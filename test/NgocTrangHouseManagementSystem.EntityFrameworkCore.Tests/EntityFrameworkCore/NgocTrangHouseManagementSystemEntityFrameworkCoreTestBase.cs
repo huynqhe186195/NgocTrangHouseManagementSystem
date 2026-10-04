@@ -1,0 +1,8 @@
+﻿using Volo.Abp;
+
+namespace NgocTrangHouseManagementSystem.EntityFrameworkCore;
+
+public abstract class NgocTrangHouseManagementSystemEntityFrameworkCoreTestBase : NgocTrangHouseManagementSystemTestBase<NgocTrangHouseManagementSystemEntityFrameworkCoreTestModule>
+{
+
+}

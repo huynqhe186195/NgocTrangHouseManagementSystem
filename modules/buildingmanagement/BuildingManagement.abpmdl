@@ -1,0 +1,58 @@
+{
+  "folders": {
+    "items": {
+      "src": {},
+      "test": {}
+    }
+  },
+  "packages": {
+    "BuildingManagement.Domain": {
+      "path": "src/BuildingManagement.Domain/BuildingManagement.Domain.abppkg",
+      "folder": "src"
+    },
+    "BuildingManagement.Application.Contracts": {
+      "path": "src/BuildingManagement.Application.Contracts/BuildingManagement.Application.Contracts.abppkg",
+      "folder": "src"
+    },
+    "BuildingManagement.Application": {
+      "path": "src/BuildingManagement.Application/BuildingManagement.Application.abppkg",
+      "folder": "src"
+    },
+    "BuildingManagement.EntityFrameworkCore": {
+      "path": "src/BuildingManagement.EntityFrameworkCore/BuildingManagement.EntityFrameworkCore.abppkg",
+      "folder": "src"
+    },
+    "BuildingManagement.HttpApi": {
+      "path": "src/BuildingManagement.HttpApi/BuildingManagement.HttpApi.abppkg",
+      "folder": "src"
+    },
+    "BuildingManagement.HttpApi.Client": {
+      "path": "src/BuildingManagement.HttpApi.Client/BuildingManagement.HttpApi.Client.abppkg",
+      "folder": "src"
+    },
+    "BuildingManagement.TestBase": {
+      "path": "test/BuildingManagement.TestBase/BuildingManagement.TestBase.abppkg",
+      "folder": "test"
+    },
+    "BuildingManagement.EntityFrameworkCore.Tests": {
+      "path": "test/BuildingManagement.EntityFrameworkCore.Tests/BuildingManagement.EntityFrameworkCore.Tests.abppkg",
+      "folder": "test"
+    },
+    "BuildingManagement.Domain.Tests": {
+      "path": "test/BuildingManagement.Domain.Tests/BuildingManagement.Domain.Tests.abppkg",
+      "folder": "test"
+    },
+    "BuildingManagement.Application.Tests": {
+      "path": "test/BuildingManagement.Application.Tests/BuildingManagement.Application.Tests.abppkg",
+      "folder": "test"
+    },
+    "BuildingManagement.Domain.Shared": {
+      "path": "src/BuildingManagement.Domain.Shared/BuildingManagement.Domain.Shared.abppkg",
+      "folder": "src"
+    },
+    "BuildingManagement.Installer": {
+       "path": "src/BuildingManagement.Installer/BuildingManagement.Installer.abppkg",
+       "folder": "src"
+    }
+  }
+}

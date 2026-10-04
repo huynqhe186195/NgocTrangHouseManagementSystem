@@ -1,0 +1,10 @@
+using NgocTrangHouseManagementSystem.Samples;
+using Xunit;
+
+namespace NgocTrangHouseManagementSystem.EntityFrameworkCore.Applications;
+
+[Collection(NgocTrangHouseManagementSystemTestConsts.CollectionDefinitionName)]
+public class EfCoreSampleAppServiceTests : SampleAppServiceTests<NgocTrangHouseManagementSystemEntityFrameworkCoreTestModule>
+{
+
+}

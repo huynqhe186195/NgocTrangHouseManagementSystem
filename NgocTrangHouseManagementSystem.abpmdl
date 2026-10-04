@@ -1,0 +1,109 @@
+{
+  "template": "app",
+  "imports": {
+    "Volo.Abp.BasicTheme": {
+      "version": "10.6.1",
+      "isInstalled": true,
+      "creationTime": "09/29/2026 17:08:22 +00:00"
+    },
+    "Volo.Abp.Account": {
+      "version": "10.6.1",
+      "isInstalled": true,
+      "creationTime": "09/29/2026 17:08:22 +00:00"
+    },
+    "Volo.Abp.OpenIddict": {
+      "version": "10.6.1",
+      "isInstalled": true,
+      "creationTime": "09/29/2026 17:08:22 +00:00"
+    },
+    "Volo.Abp.Identity": {
+      "version": "10.6.1",
+      "isInstalled": true,
+      "creationTime": "09/29/2026 17:08:22 +00:00"
+    },
+    "Volo.Abp.SettingManagement": {
+      "version": "10.6.1",
+      "isInstalled": true,
+      "creationTime": "09/29/2026 17:08:22 +00:00"
+    },
+    "Volo.Abp.PermissionManagement": {
+      "version": "10.6.1",
+      "isInstalled": true,
+      "creationTime": "09/29/2026 17:08:22 +00:00"
+    },
+    "Volo.Abp.FeatureManagement": {
+      "version": "10.6.1",
+      "isInstalled": true,
+      "creationTime": "09/29/2026 17:08:22 +00:00"
+    },
+    "Volo.Abp.BlobStoring.Database": {
+      "version": "10.6.1",
+      "isInstalled": true,
+      "creationTime": "09/29/2026 17:08:22 +00:00"
+    }
+  },
+  "folders": {
+    "items": {
+      "src": {},
+      "test": {}
+    }
+  },
+  "packages": {
+    "NgocTrangHouseManagementSystem.Application": {
+      "path": "src/NgocTrangHouseManagementSystem.Application/NgocTrangHouseManagementSystem.Application.abppkg",
+      "folder": "src"
+    },
+    "NgocTrangHouseManagementSystem.Application.Tests": {
+      "path": "test/NgocTrangHouseManagementSystem.Application.Tests/NgocTrangHouseManagementSystem.Application.Tests.abppkg",
+      "folder": "test"
+    },
+    "NgocTrangHouseManagementSystem.Domain.Shared": {
+      "path": "src/NgocTrangHouseManagementSystem.Domain.Shared/NgocTrangHouseManagementSystem.Domain.Shared.abppkg",
+      "folder": "src"
+    },
+    "NgocTrangHouseManagementSystem.Application.Contracts": {
+      "path": "src/NgocTrangHouseManagementSystem.Application.Contracts/NgocTrangHouseManagementSystem.Application.Contracts.abppkg",
+      "folder": "src"
+    },
+    "NgocTrangHouseManagementSystem.HttpApi": {
+      "path": "src/NgocTrangHouseManagementSystem.HttpApi/NgocTrangHouseManagementSystem.HttpApi.abppkg",
+      "folder": "src"
+    },
+    "NgocTrangHouseManagementSystem.HttpApi.Client": {
+      "path": "src/NgocTrangHouseManagementSystem.HttpApi.Client/NgocTrangHouseManagementSystem.HttpApi.Client.abppkg",
+      "folder": "src"
+    },
+    "NgocTrangHouseManagementSystem.EntityFrameworkCore.Tests": {
+      "path": "test/NgocTrangHouseManagementSystem.EntityFrameworkCore.Tests/NgocTrangHouseManagementSystem.EntityFrameworkCore.Tests.abppkg",
+      "folder": "test"
+    },
+    "NgocTrangHouseManagementSystem.EntityFrameworkCore": {
+      "path": "src/NgocTrangHouseManagementSystem.EntityFrameworkCore/NgocTrangHouseManagementSystem.EntityFrameworkCore.abppkg",
+      "folder": "src"
+    },
+    "NgocTrangHouseManagementSystem.TestBase": {
+      "path": "test/NgocTrangHouseManagementSystem.TestBase/NgocTrangHouseManagementSystem.TestBase.abppkg",
+      "folder": "test"
+    },
+    "NgocTrangHouseManagementSystem.Domain.Tests": {
+      "path": "test/NgocTrangHouseManagementSystem.Domain.Tests/NgocTrangHouseManagementSystem.Domain.Tests.abppkg",
+      "folder": "test"
+    },
+    "NgocTrangHouseManagementSystem.HttpApi.Client.ConsoleTestApp": {
+      "path": "test/NgocTrangHouseManagementSystem.HttpApi.Client.ConsoleTestApp/NgocTrangHouseManagementSystem.HttpApi.Client.ConsoleTestApp.abppkg",
+      "folder": "test"
+    },
+    "NgocTrangHouseManagementSystem.DbMigrator": {
+      "path": "src/NgocTrangHouseManagementSystem.DbMigrator/NgocTrangHouseManagementSystem.DbMigrator.abppkg",
+      "folder": "src"
+    },
+    "NgocTrangHouseManagementSystem.HttpApi.Host": {
+      "path": "src/NgocTrangHouseManagementSystem.HttpApi.Host/NgocTrangHouseManagementSystem.HttpApi.Host.abppkg",
+      "folder": "src"
+    },
+    "NgocTrangHouseManagementSystem.Domain": {
+      "path": "src/NgocTrangHouseManagementSystem.Domain/NgocTrangHouseManagementSystem.Domain.abppkg",
+      "folder": "src"
+    }
+  }
+}

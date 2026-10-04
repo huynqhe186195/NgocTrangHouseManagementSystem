@@ -1,0 +1,9 @@
+﻿using Xunit;
+
+namespace NgocTrangHouseManagementSystem.EntityFrameworkCore;
+
+[CollectionDefinition(NgocTrangHouseManagementSystemTestConsts.CollectionDefinitionName)]
+public class NgocTrangHouseManagementSystemEntityFrameworkCoreCollection : ICollectionFixture<NgocTrangHouseManagementSystemEntityFrameworkCoreFixture>
+{
+
+}

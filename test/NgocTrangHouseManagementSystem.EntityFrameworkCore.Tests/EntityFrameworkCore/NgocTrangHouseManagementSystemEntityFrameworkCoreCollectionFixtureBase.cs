@@ -1,0 +1,9 @@
+﻿using NgocTrangHouseManagementSystem.EntityFrameworkCore;
+using Xunit;
+
+namespace NgocTrangHouseManagementSystem.EntityFrameworkCore;
+
+public class NgocTrangHouseManagementSystemEntityFrameworkCoreCollectionFixtureBase : ICollectionFixture<NgocTrangHouseManagementSystemEntityFrameworkCoreFixture>
+{
+
+}

@@ -1,0 +1,41 @@
+<Solution>
+    <Folder Name="/src/">
+        <Project Path="src/NgocTrangHouseManagementSystem.Application.Contracts/NgocTrangHouseManagementSystem.Application.Contracts.csproj" />
+        <Project Path="src/NgocTrangHouseManagementSystem.Application/NgocTrangHouseManagementSystem.Application.csproj" />
+        <Project Path="src/NgocTrangHouseManagementSystem.DbMigrator/NgocTrangHouseManagementSystem.DbMigrator.csproj" />
+        <Project Path="src/NgocTrangHouseManagementSystem.Domain.Shared/NgocTrangHouseManagementSystem.Domain.Shared.csproj" />
+        <Project Path="src/NgocTrangHouseManagementSystem.Domain/NgocTrangHouseManagementSystem.Domain.csproj" />
+        <Project Path="src/NgocTrangHouseManagementSystem.EntityFrameworkCore/NgocTrangHouseManagementSystem.EntityFrameworkCore.csproj" />
+        <Project Path="src/NgocTrangHouseManagementSystem.HttpApi.Client/NgocTrangHouseManagementSystem.HttpApi.Client.csproj" />
+        <Project Path="src/NgocTrangHouseManagementSystem.HttpApi.Host/NgocTrangHouseManagementSystem.HttpApi.Host.csproj" />
+        <Project Path="src/NgocTrangHouseManagementSystem.HttpApi/NgocTrangHouseManagementSystem.HttpApi.csproj" />
+    </Folder>
+    <Folder Name="/test/">
+        <Project Path="test/NgocTrangHouseManagementSystem.Application.Tests/NgocTrangHouseManagementSystem.Application.Tests.csproj" />
+        <Project Path="test/NgocTrangHouseManagementSystem.Domain.Tests/NgocTrangHouseManagementSystem.Domain.Tests.csproj" />
+        <Project Path="test/NgocTrangHouseManagementSystem.EntityFrameworkCore.Tests/NgocTrangHouseManagementSystem.EntityFrameworkCore.Tests.csproj" />
+        <Project Path="test/NgocTrangHouseManagementSystem.HttpApi.Client.ConsoleTestApp/NgocTrangHouseManagementSystem.HttpApi.Client.ConsoleTestApp.csproj" />
+        <Project Path="test/NgocTrangHouseManagementSystem.TestBase/NgocTrangHouseManagementSystem.TestBase.csproj" />
+    </Folder>
+    <Folder Name="/docker/">
+        <File Path="docker-compose.yml" />
+    </Folder>
+    <Folder Name="/modules/" />
+    <Folder Name="/modules/buildingmanagement/" />
+    <Folder Name="/modules/buildingmanagement/src/">
+        <Project Path="modules/buildingmanagement/src/BuildingManagement.Application.Contracts/BuildingManagement.Application.Contracts.csproj" />
+        <Project Path="modules/buildingmanagement/src/BuildingManagement.Application/BuildingManagement.Application.csproj" />
+        <Project Path="modules/buildingmanagement/src/BuildingManagement.Domain.Shared/BuildingManagement.Domain.Shared.csproj" />
+        <Project Path="modules/buildingmanagement/src/BuildingManagement.Domain/BuildingManagement.Domain.csproj" />
+        <Project Path="modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/BuildingManagement.EntityFrameworkCore.csproj" />
+        <Project Path="modules/buildingmanagement/src/BuildingManagement.HttpApi.Client/BuildingManagement.HttpApi.Client.csproj" />
+        <Project Path="modules/buildingmanagement/src/BuildingManagement.HttpApi/BuildingManagement.HttpApi.csproj" />
+        <Project Path="modules/buildingmanagement/src/BuildingManagement.Installer/BuildingManagement.Installer.csproj" />
+    </Folder>
+    <Folder Name="/modules/buildingmanagement/test/">
+        <Project Path="modules/buildingmanagement/test/BuildingManagement.Application.Tests/BuildingManagement.Application.Tests.csproj" />
+        <Project Path="modules/buildingmanagement/test/BuildingManagement.Domain.Tests/BuildingManagement.Domain.Tests.csproj" />
+        <Project Path="modules/buildingmanagement/test/BuildingManagement.EntityFrameworkCore.Tests/BuildingManagement.EntityFrameworkCore.Tests.csproj" />
+        <Project Path="modules/buildingmanagement/test/BuildingManagement.TestBase/BuildingManagement.TestBase.csproj" />
+    </Folder>
+</Solution>

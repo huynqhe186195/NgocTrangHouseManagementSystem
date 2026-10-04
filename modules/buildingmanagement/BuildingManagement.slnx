@@ -1,0 +1,23 @@
+<Solution>
+    <Configurations>
+        <Platform Name="Any CPU" />
+    </Configurations>
+
+    <Folder Name="/src/">
+        <Project Path="src/BuildingManagement.Domain.Shared/BuildingManagement.Domain.Shared.csproj" />
+        <Project Path="src/BuildingManagement.Domain/BuildingManagement.Domain.csproj" />
+        <Project Path="src/BuildingManagement.Application.Contracts/BuildingManagement.Application.Contracts.csproj" />
+        <Project Path="src/BuildingManagement.Application/BuildingManagement.Application.csproj" />
+        <Project Path="src/BuildingManagement.EntityFrameworkCore/BuildingManagement.EntityFrameworkCore.csproj" />
+        <Project Path="src/BuildingManagement.HttpApi/BuildingManagement.HttpApi.csproj" />
+        <Project Path="src/BuildingManagement.HttpApi.Client/BuildingManagement.HttpApi.Client.csproj" />
+        <Project Path="src/BuildingManagement.Installer/BuildingManagement.Installer.csproj" />
+    </Folder>
+    
+    <Folder Name="/test/">
+        <Project Path="test/BuildingManagement.TestBase/BuildingManagement.TestBase.csproj" />
+        <Project Path="test/BuildingManagement.EntityFrameworkCore.Tests/BuildingManagement.EntityFrameworkCore.Tests.csproj" />
+        <Project Path="test/BuildingManagement.Domain.Tests/BuildingManagement.Domain.Tests.csproj" />
+        <Project Path="test/BuildingManagement.Application.Tests/BuildingManagement.Application.Tests.csproj" />
+    </Folder>
+</Solution>

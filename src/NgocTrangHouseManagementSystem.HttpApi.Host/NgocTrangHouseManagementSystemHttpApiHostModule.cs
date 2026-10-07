@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Security.Cryptography.X509Certificates;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Builder;
@@ -43,6 +44,7 @@ using Volo.Abp.AspNetCore.Mvc.Libs;
 using BuildingManagement;
 using Microsoft.AspNetCore.Mvc;
 using Volo.Abp.AspNetCore.Mvc;
+using Volo.Abp.AspNetCore.ExceptionHandling;
 
 namespace NgocTrangHouseManagementSystem;
 
@@ -156,6 +158,7 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule
         ConfigureSwagger(context, configuration);
         ConfigureVirtualFileSystem(context);
         ConfigureCors(context, configuration);
+        ConfigureErrorHttpStatusCodeMappings();
     }
 
     private void ConfigureStudio(IHostEnvironment hostingEnvironment)
@@ -278,6 +281,27 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule
     private void ConfigureHealthChecks(ServiceConfigurationContext context)
     {
         context.Services.AddNgocTrangHouseManagementSystemHealthChecks();
+    }
+
+    private void ConfigureErrorHttpStatusCodeMappings()
+    {
+        Configure<AbpExceptionHttpStatusCodeOptions>(options =>
+        {
+            options.Map(
+                BuildingManagementErrorCodes.RoomNumberAlreadyExists,
+                HttpStatusCode.Conflict
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.InvalidRoomNumber,
+                HttpStatusCode.BadRequest
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.RoomNumberDoesNotMatchFloor,
+                HttpStatusCode.BadRequest
+            );
+        });
     }
 
 

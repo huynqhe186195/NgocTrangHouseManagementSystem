@@ -132,7 +132,7 @@ namespace BuildingManagement.Rooms
             if (!int.TryParse(roomNumber, out _))
             {
                 throw new BusinessException(
-                    "BuildingManagement:InvalidRoomNumber"
+                    BuildingManagementErrorCodes.InvalidRoomNumber
                 )
                 .WithData("RoomNumber", roomNumber);
             }
@@ -140,7 +140,7 @@ namespace BuildingManagement.Rooms
             if (roomNumber.Length < 3)
             {
                 throw new BusinessException(
-                    "BuildingManagement:InvalidRoomNumber"
+                    BuildingManagementErrorCodes.InvalidRoomNumber
                 )
                 .WithData("RoomNumber", roomNumber);
             }
@@ -151,7 +151,7 @@ namespace BuildingManagement.Rooms
                 roomFloorNumber != floorNumber)
             {
                 throw new BusinessException(
-                    "BuildingManagement:RoomNumberDoesNotMatchFloor"
+                    BuildingManagementErrorCodes.RoomNumberDoesNotMatchFloor
                 )
                 .WithData("FloorNumber", floorNumber)
                 .WithData("RoomNumber", roomNumber);
@@ -181,7 +181,7 @@ namespace BuildingManagement.Rooms
             if (exists)
             {
                 throw new BusinessException(
-                    "BuildingManagement:RoomNumberAlreadyExists"
+                    BuildingManagementErrorCodes.RoomNumberAlreadyExists
                 )
                 .WithData("FloorId", floorId)
                 .WithData("RoomNumber", roomNumber);

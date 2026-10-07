@@ -1,4 +1,6 @@
 ﻿using Localization.Resources.AbpUi;
+using Microsoft.AspNetCore.Mvc;
+using NgocTrangHouseManagementSystem.Filters;
 using NgocTrangHouseManagementSystem.Localization;
 using Volo.Abp.Account;
 using Volo.Abp.SettingManagement;
@@ -23,6 +25,7 @@ public class NgocTrangHouseManagementSystemHttpApiModule : AbpModule
     public override void ConfigureServices(ServiceConfigurationContext context)
     {
         ConfigureLocalization();
+        ConfigureResponseFilter();
     }
 
     private void ConfigureLocalization()
@@ -34,6 +37,14 @@ public class NgocTrangHouseManagementSystemHttpApiModule : AbpModule
                 .AddBaseTypes(
                     typeof(AbpUiResource)
                 );
+        });
+    }
+
+    private void ConfigureResponseFilter()
+    {
+        Configure<MvcOptions>(options =>
+        {
+            options.Filters.Add<ApiResponseFilter>();
         });
     }
 }

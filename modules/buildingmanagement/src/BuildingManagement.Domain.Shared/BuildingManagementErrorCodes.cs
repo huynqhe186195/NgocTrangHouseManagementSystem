@@ -1,6 +1,13 @@
-﻿namespace BuildingManagement;
+namespace BuildingManagement;
 
 public static class BuildingManagementErrorCodes
 {
-    //Add your business exception error codes here...
+    public const string InvalidRoomNumber =
+        "BuildingManagement:InvalidRoomNumber";
+
+    public const string RoomNumberDoesNotMatchFloor =
+        "BuildingManagement:RoomNumberDoesNotMatchFloor";
+
+    public const string RoomNumberAlreadyExists =
+        "BuildingManagement:RoomNumberAlreadyExists";
 }

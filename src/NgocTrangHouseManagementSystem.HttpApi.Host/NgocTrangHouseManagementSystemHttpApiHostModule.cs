@@ -1,50 +1,50 @@
+using BuildingManagement;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Cors;
+using Microsoft.AspNetCore.Extensions.DependencyInjection;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.OpenApi;
+using NgocTrangHouseManagementSystem.EntityFrameworkCore;
+using NgocTrangHouseManagementSystem.HealthChecks;
+using NgocTrangHouseManagementSystem.MultiTenancy;
+using NgocTrangHouseManagementSystem.Swagger;
+using OpenIddict.Server.AspNetCore;
+using OpenIddict.Validation.AspNetCore;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
 using System.Security.Cryptography.X509Certificates;
-using Microsoft.AspNetCore.Authentication;
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Cors;
-using Microsoft.AspNetCore.HttpOverrides;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
-using Microsoft.AspNetCore.Extensions.DependencyInjection;
-using OpenIddict.Validation.AspNetCore;
-using OpenIddict.Server.AspNetCore;
-using NgocTrangHouseManagementSystem.EntityFrameworkCore;
-using NgocTrangHouseManagementSystem.MultiTenancy;
-using NgocTrangHouseManagementSystem.HealthChecks;
-using Microsoft.OpenApi;
 using Volo.Abp;
-using Volo.Abp.Studio;
 using Volo.Abp.Account;
 using Volo.Abp.Account.Web;
+using Volo.Abp.AspNetCore.ExceptionHandling;
 using Volo.Abp.AspNetCore.MultiTenancy;
 using Volo.Abp.AspNetCore.Mvc;
-using Volo.Abp.Autofac;
-using Volo.Abp.Localization;
-using Volo.Abp.Modularity;
-using Volo.Abp.UI.Navigation.Urls;
-using Volo.Abp.VirtualFileSystem;
+using Volo.Abp.AspNetCore.Mvc.Libs;
 using Volo.Abp.AspNetCore.Mvc.UI.Bundling;
-using Volo.Abp.AspNetCore.Mvc.UI.Theme.Shared;
 using Volo.Abp.AspNetCore.Mvc.UI.Theme.Basic;
 using Volo.Abp.AspNetCore.Mvc.UI.Theme.Basic.Bundling;
-using Microsoft.AspNetCore.Hosting;
+using Volo.Abp.AspNetCore.Mvc.UI.Theme.Shared;
 using Volo.Abp.AspNetCore.Serilog;
+using Volo.Abp.Autofac;
 using Volo.Abp.Identity;
+using Volo.Abp.Localization;
+using Volo.Abp.Modularity;
 using Volo.Abp.OpenIddict;
-using Volo.Abp.Swashbuckle;
-using Volo.Abp.Studio.Client.AspNetCore;
 using Volo.Abp.Security.Claims;
-using Volo.Abp.AspNetCore.Mvc.Libs;
-using BuildingManagement;
-using Microsoft.AspNetCore.Mvc;
-using Volo.Abp.AspNetCore.Mvc;
-using Volo.Abp.AspNetCore.ExceptionHandling;
+using Volo.Abp.Studio;
+using Volo.Abp.Studio.Client.AspNetCore;
+using Volo.Abp.Swashbuckle;
+using Volo.Abp.UI.Navigation.Urls;
+using Volo.Abp.VirtualFileSystem;
 
 namespace NgocTrangHouseManagementSystem;
 
@@ -241,7 +241,9 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule
         });
     }
 
-    private static void ConfigureSwagger(ServiceConfigurationContext context, IConfiguration configuration)
+    private static void ConfigureSwagger(
+    ServiceConfigurationContext context,
+    IConfiguration configuration)
     {
         context.Services.AddAbpSwaggerGenWithOidc(
             configuration["AuthServer:Authority"]!,
@@ -250,9 +252,27 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule
             null,
             options =>
             {
-                options.SwaggerDoc("v1", new OpenApiInfo { Title = "NgocTrangHouseManagementSystem API", Version = "v1" });
-                options.DocInclusionPredicate((docName, description) => true);
-                options.CustomSchemaIds(type => type.FullName);
+                options.SwaggerDoc(
+                    "v1",
+                    new OpenApiInfo
+                    {
+                        Title =
+                            "NgocTrangHouseManagementSystem API",
+                        Version = "v1"
+                    }
+                );
+
+                options.DocInclusionPredicate(
+                    (docName, description) => true
+                );
+
+                options.CustomSchemaIds(
+                    type => type.FullName
+                );
+
+                options.OperationFilter<
+                    ApiResponseOperationFilter
+                >();
             });
     }
 

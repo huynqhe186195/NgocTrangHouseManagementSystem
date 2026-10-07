@@ -40,7 +40,7 @@ public class NgocTrangHouseManagementSystemHttpApiModule : AbpModule
         });
     }
 
-    private void ConfigureResponseFilter()
+    private void ConfigureResponseFilter() // Apply this filter to the entire MVC/API.
     {
         Configure<MvcOptions>(options =>
         {

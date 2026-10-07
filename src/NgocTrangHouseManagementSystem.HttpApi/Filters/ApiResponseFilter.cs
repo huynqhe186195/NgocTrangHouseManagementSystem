@@ -1,4 +1,4 @@
-using System;
+ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -16,8 +16,16 @@ public sealed class ApiResponseFilter
 {
     public async Task OnResultExecutionAsync(
         ResultExecutingContext context,
-        ResultExecutionDelegate next)
+        ResultExecutionDelegate next) // context = the response currently being prepared for dispatch
+                                      // next = allows the response to proceed outward
     {
+
+        if (ShouldSkipWrapping(context.HttpContext))
+        {
+            await next();
+            return;
+        }
+
         var traceId =
             Activity.Current?.Id
             ?? context.HttpContext.TraceIdentifier;
@@ -26,65 +34,101 @@ public sealed class ApiResponseFilter
         {
             TraceId = traceId,
             Timestamp = DateTimeOffset.UtcNow
-        };
+        }; // Get the identifier of the current request.
 
-        switch (context.Result)
+        if (context.Result is ObjectResult
+            {
+                Value: RemoteServiceErrorResponse remoteError
+            } errorResult)
+        {
+            errorResult.Value =
+                CreateErrorResponse(
+                    remoteError,
+                    errorResult.StatusCode,
+                    meta
+                );
+
+            await next();
+            return;
+        }
+
+        // DELETE thành công->luôn trả 200 + envelope
+        if (HttpMethods.IsDelete(
+                context.HttpContext.Request.Method)
+            && IsEmptySuccessResult(context.Result))
+        {
+            context.HttpContext.Response.StatusCode =
+                StatusCodes.Status200OK;
+
+            context.Result = new ObjectResult(
+                ApiResponse<object?>.Ok(
+                    null,
+                    meta
+                )
+            )
+            {
+                StatusCode = StatusCodes.Status200OK
+            };
+
+            await next();
+            return;
+        }
+
+        switch (context.Result) // What type is the current response?
         {
             case ObjectResult
             {
-                Value: IApiResponse
+                Value: IApiResponse // If the data has already been packaged according to our standard, do not package it again
             }:
                 break;
 
-            case ObjectResult
-            {
-                Value: RemoteServiceErrorResponse remoteError
-            } objectResult:
-            {
-                objectResult.Value =
-                    CreateErrorResponse(
-                        remoteError,
-                        objectResult.StatusCode,
-                        meta
-                    );
-
-                break;
-            }
-
             case ObjectResult objectResult:
-            {
-                var statusCode =
-                    objectResult.StatusCode
-                    ?? StatusCodes.Status200OK;
-
-                if (statusCode < 400)
                 {
-                    objectResult.Value =
-                        ApiResponse<object?>.Ok(
-                            objectResult.Value,
-                            meta
-                        );
-                }
+                    var statusCode =
+                        objectResult.StatusCode
+                        ?? StatusCodes.Status200OK;
 
-                break;
-            }
+                    if (statusCode < 400)
+                    {
+                        if (objectResult.Value is not IApiResponse)
+                        {
+                            objectResult.Value =
+                                ApiResponse<object?>.Ok(
+                                    objectResult.Value,
+                                    meta
+                                );
+                        }
+
+                        if (HttpMethods.IsPost(
+                            context.HttpContext.Request.Method))
+                        {
+                            objectResult.StatusCode =
+                                StatusCodes.Status201Created;
+
+                            context.HttpContext.Response.StatusCode =
+                                StatusCodes.Status201Created;
+                        }
+                    }
+
+                    break;
+                }
 
             case JsonResult jsonResult:
-            {
-                if (jsonResult.Value is not IApiResponse)
                 {
-                    jsonResult.Value =
-                        ApiResponse<object?>.Ok(
-                            jsonResult.Value,
-                            meta
-                        );
+                    if (jsonResult.Value is not IApiResponse)
+                    {
+                        jsonResult.Value =
+                            ApiResponse<object?>.Ok(
+                                jsonResult.Value,
+                                meta
+                            );
+                    }
+
+                    break;
                 }
 
-                break;
-            }
+                await next(); // I've finished modifying the response. Now, let the pipeline proceed with sending the response to the client.
         }
-
-        await next();
     }
 
     private static ApiResponse<object?> CreateErrorResponse(
@@ -119,7 +163,7 @@ public sealed class ApiResponseFilter
                     ];
                 })
                 .ToList()
-            ?? [];
+            ?? []; // Get all validation error of ABP and then switch to ApiValidationError of system
 
         var code =
             remote.Error.Code
@@ -174,5 +218,45 @@ public sealed class ApiResponseFilter
             _ =>
                 "Common:InternalServerError"
         };
+    }
+
+    private static bool IsEmptySuccessResult(
+    IActionResult result)
+    {
+        return result switch
+        {
+            EmptyResult => true,
+
+            NoContentResult => true,
+
+            StatusCodeResult statusCodeResult
+                when statusCodeResult.StatusCode ==
+                     StatusCodes.Status204NoContent
+                => true,
+
+            ObjectResult
+            {
+                Value: null
+            } objectResult
+                when objectResult.StatusCode is null
+                     or StatusCodes.Status200OK
+                     or StatusCodes.Status204NoContent
+                => true,
+
+            _ => false
+        };
+    }
+
+    private static bool ShouldSkipWrapping(
+    HttpContext httpContext)
+    {
+        var path = httpContext.Request.Path;
+
+        return
+            path.StartsWithSegments("/swagger") ||
+            path.StartsWithSegments("/health-status") ||
+            path.StartsWithSegments("/api/abp") ||
+            path.StartsWithSegments("/connect") ||
+            path.StartsWithSegments("/.well-known");
     }
 }

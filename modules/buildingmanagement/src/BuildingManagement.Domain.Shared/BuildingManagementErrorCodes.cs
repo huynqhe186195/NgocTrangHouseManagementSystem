@@ -10,4 +10,4 @@ public static class BuildingManagementErrorCodes
 
     public const string RoomNumberAlreadyExists =
         "BuildingManagement:RoomNumberAlreadyExists";
-}
+} // Consolidate all of the module's error codes in one place.

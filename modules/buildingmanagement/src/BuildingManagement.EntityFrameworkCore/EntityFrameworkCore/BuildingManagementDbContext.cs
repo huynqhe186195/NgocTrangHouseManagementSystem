@@ -1,8 +1,9 @@
 ﻿using BuildingManagement.Buildings;
+using BuildingManagement.Floors;
+using BuildingManagement.Rooms;
 using Microsoft.EntityFrameworkCore;
 using Volo.Abp.Data;
 using Volo.Abp.EntityFrameworkCore;
-using BuildingManagement.Floors;
 
 namespace BuildingManagement.EntityFrameworkCore;
 
@@ -15,6 +16,7 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
     // The register entity Building into database
     public DbSet<Building> Buildings { get; set; } = default!;
     public DbSet<Floor> Floors { get; set; } = default!;
+    public DbSet<Room> Rooms { get; set; } = default!;
 
     public BuildingManagementDbContext(DbContextOptions<BuildingManagementDbContext> options)
         : base(options)

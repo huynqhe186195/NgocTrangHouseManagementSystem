@@ -1,5 +1,6 @@
 using BuildingManagement.Buildings;
 using BuildingManagement.Floors;
+using BuildingManagement.Rooms;
 using Riok.Mapperly.Abstractions;
 using Volo.Abp.Mapperly;
 
@@ -25,4 +26,15 @@ public partial class FloorToFloorDtoMapper
     public override partial void Map(
         Floor source,
         FloorDto destination);
+}
+
+[Mapper(RequiredMappingStrategy = RequiredMappingStrategy.Target)]
+public partial class RoomToRoomDtoMapper
+    : MapperBase<Room, RoomDto>
+{
+    public override partial RoomDto Map(Room source);
+
+    public override partial void Map(
+        Room source,
+        RoomDto destination);
 }

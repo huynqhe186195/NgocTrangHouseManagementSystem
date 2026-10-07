@@ -14,8 +14,4 @@
     <ProjectReference Include="..\BuildingManagement.Domain.Shared\BuildingManagement.Domain.Shared.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <Folder Include="Floors\" />
-  </ItemGroup>
-
 </Project>

@@ -1,4 +1,5 @@
-﻿using BuildingManagement.EntityFrameworkCore.EntityConfigurations;
+﻿using BuildingManagement.EntityConfigurations;
+using BuildingManagement.EntityFrameworkCore.EntityConfigurations;
 using Microsoft.EntityFrameworkCore;
 using Volo.Abp;
 
@@ -13,10 +14,12 @@ public static class BuildingManagementDbContextModelCreatingExtensions
 
         //This code use register configuration entity framework core for entity Building into Dbcontext
         builder.ApplyConfiguration(new BuildingConfiguration());
+        //This code use register configuration entity framework core for entity Floor into Dbcontext
+        builder.ApplyConfiguration(new FloorConfiguration());
 
         /* Configure all entities here. Example:
 
-        builder.Entity<Question>(b =>
+        builder.Entity<Question>(b => 
         {
             //Configure table & schema name
             b.ToTable(BuildingManagementDbProperties.DbTablePrefix + "Questions", BuildingManagementDbProperties.DbSchema);

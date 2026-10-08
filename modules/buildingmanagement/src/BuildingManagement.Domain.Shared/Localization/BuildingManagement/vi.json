@@ -2,6 +2,9 @@
   "culture": "vi",
   "texts": {
     "MyAccount": "Tài khoản của tôi",
-    "SamplePageMessage": "Trang mẫu cho mô-đun BuildingManagement"
+    "SamplePageMessage": "Trang mẫu cho mô-đun BuildingManagement",
+    "BuildingManagement:InvalidRoomNumber": "Số phòng '{RoomNumber}' không hợp lệ. Số phòng chỉ được chứa chữ số và phải có ít nhất 3 chữ số.",
+    "BuildingManagement:RoomNumberDoesNotMatchFloor": "Số phòng {RoomNumber} không thuộc tầng {FloorNumber}. Vui lòng nhập số phòng phù hợp với tầng {FloorNumber}.",
+    "BuildingManagement:RoomNumberAlreadyExists": "Số phòng {RoomNumber} đã tồn tại trên tầng này."
   }
 }

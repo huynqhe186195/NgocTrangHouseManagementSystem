@@ -1,7 +1,10 @@
 {
   "culture": "en",
   "texts": {
-    "MyAccount":  "My account",
-    "SamplePageMessage": "A sample page for the BuildingManagement module"
+    "MyAccount": "My account",
+    "SamplePageMessage": "A sample page for the BuildingManagement module",
+    "BuildingManagement:InvalidRoomNumber": "Room number '{RoomNumber}' is invalid. The room number must contain only digits and have at least 3 digits.",
+    "BuildingManagement:RoomNumberDoesNotMatchFloor": "Room number {RoomNumber} does not belong to floor {FloorNumber}. Please enter a room number that matches floor {FloorNumber}.",
+    "BuildingManagement:RoomNumberAlreadyExists": "Room number {RoomNumber} already exists on this floor."
   }
 }

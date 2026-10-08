@@ -34,5 +34,13 @@ public class BuildingManagementDomainSharedModule : AbpModule
         {
             options.MapCodeNamespace("BuildingManagement", typeof(BuildingManagementResource));
         });
+
+        Configure<AbpExceptionLocalizationOptions>(options =>
+        {
+            options.MapCodeNamespace(
+                "BuildingManagement",
+                typeof(BuildingManagementResource)
+            );
+        });
     }
 }

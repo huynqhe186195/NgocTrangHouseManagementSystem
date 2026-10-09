@@ -62,7 +62,7 @@ namespace NgocTrangHouseManagementSystem;
     typeof(BuildingManagementApplicationModule),
     typeof(BuildingManagementHttpApiModule)
     )]
-public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule
+public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule // system tell abp that system must active rules
 {
     public override void PreConfigureServices(ServiceConfigurationContext context)
     {
@@ -313,6 +313,11 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule
             );
 
             options.Map(
+    BuildingManagementErrorCodes.FloorNumberAlreadyExists,
+    HttpStatusCode.Conflict
+);
+
+            options.Map(
                 BuildingManagementErrorCodes.InvalidRoomNumber,
                 HttpStatusCode.BadRequest
             );
@@ -320,6 +325,21 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule
             options.Map(
                 BuildingManagementErrorCodes.RoomNumberDoesNotMatchFloor,
                 HttpStatusCode.BadRequest
+            );
+
+            options.Map(
+    BuildingManagementErrorCodes.BuildingNotFound,
+    HttpStatusCode.NotFound
+);
+
+            options.Map(
+                BuildingManagementErrorCodes.BuildingHasFloors,
+                HttpStatusCode.Conflict
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.FloorHasRooms,
+                HttpStatusCode.Conflict
             );
         });
     }

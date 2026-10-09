@@ -1,8 +1,10 @@
 ﻿using BuildingManagement.Buildings;
+using BuildingManagement.Rooms;
 using System;
 using System.Collections.Generic;
 using System.Text;
 using System.Threading.Tasks;
+using Volo.Abp;
 using Volo.Abp.Application.Services;
 using Volo.Abp.Domain.Repositories;
 using Volo.Abp.Guids;
@@ -16,22 +18,27 @@ namespace BuildingManagement.Floors
     {
         private readonly IRepository<Floor, Guid> _floorRepository;
         private readonly IRepository<Building, Guid> _buildingRepository;
+        private readonly IRepository<Room, Guid> _roomRepository;
 
         public FloorAppService(
             IRepository<Floor, Guid> floorRepository,
-            IRepository<Building, Guid> buildingRepository)
+            IRepository<Building, Guid> buildingRepository,
+            IRepository<Room, Guid> roomRepository)
         {
             _floorRepository = floorRepository;
             _buildingRepository = buildingRepository;
+            _roomRepository = roomRepository;
         }
 
         public async Task<FloorDto> CreateAsync(
             CreateFloorDto input)
         {
             // Kiểm tra Building có tồn tại không
-            await _buildingRepository.GetAsync(
-                input.BuildingId
-            );
+            await EnsureBuildingExistsAsync(
+    input.BuildingId
+);
+            // Check exits floor
+            await EnsureFloorNumberUniqueAsync(input.BuildingId, input.FloorNumber);
 
             var floor = new Floor(
                 GuidGenerator.Create(),
@@ -81,6 +88,8 @@ namespace BuildingManagement.Floors
             var floor =
                 await _floorRepository.GetAsync(id);
 
+            await EnsureFloorNumberUniqueAsync(floor.BuildingId, input.FloorNumber, floor.Id);
+
             floor.Update(
                 input.FloorNumber,
                 input.Name,
@@ -99,10 +108,56 @@ namespace BuildingManagement.Floors
 
         public async Task DeleteAsync(Guid id)
         {
+            await EnsureNoFloorRoomsAsync(id);
             await _floorRepository.DeleteAsync(
                 id,
                 autoSave: true
             );
+        }
+
+        private async Task EnsureNoFloorRoomsAsync(Guid floorId)
+        {
+            var hasRooms = await _roomRepository.AnyAsync(
+                r => r.FloorId == floorId
+            );
+
+            if (hasRooms)
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes.FloorHasRooms
+                );
+            }
+        }
+
+        private async Task EnsureFloorNumberUniqueAsync(Guid buildingId, int floorNumber ,Guid? excludedFloorId = null)
+        {
+            var exists = await _floorRepository.AnyAsync(floor =>
+                floor.BuildingId == buildingId
+                && floor.FloorNumber == floorNumber
+                && (!excludedFloorId.HasValue
+                    || floor.Id != excludedFloorId.Value)
+            );
+
+            if (exists)
+            {
+                throw new BusinessException(
+                        BuildingManagementErrorCodes.FloorNumberAlreadyExists)
+                    .WithData("FloorNumber", floorNumber);
+            }
+        }
+
+        private async Task EnsureBuildingExistsAsync(
+    Guid buildingId)
+        {
+            var building =
+                await _buildingRepository.FindAsync(buildingId);
+
+            if (building is null)
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes.BuildingNotFound
+                );
+            }
         }
     }
 }

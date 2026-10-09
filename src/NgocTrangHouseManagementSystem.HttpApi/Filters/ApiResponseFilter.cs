@@ -74,11 +74,11 @@ public sealed class ApiResponseFilter
             return;
         }
 
-        switch (context.Result) // What type is the current response?
+        switch (context.Result)
         {
             case ObjectResult
             {
-                Value: IApiResponse // If the data has already been packaged according to our standard, do not package it again
+                Value: IApiResponse
             }:
                 break;
 
@@ -126,9 +126,9 @@ public sealed class ApiResponseFilter
 
                     break;
                 }
-
-                await next(); // I've finished modifying the response. Now, let the pipeline proceed with sending the response to the client.
         }
+
+        await next();
     }
 
     private static ApiResponse<object?> CreateErrorResponse(

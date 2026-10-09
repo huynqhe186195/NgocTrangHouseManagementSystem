@@ -5,6 +5,10 @@
     "SamplePageMessage": "A sample page for the BuildingManagement module",
     "BuildingManagement:InvalidRoomNumber": "Room number '{RoomNumber}' is invalid. The room number must contain only digits and have at least 3 digits.",
     "BuildingManagement:RoomNumberDoesNotMatchFloor": "Room number {RoomNumber} does not belong to floor {FloorNumber}. Please enter a room number that matches floor {FloorNumber}.",
-    "BuildingManagement:RoomNumberAlreadyExists": "Room number {RoomNumber} already exists on this floor."
+    "BuildingManagement:RoomNumberAlreadyExists": "Room number {RoomNumber} already exists on this floor.",
+    "BuildingManagement:FloorNumberAlreadyExists": "Floor {FloorNumber} already exists in this building.",
+    "BuildingManagement:BuildingNotFound": "The selected building was not found.",
+    "BuildingManagement:BuildingHasFloors": "Cannot delete building because it still has floors. Please delete all floors first.",
+    "BuildingManagement:FloorHasRooms": "Cannot delete floor because it still has rooms. Please delete all rooms first."
   }
 }

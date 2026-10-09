@@ -2,6 +2,8 @@
 using System.Collections.Generic;
 using System.Text;
 using System.Threading.Tasks;
+using BuildingManagement.Floors;
+using Volo.Abp;
 using Volo.Abp.Application.Services;
 using Volo.Abp.Domain.Repositories;
 
@@ -11,11 +13,15 @@ namespace BuildingManagement.Buildings
     ApplicationService,
     IBuildingAppService
     {
-        private readonly IRepository<Building, Guid>? _buildingRepository;
+        private readonly IRepository<Building, Guid> _buildingRepository;
+        private readonly IRepository<Floor, Guid> _floorRepository;
 
-        public BuildingAppService(IRepository<Building, Guid>? buildingRepository)
+        public BuildingAppService(
+            IRepository<Building, Guid> buildingRepository,
+            IRepository<Floor, Guid> floorRepository)
         {
             _buildingRepository = buildingRepository;
+            _floorRepository = floorRepository;
         }
 
         public async Task<BuildingDto> CreateAsync(CreateBuildingDto input)
@@ -40,6 +46,7 @@ namespace BuildingManagement.Buildings
 
         public async Task DeleteAsync(Guid id)
         {
+            await EnsureNoBuildingFloorsAsync(id);
             await _buildingRepository.DeleteAsync(id, autoSave: true);
         }
 
@@ -89,6 +96,20 @@ namespace BuildingManagement.Buildings
                 Building,
                 BuildingDto
             >(building);
+        }
+
+        private async Task EnsureNoBuildingFloorsAsync(Guid buildingId)
+        {
+            var hasFloors = await _floorRepository.AnyAsync(
+                f => f.BuildingId == buildingId
+            );
+
+            if (hasFloors)
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes.BuildingHasFloors
+                );
+            }
         }
     }
 }

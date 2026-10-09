@@ -5,6 +5,10 @@
     "SamplePageMessage": "Trang mẫu cho mô-đun BuildingManagement",
     "BuildingManagement:InvalidRoomNumber": "Số phòng '{RoomNumber}' không hợp lệ. Số phòng chỉ được chứa chữ số và phải có ít nhất 3 chữ số.",
     "BuildingManagement:RoomNumberDoesNotMatchFloor": "Số phòng {RoomNumber} không thuộc tầng {FloorNumber}. Vui lòng nhập số phòng phù hợp với tầng {FloorNumber}.",
-    "BuildingManagement:RoomNumberAlreadyExists": "Số phòng {RoomNumber} đã tồn tại trên tầng này."
+    "BuildingManagement:RoomNumberAlreadyExists": "Số phòng {RoomNumber} đã tồn tại trên tầng này.",
+    "BuildingManagement:FloorNumberAlreadyExists": "Tầng {FloorNumber} đã tồn tại trong tòa nhà này.",
+    "BuildingManagement:BuildingNotFound": "Không tìm thấy tòa nhà được chọn.",
+    "BuildingManagement:BuildingHasFloors": "Không thể xóa tòa nhà vì vẫn còn tầng. Vui lòng xóa tất cả các tầng trước.",
+    "BuildingManagement:FloorHasRooms": "Không thể xóa tầng vì vẫn còn phòng. Vui lòng xóa tất cả các phòng trước."
   }
 }

@@ -39,6 +39,13 @@
     "BuildingManagement:InvalidUtilityType": "The utility type is invalid.",
     "BuildingManagement:InvalidUtilityUnitPrice": "The utility unit price must be greater than 0.",
     "BuildingManagement:InvalidUtilityRatePeriod": "The effective end date cannot be earlier than the effective start date.",
-    "BuildingManagement:UtilityRatePeriodOverlaps": "The utility rate period overlaps with an existing rate."
+    "BuildingManagement:UtilityRatePeriodOverlaps": "The utility rate period overlaps with an existing rate.",
+    "BuildingManagement:UtilityMeterNotFound": "The selected utility meter was not found.",
+    "BuildingManagement:InvalidMeterCode": "The meter code is invalid.",
+    "BuildingManagement:InvalidInitialMeterReading": "The initial meter reading cannot be less than 0.",
+    "BuildingManagement:MeterCodeAlreadyExists": "Meter code {MeterCode} already exists.",
+    "BuildingManagement:ActiveUtilityMeterAlreadyExists": "The room already has an active meter for this utility type.",
+    "BuildingManagement:UtilityMeterAlreadyInactive": "The utility meter is already inactive.",
+    "BuildingManagement:RoomHasActiveUtilityMeter": "The room has an active utility meter and cannot be deleted."
   }
 }

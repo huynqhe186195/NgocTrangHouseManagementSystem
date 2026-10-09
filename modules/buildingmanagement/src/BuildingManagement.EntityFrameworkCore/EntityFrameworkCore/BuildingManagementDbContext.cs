@@ -24,6 +24,7 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
     public DbSet<Contract> Contracts { get; set; } = default!;
     public DbSet<ContractTenant> ContractTenants { get; set; } = default!;
     public DbSet<UtilityRate> UtilityRates { get; set; } = default!;
+    public DbSet<UtilityMeter> UtilityMeters { get; set; } = default!;
 
     public BuildingManagementDbContext(DbContextOptions<BuildingManagementDbContext> options)
         : base(options)

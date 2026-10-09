@@ -1,4 +1,6 @@
-﻿using BuildingManagement.Floors;
+﻿using BuildingManagement.Contracts;
+using BuildingManagement.Floors;
+using BuildingManagement.Utilities;
 using System;
 using System.Collections.Generic;
 using System.Text;
@@ -8,7 +10,6 @@ using Volo.Abp.Application.Services;
 using Volo.Abp.Domain.Repositories;
 using Volo.Abp.Guids;
 using Volo.Abp.ObjectMapping;
-using BuildingManagement.Contracts;
 
 namespace BuildingManagement.Rooms
 {
@@ -19,15 +20,18 @@ namespace BuildingManagement.Rooms
         private readonly IRepository<Room, Guid> _roomRepository;
         private readonly IRepository<Floor, Guid> _floorRepository;
         private readonly IRepository<Contract, Guid>_contractRepository;
+        private readonly IRepository<UtilityMeter, Guid> _utilityMeterRepository;
 
         public RoomAppService(
-            IRepository<Room, Guid> roomRepository,
-            IRepository<Floor, Guid> floorRepository,
-            IRepository<Contract, Guid> contractRepository)
+    IRepository<Room, Guid> roomRepository,
+    IRepository<Floor, Guid> floorRepository,
+    IRepository<Contract, Guid> contractRepository,
+    IRepository<UtilityMeter, Guid> utilityMeterRepository)
         {
             _roomRepository = roomRepository;
             _floorRepository = floorRepository;
             _contractRepository = contractRepository;
+            _utilityMeterRepository = utilityMeterRepository;
         }
 
         public async Task<RoomDto> CreateAsync(
@@ -141,12 +145,34 @@ namespace BuildingManagement.Rooms
                 );
             }
 
+            var hasActiveUtilityMeter =
+                await _utilityMeterRepository.AnyAsync(
+                    x =>
+                        x.RoomId == id
+                        &&
+                        x.IsActive
+                );
+
+            if (hasActiveUtilityMeter)
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes
+                        .RoomHasActiveUtilityMeter
+                );
+            }
+
             var hasAnyContract =
                 await _contractRepository.AnyAsync(
                     x => x.RoomId == id
                 );
 
-            if (hasAnyContract)
+            var hasAnyUtilityMeter =
+                await _utilityMeterRepository.AnyAsync(
+                    x => x.RoomId == id
+                );
+
+            if (hasAnyContract ||
+                hasAnyUtilityMeter)
             {
                 room.ChangeStatus(
                     RoomStatus.Inactive

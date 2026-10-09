@@ -101,3 +101,19 @@ public partial class UtilityRateToUtilityRateDtoMapper
         UtilityRateDto destination
     );
 }
+
+[Mapper(
+    RequiredMappingStrategy =
+        RequiredMappingStrategy.Target)]
+public partial class UtilityMeterToUtilityMeterDtoMapper
+    : MapperBase<UtilityMeter, UtilityMeterDto>
+{
+    public override partial UtilityMeterDto Map(
+        UtilityMeter source
+    );
+
+    public override partial void Map(
+        UtilityMeter source,
+        UtilityMeterDto destination
+    );
+}

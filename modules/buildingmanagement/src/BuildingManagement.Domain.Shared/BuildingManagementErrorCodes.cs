@@ -107,4 +107,25 @@ public static class BuildingManagementErrorCodes
 
     public const string UtilityRatePeriodOverlaps =
         "BuildingManagement:UtilityRatePeriodOverlaps";
+
+    public const string UtilityMeterNotFound =
+    "BuildingManagement:UtilityMeterNotFound";
+
+    public const string InvalidMeterCode =
+        "BuildingManagement:InvalidMeterCode";
+
+    public const string InvalidInitialMeterReading =
+        "BuildingManagement:InvalidInitialMeterReading";
+
+    public const string MeterCodeAlreadyExists =
+        "BuildingManagement:MeterCodeAlreadyExists";
+
+    public const string ActiveUtilityMeterAlreadyExists =
+        "BuildingManagement:ActiveUtilityMeterAlreadyExists";
+
+    public const string UtilityMeterAlreadyInactive =
+        "BuildingManagement:UtilityMeterAlreadyInactive";
+
+    public const string RoomHasActiveUtilityMeter =
+        "BuildingManagement:RoomHasActiveUtilityMeter";
 } // Consolidate all of the module's error codes in one place.

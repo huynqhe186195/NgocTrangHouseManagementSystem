@@ -9,6 +9,8 @@
     "BuildingManagement:FloorNumberAlreadyExists": "Tầng {FloorNumber} đã tồn tại trong tòa nhà này.",
     "BuildingManagement:BuildingNotFound": "Không tìm thấy tòa nhà được chọn.",
     "BuildingManagement:BuildingHasFloors": "Không thể xóa tòa nhà vì vẫn còn tầng. Vui lòng xóa tất cả các tầng trước.",
-    "BuildingManagement:FloorHasRooms": "Không thể xóa tầng vì vẫn còn phòng. Vui lòng xóa tất cả các phòng trước."
+    "BuildingManagement:FloorHasRooms": "Không thể xóa tầng vì vẫn còn phòng. Vui lòng xóa tất cả các phòng trước.",
+    "BuildingManagement:FloorNotFound": "Không tìm thấy tầng được chọn.",
+    "BuildingManagement:RoomNotFound": "Không tìm thấy phòng được chọn."
   }
 }

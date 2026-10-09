@@ -29,7 +29,7 @@ namespace BuildingManagement.Rooms
         public async Task<RoomDto> CreateAsync(
             CreateRoomDto input)
         {
-            var floor = await _floorRepository.GetAsync(
+            var floor = await GetExistingFloorAsync(
                 input.FloorId
             );
 
@@ -61,7 +61,7 @@ namespace BuildingManagement.Rooms
         public async Task<RoomDto> GetAsync(Guid id)
         {
             var room =
-                await _roomRepository.GetAsync(id);
+                await GetExistingRoomAsync(id);
 
             return ObjectMapper.Map<
                 Room,
@@ -85,10 +85,10 @@ namespace BuildingManagement.Rooms
             UpdateRoomDto input)
         {
             var room =
-                await _roomRepository.GetAsync(id);
+                await GetExistingRoomAsync(id);
 
             var floor =
-                await _floorRepository.GetAsync(
+                await GetExistingFloorAsync(
                     room.FloorId
                 );
 
@@ -118,6 +118,8 @@ namespace BuildingManagement.Rooms
 
         public async Task DeleteAsync(Guid id)
         {
+            var room = await GetExistingRoomAsync(id);
+
             await _roomRepository.DeleteAsync(
                 id,
                 autoSave: true
@@ -186,6 +188,38 @@ namespace BuildingManagement.Rooms
                 .WithData("FloorId", floorId)
                 .WithData("RoomNumber", roomNumber);
             }
+        }
+
+        private async Task<Floor> GetExistingFloorAsync(
+    Guid floorId)
+        {
+            var floor =
+                await _floorRepository.FindAsync(floorId);
+
+            if (floor is null)
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes.FloorNotFound
+                );
+            }
+
+            return floor;
+        }
+
+        private async Task<Room> GetExistingRoomAsync(
+    Guid roomId)
+        {
+            var room =
+                await _roomRepository.FindAsync(roomId);
+
+            if (room is null)
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes.RoomNotFound
+                );
+            }
+
+            return room;
         }
     }
 }

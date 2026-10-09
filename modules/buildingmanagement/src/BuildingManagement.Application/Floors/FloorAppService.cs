@@ -108,9 +108,20 @@ namespace BuildingManagement.Floors
 
         public async Task DeleteAsync(Guid id)
         {
+            var floor =
+                await _floorRepository.FindAsync(id);
+
+            if (floor is null)
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes.FloorNotFound
+                );
+            }
+
             await EnsureNoFloorRoomsAsync(id);
+
             await _floorRepository.DeleteAsync(
-                id,
+                floor,
                 autoSave: true
             );
         }

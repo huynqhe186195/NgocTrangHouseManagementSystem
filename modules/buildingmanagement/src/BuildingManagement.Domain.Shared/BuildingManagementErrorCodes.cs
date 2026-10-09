@@ -22,4 +22,10 @@ public static class BuildingManagementErrorCodes
 
     public const string FloorHasRooms =
         "BuildingManagement:FloorHasRooms";
+
+    public const string FloorNotFound =
+        "BuildingManagement:FloorNotFound";
+
+    public const string RoomNotFound =
+        "BuildingManagement:RoomNotFound";
 } // Consolidate all of the module's error codes in one place.

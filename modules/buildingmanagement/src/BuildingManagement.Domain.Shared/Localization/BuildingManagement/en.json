@@ -9,6 +9,8 @@
     "BuildingManagement:FloorNumberAlreadyExists": "Floor {FloorNumber} already exists in this building.",
     "BuildingManagement:BuildingNotFound": "The selected building was not found.",
     "BuildingManagement:BuildingHasFloors": "Cannot delete building because it still has floors. Please delete all floors first.",
-    "BuildingManagement:FloorHasRooms": "Cannot delete floor because it still has rooms. Please delete all rooms first."
+    "BuildingManagement:FloorHasRooms": "Cannot delete floor because it still has rooms. Please delete all rooms first.",
+    "BuildingManagement:FloorNotFound": "The selected floor was not found.",
+    "BuildingManagement:RoomNotFound": "The selected room was not found."
   }
 }

@@ -46,8 +46,22 @@ namespace BuildingManagement.Buildings
 
         public async Task DeleteAsync(Guid id)
         {
+            var building =
+                await _buildingRepository.FindAsync(id);
+
+            if (building is null)
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes.BuildingNotFound
+                );
+            }
+
             await EnsureNoBuildingFloorsAsync(id);
-            await _buildingRepository.DeleteAsync(id, autoSave: true);
+
+            await _buildingRepository.DeleteAsync(
+                building,
+                autoSave: true
+            );
         }
 
         public async Task<BuildingDto> GetAsync(Guid id)

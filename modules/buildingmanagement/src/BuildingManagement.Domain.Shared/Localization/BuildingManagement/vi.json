@@ -34,6 +34,11 @@
     "BuildingManagement:ContractCanOnlyBeModifiedWhenDraft": "Chỉ hợp đồng ở trạng thái nháp mới được phép chỉnh sửa.",
     "BuildingManagement:RoomHasActiveContract": "Không thể xóa phòng vì phòng đang có hợp đồng thuê hoạt động.",
     "BuildingManagement:TenantHasActiveContract": "Không thể xóa người thuê vì người thuê đang tham gia hợp đồng hoạt động.",
-    "BuildingManagement:TenantHasContractHistory": "Không thể xóa người thuê vì người thuê đã phát sinh dữ liệu hợp đồng."
+    "BuildingManagement:TenantHasContractHistory": "Không thể xóa người thuê vì người thuê đã phát sinh dữ liệu hợp đồng.",
+    "BuildingManagement:UtilityRateNotFound": "Không tìm thấy đơn giá tiện ích được chọn.",
+    "BuildingManagement:InvalidUtilityType": "Loại tiện ích không hợp lệ.",
+    "BuildingManagement:InvalidUtilityUnitPrice": "Đơn giá tiện ích phải lớn hơn 0.",
+    "BuildingManagement:InvalidUtilityRatePeriod": "Ngày kết thúc hiệu lực không được trước ngày bắt đầu.",
+    "BuildingManagement:UtilityRatePeriodOverlaps": "Khoảng thời gian áp dụng đơn giá bị trùng với một đơn giá đã tồn tại."
   }
 }

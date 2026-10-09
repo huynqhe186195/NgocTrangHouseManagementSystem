@@ -93,4 +93,18 @@ public static class BuildingManagementErrorCodes
 
     public const string TenantHasContractHistory =
         "BuildingManagement:TenantHasContractHistory";
+    public const string UtilityRateNotFound =
+    "BuildingManagement:UtilityRateNotFound";
+
+    public const string InvalidUtilityType =
+        "BuildingManagement:InvalidUtilityType";
+
+    public const string InvalidUtilityUnitPrice =
+        "BuildingManagement:InvalidUtilityUnitPrice";
+
+    public const string InvalidUtilityRatePeriod =
+        "BuildingManagement:InvalidUtilityRatePeriod";
+
+    public const string UtilityRatePeriodOverlaps =
+        "BuildingManagement:UtilityRatePeriodOverlaps";
 } // Consolidate all of the module's error codes in one place.

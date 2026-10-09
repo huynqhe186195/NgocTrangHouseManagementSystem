@@ -34,6 +34,11 @@
     "BuildingManagement:ContractCanOnlyBeModifiedWhenDraft": "Only a draft contract can be modified.",
     "BuildingManagement:RoomHasActiveContract": "The room cannot be deleted because it has an active contract.",
     "BuildingManagement:TenantHasActiveContract": "The tenant cannot be deleted because the tenant is participating in an active contract.",
-    "BuildingManagement:TenantHasContractHistory": "The tenant cannot be deleted because the tenant has contract history."
+    "BuildingManagement:TenantHasContractHistory": "The tenant cannot be deleted because the tenant has contract history.",
+    "BuildingManagement:UtilityRateNotFound": "The selected utility rate was not found.",
+    "BuildingManagement:InvalidUtilityType": "The utility type is invalid.",
+    "BuildingManagement:InvalidUtilityUnitPrice": "The utility unit price must be greater than 0.",
+    "BuildingManagement:InvalidUtilityRatePeriod": "The effective end date cannot be earlier than the effective start date.",
+    "BuildingManagement:UtilityRatePeriodOverlaps": "The utility rate period overlaps with an existing rate."
   }
 }

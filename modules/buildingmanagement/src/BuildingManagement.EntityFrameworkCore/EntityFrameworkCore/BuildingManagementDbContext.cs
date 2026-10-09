@@ -3,6 +3,7 @@ using BuildingManagement.Contracts;
 using BuildingManagement.Floors;
 using BuildingManagement.Rooms;
 using BuildingManagement.Tenants;
+using BuildingManagement.Utilities;
 using Microsoft.EntityFrameworkCore;
 using Volo.Abp.Data;
 using Volo.Abp.EntityFrameworkCore;
@@ -22,6 +23,7 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
     public DbSet<Tenant> Tenants { get; set; } = default!;
     public DbSet<Contract> Contracts { get; set; } = default!;
     public DbSet<ContractTenant> ContractTenants { get; set; } = default!;
+    public DbSet<UtilityRate> UtilityRates { get; set; } = default!;
 
     public BuildingManagementDbContext(DbContextOptions<BuildingManagementDbContext> options)
         : base(options)

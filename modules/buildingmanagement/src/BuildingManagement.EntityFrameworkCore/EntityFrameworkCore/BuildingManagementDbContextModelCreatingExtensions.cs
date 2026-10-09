@@ -24,7 +24,8 @@ public static class BuildingManagementDbContextModelCreatingExtensions
         builder.ApplyConfiguration(new ContractConfiguration());
         //This code use register configuration entity framework core for entity Contract Tenant into Dbcontext
         builder.ApplyConfiguration(new ContractTenantConfiguration());
-
+        //This code use register configuration entity framework core for entity Utilities Tenant into Dbcontext
+        builder.ApplyConfiguration(new UtilityRateConfiguration());
         /* Configure all entities here. Example:
 
         builder.Entity<Question>(b => 

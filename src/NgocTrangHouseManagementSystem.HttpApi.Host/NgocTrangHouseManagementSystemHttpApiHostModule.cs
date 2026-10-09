@@ -308,6 +308,31 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule // syst
         Configure<AbpExceptionHttpStatusCodeOptions>(options =>
         {
             options.Map(
+    BuildingManagementErrorCodes.UtilityRateNotFound,
+    HttpStatusCode.NotFound
+);
+
+            options.Map(
+                BuildingManagementErrorCodes.InvalidUtilityType,
+                HttpStatusCode.BadRequest
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.InvalidUtilityUnitPrice,
+                HttpStatusCode.BadRequest
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.InvalidUtilityRatePeriod,
+                HttpStatusCode.BadRequest
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.UtilityRatePeriodOverlaps,
+                HttpStatusCode.Conflict
+            );
+
+            options.Map(
     BuildingManagementErrorCodes.RoomHasActiveContract,
     HttpStatusCode.Conflict
 );

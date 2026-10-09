@@ -3,6 +3,7 @@ using BuildingManagement.Contracts;
 using BuildingManagement.Floors;
 using BuildingManagement.Rooms;
 using BuildingManagement.Tenants;
+using BuildingManagement.Utilities;
 using Riok.Mapperly.Abstractions;
 using Volo.Abp.Mapperly;
 
@@ -82,5 +83,21 @@ public partial class ContractTenantToContractTenantDtoMapper
     public override partial void Map(
         ContractTenant source,
         ContractTenantDto destination
+    );
+}
+
+[Mapper(
+    RequiredMappingStrategy =
+        RequiredMappingStrategy.Target)]
+public partial class UtilityRateToUtilityRateDtoMapper
+    : MapperBase<UtilityRate, UtilityRateDto>
+{
+    public override partial UtilityRateDto Map(
+        UtilityRate source
+    );
+
+    public override partial void Map(
+        UtilityRate source,
+        UtilityRateDto destination
     );
 }

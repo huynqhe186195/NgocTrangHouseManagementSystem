@@ -10,6 +10,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Abp" Version="10.5.0" />
     <PackageReference Include="Volo.Abp.Ddd.Domain.Shared" Version="10.6.1" />
     <PackageReference Include="Volo.Abp.Validation" Version="10.6.1" />
   </ItemGroup>

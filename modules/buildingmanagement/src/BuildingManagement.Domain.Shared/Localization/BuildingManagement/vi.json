@@ -11,6 +11,9 @@
     "BuildingManagement:BuildingHasFloors": "Không thể xóa tòa nhà vì vẫn còn tầng. Vui lòng xóa tất cả các tầng trước.",
     "BuildingManagement:FloorHasRooms": "Không thể xóa tầng vì vẫn còn phòng. Vui lòng xóa tất cả các phòng trước.",
     "BuildingManagement:FloorNotFound": "Không tìm thấy tầng được chọn.",
-    "BuildingManagement:RoomNotFound": "Không tìm thấy phòng được chọn."
+    "BuildingManagement:RoomNotFound": "Không tìm thấy phòng được chọn.",
+    "BuildingManagement:TenantNotFound": "Không tìm thấy người thuê được chọn.",
+    "BuildingManagement:TenantIdentityAlreadyExists": "Số giấy tờ {IdentityNumber} đã tồn tại trong hệ thống.",
+    "BuildingManagement:InvalidTenantIdentityInformation": "Loại giấy tờ và số giấy tờ phải được nhập cùng nhau."
   }
 }

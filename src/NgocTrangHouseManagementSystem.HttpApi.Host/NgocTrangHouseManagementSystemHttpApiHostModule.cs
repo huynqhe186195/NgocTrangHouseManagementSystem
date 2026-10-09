@@ -313,6 +313,21 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule // syst
             );
 
             options.Map(
+    BuildingManagementErrorCodes.TenantNotFound,
+    HttpStatusCode.NotFound
+);
+
+            options.Map(
+                BuildingManagementErrorCodes.TenantIdentityAlreadyExists,
+                HttpStatusCode.Conflict
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.InvalidTenantIdentityInformation,
+                HttpStatusCode.BadRequest
+            );
+
+            options.Map(
     BuildingManagementErrorCodes.RoomNotFound,
     HttpStatusCode.NotFound
 );

@@ -28,4 +28,10 @@ public static class BuildingManagementErrorCodes
 
     public const string RoomNotFound =
         "BuildingManagement:RoomNotFound";
+    public const string TenantNotFound =
+        "BuildingManagement:TenantNotFound";
+    public const string TenantIdentityAlreadyExists =
+        "BuildingManagement:TenantIdentityAlreadyExists";
+    public const string InvalidTenantIdentityInformation =
+        "BuildingManagement:InvalidTenantIdentityInformation";
 } // Consolidate all of the module's error codes in one place.

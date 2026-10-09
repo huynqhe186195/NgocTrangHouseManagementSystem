@@ -22,6 +22,19 @@ public sealed class ApiResponseOperationFilter
 
         var httpMethod = context.ApiDescription.HttpMethod;
 
+
+        if (string.IsNullOrWhiteSpace(httpMethod))
+        {
+            return;
+        }
+
+        var responses = operation.Responses;
+
+        if (responses is null)
+        {
+            return;
+        }
+
         var errorSchema =
             context.SchemaGenerator.GenerateSchema(
                 typeof(ApiResponse<object?>),

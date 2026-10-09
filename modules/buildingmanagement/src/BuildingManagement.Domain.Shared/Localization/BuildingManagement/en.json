@@ -11,6 +11,9 @@
     "BuildingManagement:BuildingHasFloors": "Cannot delete building because it still has floors. Please delete all floors first.",
     "BuildingManagement:FloorHasRooms": "Cannot delete floor because it still has rooms. Please delete all rooms first.",
     "BuildingManagement:FloorNotFound": "The selected floor was not found.",
-    "BuildingManagement:RoomNotFound": "The selected room was not found."
+    "BuildingManagement:RoomNotFound": "The selected room was not found.",
+    "BuildingManagement:TenantNotFound": "The selected tenant was not found.",
+    "BuildingManagement:TenantIdentityAlreadyExists": "Identity number {IdentityNumber} already exists in the system.",
+    "BuildingManagement:InvalidTenantIdentityInformation": "Identity type and identity number must be provided together."
   }
 }

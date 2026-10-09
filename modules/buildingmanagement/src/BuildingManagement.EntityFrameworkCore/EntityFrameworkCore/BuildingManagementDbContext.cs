@@ -1,6 +1,7 @@
 ﻿using BuildingManagement.Buildings;
 using BuildingManagement.Floors;
 using BuildingManagement.Rooms;
+using BuildingManagement.Tenants;
 using Microsoft.EntityFrameworkCore;
 using Volo.Abp.Data;
 using Volo.Abp.EntityFrameworkCore;
@@ -17,6 +18,7 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
     public DbSet<Building> Buildings { get; set; } = default!;
     public DbSet<Floor> Floors { get; set; } = default!;
     public DbSet<Room> Rooms { get; set; } = default!;
+    public DbSet<Tenant> Tenants { get; set; } = default!;
 
     public BuildingManagementDbContext(DbContextOptions<BuildingManagementDbContext> options)
         : base(options)

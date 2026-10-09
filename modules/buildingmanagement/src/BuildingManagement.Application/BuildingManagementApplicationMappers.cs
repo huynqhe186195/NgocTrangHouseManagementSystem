@@ -117,3 +117,19 @@ public partial class UtilityMeterToUtilityMeterDtoMapper
         UtilityMeterDto destination
     );
 }
+
+[Mapper(
+    RequiredMappingStrategy =
+        RequiredMappingStrategy.Target)]
+public partial class MeterReadingToMeterReadingDtoMapper
+    : MapperBase<MeterReading, MeterReadingDto>
+{
+    public override partial MeterReadingDto Map(
+        MeterReading source
+    );
+
+    public override partial void Map(
+        MeterReading source,
+        MeterReadingDto destination
+    );
+}

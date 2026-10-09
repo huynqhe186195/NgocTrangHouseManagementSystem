@@ -45,6 +45,17 @@
     "BuildingManagement:InvalidInitialMeterReading": "Chỉ số ban đầu của đồng hồ không được nhỏ hơn 0.",
     "BuildingManagement:MeterCodeAlreadyExists": "Mã đồng hồ {MeterCode} đã tồn tại trong hệ thống.",
     "BuildingManagement:ActiveUtilityMeterAlreadyExists": "Phòng đã có một đồng hồ đang hoạt động cho loại tiện ích này.",
-    "BuildingManagement:UtilityMeterAlreadyInactive": "Đồng hồ đã ở trạng thái ngừng hoạt động."
+    "BuildingManagement:UtilityMeterAlreadyInactive": "Đồng hồ đã ở trạng thái ngừng hoạt động.",
+    "BuildingManagement:RoomHasActiveUtilityMeter": "Phòng đang có đồng hồ điện/nước hoạt động nên không thể xóa.",
+    "BuildingManagement:MeterReadingNotFound": "Không tìm thấy bản ghi chỉ số đồng hồ.",
+    "BuildingManagement:UtilityMeterInactive": "Đồng hồ đã ngừng hoạt động nên không thể ghi thêm chỉ số.",
+    "BuildingManagement:InvalidBillingYear": "Năm tính tiền không hợp lệ.",
+    "BuildingManagement:InvalidBillingMonth": "Tháng tính tiền phải nằm trong khoảng từ 1 đến 12.",
+    "BuildingManagement:InvalidReadingDate": "Ngày ghi chỉ số không hợp lệ.",
+    "BuildingManagement:InvalidCurrentReading": "Chỉ số hiện tại không được nhỏ hơn chỉ số trước đó.",
+    "BuildingManagement:MeterReadingAlreadyExists": "Đồng hồ đã có bản ghi chỉ số cho kỳ {BillingMonth}/{BillingYear}.",
+    "BuildingManagement:MeterReadingPeriodMustBeAfterLatest": "Kỳ ghi chỉ số mới phải sau kỳ gần nhất của đồng hồ.",
+    "BuildingManagement:OnlyLatestMeterReadingCanBeUpdated": "Chỉ bản ghi chỉ số mới nhất của đồng hồ mới được phép chỉnh sửa.",
+    "BuildingManagement:UtilityMeterHasReadingHistory": "Đồng hồ đã có lịch sử ghi chỉ số nên không thể xóa. Hãy ngừng hoạt động đồng hồ thay vì xóa."
   }
 }

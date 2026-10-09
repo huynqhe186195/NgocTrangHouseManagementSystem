@@ -22,16 +22,23 @@ namespace BuildingManagement.Utilities
         private readonly IDataFilter<ISoftDelete>
             _softDeleteFilter;
 
+        private readonly IRepository<MeterReading, Guid>
+            _meterReadingRepository;
+
         public UtilityMeterAppService(
-            IRepository<UtilityMeter, Guid> utilityMeterRepository,
-            IRepository<Room, Guid> roomRepository,
-            IDataFilter<ISoftDelete> softDeleteFilter)
+    IRepository<UtilityMeter, Guid> utilityMeterRepository,
+    IRepository<Room, Guid> roomRepository,
+    IRepository<MeterReading, Guid> meterReadingRepository,
+    IDataFilter<ISoftDelete> softDeleteFilter)
         {
             _utilityMeterRepository =
                 utilityMeterRepository;
 
             _roomRepository =
                 roomRepository;
+
+            _meterReadingRepository =
+                meterReadingRepository;
 
             _softDeleteFilter =
                 softDeleteFilter;
@@ -199,6 +206,27 @@ namespace BuildingManagement.Utilities
         {
             var utilityMeter =
                 await GetExistingUtilityMeterAsync(id);
+
+            bool hasReadingHistory;
+
+            using (_softDeleteFilter.Disable())
+            {
+                hasReadingHistory =
+                    await _meterReadingRepository
+                        .AnyAsync(
+                            x =>
+                                x.UtilityMeterId ==
+                                    utilityMeter.Id
+                        );
+            }
+
+            if (hasReadingHistory)
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes
+                        .UtilityMeterHasReadingHistory
+                );
+            }
 
             await _utilityMeterRepository
                 .DeleteAsync(

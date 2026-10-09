@@ -46,6 +46,16 @@
     "BuildingManagement:MeterCodeAlreadyExists": "Meter code {MeterCode} already exists.",
     "BuildingManagement:ActiveUtilityMeterAlreadyExists": "The room already has an active meter for this utility type.",
     "BuildingManagement:UtilityMeterAlreadyInactive": "The utility meter is already inactive.",
-    "BuildingManagement:RoomHasActiveUtilityMeter": "The room has an active utility meter and cannot be deleted."
+    "BuildingManagement:RoomHasActiveUtilityMeter": "The room has an active utility meter and cannot be deleted.",
+    "BuildingManagement:MeterReadingNotFound": "The meter reading was not found.",
+    "BuildingManagement:UtilityMeterInactive": "The utility meter is inactive and cannot receive a new reading.",
+    "BuildingManagement:InvalidBillingYear": "The billing year is invalid.",
+    "BuildingManagement:InvalidBillingMonth": "The billing month must be between 1 and 12.",
+    "BuildingManagement:InvalidReadingDate": "The reading date is invalid.",
+    "BuildingManagement:InvalidCurrentReading": "The current reading cannot be less than the previous reading.",
+    "BuildingManagement:MeterReadingAlreadyExists": "A meter reading already exists for {BillingMonth}/{BillingYear}.",
+    "BuildingManagement:MeterReadingPeriodMustBeAfterLatest": "The new billing period must be after the latest meter reading period.",
+    "BuildingManagement:OnlyLatestMeterReadingCanBeUpdated": "Only the latest meter reading can be updated.",
+    "BuildingManagement:UtilityMeterHasReadingHistory": "The utility meter has reading history and cannot be deleted. Deactivate the meter instead."
   }
 }

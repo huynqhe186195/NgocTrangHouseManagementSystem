@@ -128,4 +128,34 @@ public static class BuildingManagementErrorCodes
 
     public const string RoomHasActiveUtilityMeter =
         "BuildingManagement:RoomHasActiveUtilityMeter";
+
+    public const string MeterReadingNotFound =
+        "BuildingManagement:MeterReadingNotFound";
+
+    public const string UtilityMeterInactive =
+        "BuildingManagement:UtilityMeterInactive";
+
+    public const string InvalidBillingYear =
+        "BuildingManagement:InvalidBillingYear";
+
+    public const string InvalidBillingMonth =
+        "BuildingManagement:InvalidBillingMonth";
+
+    public const string InvalidReadingDate =
+        "BuildingManagement:InvalidReadingDate";
+
+    public const string InvalidCurrentReading =
+        "BuildingManagement:InvalidCurrentReading";
+
+    public const string MeterReadingAlreadyExists =
+        "BuildingManagement:MeterReadingAlreadyExists";
+
+    public const string MeterReadingPeriodMustBeAfterLatest =
+        "BuildingManagement:MeterReadingPeriodMustBeAfterLatest";
+
+    public const string OnlyLatestMeterReadingCanBeUpdated =
+        "BuildingManagement:OnlyLatestMeterReadingCanBeUpdated";
+
+    public const string UtilityMeterHasReadingHistory =
+        "BuildingManagement:UtilityMeterHasReadingHistory";
 } // Consolidate all of the module's error codes in one place.

@@ -308,6 +308,56 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule // syst
         Configure<AbpExceptionHttpStatusCodeOptions>(options =>
         {
             options.Map(
+    BuildingManagementErrorCodes.InvalidBillingYear,
+    HttpStatusCode.BadRequest
+);
+
+            options.Map(
+                BuildingManagementErrorCodes.InvalidBillingMonth,
+                HttpStatusCode.BadRequest
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.InvalidReadingDate,
+                HttpStatusCode.BadRequest
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.InvalidCurrentReading,
+                HttpStatusCode.BadRequest
+            );
+
+            options.Map(
+    BuildingManagementErrorCodes.MeterReadingNotFound,
+    HttpStatusCode.NotFound
+);
+
+            options.Map(
+    BuildingManagementErrorCodes.UtilityMeterInactive,
+    HttpStatusCode.Conflict
+);
+
+            options.Map(
+                BuildingManagementErrorCodes.MeterReadingAlreadyExists,
+                HttpStatusCode.Conflict
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.MeterReadingPeriodMustBeAfterLatest,
+                HttpStatusCode.Conflict
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.OnlyLatestMeterReadingCanBeUpdated,
+                HttpStatusCode.Conflict
+            );
+
+            options.Map(
+    BuildingManagementErrorCodes.RoomHasActiveUtilityMeter,
+    HttpStatusCode.Conflict
+);
+
+            options.Map(
     BuildingManagementErrorCodes.UtilityMeterNotFound,
     HttpStatusCode.NotFound
 );

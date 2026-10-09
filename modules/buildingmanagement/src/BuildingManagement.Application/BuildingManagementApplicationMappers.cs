@@ -1,4 +1,5 @@
 using BuildingManagement.Buildings;
+using BuildingManagement.Contracts;
 using BuildingManagement.Floors;
 using BuildingManagement.Rooms;
 using BuildingManagement.Tenants;
@@ -50,4 +51,36 @@ public partial class TenantToTenantDtoMapper
     public override partial void Map(
         Tenant source,
         TenantDto destination);
+}
+
+[Mapper(
+    RequiredMappingStrategy =
+        RequiredMappingStrategy.Target)]
+public partial class ContractToContractDtoMapper
+    : MapperBase<Contract, ContractDto>
+{
+    public override partial ContractDto Map(
+        Contract source
+    );
+
+    public override partial void Map(
+        Contract source,
+        ContractDto destination
+    );
+}
+
+[Mapper(
+    RequiredMappingStrategy =
+        RequiredMappingStrategy.Target)]
+public partial class ContractTenantToContractTenantDtoMapper
+    : MapperBase<ContractTenant, ContractTenantDto>
+{
+    public override partial ContractTenantDto Map(
+        ContractTenant source
+    );
+
+    public override partial void Map(
+        ContractTenant source,
+        ContractTenantDto destination
+    );
 }

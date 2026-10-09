@@ -60,5 +60,10 @@ namespace BuildingManagement.Rooms
             Status = status;
             Description = description;
         }
+
+        public void ChangeStatus(RoomStatus status)
+        {
+            Status = status;
+        }
     }
 }

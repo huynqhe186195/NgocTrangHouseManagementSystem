@@ -34,4 +34,63 @@ public static class BuildingManagementErrorCodes
         "BuildingManagement:TenantIdentityAlreadyExists";
     public const string InvalidTenantIdentityInformation =
         "BuildingManagement:InvalidTenantIdentityInformation";
+    public const string ContractNotFound =
+    "BuildingManagement:ContractNotFound";
+
+    public const string ContractNumberAlreadyExists =
+        "BuildingManagement:ContractNumberAlreadyExists";
+
+    public const string InvalidContractPeriod =
+        "BuildingManagement:InvalidContractPeriod";
+
+    public const string InvalidMonthlyRent =
+        "BuildingManagement:InvalidMonthlyRent";
+
+    public const string InvalidDepositAmount =
+        "BuildingManagement:InvalidDepositAmount";
+
+    public const string TenantAlreadyInContract =
+        "BuildingManagement:TenantAlreadyInContract";
+
+    public const string ContractTenantNotFound =
+        "BuildingManagement:ContractTenantNotFound";
+
+    public const string ContractAlreadyHasPrimaryTenant =
+        "BuildingManagement:ContractAlreadyHasPrimaryTenant";
+
+    public const string InvalidContractTenantRole =
+        "BuildingManagement:InvalidContractTenantRole";
+
+    public const string ContractCannotBeActivated =
+    "BuildingManagement:ContractCannotBeActivated";
+
+    public const string ContractCannotBeEnded =
+        "BuildingManagement:ContractCannotBeEnded";
+
+    public const string ContractCannotBeCancelled =
+        "BuildingManagement:ContractCannotBeCancelled";
+
+    public const string ContractRequiresTenant =
+        "BuildingManagement:ContractRequiresTenant";
+
+    public const string ContractRequiresPrimaryTenant =
+        "BuildingManagement:ContractRequiresPrimaryTenant";
+
+    public const string RoomAlreadyHasActiveContract =
+        "BuildingManagement:RoomAlreadyHasActiveContract";
+
+    public const string RoomNotAvailableForRent =
+        "BuildingManagement:RoomNotAvailableForRent";
+
+    public const string ContractCanOnlyBeModifiedWhenDraft =
+        "BuildingManagement:ContractCanOnlyBeModifiedWhenDraft";
+
+    public const string RoomHasActiveContract =
+        "BuildingManagement:RoomHasActiveContract";
+
+    public const string TenantHasActiveContract =
+        "BuildingManagement:TenantHasActiveContract";
+
+    public const string TenantHasContractHistory =
+        "BuildingManagement:TenantHasContractHistory";
 } // Consolidate all of the module's error codes in one place.

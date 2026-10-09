@@ -8,6 +8,7 @@ using Volo.Abp.Application.Services;
 using Volo.Abp.Domain.Repositories;
 using Volo.Abp.Guids;
 using Volo.Abp.ObjectMapping;
+using BuildingManagement.Contracts;
 
 namespace BuildingManagement.Rooms
 {
@@ -17,13 +18,16 @@ namespace BuildingManagement.Rooms
     {
         private readonly IRepository<Room, Guid> _roomRepository;
         private readonly IRepository<Floor, Guid> _floorRepository;
+        private readonly IRepository<Contract, Guid>_contractRepository;
 
         public RoomAppService(
             IRepository<Room, Guid> roomRepository,
-            IRepository<Floor, Guid> floorRepository)
+            IRepository<Floor, Guid> floorRepository,
+            IRepository<Contract, Guid> contractRepository)
         {
             _roomRepository = roomRepository;
             _floorRepository = floorRepository;
+            _contractRepository = contractRepository;
         }
 
         public async Task<RoomDto> CreateAsync(
@@ -118,10 +122,46 @@ namespace BuildingManagement.Rooms
 
         public async Task DeleteAsync(Guid id)
         {
-            var room = await GetExistingRoomAsync(id);
+            var room =
+                await GetExistingRoomAsync(id);
+
+            var hasActiveContract =
+                await _contractRepository.AnyAsync(
+                    x =>
+                        x.RoomId == id
+                        &&
+                        x.Status == ContractStatus.Active
+                );
+
+            if (hasActiveContract)
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes
+                        .RoomHasActiveContract
+                );
+            }
+
+            var hasAnyContract =
+                await _contractRepository.AnyAsync(
+                    x => x.RoomId == id
+                );
+
+            if (hasAnyContract)
+            {
+                room.ChangeStatus(
+                    RoomStatus.Inactive
+                );
+
+                await _roomRepository.UpdateAsync(
+                    room,
+                    autoSave: true
+                );
+
+                return;
+            }
 
             await _roomRepository.DeleteAsync(
-                id,
+                room,
                 autoSave: true
             );
         }
@@ -206,8 +246,7 @@ namespace BuildingManagement.Rooms
             return floor;
         }
 
-        private async Task<Room> GetExistingRoomAsync(
-    Guid roomId)
+        private async Task<Room> GetExistingRoomAsync(Guid roomId)
         {
             var room =
                 await _roomRepository.FindAsync(roomId);
@@ -221,5 +260,7 @@ namespace BuildingManagement.Rooms
 
             return room;
         }
+
+
     }
 }

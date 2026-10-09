@@ -14,6 +14,26 @@
     "BuildingManagement:RoomNotFound": "The selected room was not found.",
     "BuildingManagement:TenantNotFound": "The selected tenant was not found.",
     "BuildingManagement:TenantIdentityAlreadyExists": "Identity number {IdentityNumber} already exists in the system.",
-    "BuildingManagement:InvalidTenantIdentityInformation": "Identity type and identity number must be provided together."
+    "BuildingManagement:InvalidTenantIdentityInformation": "Identity type and identity number must be provided together.",
+    "BuildingManagement:ContractNotFound": "The selected contract was not found.",
+    "BuildingManagement:ContractNumberAlreadyExists": "Contract number {ContractNumber} already exists.",
+    "BuildingManagement:InvalidContractPeriod": "The contract end date cannot be earlier than the start date.",
+    "BuildingManagement:InvalidMonthlyRent": "Monthly rent must be greater than 0.",
+    "BuildingManagement:InvalidDepositAmount": "Deposit amount cannot be less than 0.",
+    "BuildingManagement:TenantAlreadyInContract": "The tenant is already included in this contract.",
+    "BuildingManagement:ContractTenantNotFound": "The tenant was not found in this contract.",
+    "BuildingManagement:ContractAlreadyHasPrimaryTenant": "The contract already has a primary tenant.",
+    "BuildingManagement:InvalidContractTenantRole": "The tenant role in the contract is invalid.",
+    "BuildingManagement:ContractCannotBeActivated": "Only a draft contract can be activated.",
+    "BuildingManagement:ContractCannotBeEnded": "Only an active contract can be ended.",
+    "BuildingManagement:ContractCannotBeCancelled": "Only a draft contract can be cancelled.",
+    "BuildingManagement:ContractRequiresTenant": "The contract must have at least one tenant before activation.",
+    "BuildingManagement:ContractRequiresPrimaryTenant": "The contract must have exactly one primary tenant before activation.",
+    "BuildingManagement:RoomAlreadyHasActiveContract": "The room already has an active contract.",
+    "BuildingManagement:RoomNotAvailableForRent": "The room is not currently available for rent.",
+    "BuildingManagement:ContractCanOnlyBeModifiedWhenDraft": "Only a draft contract can be modified.",
+    "BuildingManagement:RoomHasActiveContract": "The room cannot be deleted because it has an active contract.",
+    "BuildingManagement:TenantHasActiveContract": "The tenant cannot be deleted because the tenant is participating in an active contract.",
+    "BuildingManagement:TenantHasContractHistory": "The tenant cannot be deleted because the tenant has contract history."
   }
 }

@@ -1,4 +1,5 @@
 ﻿using BuildingManagement.Buildings;
+using BuildingManagement.Contracts;
 using BuildingManagement.Floors;
 using BuildingManagement.Rooms;
 using BuildingManagement.Tenants;
@@ -19,6 +20,8 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
     public DbSet<Floor> Floors { get; set; } = default!;
     public DbSet<Room> Rooms { get; set; } = default!;
     public DbSet<Tenant> Tenants { get; set; } = default!;
+    public DbSet<Contract> Contracts { get; set; } = default!;
+    public DbSet<ContractTenant> ContractTenants { get; set; } = default!;
 
     public BuildingManagementDbContext(DbContextOptions<BuildingManagementDbContext> options)
         : base(options)

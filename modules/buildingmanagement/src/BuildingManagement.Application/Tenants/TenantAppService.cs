@@ -1,4 +1,5 @@
-﻿using System;
+﻿using BuildingManagement.Contracts;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -6,6 +7,8 @@ using Volo.Abp;
 using Volo.Abp.Application.Services;
 using Volo.Abp.Data;
 using Volo.Abp.Domain.Repositories;
+using BuildingManagement.Contracts;
+using System.Linq;
 
 namespace BuildingManagement.Tenants
 {
@@ -15,13 +18,19 @@ namespace BuildingManagement.Tenants
     {
         private readonly IRepository<Tenant, Guid> _tenantRepository;
         private readonly IDataFilter<ISoftDelete> _softDeleteFilter;
+        private readonly IRepository<Contract, Guid> _contractRepository;
+        private readonly IRepository<ContractTenant, Guid> _contractTenantRepository;
 
         public TenantAppService(
     IRepository<Tenant, Guid> tenantRepository,
-    IDataFilter<ISoftDelete> softDeleteFilter)
+    IDataFilter<ISoftDelete> softDeleteFilter,
+    IRepository<Contract, Guid> contractRepository,
+IRepository<ContractTenant, Guid> contractTenantRepository)
         {
             _tenantRepository = tenantRepository;
             _softDeleteFilter = softDeleteFilter;
+            _contractRepository = contractRepository;
+            _contractTenantRepository = contractTenantRepository;
         }
 
         public async Task<TenantDto> GetAsync(Guid id)
@@ -139,6 +148,41 @@ namespace BuildingManagement.Tenants
         {
             var tenant =
                 await GetExistingTenantAsync(id);
+
+            var contractTenants =
+                await _contractTenantRepository.GetListAsync(
+                    x => x.TenantId == id
+                );
+
+            if (contractTenants.Count > 0)
+            {
+                var contractIds =
+                    contractTenants
+                        .Select(x => x.ContractId)
+                        .ToList();
+
+                var hasActiveContract =
+                    await _contractRepository.AnyAsync(
+                        x =>
+                            contractIds.Contains(x.Id)
+                            &&
+                            x.Status ==
+                                ContractStatus.Active
+                    );
+
+                if (hasActiveContract)
+                {
+                    throw new BusinessException(
+                        BuildingManagementErrorCodes
+                            .TenantHasActiveContract
+                    );
+                }
+
+                throw new BusinessException(
+                    BuildingManagementErrorCodes
+                        .TenantHasContractHistory
+                );
+            }
 
             await _tenantRepository.DeleteAsync(
                 tenant,

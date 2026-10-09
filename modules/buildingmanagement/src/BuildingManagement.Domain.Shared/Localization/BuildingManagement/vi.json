@@ -14,6 +14,26 @@
     "BuildingManagement:RoomNotFound": "Không tìm thấy phòng được chọn.",
     "BuildingManagement:TenantNotFound": "Không tìm thấy người thuê được chọn.",
     "BuildingManagement:TenantIdentityAlreadyExists": "Số giấy tờ {IdentityNumber} đã tồn tại trong hệ thống.",
-    "BuildingManagement:InvalidTenantIdentityInformation": "Loại giấy tờ và số giấy tờ phải được nhập cùng nhau."
+    "BuildingManagement:InvalidTenantIdentityInformation": "Loại giấy tờ và số giấy tờ phải được nhập cùng nhau.",
+    "BuildingManagement:ContractNotFound": "Không tìm thấy hợp đồng được chọn.",
+    "BuildingManagement:ContractNumberAlreadyExists": "Mã hợp đồng {ContractNumber} đã tồn tại trong hệ thống.",
+    "BuildingManagement:InvalidContractPeriod": "Ngày kết thúc hợp đồng không được trước ngày bắt đầu.",
+    "BuildingManagement:InvalidMonthlyRent": "Tiền thuê hàng tháng phải lớn hơn 0.",
+    "BuildingManagement:InvalidDepositAmount": "Tiền đặt cọc không được nhỏ hơn 0.",
+    "BuildingManagement:TenantAlreadyInContract": "Người thuê đã có trong hợp đồng này.",
+    "BuildingManagement:ContractTenantNotFound": "Không tìm thấy người thuê trong hợp đồng này.",
+    "BuildingManagement:ContractAlreadyHasPrimaryTenant": "Hợp đồng đã có người thuê chính.",
+    "BuildingManagement:InvalidContractTenantRole": "Vai trò của người thuê trong hợp đồng không hợp lệ.",
+    "BuildingManagement:ContractCannotBeActivated": "Chỉ hợp đồng ở trạng thái nháp mới có thể được kích hoạt.",
+    "BuildingManagement:ContractCannotBeEnded": "Chỉ hợp đồng đang hoạt động mới có thể kết thúc.",
+    "BuildingManagement:ContractCannotBeCancelled": "Chỉ hợp đồng ở trạng thái nháp mới có thể hủy.",
+    "BuildingManagement:ContractRequiresTenant": "Hợp đồng phải có ít nhất một người thuê trước khi kích hoạt.",
+    "BuildingManagement:ContractRequiresPrimaryTenant": "Hợp đồng phải có đúng một người thuê chính trước khi kích hoạt.",
+    "BuildingManagement:RoomAlreadyHasActiveContract": "Phòng đã có một hợp đồng đang hoạt động.",
+    "BuildingManagement:RoomNotAvailableForRent": "Phòng hiện không ở trạng thái có thể cho thuê.",
+    "BuildingManagement:ContractCanOnlyBeModifiedWhenDraft": "Chỉ hợp đồng ở trạng thái nháp mới được phép chỉnh sửa.",
+    "BuildingManagement:RoomHasActiveContract": "Không thể xóa phòng vì phòng đang có hợp đồng thuê hoạt động.",
+    "BuildingManagement:TenantHasActiveContract": "Không thể xóa người thuê vì người thuê đang tham gia hợp đồng hoạt động.",
+    "BuildingManagement:TenantHasContractHistory": "Không thể xóa người thuê vì người thuê đã phát sinh dữ liệu hợp đồng."
   }
 }

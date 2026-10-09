@@ -308,6 +308,106 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule // syst
         Configure<AbpExceptionHttpStatusCodeOptions>(options =>
         {
             options.Map(
+    BuildingManagementErrorCodes.RoomHasActiveContract,
+    HttpStatusCode.Conflict
+);
+
+            options.Map(
+                BuildingManagementErrorCodes.TenantHasActiveContract,
+                HttpStatusCode.Conflict
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.TenantHasContractHistory,
+                HttpStatusCode.Conflict
+            );
+
+            options.Map(
+    BuildingManagementErrorCodes.ContractCannotBeActivated,
+    HttpStatusCode.Conflict
+);
+
+            options.Map(
+                BuildingManagementErrorCodes.ContractCannotBeEnded,
+                HttpStatusCode.Conflict
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.ContractCannotBeCancelled,
+                HttpStatusCode.Conflict
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.ContractRequiresTenant,
+                HttpStatusCode.Conflict
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.ContractRequiresPrimaryTenant,
+                HttpStatusCode.Conflict
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.RoomAlreadyHasActiveContract,
+                HttpStatusCode.Conflict
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.RoomNotAvailableForRent,
+                HttpStatusCode.Conflict
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.ContractCanOnlyBeModifiedWhenDraft,
+                HttpStatusCode.Conflict
+            );
+
+            options.Map(
+    BuildingManagementErrorCodes.ContractNotFound,
+    HttpStatusCode.NotFound
+);
+
+            options.Map(
+                BuildingManagementErrorCodes.ContractNumberAlreadyExists,
+                HttpStatusCode.Conflict
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.InvalidContractPeriod,
+                HttpStatusCode.BadRequest
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.InvalidMonthlyRent,
+                HttpStatusCode.BadRequest
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.InvalidDepositAmount,
+                HttpStatusCode.BadRequest
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.TenantAlreadyInContract,
+                HttpStatusCode.Conflict
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.ContractTenantNotFound,
+                HttpStatusCode.NotFound
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.ContractAlreadyHasPrimaryTenant,
+                HttpStatusCode.Conflict
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.InvalidContractTenantRole,
+                HttpStatusCode.BadRequest
+            );
+
+            options.Map(
                 BuildingManagementErrorCodes.RoomNumberAlreadyExists,
                 HttpStatusCode.Conflict
             );

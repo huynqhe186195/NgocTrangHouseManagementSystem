@@ -68,6 +68,18 @@
     "BuildingManagement:ContractRenewalHoldCannotBeCancelled": "Yêu cầu giữ quyền gia hạn hiện tại không thể hủy.",
     "BuildingManagement:ContractRenewalHoldExpired": "Quyền giữ gia hạn 24 giờ đã hết hạn.",
     "BuildingManagement:ContractRenewalHoldRequired": "Khách thuê phải có quyền giữ gia hạn còn hiệu lực trước khi ký hợp đồng ở tiếp.",
-    "BuildingManagement:ContractRenewalHoldNotActive": "Quyền giữ gia hạn hợp đồng không còn hiệu lực."
+    "BuildingManagement:ContractRenewalHoldNotActive": "Quyền giữ gia hạn hợp đồng không còn hiệu lực.",
+    "BuildingManagement:RoomReservationNotFound": "Không tìm thấy yêu cầu đặt phòng.",
+    "BuildingManagement:RoomReservationNumberAlreadyExists": "Mã đặt phòng đã tồn tại.",
+    "BuildingManagement:InvalidRoomReservationNumber": "Mã đặt phòng không hợp lệ.",
+    "BuildingManagement:InvalidExpectedMoveInDate": "Ngày dự kiến nhận phòng không hợp lệ.",
+    "BuildingManagement:InvalidQuotedMonthlyRent": "Tiền thuê phòng dự kiến phải lớn hơn 0.",
+    "BuildingManagement:InvalidRequiredDepositAmount": "Tiền cọc yêu cầu phải lớn hơn 0.",
+    "BuildingManagement:RoomNotAvailableForReservation": "Phòng không khả dụng cho ngày nhận phòng dự kiến.",
+    "BuildingManagement:RoomAlreadyReserved": "Phòng đã được giữ cho một khách khác.",
+    "BuildingManagement:RoomReservationAlreadyExistsForTenant": "Khách thuê đã có yêu cầu đặt phòng đang hoạt động cho phòng này.",
+    "BuildingManagement:RoomReservationCannotBeCancelled": "Yêu cầu đặt phòng hiện tại không thể hủy.",
+    "BuildingManagement:InvalidReservationCancellationReason": "Lý do hủy đặt phòng không hợp lệ.",
+    "BuildingManagement:InvalidMinimumReservationDepositAmount": "Số tiền cọc tối thiểu để giữ phòng phải lớn hơn 0 và không được vượt quá tổng tiền cọc yêu cầu."
   }
 }

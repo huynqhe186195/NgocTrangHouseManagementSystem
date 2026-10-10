@@ -1,6 +1,7 @@
 using BuildingManagement.Buildings;
 using BuildingManagement.Contracts;
 using BuildingManagement.Floors;
+using BuildingManagement.RoomReservations;
 using BuildingManagement.Rooms;
 using BuildingManagement.Tenants;
 using BuildingManagement.Utilities;
@@ -151,3 +152,24 @@ public partial class ContractRenewalHoldToContractRenewalHoldDtoMapper
         ContractRenewalHoldDto destination
     );
 }
+
+[Mapper(
+    RequiredMappingStrategy =
+        RequiredMappingStrategy.Target
+)]
+public partial class
+    RoomReservationToRoomReservationDtoMapper
+    : MapperBase<
+        RoomReservation,
+        RoomReservationDto>
+{
+    public override partial RoomReservationDto Map(
+        RoomReservation source
+    );
+
+    public override partial void Map(
+        RoomReservation source,
+        RoomReservationDto destination
+    );
+}
+

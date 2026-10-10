@@ -1,4 +1,5 @@
-﻿using BuildingManagement.Rooms;
+﻿using BuildingManagement.RoomReservations;
+using BuildingManagement.Rooms;
 using BuildingManagement.Tenants;
 using System;
 using System.Collections.Generic;
@@ -30,6 +31,8 @@ namespace BuildingManagement.Contracts
 
         private readonly IClock _clock;
 
+        private readonly IRepository<RoomReservation, Guid> _roomReservationRepository;
+
         public ContractAppService(
             IRepository<Contract, Guid> contractRepository,
             IRepository<ContractTenant, Guid> contractTenantRepository,
@@ -37,7 +40,7 @@ namespace BuildingManagement.Contracts
             IRepository<Tenant, Guid> tenantRepository,
             IDataFilter<ISoftDelete> softDeleteFilter,
             IRepository<ContractRenewalHold, Guid> contractRenewalHoldRepository,
-            IClock clock)
+            IClock clock, IRepository<RoomReservation, Guid>roomReservationRepository)
         {
             _contractRepository = contractRepository;
             _contractTenantRepository = contractTenantRepository;
@@ -46,6 +49,7 @@ namespace BuildingManagement.Contracts
             _softDeleteFilter = softDeleteFilter;
             _contractRenewalHoldRepository = contractRenewalHoldRepository;
             _clock = clock;
+            _roomReservationRepository = roomReservationRepository;
         }
 
         public async Task<ContractDto> GetAsync(
@@ -679,8 +683,15 @@ namespace BuildingManagement.Contracts
 
             if (room.Status == RoomStatus.Occupied)
             {
+                var hasFutureCommitment =
+                    await HasFutureCommittedOccupancyAsync(
+                        room.Id
+                    );
+
                 room.ChangeStatus(
-                    RoomStatus.Available
+                    hasFutureCommitment
+                        ? RoomStatus.Reserved
+                        : RoomStatus.Available
                 );
 
                 await _roomRepository.UpdateAsync(
@@ -939,6 +950,12 @@ namespace BuildingManagement.Contracts
             await EnsureNoOverlappingCommittedContractAsync(
                 currentContract.RoomId,
                 input.StartDate,
+                input.EndDate,
+                currentContract.Id
+            );
+
+            await EnsureNoConflictingReservedReservationAsync(
+                currentContract.RoomId,
                 input.EndDate
             );
 
@@ -986,6 +1003,11 @@ namespace BuildingManagement.Contracts
                 );
             }
 
+            await CancelConflictingPendingReservationsAsync(
+                currentContract.RoomId,
+                input.EndDate
+            );
+
             renewalHold.Complete(renewedContract.Id);
 
             await _contractRenewalHoldRepository
@@ -1000,8 +1022,7 @@ namespace BuildingManagement.Contracts
             >(renewedContract);
         }
 
-        private async Task<ContractRenewalHold>
-    GetValidRenewalHoldAsync(
+        private async Task<ContractRenewalHold> GetValidRenewalHoldAsync(
         Guid currentContractId)
         {
             var hold =
@@ -1047,6 +1068,144 @@ namespace BuildingManagement.Contracts
             }
 
             return hold;
+        }
+
+        private async Task EnsureNoConflictingReservedReservationAsync(
+        Guid roomId,
+        DateTime? renewalEndDate)
+        {
+            bool exists;
+
+            if (renewalEndDate.HasValue)
+            {
+                var endDate =
+                    renewalEndDate.Value.Date;
+
+                exists =
+                    await _roomReservationRepository
+                        .AnyAsync(
+                            x =>
+                                x.RoomId == roomId
+                                &&
+                                x.Status ==
+                                    RoomReservationStatus.Reserved
+                                &&
+                                x.ExpectedMoveInDate <=
+                                    endDate
+                        );
+            }
+            else
+            {
+                exists =
+                    await _roomReservationRepository
+                        .AnyAsync(
+                            x =>
+                                x.RoomId == roomId
+                                &&
+                                x.Status ==
+                                    RoomReservationStatus.Reserved
+                        );
+            }
+
+            if (exists)
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes
+                        .RoomAlreadyReserved
+                );
+            }
+        }
+
+        private async Task CancelConflictingPendingReservationsAsync(
+        Guid roomId,
+        DateTime? renewalEndDate)
+        {
+            var queryable =
+                await _roomReservationRepository
+                    .GetQueryableAsync();
+
+            var query =
+                queryable.Where(
+                    x =>
+                        x.RoomId == roomId
+                        &&
+                        x.Status ==
+                            RoomReservationStatus
+                                .PendingPayment
+                );
+
+            if (renewalEndDate.HasValue)
+            {
+                var endDate =
+                    renewalEndDate.Value.Date;
+
+                query =
+                    query.Where(
+                        x =>
+                            x.ExpectedMoveInDate <=
+                                endDate
+                    );
+            }
+
+            var reservations =
+                await AsyncExecuter.ToListAsync(
+                    query
+                );
+
+            if (reservations.Count == 0)
+            {
+                return;
+            }
+
+            var cancelledAt =
+                _clock.Now;
+
+            foreach (var reservation in reservations)
+            {
+                reservation.Cancel(
+                    cancelledAt,
+                    ReservationCancellationReason
+                        .SupersededByRenewal
+                );
+
+                await _roomReservationRepository
+                    .UpdateAsync(
+                        reservation,
+                        autoSave: true
+                    );
+            }
+        }
+
+        private async Task<bool> HasFutureCommittedOccupancyAsync(
+        Guid roomId)
+        {
+            var hasReservedReservation =
+                await _roomReservationRepository
+                    .AnyAsync(
+                        x =>
+                            x.RoomId == roomId
+                            &&
+                            x.Status ==
+                                RoomReservationStatus
+                                    .Reserved
+                    );
+
+            if (hasReservedReservation)
+            {
+                return true;
+            }
+
+            var hasSignedContract =
+                await _contractRepository
+                    .AnyAsync(
+                        x =>
+                            x.RoomId == roomId
+                            &&
+                            x.Status ==
+                                ContractStatus.Signed
+                    );
+
+            return hasSignedContract;
         }
     }
 }

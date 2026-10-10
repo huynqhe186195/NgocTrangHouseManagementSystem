@@ -68,6 +68,18 @@
     "BuildingManagement:ContractRenewalHoldCannotBeCancelled": "The current renewal hold cannot be cancelled.",
     "BuildingManagement:ContractRenewalHoldExpired": "The 24-hour renewal hold has expired.",
     "BuildingManagement:ContractRenewalHoldRequired": "An active renewal hold is required before renewing the contract.",
-    "BuildingManagement:ContractRenewalHoldNotActive": "The contract renewal hold is no longer active."
+    "BuildingManagement:ContractRenewalHoldNotActive": "The contract renewal hold is no longer active.",
+    "BuildingManagement:RoomReservationNotFound": "The room reservation was not found.",
+    "BuildingManagement:RoomReservationNumberAlreadyExists": "The reservation number already exists.",
+    "BuildingManagement:InvalidRoomReservationNumber": "The reservation number is invalid.",
+    "BuildingManagement:InvalidExpectedMoveInDate": "The expected move-in date is invalid.",
+    "BuildingManagement:InvalidQuotedMonthlyRent": "The quoted monthly rent must be greater than zero.",
+    "BuildingManagement:InvalidRequiredDepositAmount": "The required deposit amount must be greater than zero.",
+    "BuildingManagement:RoomNotAvailableForReservation": "The room is not available for the expected move-in date.",
+    "BuildingManagement:RoomAlreadyReserved": "The room has already been reserved for another tenant.",
+    "BuildingManagement:RoomReservationAlreadyExistsForTenant": "The tenant already has an active reservation for this room.",
+    "BuildingManagement:RoomReservationCannotBeCancelled": "The current room reservation cannot be cancelled.",
+    "BuildingManagement:InvalidReservationCancellationReason": "The reservation cancellation reason is invalid.",
+    "BuildingManagement:InvalidMinimumReservationDepositAmount": "The minimum reservation deposit must be greater than zero and cannot exceed the required deposit amount."
   }
 }

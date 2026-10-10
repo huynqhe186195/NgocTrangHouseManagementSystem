@@ -3,6 +3,7 @@ using System;
 using BuildingManagement.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using Volo.Abp.EntityFrameworkCore;
@@ -12,9 +13,11 @@ using Volo.Abp.EntityFrameworkCore;
 namespace BuildingManagement.Migrations
 {
     [DbContext(typeof(BuildingManagementDbContext))]
-    partial class BuildingManagementDbContextModelSnapshot : ModelSnapshot
+    [Migration("20261010055318_Add_RoomReservation_Entity")]
+    partial class Add_RoomReservation_Entity
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -453,12 +456,6 @@ namespace BuildingManagement.Migrations
                     b.Property<Guid?>("LastModifierId")
                         .HasColumnType("uuid")
                         .HasColumnName("LastModifierId");
-
-                    b.Property<decimal>("MinimumReservationDepositAmount")
-                        .ValueGeneratedOnAdd()
-                        .HasPrecision(18)
-                        .HasColumnType("numeric(18,0)")
-                        .HasDefaultValue(500000m);
 
                     b.Property<string>("Notes")
                         .HasMaxLength(500)

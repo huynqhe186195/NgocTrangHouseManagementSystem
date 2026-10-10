@@ -307,6 +307,68 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule // syst
     {
         Configure<AbpExceptionHttpStatusCodeOptions>(options =>
         {
+
+
+            options.Map(
+    BuildingManagementErrorCodes
+        .InvalidMinimumReservationDepositAmount,
+    HttpStatusCode.BadRequest
+);
+
+            options.Map(
+    BuildingManagementErrorCodes.RoomReservationNotFound,
+    HttpStatusCode.NotFound
+);
+
+            options.Map(
+    BuildingManagementErrorCodes.RoomReservationNumberAlreadyExists,
+    HttpStatusCode.Conflict
+);
+
+            options.Map(
+                BuildingManagementErrorCodes.RoomNotAvailableForReservation,
+                HttpStatusCode.Conflict
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.RoomAlreadyReserved,
+                HttpStatusCode.Conflict
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.RoomReservationAlreadyExistsForTenant,
+                HttpStatusCode.Conflict
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.RoomReservationCannotBeCancelled,
+                HttpStatusCode.Conflict
+            );
+
+            options.Map(
+    BuildingManagementErrorCodes.InvalidRoomReservationNumber,
+    HttpStatusCode.BadRequest
+);
+
+            options.Map(
+                BuildingManagementErrorCodes.InvalidExpectedMoveInDate,
+                HttpStatusCode.BadRequest
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.InvalidQuotedMonthlyRent,
+                HttpStatusCode.BadRequest
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.InvalidRequiredDepositAmount,
+                HttpStatusCode.BadRequest
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.InvalidReservationCancellationReason,
+                HttpStatusCode.BadRequest
+            );
             options.Map(
     BuildingManagementErrorCodes.ContractRenewalHoldRequired,
     HttpStatusCode.Conflict

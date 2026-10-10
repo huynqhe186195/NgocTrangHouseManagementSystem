@@ -1,6 +1,7 @@
 ﻿using BuildingManagement.Buildings;
 using BuildingManagement.Contracts;
 using BuildingManagement.Floors;
+using BuildingManagement.RoomReservations;
 using BuildingManagement.Rooms;
 using BuildingManagement.Tenants;
 using BuildingManagement.Utilities;
@@ -27,6 +28,7 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
     public DbSet<UtilityMeter> UtilityMeters { get; set; } = default!;
     public DbSet<MeterReading> MeterReadings { get; set; } = default!;
     public DbSet<ContractRenewalHold> ContractRenewalHolds { get; set; } = default!;
+    public DbSet<RoomReservation> RoomReservations { get; set; } = default!;
 
     public BuildingManagementDbContext(DbContextOptions<BuildingManagementDbContext> options)
         : base(options)

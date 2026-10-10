@@ -1,5 +1,6 @@
 ﻿using BuildingManagement.Buildings;
 using BuildingManagement.Floors;
+using BuildingManagement.RoomReservations;
 using BuildingManagement.Rooms;
 using BuildingManagement.Tenants;
 using Shouldly;
@@ -27,6 +28,8 @@ public abstract class ContractAppService_Tests<TStartupModule>
     private readonly IContractRenewalHoldAppService _renewalHoldAppService;
     private readonly IRepository<ContractRenewalHold, Guid> _renewalHoldRepository;
     private readonly IClock _clock;
+    private readonly IRoomReservationAppService _roomReservationAppService;
+    private readonly IRepository<RoomReservation, Guid> _roomReservationRepository;
     protected ContractAppService_Tests()
     {
         _contractAppService =
@@ -56,6 +59,11 @@ public abstract class ContractAppService_Tests<TStartupModule>
 
         _clock =
             GetRequiredService<IClock>();
+
+        _roomReservationAppService = GetRequiredService<IRoomReservationAppService>();
+
+        _roomReservationRepository =
+            GetRequiredService<IRepository<RoomReservation, Guid>>();
     }
 
     private Task<ContractRenewalHoldDto>
@@ -2438,8 +2446,7 @@ public abstract class ContractAppService_Tests<TStartupModule>
 
     // C56
     [Fact]
-    public async Task
-        Should_Not_Renew_After_Renewal_Hold_Expires()
+    public async Task Should_Not_Renew_After_Renewal_Hold_Expires()
     {
         var roomId =
             await CreateRoomAsync();
@@ -2501,6 +2508,557 @@ public abstract class ContractAppService_Tests<TStartupModule>
         exception.Code.ShouldBe(
             BuildingManagementErrorCodes
                 .ContractRenewalHoldExpired
+        );
+    }
+
+    private async Task<RoomReservationDto> CreatePendingReservationForRoomAsync(
+        Guid roomId,
+        DateTime expectedMoveInDate)
+    {
+        var tenant =
+            await CreateTenantAsync();
+
+        return await _roomReservationAppService
+            .CreateAsync(
+                new CreateRoomReservationDto
+                {
+                    ReservationNumber =
+                        $"RSV-CONTRACT-{Guid.NewGuid():N}",
+
+                    RoomId = roomId,
+
+                    TenantId = tenant.Id,
+
+                    ExpectedMoveInDate =
+                        expectedMoveInDate,
+
+                    QuotedMonthlyRent =
+                        3_000_000,
+
+                    RequiredDepositAmount =
+                        3_000_000,
+
+                    Notes =
+                        "Contract renewal conflict test"
+                }
+            );
+    }
+
+    private async Task MarkReservationAsReservedAsync(
+        Guid reservationId)
+    {
+        await WithUnitOfWorkAsync(
+            async () =>
+            {
+                var reservation =
+                    await _roomReservationRepository
+                        .GetAsync(
+                            reservationId
+                        );
+
+                reservation.MarkReserved(
+                    _clock.Now,
+                    _clock.Now.Date.AddDays(30)
+                );
+
+                await _roomReservationRepository
+                    .UpdateAsync(
+                        reservation,
+                        autoSave: true
+                    );
+            }
+        );
+    }
+
+    //C57 — B chưa cọc, A renew đè lên → B bị hủy
+    [Fact]
+    public async Task
+        Should_Cancel_Conflicting_Pending_Reservation_When_Contract_Is_Renewed()
+    {
+        var roomId =
+            await CreateRoomAsync();
+
+        var currentContract =
+            await CreateActiveContractForRoomAsync(
+                roomId
+            );
+
+        var pendingReservation =
+            await CreatePendingReservationForRoomAsync(
+                roomId,
+                new DateTime(2027, 11, 1)
+            );
+
+        await CreateRenewalHoldAsync(
+            currentContract.Id
+        );
+
+        var renewed =
+            await _contractAppService.RenewAsync(
+                currentContract.Id,
+                new RenewContractDto
+                {
+                    ContractNumber =
+                        NewContractNumber(),
+
+                    StartDate =
+                        new DateTime(2027, 11, 1),
+
+                    EndDate =
+                        new DateTime(2028, 10, 31),
+
+                    MonthlyRent =
+                        3_500_000,
+
+                    DepositAmount =
+                        3_500_000
+                }
+            );
+
+        renewed.Status.ShouldBe(
+            ContractStatus.Signed
+        );
+
+        var reservationAfterRenewal =
+            await _roomReservationAppService
+                .GetAsync(
+                    pendingReservation.Id
+                );
+
+        reservationAfterRenewal.Status.ShouldBe(
+            RoomReservationStatus.Cancelled
+        );
+
+        reservationAfterRenewal
+            .CancellationReason
+            .ShouldBe(
+                ReservationCancellationReason
+                    .SupersededByRenewal
+            );
+
+        reservationAfterRenewal
+            .CancelledAt
+            .ShouldNotBeNull();
+    }
+
+    //C58 — B vào sau khi renewal kết thúc → không hủy B
+    // C58
+    [Fact]
+    public async Task
+        Should_Keep_Pending_Reservation_When_Move_In_Is_After_Renewal_End_Date()
+    {
+        var roomId =
+            await CreateRoomAsync();
+
+        var currentContract =
+            await CreateActiveContractForRoomAsync(
+                roomId
+            );
+
+        var pendingReservation =
+            await CreatePendingReservationForRoomAsync(
+                roomId,
+                new DateTime(2028, 11, 1)
+            );
+
+        await CreateRenewalHoldAsync(
+            currentContract.Id
+        );
+
+        await _contractAppService.RenewAsync(
+            currentContract.Id,
+            new RenewContractDto
+            {
+                ContractNumber =
+                    NewContractNumber(),
+
+                StartDate =
+                    new DateTime(2027, 11, 1),
+
+                EndDate =
+                    new DateTime(2028, 10, 31),
+
+                MonthlyRent =
+                    3_500_000,
+
+                DepositAmount =
+                    3_500_000
+            }
+        );
+
+        var reservationAfterRenewal =
+            await _roomReservationAppService
+                .GetAsync(
+                    pendingReservation.Id
+                );
+
+        reservationAfterRenewal.Status.ShouldBe(
+            RoomReservationStatus.PendingPayment
+        );
+
+        reservationAfterRenewal
+            .CancellationReason
+            .ShouldBeNull();
+
+        reservationAfterRenewal
+            .CancelledAt
+            .ShouldBeNull();
+    }
+
+    //C59 — B đã cọc và bị overlap → A không được renew
+    // C59
+    [Fact]
+    public async Task
+        Should_Not_Renew_When_Conflicting_Reservation_Is_Already_Reserved()
+    {
+        var roomId =
+            await CreateRoomAsync();
+
+        var currentContract =
+            await CreateActiveContractForRoomAsync(
+                roomId
+            );
+
+        var reservation =
+            await CreatePendingReservationForRoomAsync(
+                roomId,
+                new DateTime(2027, 11, 1)
+            );
+
+        await MarkReservationAsReservedAsync(
+            reservation.Id
+        );
+
+        var renewalHold =
+            await CreateRenewalHoldAsync(
+                currentContract.Id
+            );
+
+        var exception =
+            await Assert.ThrowsAsync<
+                BusinessException>(
+                () =>
+                    _contractAppService.RenewAsync(
+                        currentContract.Id,
+                        new RenewContractDto
+                        {
+                            ContractNumber =
+                                NewContractNumber(),
+
+                            StartDate =
+                                new DateTime(
+                                    2027,
+                                    11,
+                                    1
+                                ),
+
+                            EndDate =
+                                new DateTime(
+                                    2028,
+                                    10,
+                                    31
+                                ),
+
+                            MonthlyRent =
+                                3_500_000,
+
+                            DepositAmount =
+                                3_500_000
+                        }
+                    )
+            );
+
+        exception.Code.ShouldBe(
+            BuildingManagementErrorCodes
+                .RoomAlreadyReserved
+        );
+
+        var reservationAfterFailure =
+            await _roomReservationAppService
+                .GetAsync(
+                    reservation.Id
+                );
+
+        reservationAfterFailure.Status.ShouldBe(
+            RoomReservationStatus.Reserved
+        );
+
+        var holdAfterFailure =
+            await _renewalHoldAppService
+                .GetAsync(
+                    renewalHold.Id
+                );
+
+        holdAfterFailure.Status.ShouldBe(
+            ContractRenewalHoldStatus.Active
+        );
+
+        holdAfterFailure
+            .CompletedContractId
+            .ShouldBeNull();
+    }
+
+    //C60 — B đã cọc nhưng ngày vào sau A hết renewal → A vẫn được renew
+    // C60
+    [Fact]
+    public async Task
+        Should_Allow_Renewal_When_Reserved_Move_In_Is_After_Renewal_End_Date()
+    {
+        var roomId =
+            await CreateRoomAsync();
+
+        var currentContract =
+            await CreateActiveContractForRoomAsync(
+                roomId
+            );
+
+        var reservation =
+            await CreatePendingReservationForRoomAsync(
+                roomId,
+                new DateTime(2028, 11, 1)
+            );
+
+        await MarkReservationAsReservedAsync(
+            reservation.Id
+        );
+
+        var renewalHold =
+            await CreateRenewalHoldAsync(
+                currentContract.Id
+            );
+
+        var renewed =
+            await _contractAppService.RenewAsync(
+                currentContract.Id,
+                new RenewContractDto
+                {
+                    ContractNumber =
+                        NewContractNumber(),
+
+                    StartDate =
+                        new DateTime(
+                            2027,
+                            11,
+                            1
+                        ),
+
+                    EndDate =
+                        new DateTime(
+                            2028,
+                            10,
+                            31
+                        ),
+
+                    MonthlyRent =
+                        3_500_000,
+
+                    DepositAmount =
+                        3_500_000
+                }
+            );
+
+        renewed.Status.ShouldBe(
+            ContractStatus.Signed
+        );
+
+        var reservationAfterRenewal =
+            await _roomReservationAppService
+                .GetAsync(
+                    reservation.Id
+                );
+
+        reservationAfterRenewal.Status.ShouldBe(
+            RoomReservationStatus.Reserved
+        );
+
+        reservationAfterRenewal
+            .CancellationReason
+            .ShouldBeNull();
+
+        var completedHold =
+            await _renewalHoldAppService
+                .GetAsync(
+                    renewalHold.Id
+                );
+
+        completedHold.Status.ShouldBe(
+            ContractRenewalHoldStatus.Completed
+        );
+
+        completedHold.CompletedContractId.ShouldBe(
+            renewed.Id
+        );
+    }
+
+    //C61 — B đã cọc thì khi A rời phòng phải thành Reserved
+    // C61
+    [Fact]
+    public async Task
+        Should_Set_Room_Reserved_When_Active_Contract_Ends_With_Reserved_Reservation()
+    {
+        var roomId =
+            await CreateRoomAsync();
+
+        var currentContract =
+            await CreateActiveContractForRoomAsync(
+                roomId
+            );
+
+        var reservation =
+            await CreatePendingReservationForRoomAsync(
+                roomId,
+                new DateTime(2027, 11, 1)
+            );
+
+        await MarkReservationAsReservedAsync(
+            reservation.Id
+        );
+
+        var result =
+            await _contractAppService.EndAsync(
+                currentContract.Id
+            );
+
+        result.Status.ShouldBe(
+            ContractStatus.Ended
+        );
+
+        var roomStatus =
+            await GetRoomStatusAsync(
+                roomId
+            );
+
+        roomStatus.ShouldBe(
+            RoomStatus.Reserved
+        );
+
+        var reservationAfterEnd =
+            await _roomReservationAppService
+                .GetAsync(
+                    reservation.Id
+                );
+
+        reservationAfterEnd.Status.ShouldBe(
+            RoomReservationStatus.Reserved
+        );
+    }
+
+    //C62 — B chỉ PendingPayment thì phòng phải Available
+    // C62
+    [Fact]
+    public async Task
+        Should_Set_Room_Available_When_Active_Contract_Ends_With_Only_Pending_Reservation()
+    {
+        var roomId =
+            await CreateRoomAsync();
+
+        var currentContract =
+            await CreateActiveContractForRoomAsync(
+                roomId
+            );
+
+        var pendingReservation =
+            await CreatePendingReservationForRoomAsync(
+                roomId,
+                new DateTime(2027, 11, 1)
+            );
+
+        await _contractAppService.EndAsync(
+            currentContract.Id
+        );
+
+        var roomStatus =
+            await GetRoomStatusAsync(
+                roomId
+            );
+
+        roomStatus.ShouldBe(
+            RoomStatus.Available
+        );
+
+        var reservationAfterEnd =
+            await _roomReservationAppService
+                .GetAsync(
+                    pendingReservation.Id
+                );
+
+        reservationAfterEnd.Status.ShouldBe(
+            RoomReservationStatus.PendingPayment
+        );
+    }
+
+    //C63 — A đã ký renewal thì khi Contract cũ end, phòng cũng phải Reserved
+    // C63
+    [Fact]
+    public async Task
+        Should_Set_Room_Reserved_When_Active_Contract_Ends_With_Signed_Renewal()
+    {
+        var roomId =
+            await CreateRoomAsync();
+
+        var currentContract =
+            await CreateActiveContractForRoomAsync(
+                roomId
+            );
+
+        await CreateRenewalHoldAsync(
+            currentContract.Id
+        );
+
+        var renewed =
+            await _contractAppService.RenewAsync(
+                currentContract.Id,
+                new RenewContractDto
+                {
+                    ContractNumber =
+                        NewContractNumber(),
+
+                    StartDate =
+                        new DateTime(
+                            2027,
+                            11,
+                            1
+                        ),
+
+                    EndDate =
+                        new DateTime(
+                            2028,
+                            10,
+                            31
+                        ),
+
+                    MonthlyRent =
+                        3_500_000,
+
+                    DepositAmount =
+                        3_500_000
+                }
+            );
+
+        renewed.Status.ShouldBe(
+            ContractStatus.Signed
+        );
+
+        await _contractAppService.EndAsync(
+            currentContract.Id
+        );
+
+        var roomStatus =
+            await GetRoomStatusAsync(
+                roomId
+            );
+
+        roomStatus.ShouldBe(
+            RoomStatus.Reserved
+        );
+
+        var renewedAfterEnd =
+            await _contractAppService.GetAsync(
+                renewed.Id
+            );
+
+        renewedAfterEnd.Status.ShouldBe(
+            ContractStatus.Signed
         );
     }
 }

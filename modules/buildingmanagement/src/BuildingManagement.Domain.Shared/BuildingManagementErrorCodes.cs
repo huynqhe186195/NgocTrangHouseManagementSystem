@@ -194,4 +194,40 @@ public static class BuildingManagementErrorCodes
 
     public const string ContractRenewalHoldNotActive =
         "BuildingManagement:ContractRenewalHoldNotActive";
+
+    public const string RoomReservationNotFound =
+    "BuildingManagement:RoomReservationNotFound";
+
+    public const string RoomReservationNumberAlreadyExists =
+        "BuildingManagement:RoomReservationNumberAlreadyExists";
+
+    public const string InvalidRoomReservationNumber =
+        "BuildingManagement:InvalidRoomReservationNumber";
+
+    public const string InvalidExpectedMoveInDate =
+        "BuildingManagement:InvalidExpectedMoveInDate";
+
+    public const string InvalidQuotedMonthlyRent =
+        "BuildingManagement:InvalidQuotedMonthlyRent";
+
+    public const string InvalidRequiredDepositAmount =
+        "BuildingManagement:InvalidRequiredDepositAmount";
+
+    public const string RoomNotAvailableForReservation =
+        "BuildingManagement:RoomNotAvailableForReservation";
+
+    public const string RoomAlreadyReserved =
+        "BuildingManagement:RoomAlreadyReserved";
+
+    public const string RoomReservationAlreadyExistsForTenant =
+        "BuildingManagement:RoomReservationAlreadyExistsForTenant";
+
+    public const string RoomReservationCannotBeCancelled =
+        "BuildingManagement:RoomReservationCannotBeCancelled";
+
+    public const string InvalidReservationCancellationReason =
+        "BuildingManagement:InvalidReservationCancellationReason";
+
+    public const string InvalidMinimumReservationDepositAmount =
+        "BuildingManagement:InvalidMinimumReservationDepositAmount";
 } // Consolidate all of the module's error codes in one place.

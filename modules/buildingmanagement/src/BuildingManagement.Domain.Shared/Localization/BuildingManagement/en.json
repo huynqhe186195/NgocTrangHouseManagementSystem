@@ -56,6 +56,18 @@
     "BuildingManagement:MeterReadingAlreadyExists": "A meter reading already exists for {BillingMonth}/{BillingYear}.",
     "BuildingManagement:MeterReadingPeriodMustBeAfterLatest": "The new billing period must be after the latest meter reading period.",
     "BuildingManagement:OnlyLatestMeterReadingCanBeUpdated": "Only the latest meter reading can be updated.",
-    "BuildingManagement:UtilityMeterHasReadingHistory": "The utility meter has reading history and cannot be deleted. Deactivate the meter instead."
+    "BuildingManagement:UtilityMeterHasReadingHistory": "The utility meter has reading history and cannot be deleted. Deactivate the meter instead.",
+    "BuildingManagement:ContractCannotBeSigned": "The contract cannot be signed in its current state.",
+    "BuildingManagement:ContractCannotBeRenewed": "The contract cannot be renewed in its current state.",
+    "BuildingManagement:ContractAlreadyRenewed": "This contract already has a renewal contract.",
+    "BuildingManagement:InvalidRenewalContractPeriod": "The renewal contract period is invalid.",
+    "BuildingManagement:RoomHasOverlappingCommittedContract": "The room already has a signed or active contract with an overlapping period.",
+    "BuildingManagement:ContractRenewalHoldNotFound": "The contract renewal hold was not found.",
+    "BuildingManagement:ContractRenewalHoldAlreadyExists": "This contract has already received its 24-hour renewal hold.",
+    "BuildingManagement:ContractRenewalHoldCannotBeCreated": "A renewal hold cannot be created for the current contract.",
+    "BuildingManagement:ContractRenewalHoldCannotBeCancelled": "The current renewal hold cannot be cancelled.",
+    "BuildingManagement:ContractRenewalHoldExpired": "The 24-hour renewal hold has expired.",
+    "BuildingManagement:ContractRenewalHoldRequired": "An active renewal hold is required before renewing the contract.",
+    "BuildingManagement:ContractRenewalHoldNotActive": "The contract renewal hold is no longer active."
   }
 }

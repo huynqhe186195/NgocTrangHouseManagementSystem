@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using Volo.Abp;
 using Volo.Abp.Domain.Repositories;
 using Volo.Abp.Modularity;
+using Volo.Abp.Timing;
 using Xunit;
 
 namespace BuildingManagement.Contracts;
@@ -23,7 +24,9 @@ public abstract class ContractAppService_Tests<TStartupModule>
     private readonly IRepository<Room, Guid> _roomRepository;
     private readonly ITenantAppService _tenantAppService;
     private readonly IRoomAppService _roomAppService;
-
+    private readonly IContractRenewalHoldAppService _renewalHoldAppService;
+    private readonly IRepository<ContractRenewalHold, Guid> _renewalHoldRepository;
+    private readonly IClock _clock;
     protected ContractAppService_Tests()
     {
         _contractAppService =
@@ -43,6 +46,28 @@ public abstract class ContractAppService_Tests<TStartupModule>
 
         _roomAppService =
             GetRequiredService<IRoomAppService>();
+
+        _renewalHoldAppService =
+            GetRequiredService<IContractRenewalHoldAppService>();
+
+        _renewalHoldRepository =
+            GetRequiredService<
+                IRepository<ContractRenewalHold, Guid>>();
+
+        _clock =
+            GetRequiredService<IClock>();
+    }
+
+    private Task<ContractRenewalHoldDto>
+    CreateRenewalHoldAsync(Guid contractId)
+    {
+        return _renewalHoldAppService.CreateAsync(
+            new CreateContractRenewalHoldDto
+            {
+                CurrentContractId = contractId,
+                Notes = "Renewal test hold"
+            }
+        );
     }
 
     private async Task<ContractDto> CreateDraftContractAsync()
@@ -60,6 +85,20 @@ public abstract class ContractAppService_Tests<TStartupModule>
                 DepositAmount = 3_000_000
             }
         );
+    }
+
+    private async Task<ContractDto>
+    CreateActiveContractForRoomAsync(Guid roomId)
+    {
+        var contract =
+            await CreateDraftContractForRoomAsync(roomId);
+
+        await AddPrimaryTenantAsync(
+            contract.Id
+        );
+
+        return await _contractAppService
+            .ActivateAsync(contract.Id);
     }
 
     private async Task<TenantDto> CreateTenantAsync()
@@ -1692,6 +1731,776 @@ public abstract class ContractAppService_Tests<TStartupModule>
         exception.Code.ShouldBe(
             BuildingManagementErrorCodes
                 .TenantNotFound
+        );
+    }
+
+    // C42
+    [Fact]
+    public async Task Should_Sign_Draft_Contract()
+    {
+        var roomId = await CreateRoomAsync();
+
+        var contract =
+            await CreateDraftContractForRoomAsync(
+                roomId
+            );
+
+        await AddPrimaryTenantAsync(
+            contract.Id
+        );
+
+        var result =
+            await _contractAppService.SignAsync(
+                contract.Id
+            );
+
+        result.Status.ShouldBe(
+            ContractStatus.Signed
+        );
+
+        var roomStatus =
+            await GetRoomStatusAsync(roomId);
+
+        roomStatus.ShouldBe(
+            RoomStatus.Available
+        );
+    }
+
+    // C43
+    [Fact]
+    public async Task
+        Should_Throw_When_Signing_Contract_Without_Tenant()
+    {
+        var contract =
+            await CreateDraftContractAsync();
+
+        var exception =
+            await Assert.ThrowsAsync<BusinessException>(
+                () =>
+                    _contractAppService.SignAsync(
+                        contract.Id
+                    )
+            );
+
+        exception.Code.ShouldBe(
+            BuildingManagementErrorCodes
+                .ContractRequiresTenant
+        );
+    }
+
+    // C44
+    [Fact]
+    public async Task
+        Should_Throw_When_Signing_Contract_Without_Primary_Tenant()
+    {
+        var contract =
+            await CreateDraftContractAsync();
+
+        var member =
+            await CreateTenantAsync();
+
+        await _contractAppService.AddTenantAsync(
+            contract.Id,
+            new AddContractTenantDto
+            {
+                TenantId = member.Id,
+                Role = ContractTenantRole.Member
+            }
+        );
+
+        var exception =
+            await Assert.ThrowsAsync<BusinessException>(
+                () =>
+                    _contractAppService.SignAsync(
+                        contract.Id
+                    )
+            );
+
+        exception.Code.ShouldBe(
+            BuildingManagementErrorCodes
+                .ContractRequiresPrimaryTenant
+        );
+    }
+
+    // C45
+    [Fact]
+    public async Task
+        Should_Not_Sign_Contract_Twice()
+    {
+        var contract =
+            await CreateDraftContractAsync();
+
+        await AddPrimaryTenantAsync(
+            contract.Id
+        );
+
+        await _contractAppService.SignAsync(
+            contract.Id
+        );
+
+        var exception =
+            await Assert.ThrowsAsync<BusinessException>(
+                () =>
+                    _contractAppService.SignAsync(
+                        contract.Id
+                    )
+            );
+
+        exception.Code.ShouldBe(
+            BuildingManagementErrorCodes
+                .ContractCannotBeSigned
+        );
+    }
+
+    // C46
+    [Fact]
+    public async Task
+        Should_Activate_Signed_Contract()
+    {
+        var roomId =
+            await CreateRoomAsync();
+
+        var contract =
+            await CreateDraftContractForRoomAsync(
+                roomId
+            );
+
+        await AddPrimaryTenantAsync(
+            contract.Id
+        );
+
+        await _contractAppService.SignAsync(
+            contract.Id
+        );
+
+        var result =
+            await _contractAppService.ActivateAsync(
+                contract.Id
+            );
+
+        result.Status.ShouldBe(
+            ContractStatus.Active
+        );
+
+        var roomStatus =
+            await GetRoomStatusAsync(roomId);
+
+        roomStatus.ShouldBe(
+            RoomStatus.Occupied
+        );
+    }
+
+    // C47
+    [Fact]
+    public async Task
+        Should_Cancel_Signed_Contract()
+    {
+        var contract =
+            await CreateDraftContractAsync();
+
+        await AddPrimaryTenantAsync(
+            contract.Id
+        );
+
+        await _contractAppService.SignAsync(
+            contract.Id
+        );
+
+        var result =
+            await _contractAppService.CancelAsync(
+                contract.Id
+            );
+
+        result.Status.ShouldBe(
+            ContractStatus.Cancelled
+        );
+    }
+
+    [Fact]
+    public async Task Should_Renew_Active_Contract_And_Copy_Tenants()
+    {
+        var roomId =
+            await CreateRoomAsync();
+
+        var currentContract =
+            await CreateDraftContractForRoomAsync(
+                roomId
+            );
+
+        var primary =
+            await CreateTenantAsync();
+
+        var member =
+            await CreateTenantAsync();
+
+        await _contractAppService.AddTenantAsync(
+            currentContract.Id,
+            new AddContractTenantDto
+            {
+                TenantId = primary.Id,
+                Role =
+                    ContractTenantRole.PrimaryTenant
+            }
+        );
+
+        await _contractAppService.AddTenantAsync(
+            currentContract.Id,
+            new AddContractTenantDto
+            {
+                TenantId = member.Id,
+                Role =
+                    ContractTenantRole.Member
+            }
+        );
+
+        await _contractAppService.ActivateAsync(
+            currentContract.Id
+        );
+
+        // Bắt buộc phải có Renewal Hold trước khi Renew
+        var renewalHold =
+            await CreateRenewalHoldAsync(
+                currentContract.Id
+            );
+
+        var renewed =
+            await _contractAppService.RenewAsync(
+                currentContract.Id,
+                new RenewContractDto
+                {
+                    ContractNumber =
+                        NewContractNumber(),
+
+                    StartDate =
+                        new DateTime(2027, 11, 1),
+
+                    EndDate =
+                        new DateTime(2028, 10, 31),
+
+                    MonthlyRent = 3_500_000,
+
+                    DepositAmount = 3_500_000,
+
+                    Notes = "Renewed contract"
+                }
+            );
+
+        // Contract mới phải ở trạng thái Signed
+        renewed.Status.ShouldBe(
+            ContractStatus.Signed
+        );
+
+        // Vẫn phải thuộc cùng Room
+        renewed.RoomId.ShouldBe(
+            currentContract.RoomId
+        );
+
+        // Contract mới phải liên kết về Contract cũ
+        renewed.RenewedFromContractId.ShouldBe(
+            currentContract.Id
+        );
+
+        // Contract mới phải là record khác
+        renewed.Id.ShouldNotBe(
+            currentContract.Id
+        );
+
+        // Tenant phải được copy sang Contract mới
+        var renewedTenants =
+            await _contractAppService
+                .GetTenantsAsync(
+                    renewed.Id
+                );
+
+        renewedTenants.ShouldContain(
+            x =>
+                x.TenantId == primary.Id
+                &&
+                x.Role ==
+                    ContractTenantRole.PrimaryTenant
+        );
+
+        renewedTenants.ShouldContain(
+            x =>
+                x.TenantId == member.Id
+                &&
+                x.Role ==
+                    ContractTenantRole.Member
+        );
+
+        renewedTenants.Count.ShouldBe(2);
+
+        // Renewal Hold phải tự động được hoàn thành
+        var completedHold =
+            await _renewalHoldAppService.GetAsync(
+                renewalHold.Id
+            );
+
+        completedHold.Status.ShouldBe(
+            ContractRenewalHoldStatus.Completed
+        );
+
+        // Hold phải trỏ tới đúng Contract mới
+        completedHold.CompletedContractId.ShouldBe(
+            renewed.Id
+        );
+    }
+
+    // C49
+    [Fact]
+    public async Task
+        Should_Not_Renew_Draft_Contract()
+    {
+        var contract =
+            await CreateDraftContractAsync();
+
+        var exception =
+            await Assert.ThrowsAsync<BusinessException>(
+                () =>
+                    _contractAppService.RenewAsync(
+                        contract.Id,
+                        new RenewContractDto
+                        {
+                            ContractNumber =
+                                NewContractNumber(),
+
+                            StartDate =
+                                new DateTime(
+                                    2027,
+                                    11,
+                                    1
+                                ),
+
+                            EndDate =
+                                new DateTime(
+                                    2028,
+                                    10,
+                                    31
+                                ),
+
+                            MonthlyRent = 3_000_000,
+                            DepositAmount = 3_000_000
+                        }
+                    )
+            );
+
+        exception.Code.ShouldBe(
+            BuildingManagementErrorCodes
+                .ContractCannotBeRenewed
+        );
+    }
+
+    // C50
+    [Fact]
+    public async Task
+        Should_Not_Renew_Contract_Without_EndDate()
+    {
+        var roomId =
+            await CreateRoomAsync();
+
+        var contract =
+            await _contractAppService.CreateAsync(
+                new CreateContractDto
+                {
+                    ContractNumber =
+                        NewContractNumber(),
+
+                    RoomId = roomId,
+
+                    StartDate =
+                        new DateTime(2026, 11, 1),
+
+                    EndDate = null,
+
+                    MonthlyRent = 3_000_000,
+                    DepositAmount = 3_000_000
+                }
+            );
+
+        await AddPrimaryTenantAsync(
+            contract.Id
+        );
+
+        await _contractAppService.ActivateAsync(
+            contract.Id
+        );
+
+        var exception =
+            await Assert.ThrowsAsync<BusinessException>(
+                () =>
+                    _contractAppService.RenewAsync(
+                        contract.Id,
+                        new RenewContractDto
+                        {
+                            ContractNumber =
+                                NewContractNumber(),
+
+                            StartDate =
+                                new DateTime(
+                                    2027,
+                                    11,
+                                    1
+                                ),
+
+                            EndDate =
+                                new DateTime(
+                                    2028,
+                                    10,
+                                    31
+                                ),
+
+                            MonthlyRent = 3_000_000,
+                            DepositAmount = 3_000_000
+                        }
+                    )
+            );
+
+        exception.Code.ShouldBe(
+            BuildingManagementErrorCodes
+                .ContractCannotBeRenewed
+        );
+    }
+
+    // C51
+    [Fact]
+    public async Task
+        Should_Throw_When_Renewal_StartDate_Is_Not_After_Current_EndDate()
+    {
+        var roomId =
+            await CreateRoomAsync();
+
+        var current =
+            await CreateActiveContractForRoomAsync(
+                roomId
+            );
+
+        var exception =
+            await Assert.ThrowsAsync<BusinessException>(
+                () =>
+                    _contractAppService.RenewAsync(
+                        current.Id,
+                        new RenewContractDto
+                        {
+                            ContractNumber =
+                                NewContractNumber(),
+
+                            StartDate =
+                                new DateTime(
+                                    2027,
+                                    10,
+                                    31
+                                ),
+
+                            EndDate =
+                                new DateTime(
+                                    2028,
+                                    10,
+                                    31
+                                ),
+
+                            MonthlyRent = 3_500_000,
+                            DepositAmount = 3_500_000
+                        }
+                    )
+            );
+
+        exception.Code.ShouldBe(
+            BuildingManagementErrorCodes
+                .InvalidRenewalContractPeriod
+        );
+    }
+
+    // C52
+    [Fact]
+    public async Task
+        Should_Not_Renew_Same_Contract_Twice()
+    {
+        var roomId =
+            await CreateRoomAsync();
+
+        var current =
+            await CreateActiveContractForRoomAsync(
+                roomId
+            );
+
+        await CreateRenewalHoldAsync(current.Id);
+
+        await _contractAppService.RenewAsync(
+            current.Id,
+            new RenewContractDto
+            {
+                ContractNumber =
+                    NewContractNumber(),
+
+                StartDate =
+                    new DateTime(2027, 11, 1),
+
+                EndDate =
+                    new DateTime(2028, 10, 31),
+
+                MonthlyRent = 3_500_000,
+                DepositAmount = 3_500_000
+            }
+        );
+
+        var exception =
+            await Assert.ThrowsAsync<BusinessException>(
+                () =>
+                    _contractAppService.RenewAsync(
+                        current.Id,
+                        new RenewContractDto
+                        {
+                            ContractNumber =
+                                NewContractNumber(),
+
+                            StartDate =
+                                new DateTime(
+                                    2027,
+                                    11,
+                                    1
+                                ),
+
+                            EndDate =
+                                new DateTime(
+                                    2028,
+                                    10,
+                                    31
+                                ),
+
+                            MonthlyRent = 3_500_000,
+                            DepositAmount = 3_500_000
+                        }
+                    )
+            );
+
+        exception.Code.ShouldBe(
+            BuildingManagementErrorCodes
+                .ContractAlreadyRenewed
+        );
+    }
+
+    // C53
+    [Fact]
+    public async Task
+        Should_Not_Sign_Overlapping_Committed_Contract()
+    {
+        var roomId =
+            await CreateRoomAsync();
+
+        await CreateActiveContractForRoomAsync(
+            roomId
+        );
+
+        var second =
+            await _contractAppService.CreateAsync(
+                new CreateContractDto
+                {
+                    ContractNumber =
+                        NewContractNumber(),
+
+                    RoomId = roomId,
+
+                    StartDate =
+                        new DateTime(2027, 1, 1),
+
+                    EndDate =
+                        new DateTime(2027, 12, 31),
+
+                    MonthlyRent = 3_500_000,
+                    DepositAmount = 3_500_000
+                }
+            );
+
+        await AddPrimaryTenantAsync(
+            second.Id
+        );
+
+        var exception =
+            await Assert.ThrowsAsync<BusinessException>(
+                () =>
+                    _contractAppService.SignAsync(
+                        second.Id
+                    )
+            );
+
+        exception.Code.ShouldBe(
+            BuildingManagementErrorCodes
+                .RoomHasOverlappingCommittedContract
+        );
+    }
+
+    // C54
+    [Fact]
+    public async Task
+        Should_Not_Renew_Without_Renewal_Hold()
+    {
+        var roomId =
+            await CreateRoomAsync();
+
+        var current =
+            await CreateActiveContractForRoomAsync(
+                roomId
+            );
+
+        var exception =
+            await Assert.ThrowsAsync<BusinessException>(
+                () =>
+                    _contractAppService.RenewAsync(
+                        current.Id,
+                        new RenewContractDto
+                        {
+                            ContractNumber =
+                                NewContractNumber(),
+
+                            StartDate =
+                                new DateTime(
+                                    2027,
+                                    11,
+                                    1
+                                ),
+
+                            EndDate =
+                                new DateTime(
+                                    2028,
+                                    10,
+                                    31
+                                ),
+
+                            MonthlyRent = 3_500_000,
+                            DepositAmount = 3_500_000
+                        }
+                    )
+            );
+
+        exception.Code.ShouldBe(
+            BuildingManagementErrorCodes
+                .ContractRenewalHoldRequired
+        );
+    }
+
+    // C55
+    [Fact]
+    public async Task
+        Should_Not_Renew_After_Renewal_Hold_Is_Cancelled()
+    {
+        var roomId =
+            await CreateRoomAsync();
+
+        var current =
+            await CreateActiveContractForRoomAsync(
+                roomId
+            );
+
+        var hold =
+            await CreateRenewalHoldAsync(
+                current.Id
+            );
+
+        await _renewalHoldAppService.CancelAsync(
+            hold.Id
+        );
+
+        var exception =
+            await Assert.ThrowsAsync<BusinessException>(
+                () =>
+                    _contractAppService.RenewAsync(
+                        current.Id,
+                        new RenewContractDto
+                        {
+                            ContractNumber =
+                                NewContractNumber(),
+
+                            StartDate =
+                                new DateTime(
+                                    2027,
+                                    11,
+                                    1
+                                ),
+
+                            EndDate =
+                                new DateTime(
+                                    2028,
+                                    10,
+                                    31
+                                ),
+
+                            MonthlyRent = 3_500_000,
+                            DepositAmount = 3_500_000
+                        }
+                    )
+            );
+
+        exception.Code.ShouldBe(
+            BuildingManagementErrorCodes
+                .ContractRenewalHoldNotActive
+        );
+    }
+
+    // C56
+    [Fact]
+    public async Task
+        Should_Not_Renew_After_Renewal_Hold_Expires()
+    {
+        var roomId =
+            await CreateRoomAsync();
+
+        var current =
+            await CreateActiveContractForRoomAsync(
+                roomId
+            );
+
+        var expiredHold =
+            new ContractRenewalHold(
+                Guid.NewGuid(),
+                current.Id,
+                current.RoomId,
+                _clock.Now.AddHours(-25),
+                "Expired renewal hold"
+            );
+
+        await WithUnitOfWorkAsync(
+            async () =>
+            {
+                await _renewalHoldRepository.InsertAsync(
+                    expiredHold,
+                    autoSave: true
+                );
+            }
+        );
+
+        var exception =
+            await Assert.ThrowsAsync<BusinessException>(
+                () =>
+                    _contractAppService.RenewAsync(
+                        current.Id,
+                        new RenewContractDto
+                        {
+                            ContractNumber =
+                                NewContractNumber(),
+
+                            StartDate =
+                                new DateTime(
+                                    2027,
+                                    11,
+                                    1
+                                ),
+
+                            EndDate =
+                                new DateTime(
+                                    2028,
+                                    10,
+                                    31
+                                ),
+
+                            MonthlyRent = 3_500_000,
+                            DepositAmount = 3_500_000
+                        }
+                    )
+            );
+
+        exception.Code.ShouldBe(
+            BuildingManagementErrorCodes
+                .ContractRenewalHoldExpired
         );
     }
 }

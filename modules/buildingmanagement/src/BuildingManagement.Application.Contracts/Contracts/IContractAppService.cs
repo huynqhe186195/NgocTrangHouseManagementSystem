@@ -15,6 +15,13 @@ namespace BuildingManagement.Contracts
             CreateContractDto input
         );
 
+        Task<ContractDto> SignAsync(Guid id);
+
+        Task<ContractDto> RenewAsync(
+            Guid id,
+            RenewContractDto input
+        );
+
         Task<ContractDto> UpdateAsync(
             Guid id,
             UpdateContractDto input

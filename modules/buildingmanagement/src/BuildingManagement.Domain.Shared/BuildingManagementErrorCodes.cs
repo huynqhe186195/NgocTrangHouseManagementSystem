@@ -158,4 +158,40 @@ public static class BuildingManagementErrorCodes
 
     public const string UtilityMeterHasReadingHistory =
         "BuildingManagement:UtilityMeterHasReadingHistory";
+
+    public const string ContractCannotBeSigned =
+        "BuildingManagement:ContractCannotBeSigned";
+
+    public const string ContractCannotBeRenewed =
+        "BuildingManagement:ContractCannotBeRenewed";
+
+    public const string ContractAlreadyRenewed =
+        "BuildingManagement:ContractAlreadyRenewed";
+
+    public const string InvalidRenewalContractPeriod =
+        "BuildingManagement:InvalidRenewalContractPeriod";
+
+    public const string RoomHasOverlappingCommittedContract =
+        "BuildingManagement:RoomHasOverlappingCommittedContract";
+
+    public const string ContractRenewalHoldNotFound =
+        "BuildingManagement:ContractRenewalHoldNotFound";
+
+    public const string ContractRenewalHoldAlreadyExists =
+        "BuildingManagement:ContractRenewalHoldAlreadyExists";
+
+    public const string ContractRenewalHoldCannotBeCreated =
+        "BuildingManagement:ContractRenewalHoldCannotBeCreated";
+
+    public const string ContractRenewalHoldCannotBeCancelled =
+        "BuildingManagement:ContractRenewalHoldCannotBeCancelled";
+
+    public const string ContractRenewalHoldExpired =
+        "BuildingManagement:ContractRenewalHoldExpired";
+
+    public const string ContractRenewalHoldRequired =
+    "BuildingManagement:ContractRenewalHoldRequired";
+
+    public const string ContractRenewalHoldNotActive =
+        "BuildingManagement:ContractRenewalHoldNotActive";
 } // Consolidate all of the module's error codes in one place.

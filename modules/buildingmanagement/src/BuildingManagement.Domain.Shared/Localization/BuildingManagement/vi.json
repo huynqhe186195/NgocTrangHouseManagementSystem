@@ -56,6 +56,18 @@
     "BuildingManagement:MeterReadingAlreadyExists": "Đồng hồ đã có bản ghi chỉ số cho kỳ {BillingMonth}/{BillingYear}.",
     "BuildingManagement:MeterReadingPeriodMustBeAfterLatest": "Kỳ ghi chỉ số mới phải sau kỳ gần nhất của đồng hồ.",
     "BuildingManagement:OnlyLatestMeterReadingCanBeUpdated": "Chỉ bản ghi chỉ số mới nhất của đồng hồ mới được phép chỉnh sửa.",
-    "BuildingManagement:UtilityMeterHasReadingHistory": "Đồng hồ đã có lịch sử ghi chỉ số nên không thể xóa. Hãy ngừng hoạt động đồng hồ thay vì xóa."
+    "BuildingManagement:UtilityMeterHasReadingHistory": "Đồng hồ đã có lịch sử ghi chỉ số nên không thể xóa. Hãy ngừng hoạt động đồng hồ thay vì xóa.",
+    "BuildingManagement:ContractCannotBeSigned": "Hợp đồng hiện tại không thể được ký.",
+    "BuildingManagement:ContractCannotBeRenewed": "Hợp đồng hiện tại không thể được gia hạn.",
+    "BuildingManagement:ContractAlreadyRenewed": "Hợp đồng này đã có hợp đồng gia hạn.",
+    "BuildingManagement:InvalidRenewalContractPeriod": "Thời gian của hợp đồng gia hạn không hợp lệ.",
+    "BuildingManagement:RoomHasOverlappingCommittedContract": "Phòng đã có hợp đồng đã ký hoặc đang hoạt động bị chồng lấn thời gian.",
+    "BuildingManagement:ContractRenewalHoldNotFound": "Không tìm thấy yêu cầu giữ quyền gia hạn hợp đồng.",
+    "BuildingManagement:ContractRenewalHoldAlreadyExists": "Hợp đồng này đã từng được giữ quyền gia hạn 24 giờ.",
+    "BuildingManagement:ContractRenewalHoldCannotBeCreated": "Không thể tạo quyền giữ gia hạn cho hợp đồng hiện tại.",
+    "BuildingManagement:ContractRenewalHoldCannotBeCancelled": "Yêu cầu giữ quyền gia hạn hiện tại không thể hủy.",
+    "BuildingManagement:ContractRenewalHoldExpired": "Quyền giữ gia hạn 24 giờ đã hết hạn.",
+    "BuildingManagement:ContractRenewalHoldRequired": "Khách thuê phải có quyền giữ gia hạn còn hiệu lực trước khi ký hợp đồng ở tiếp.",
+    "BuildingManagement:ContractRenewalHoldNotActive": "Quyền giữ gia hạn hợp đồng không còn hiệu lực."
   }
 }

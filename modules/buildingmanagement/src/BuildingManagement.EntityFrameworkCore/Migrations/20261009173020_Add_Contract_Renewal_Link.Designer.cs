@@ -3,6 +3,7 @@ using System;
 using BuildingManagement.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using Volo.Abp.EntityFrameworkCore;
@@ -12,9 +13,11 @@ using Volo.Abp.EntityFrameworkCore;
 namespace BuildingManagement.Migrations
 {
     [DbContext(typeof(BuildingManagementDbContext))]
-    partial class BuildingManagementDbContextModelSnapshot : ModelSnapshot
+    [Migration("20261009173020_Add_Contract_Renewal_Link")]
+    partial class Add_Contract_Renewal_Link
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -180,88 +183,6 @@ namespace BuildingManagement.Migrations
                     b.HasIndex("RoomId");
 
                     b.ToTable("BuildingManagementContracts", (string)null);
-                });
-
-            modelBuilder.Entity("BuildingManagement.Contracts.ContractRenewalHold", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid?>("CompletedContractId")
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("ConcurrencyStamp")
-                        .IsConcurrencyToken()
-                        .IsRequired()
-                        .HasMaxLength(40)
-                        .HasColumnType("character varying(40)")
-                        .HasColumnName("ConcurrencyStamp");
-
-                    b.Property<DateTime>("CreationTime")
-                        .HasColumnType("timestamp without time zone")
-                        .HasColumnName("CreationTime");
-
-                    b.Property<Guid?>("CreatorId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("CreatorId");
-
-                    b.Property<Guid>("CurrentContractId")
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid?>("DeleterId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("DeleterId");
-
-                    b.Property<DateTime?>("DeletionTime")
-                        .HasColumnType("timestamp without time zone")
-                        .HasColumnName("DeletionTime");
-
-                    b.Property<DateTime>("ExpiresAt")
-                        .HasColumnType("timestamp without time zone");
-
-                    b.Property<string>("ExtraProperties")
-                        .IsRequired()
-                        .HasColumnType("text")
-                        .HasColumnName("ExtraProperties");
-
-                    b.Property<bool>("IsDeleted")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("boolean")
-                        .HasDefaultValue(false)
-                        .HasColumnName("IsDeleted");
-
-                    b.Property<DateTime?>("LastModificationTime")
-                        .HasColumnType("timestamp without time zone")
-                        .HasColumnName("LastModificationTime");
-
-                    b.Property<Guid?>("LastModifierId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("LastModifierId");
-
-                    b.Property<string>("Notes")
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.Property<DateTime>("RequestedAt")
-                        .HasColumnType("timestamp without time zone");
-
-                    b.Property<Guid>("RoomId")
-                        .HasColumnType("uuid");
-
-                    b.Property<int>("Status")
-                        .HasColumnType("integer");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("CompletedContractId")
-                        .IsUnique();
-
-                    b.HasIndex("CurrentContractId")
-                        .IsUnique();
-
-                    b.HasIndex("RoomId", "Status", "ExpiresAt");
-
-                    b.ToTable("BuildingManagementContractRenewalHolds", (string)null);
                 });
 
             modelBuilder.Entity("BuildingManagement.Contracts.ContractTenant", b =>
@@ -813,27 +734,6 @@ namespace BuildingManagement.Migrations
                         .WithMany()
                         .HasForeignKey("RenewedFromContractId")
                         .OnDelete(DeleteBehavior.Restrict);
-
-                    b.HasOne("BuildingManagement.Rooms.Room", null)
-                        .WithMany()
-                        .HasForeignKey("RoomId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("BuildingManagement.Contracts.ContractRenewalHold", b =>
-                {
-                    b.HasOne("BuildingManagement.Contracts.Contract", null)
-                        .WithMany()
-                        .HasForeignKey("CompletedContractId")
-                        .OnDelete(DeleteBehavior.Restrict);
-
-                    b.HasOne("BuildingManagement.Contracts.Contract", null)
-                        .WithMany()
-                        .HasForeignKey("CurrentContractId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired()
-                        .HasConstraintName("FK_BuildingManagementContractRenewalHolds_BuildingManagementC~1");
 
                     b.HasOne("BuildingManagement.Rooms.Room", null)
                         .WithMany()

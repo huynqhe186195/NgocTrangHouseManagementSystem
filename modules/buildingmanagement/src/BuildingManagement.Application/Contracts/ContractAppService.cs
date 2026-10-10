@@ -2,12 +2,13 @@
 using BuildingManagement.Tenants;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using Volo.Abp;
 using Volo.Abp.Application.Services;
 using Volo.Abp.Data;
 using Volo.Abp.Domain.Repositories;
-using System.Linq;
+using Volo.Abp.Timing;
 
 namespace BuildingManagement.Contracts
 {
@@ -15,34 +16,36 @@ namespace BuildingManagement.Contracts
         : ApplicationService,
           IContractAppService
     {
-        private readonly IRepository<Contract, Guid>
-            _contractRepository;
+        private readonly IRepository<Contract, Guid> _contractRepository;
 
-        private readonly IRepository<ContractTenant, Guid>
-            _contractTenantRepository;
+        private readonly IRepository<ContractTenant, Guid> _contractTenantRepository;
 
-        private readonly IRepository<Room, Guid>
-            _roomRepository;
+        private readonly IRepository<Room, Guid> _roomRepository;
 
-        private readonly IRepository<Tenant, Guid>
-            _tenantRepository;
+        private readonly IRepository<Tenant, Guid> _tenantRepository;
 
-        private readonly IDataFilter<ISoftDelete>
-            _softDeleteFilter;
+        private readonly IDataFilter<ISoftDelete> _softDeleteFilter;
+
+        private readonly IRepository<ContractRenewalHold, Guid> _contractRenewalHoldRepository;
+
+        private readonly IClock _clock;
 
         public ContractAppService(
             IRepository<Contract, Guid> contractRepository,
             IRepository<ContractTenant, Guid> contractTenantRepository,
             IRepository<Room, Guid> roomRepository,
             IRepository<Tenant, Guid> tenantRepository,
-            IDataFilter<ISoftDelete> softDeleteFilter)
+            IDataFilter<ISoftDelete> softDeleteFilter,
+            IRepository<ContractRenewalHold, Guid> contractRenewalHoldRepository,
+            IClock clock)
         {
             _contractRepository = contractRepository;
-            _contractTenantRepository =
-                contractTenantRepository;
+            _contractTenantRepository = contractTenantRepository;
             _roomRepository = roomRepository;
             _tenantRepository = tenantRepository;
             _softDeleteFilter = softDeleteFilter;
+            _contractRenewalHoldRepository = contractRenewalHoldRepository;
+            _clock = clock;
         }
 
         public async Task<ContractDto> GetAsync(
@@ -564,7 +567,8 @@ namespace BuildingManagement.Contracts
             var contract =
                 await GetExistingContractAsync(id);
 
-            if (contract.Status != ContractStatus.Draft)
+            if (contract.Status != ContractStatus.Draft &&
+                contract.Status != ContractStatus.Signed)
             {
                 throw new BusinessException(
                     BuildingManagementErrorCodes
@@ -572,32 +576,9 @@ namespace BuildingManagement.Contracts
                 );
             }
 
-            var contractTenants =
-                await _contractTenantRepository.GetListAsync(
-                    x => x.ContractId == contract.Id
-                );
-
-            if (contractTenants.Count == 0)
-            {
-                throw new BusinessException(
-                    BuildingManagementErrorCodes
-                        .ContractRequiresTenant
-                );
-            }
-
-            var primaryTenantCount =
-                contractTenants.Count(
-                    x => x.Role ==
-                         ContractTenantRole.PrimaryTenant
-                );
-
-            if (primaryTenantCount != 1)
-            {
-                throw new BusinessException(
-                    BuildingManagementErrorCodes
-                        .ContractRequiresPrimaryTenant
-                );
-            }
+            await EnsureContractHasValidTenantsAsync(
+                contract.Id
+            );
 
             var room =
                 await _roomRepository.FindAsync(
@@ -629,6 +610,13 @@ namespace BuildingManagement.Contracts
                         .RoomAlreadyHasActiveContract
                 );
             }
+
+            await EnsureNoOverlappingCommittedContractAsync(
+                contract.RoomId,
+                contract.StartDate,
+                contract.EndDate,
+                contract.Id
+            );
 
             if (room.Status != RoomStatus.Available &&
                 room.Status != RoomStatus.Reserved)
@@ -717,7 +705,8 @@ namespace BuildingManagement.Contracts
             var contract =
                 await GetExistingContractAsync(id);
 
-            if (contract.Status != ContractStatus.Draft)
+            if (contract.Status != ContractStatus.Draft &&
+    contract.Status != ContractStatus.Signed)
             {
                 throw new BusinessException(
                     BuildingManagementErrorCodes
@@ -747,6 +736,317 @@ namespace BuildingManagement.Contracts
                         .ContractCanOnlyBeModifiedWhenDraft
                 );
             }
+        }
+
+        private async Task EnsureContractHasValidTenantsAsync(
+    Guid contractId)
+        {
+            var contractTenants =
+                await _contractTenantRepository.GetListAsync(
+                    x => x.ContractId == contractId
+                );
+
+            if (contractTenants.Count == 0)
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes
+                        .ContractRequiresTenant
+                );
+            }
+
+            var primaryTenantCount =
+                contractTenants.Count(
+                    x =>
+                        x.Role ==
+                        ContractTenantRole.PrimaryTenant
+                );
+
+            if (primaryTenantCount != 1)
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes
+                        .ContractRequiresPrimaryTenant
+                );
+            }
+        }
+
+        private async Task
+    EnsureNoOverlappingCommittedContractAsync(
+        Guid roomId,
+        DateTime startDate,
+        DateTime? endDate,
+        Guid? excludedContractId = null)
+        {
+            var start = startDate.Date;
+            var end = endDate?.Date;
+
+            var exists =
+                await _contractRepository.AnyAsync(
+                    x =>
+                        x.RoomId == roomId
+                        &&
+                        (
+                            x.Status == ContractStatus.Active
+                            ||
+                            x.Status == ContractStatus.Signed
+                        )
+                        &&
+                        (
+                            !excludedContractId.HasValue
+                            ||
+                            x.Id != excludedContractId.Value
+                        )
+                        &&
+                        (
+                            !x.EndDate.HasValue
+                            ||
+                            x.EndDate.Value >= start
+                        )
+                        &&
+                        (
+                            !end.HasValue
+                            ||
+                            x.StartDate <= end.Value
+                        )
+                );
+
+            if (exists)
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes
+                        .RoomHasOverlappingCommittedContract
+                );
+            }
+        }
+
+        public async Task<ContractDto> SignAsync(Guid id)
+        {
+            var contract =
+                await GetExistingContractAsync(id);
+
+            if (contract.Status != ContractStatus.Draft)
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes
+                        .ContractCannotBeSigned
+                );
+            }
+
+            await EnsureContractHasValidTenantsAsync(
+                contract.Id
+            );
+
+            await EnsureNoOverlappingCommittedContractAsync(
+                contract.RoomId,
+                contract.StartDate,
+                contract.EndDate,
+                contract.Id
+            );
+
+            contract.Sign();
+
+            await _contractRepository.UpdateAsync(
+                contract,
+                autoSave: true
+            );
+
+            return ObjectMapper.Map<
+                Contract,
+                ContractDto
+            >(contract);
+        }
+
+        private async Task EnsureContractNotAlreadyRenewedAsync(Guid contractId)
+        {
+            bool exists;
+
+            using (_softDeleteFilter.Disable())
+            {
+                exists =
+                    await _contractRepository.AnyAsync(
+                        x =>
+                            x.RenewedFromContractId ==
+                            contractId
+                    );
+            }
+
+            if (exists)
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes
+                        .ContractAlreadyRenewed
+                );
+            }
+        }
+
+        public async Task<ContractDto> RenewAsync(Guid id, RenewContractDto input)
+        {
+            var currentContract =
+                await GetExistingContractAsync(id);
+
+            if (currentContract.Status !=
+                ContractStatus.Active)
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes
+                        .ContractCannotBeRenewed
+                );
+            }
+
+            if (!currentContract.EndDate.HasValue)
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes
+                        .ContractCannotBeRenewed
+                );
+            }
+
+            ValidateContractValues(
+                input.StartDate,
+                input.EndDate,
+                input.MonthlyRent,
+                input.DepositAmount
+            );
+
+            if (input.StartDate.Date <=
+                currentContract.EndDate.Value.Date)
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes
+                        .InvalidRenewalContractPeriod
+                );
+            }
+
+            await EnsureContractNotAlreadyRenewedAsync(
+                currentContract.Id
+            );
+
+            var renewalHold = await GetValidRenewalHoldAsync(currentContract.Id);
+
+            await EnsureContractHasValidTenantsAsync(
+                currentContract.Id
+            );
+
+            var contractNumber =
+                NormalizeContractNumber(
+                    input.ContractNumber
+                );
+
+            await EnsureContractNumberUniqueAsync(
+                contractNumber
+            );
+
+            await EnsureNoOverlappingCommittedContractAsync(
+                currentContract.RoomId,
+                input.StartDate,
+                input.EndDate
+            );
+
+            var renewedContract =
+                new Contract(
+                    GuidGenerator.Create(),
+                    contractNumber,
+                    currentContract.RoomId,
+                    input.StartDate.Date,
+                    input.EndDate?.Date,
+                    input.MonthlyRent,
+                    input.DepositAmount,
+                    NormalizeOptional(input.Notes),
+                    renewedFromContractId:
+                        currentContract.Id
+                );
+
+            renewedContract.Sign();
+
+            await _contractRepository.InsertAsync(
+                renewedContract,
+                autoSave: true
+            );
+
+            var currentTenants =
+                await _contractTenantRepository.GetListAsync(
+                    x =>
+                        x.ContractId ==
+                        currentContract.Id
+                );
+
+            foreach (var currentTenant in currentTenants)
+            {
+                var renewedTenant =
+                    new ContractTenant(
+                        GuidGenerator.Create(),
+                        renewedContract.Id,
+                        currentTenant.TenantId,
+                        currentTenant.Role
+                    );
+
+                await _contractTenantRepository.InsertAsync(
+                    renewedTenant,
+                    autoSave: true
+                );
+            }
+
+            renewalHold.Complete(renewedContract.Id);
+
+            await _contractRenewalHoldRepository
+                .UpdateAsync(
+                    renewalHold,
+                    autoSave: true
+                );
+
+            return ObjectMapper.Map<
+                Contract,
+                ContractDto
+            >(renewedContract);
+        }
+
+        private async Task<ContractRenewalHold>
+    GetValidRenewalHoldAsync(
+        Guid currentContractId)
+        {
+            var hold =
+                await _contractRenewalHoldRepository
+                    .FirstOrDefaultAsync(
+                        x =>
+                            x.CurrentContractId ==
+                            currentContractId
+                    );
+
+            if (hold is null)
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes
+                        .ContractRenewalHoldRequired
+                );
+            }
+
+            if (hold.Status ==
+                ContractRenewalHoldStatus.Expired)
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes
+                        .ContractRenewalHoldExpired
+                );
+            }
+
+            if (hold.Status !=
+                ContractRenewalHoldStatus.Active)
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes
+                        .ContractRenewalHoldNotActive
+                );
+            }
+
+            if (hold.ExpiresAt <= _clock.Now)
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes
+                        .ContractRenewalHoldExpired
+                );
+            }
+
+            return hold;
         }
     }
 }

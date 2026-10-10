@@ -46,6 +46,17 @@ namespace BuildingManagement.EntityFrameworkCore.EntityConfigurations
             builder.Property(x => x.Notes)
                 .HasMaxLength(500);
 
+            builder.Property(x => x.RenewedFromContractId)
+    .IsRequired(false);
+
+            builder.HasIndex(x => x.RenewedFromContractId)
+    .IsUnique();
+
+            builder.HasOne<Contract>()
+    .WithMany()
+    .HasForeignKey(x => x.RenewedFromContractId)
+    .OnDelete(DeleteBehavior.Restrict);
+
             builder.HasIndex(x => x.ContractNumber)
                 .IsUnique();
 

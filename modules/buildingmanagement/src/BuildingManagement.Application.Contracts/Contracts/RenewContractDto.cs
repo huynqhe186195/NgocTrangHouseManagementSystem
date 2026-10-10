@@ -1,15 +1,15 @@
 ﻿using System;
-using Volo.Abp.Application.Dtos;
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
+using System.Text;
 
 namespace BuildingManagement.Contracts
 {
-    public class ContractDto : AuditedEntityDto<Guid>
+    public class RenewContractDto
     {
+        [Required]
+        [MaxLength(64)]
         public string ContractNumber { get; set; } = default!;
-
-        public Guid RoomId { get; set; }
-
-        public Guid? RenewedFromContractId { get; set; }
 
         public DateTime StartDate { get; set; }
 
@@ -19,8 +19,7 @@ namespace BuildingManagement.Contracts
 
         public decimal DepositAmount { get; set; }
 
-        public ContractStatus Status { get; set; }
-
+        [MaxLength(500)]
         public string? Notes { get; set; }
     }
 }

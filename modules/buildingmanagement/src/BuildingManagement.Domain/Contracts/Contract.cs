@@ -9,6 +9,8 @@ namespace BuildingManagement.Contracts
 
         public Guid RoomId { get; private set; }
 
+        public Guid? RenewedFromContractId { get; private set; }
+
         public DateTime StartDate { get; private set; }
 
         public DateTime? EndDate { get; private set; }
@@ -26,15 +28,16 @@ namespace BuildingManagement.Contracts
         }
 
         public Contract(
-            Guid id,
-            string contractNumber,
-            Guid roomId,
-            DateTime startDate,
-            DateTime? endDate,
-            decimal monthlyRent,
-            decimal depositAmount,
-            string? notes = null
-        ) : base(id)
+    Guid id,
+    string contractNumber,
+    Guid roomId,
+    DateTime startDate,
+    DateTime? endDate,
+    decimal monthlyRent,
+    decimal depositAmount,
+    string? notes = null,
+    Guid? renewedFromContractId = null
+) : base(id)
         {
             ContractNumber = contractNumber;
             RoomId = roomId;
@@ -44,6 +47,7 @@ namespace BuildingManagement.Contracts
             DepositAmount = depositAmount;
             Status = ContractStatus.Draft;
             Notes = notes;
+            RenewedFromContractId = renewedFromContractId;
         }
 
         public void Update(
@@ -77,6 +81,11 @@ namespace BuildingManagement.Contracts
         public void Cancel()
         {
             Status = ContractStatus.Cancelled;
+        }
+
+        public void Sign()
+        {
+            Status = ContractStatus.Signed;
         }
     }
 }

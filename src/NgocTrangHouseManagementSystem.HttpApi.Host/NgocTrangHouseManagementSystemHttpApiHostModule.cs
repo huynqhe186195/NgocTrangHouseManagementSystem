@@ -308,6 +308,66 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule // syst
         Configure<AbpExceptionHttpStatusCodeOptions>(options =>
         {
             options.Map(
+    BuildingManagementErrorCodes.ContractRenewalHoldRequired,
+    HttpStatusCode.Conflict
+);
+
+            options.Map(
+                BuildingManagementErrorCodes.ContractRenewalHoldNotActive,
+                HttpStatusCode.Conflict
+            );
+
+            options.Map(
+    BuildingManagementErrorCodes.ContractRenewalHoldNotFound,
+    HttpStatusCode.NotFound
+);
+
+            options.Map(
+                BuildingManagementErrorCodes.ContractRenewalHoldAlreadyExists,
+                HttpStatusCode.Conflict
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.ContractRenewalHoldCannotBeCreated,
+                HttpStatusCode.Conflict
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.ContractRenewalHoldCannotBeCancelled,
+                HttpStatusCode.Conflict
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.ContractRenewalHoldExpired,
+                HttpStatusCode.Conflict
+            );
+
+            options.Map(
+    BuildingManagementErrorCodes.ContractCannotBeSigned,
+    HttpStatusCode.Conflict
+);
+
+            options.Map(
+                BuildingManagementErrorCodes.ContractCannotBeRenewed,
+                HttpStatusCode.Conflict
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.ContractAlreadyRenewed,
+                HttpStatusCode.Conflict
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.InvalidRenewalContractPeriod,
+                HttpStatusCode.BadRequest
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.RoomHasOverlappingCommittedContract,
+                HttpStatusCode.Conflict
+            );
+
+            options.Map(
     BuildingManagementErrorCodes.InvalidBillingYear,
     HttpStatusCode.BadRequest
 );

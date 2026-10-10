@@ -133,3 +133,21 @@ public partial class MeterReadingToMeterReadingDtoMapper
         MeterReadingDto destination
     );
 }
+
+[Mapper(
+    RequiredMappingStrategy =
+        RequiredMappingStrategy.Target)]
+public partial class ContractRenewalHoldToContractRenewalHoldDtoMapper
+    : MapperBase<
+        ContractRenewalHold,
+        ContractRenewalHoldDto>
+{
+    public override partial ContractRenewalHoldDto Map(
+        ContractRenewalHold source
+    );
+
+    public override partial void Map(
+        ContractRenewalHold source,
+        ContractRenewalHoldDto destination
+    );
+}

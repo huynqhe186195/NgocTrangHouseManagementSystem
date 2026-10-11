@@ -1,6 +1,7 @@
 using BuildingManagement.Buildings;
 using BuildingManagement.Contracts;
 using BuildingManagement.Floors;
+using BuildingManagement.Payments;
 using BuildingManagement.RoomReservations;
 using BuildingManagement.Rooms;
 using BuildingManagement.Tenants;
@@ -170,6 +171,24 @@ public partial class
     public override partial void Map(
         RoomReservation source,
         RoomReservationDto destination
+    );
+}
+
+[Mapper(
+    RequiredMappingStrategy =
+        RequiredMappingStrategy.Target
+)]
+public partial class
+    PaymentToPaymentDtoMapper 
+    : MapperBase<Payment, PaymentDto>
+{
+    public override partial PaymentDto Map(
+        Payment source
+    );
+
+    public override partial void Map(
+        Payment source,
+        PaymentDto destination
     );
 }
 

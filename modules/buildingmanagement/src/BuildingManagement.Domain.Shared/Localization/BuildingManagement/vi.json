@@ -80,6 +80,22 @@
     "BuildingManagement:RoomReservationAlreadyExistsForTenant": "Khách thuê đã có yêu cầu đặt phòng đang hoạt động cho phòng này.",
     "BuildingManagement:RoomReservationCannotBeCancelled": "Yêu cầu đặt phòng hiện tại không thể hủy.",
     "BuildingManagement:InvalidReservationCancellationReason": "Lý do hủy đặt phòng không hợp lệ.",
-    "BuildingManagement:InvalidMinimumReservationDepositAmount": "Số tiền cọc tối thiểu để giữ phòng phải lớn hơn 0 và không được vượt quá tổng tiền cọc yêu cầu."
+    "BuildingManagement:InvalidMinimumReservationDepositAmount": "Số tiền cọc tối thiểu để giữ phòng phải lớn hơn 0 và không được vượt quá tổng tiền cọc yêu cầu.",
+    "BuildingManagement:PaymentNotFound": "Không tìm thấy khoản thanh toán.",
+    "BuildingManagement:InvalidPaymentNumber": "Mã thanh toán không hợp lệ.",
+    "BuildingManagement:PaymentNumberAlreadyExists": "Mã thanh toán đã tồn tại.",
+    "BuildingManagement:InvalidPaymentAmount": "Số tiền thanh toán phải lớn hơn 0.",
+    "BuildingManagement:InvalidPaymentMethod": "Phương thức thanh toán không hợp lệ.",
+    "BuildingManagement:InvalidPaymentChannel": "Kênh thanh toán không hợp lệ.",
+    "BuildingManagement:InvalidPaymentMethodChannel": "Phương thức và kênh thanh toán không phù hợp với nhau.",
+    "BuildingManagement:PaymentCannotBeCompleted": "Khoản thanh toán hiện tại không thể hoàn tất.",
+    "BuildingManagement:PaymentCannotBeCancelled": "Khoản thanh toán hiện tại không thể hủy.",
+    "BuildingManagement:TransactionReferenceRequired": "Mã giao dịch là bắt buộc đối với phương thức thanh toán này.",
+    "BuildingManagement:TransactionReferenceAlreadyExists": "Mã giao dịch đã được sử dụng.",
+    "BuildingManagement:RoomReservationNotPayable": "Yêu cầu đặt phòng hiện tại không thể tiếp tục thanh toán.",
+    "BuildingManagement:ReservationDepositBelowMinimum": "Khoản cọc đầu tiên chưa đạt mức tối thiểu để giữ phòng.",
+    "BuildingManagement:ReservationDepositExceedsRemaining": "Số tiền thanh toán vượt quá số tiền cọc còn lại.",
+    "BuildingManagement:ReservationDepositAlreadyFullyPaid": "Tiền cọc của yêu cầu đặt phòng đã được thanh toán đầy đủ.",
+    "BuildingManagement:ActiveRenewalHoldBlocksReservationDeposit": "Phòng đang được giữ quyền gia hạn cho khách hiện tại nên chưa thể nhận tiền cọc đặt phòng."
   }
 }

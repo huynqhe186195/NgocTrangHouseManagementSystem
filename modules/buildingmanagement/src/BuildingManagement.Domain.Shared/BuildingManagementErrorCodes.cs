@@ -230,4 +230,52 @@ public static class BuildingManagementErrorCodes
 
     public const string InvalidMinimumReservationDepositAmount =
         "BuildingManagement:InvalidMinimumReservationDepositAmount";
+
+    public const string PaymentNotFound =
+    "BuildingManagement:PaymentNotFound";
+
+    public const string InvalidPaymentNumber =
+        "BuildingManagement:InvalidPaymentNumber";
+
+    public const string PaymentNumberAlreadyExists =
+        "BuildingManagement:PaymentNumberAlreadyExists";
+
+    public const string InvalidPaymentAmount =
+        "BuildingManagement:InvalidPaymentAmount";
+
+    public const string InvalidPaymentMethod =
+        "BuildingManagement:InvalidPaymentMethod";
+
+    public const string InvalidPaymentChannel =
+        "BuildingManagement:InvalidPaymentChannel";
+
+    public const string InvalidPaymentMethodChannel =
+        "BuildingManagement:InvalidPaymentMethodChannel";
+
+    public const string PaymentCannotBeCompleted =
+        "BuildingManagement:PaymentCannotBeCompleted";
+
+    public const string PaymentCannotBeCancelled =
+        "BuildingManagement:PaymentCannotBeCancelled";
+
+    public const string TransactionReferenceRequired =
+        "BuildingManagement:TransactionReferenceRequired";
+
+    public const string TransactionReferenceAlreadyExists =
+        "BuildingManagement:TransactionReferenceAlreadyExists";
+
+    public const string RoomReservationNotPayable =
+        "BuildingManagement:RoomReservationNotPayable";
+
+    public const string ReservationDepositBelowMinimum =
+        "BuildingManagement:ReservationDepositBelowMinimum";
+
+    public const string ReservationDepositExceedsRemaining =
+        "BuildingManagement:ReservationDepositExceedsRemaining";
+
+    public const string ReservationDepositAlreadyFullyPaid =
+        "BuildingManagement:ReservationDepositAlreadyFullyPaid";
+
+    public const string ActiveRenewalHoldBlocksReservationDeposit =
+        "BuildingManagement:ActiveRenewalHoldBlocksReservationDeposit";
 } // Consolidate all of the module's error codes in one place.

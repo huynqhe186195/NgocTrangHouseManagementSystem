@@ -80,6 +80,22 @@
     "BuildingManagement:RoomReservationAlreadyExistsForTenant": "The tenant already has an active reservation for this room.",
     "BuildingManagement:RoomReservationCannotBeCancelled": "The current room reservation cannot be cancelled.",
     "BuildingManagement:InvalidReservationCancellationReason": "The reservation cancellation reason is invalid.",
-    "BuildingManagement:InvalidMinimumReservationDepositAmount": "The minimum reservation deposit must be greater than zero and cannot exceed the required deposit amount."
+    "BuildingManagement:InvalidMinimumReservationDepositAmount": "The minimum reservation deposit must be greater than zero and cannot exceed the required deposit amount.",
+    "BuildingManagement:PaymentNotFound": "The payment was not found.",
+    "BuildingManagement:InvalidPaymentNumber": "The payment number is invalid.",
+    "BuildingManagement:PaymentNumberAlreadyExists": "The payment number already exists.",
+    "BuildingManagement:InvalidPaymentAmount": "The payment amount must be greater than zero.",
+    "BuildingManagement:InvalidPaymentMethod": "The payment method is invalid.",
+    "BuildingManagement:InvalidPaymentChannel": "The payment channel is invalid.",
+    "BuildingManagement:InvalidPaymentMethodChannel": "The payment method and channel combination is invalid.",
+    "BuildingManagement:PaymentCannotBeCompleted": "The current payment cannot be completed.",
+    "BuildingManagement:PaymentCannotBeCancelled": "The current payment cannot be cancelled.",
+    "BuildingManagement:TransactionReferenceRequired": "A transaction reference is required for this payment method.",
+    "BuildingManagement:TransactionReferenceAlreadyExists": "The transaction reference has already been used.",
+    "BuildingManagement:RoomReservationNotPayable": "The current room reservation cannot accept payments.",
+    "BuildingManagement:ReservationDepositBelowMinimum": "The first reservation deposit is below the minimum amount required to hold the room.",
+    "BuildingManagement:ReservationDepositExceedsRemaining": "The payment exceeds the remaining reservation deposit.",
+    "BuildingManagement:ReservationDepositAlreadyFullyPaid": "The reservation deposit has already been fully paid.",
+    "BuildingManagement:ActiveRenewalHoldBlocksReservationDeposit": "The room currently has an active renewal hold and cannot accept a reservation deposit."
   }
 }

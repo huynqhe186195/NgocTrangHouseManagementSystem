@@ -307,7 +307,85 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule // syst
     {
         Configure<AbpExceptionHttpStatusCodeOptions>(options =>
         {
+            options.Map(
+    BuildingManagementErrorCodes.PaymentNumberAlreadyExists,
+    HttpStatusCode.Conflict
+);
 
+            options.Map(
+                BuildingManagementErrorCodes.PaymentCannotBeCompleted,
+                HttpStatusCode.Conflict
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.PaymentCannotBeCancelled,
+                HttpStatusCode.Conflict
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.TransactionReferenceAlreadyExists,
+                HttpStatusCode.Conflict
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.RoomReservationNotPayable,
+                HttpStatusCode.Conflict
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.ReservationDepositExceedsRemaining,
+                HttpStatusCode.Conflict
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.ReservationDepositAlreadyFullyPaid,
+                HttpStatusCode.Conflict
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.ActiveRenewalHoldBlocksReservationDeposit,
+                HttpStatusCode.Conflict
+            );
+
+            options.Map(
+    BuildingManagementErrorCodes.InvalidPaymentNumber,
+    HttpStatusCode.BadRequest
+);
+
+            options.Map(
+                BuildingManagementErrorCodes.InvalidPaymentAmount,
+                HttpStatusCode.BadRequest
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.InvalidPaymentMethod,
+                HttpStatusCode.BadRequest
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.InvalidPaymentChannel,
+                HttpStatusCode.BadRequest
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.InvalidPaymentMethodChannel,
+                HttpStatusCode.BadRequest
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.TransactionReferenceRequired,
+                HttpStatusCode.BadRequest
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.ReservationDepositBelowMinimum,
+                HttpStatusCode.BadRequest
+            );
+
+            options.Map(
+    BuildingManagementErrorCodes.PaymentNotFound,
+    HttpStatusCode.NotFound
+);
 
             options.Map(
     BuildingManagementErrorCodes

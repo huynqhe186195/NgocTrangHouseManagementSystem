@@ -308,6 +308,26 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule // syst
         Configure<AbpExceptionHttpStatusCodeOptions>(options =>
         {
             options.Map(
+    BuildingManagementErrorCodes.InvalidTenantPhoneNumber,
+    HttpStatusCode.BadRequest
+);
+
+            options.Map(
+                BuildingManagementErrorCodes.InvalidTenantCitizenId,
+                HttpStatusCode.BadRequest
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.TenantIdentityMustBeCitizenId,
+                HttpStatusCode.BadRequest
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.TenantPhoneNumberAlreadyExists,
+                HttpStatusCode.Conflict
+            );
+
+            options.Map(
     BuildingManagementErrorCodes.PaymentNumberAlreadyExists,
     HttpStatusCode.Conflict
 );

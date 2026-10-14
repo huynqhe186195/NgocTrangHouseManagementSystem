@@ -7,8 +7,6 @@ using Volo.Abp;
 using Volo.Abp.Application.Services;
 using Volo.Abp.Data;
 using Volo.Abp.Domain.Repositories;
-using BuildingManagement.Contracts;
-using System.Linq;
 
 namespace BuildingManagement.Tenants
 {
@@ -16,37 +14,55 @@ namespace BuildingManagement.Tenants
         : ApplicationService,
           ITenantAppService
     {
-        private readonly IRepository<Tenant, Guid> _tenantRepository;
-        private readonly IDataFilter<ISoftDelete> _softDeleteFilter;
-        private readonly IRepository<Contract, Guid> _contractRepository;
-        private readonly IRepository<ContractTenant, Guid> _contractTenantRepository;
+        private readonly IRepository<Tenant, Guid>
+            _tenantRepository;
+
+        private readonly IDataFilter<ISoftDelete>
+            _softDeleteFilter;
+
+        private readonly IRepository<Contract, Guid>
+            _contractRepository;
+
+        private readonly IRepository<ContractTenant, Guid>
+            _contractTenantRepository;
 
         public TenantAppService(
-    IRepository<Tenant, Guid> tenantRepository,
-    IDataFilter<ISoftDelete> softDeleteFilter,
-    IRepository<Contract, Guid> contractRepository,
-IRepository<ContractTenant, Guid> contractTenantRepository)
+            IRepository<Tenant, Guid> tenantRepository,
+            IDataFilter<ISoftDelete> softDeleteFilter,
+            IRepository<Contract, Guid> contractRepository,
+            IRepository<ContractTenant, Guid> contractTenantRepository)
         {
-            _tenantRepository = tenantRepository;
-            _softDeleteFilter = softDeleteFilter;
-            _contractRepository = contractRepository;
-            _contractTenantRepository = contractTenantRepository;
+            _tenantRepository =
+                tenantRepository;
+
+            _softDeleteFilter =
+                softDeleteFilter;
+
+            _contractRepository =
+                contractRepository;
+
+            _contractTenantRepository =
+                contractTenantRepository;
         }
 
-        public async Task<TenantDto> GetAsync(Guid id)
+        public async Task<TenantDto> GetAsync(
+            Guid id)
         {
             var tenant =
                 await GetExistingTenantAsync(id);
 
-            return ObjectMapper.Map<Tenant, TenantDto>(
-                tenant
-            );
+            return ObjectMapper.Map<
+                Tenant,
+                TenantDto
+            >(tenant);
         }
 
-        public async Task<List<TenantDto>> GetListAsync()
+        public async Task<List<TenantDto>>
+            GetListAsync()
         {
             var tenants =
-                await _tenantRepository.GetListAsync();
+                await _tenantRepository
+                    .GetListAsync();
 
             return ObjectMapper.Map<
                 List<Tenant>,
@@ -57,44 +73,65 @@ IRepository<ContractTenant, Guid> contractTenantRepository)
         public async Task<TenantDto> CreateAsync(
             CreateTenantDto input)
         {
+            var phoneNumber =
+                NormalizePhoneNumber(
+                    input.PhoneNumber
+                );
+
             var identityNumber =
-                NormalizeIdentityNumber(
+                NormalizeCitizenId(
                     input.IdentityNumber
                 );
 
-            ValidateIdentityInformation(
-                input.IdentityType,
-                identityNumber
+            ValidateCitizenIdentityType(
+                input.IdentityType
+            );
+
+            await EnsurePhoneNumberUniqueAsync(
+                phoneNumber
             );
 
             await EnsureIdentityUniqueAsync(
-                input.IdentityType,
+                IdentityType.CitizenId,
                 identityNumber
             );
 
-            var tenant = new Tenant(
-                GuidGenerator.Create(),
-                input.FullName.Trim(),
-                NormalizeOptional(input.PhoneNumber),
-                NormalizeOptional(input.Email),
-                input.DateOfBirth,
-                input.Gender,
-                input.IdentityType,
-                identityNumber,
-                NormalizeOptional(input.PermanentAddress),
-                NormalizeOptional(input.EmergencyContactName),
-                NormalizeOptional(input.EmergencyContactPhone),
-                NormalizeOptional(input.Notes)
-            );
+            var tenant =
+                new Tenant(
+                    GuidGenerator.Create(),
+                    input.FullName.Trim(),
+                    phoneNumber,
+                    NormalizeOptional(
+                        input.Email
+                    ),
+                    input.DateOfBirth,
+                    input.Gender,
+                    IdentityType.CitizenId,
+                    identityNumber,
+                    NormalizeOptional(
+                        input.PermanentAddress
+                    ),
+                    NormalizeOptional(
+                        input.EmergencyContactName
+                    ),
+                    NormalizeOptional(
+                        input.EmergencyContactPhone
+                    ),
+                    NormalizeOptional(
+                        input.Notes
+                    )
+                );
 
-            await _tenantRepository.InsertAsync(
-                tenant,
-                autoSave: true
-            );
+            await _tenantRepository
+                .InsertAsync(
+                    tenant,
+                    autoSave: true
+                );
 
-            return ObjectMapper.Map<Tenant, TenantDto>(
-                tenant
-            );
+            return ObjectMapper.Map<
+                Tenant,
+                TenantDto
+            >(tenant);
         }
 
         public async Task<TenantDto> UpdateAsync(
@@ -104,71 +141,99 @@ IRepository<ContractTenant, Guid> contractTenantRepository)
             var tenant =
                 await GetExistingTenantAsync(id);
 
+            var phoneNumber =
+                NormalizePhoneNumber(
+                    input.PhoneNumber
+                );
+
             var identityNumber =
-                NormalizeIdentityNumber(
+                NormalizeCitizenId(
                     input.IdentityNumber
                 );
 
-            ValidateIdentityInformation(
-                input.IdentityType,
-                identityNumber
+            ValidateCitizenIdentityType(
+                input.IdentityType
+            );
+
+            await EnsurePhoneNumberUniqueAsync(
+                phoneNumber,
+                tenant.Id
             );
 
             await EnsureIdentityUniqueAsync(
-                input.IdentityType,
+                IdentityType.CitizenId,
                 identityNumber,
                 tenant.Id
             );
 
             tenant.Update(
                 input.FullName.Trim(),
-                NormalizeOptional(input.PhoneNumber),
-                NormalizeOptional(input.Email),
+                phoneNumber,
+                NormalizeOptional(
+                    input.Email
+                ),
                 input.DateOfBirth,
                 input.Gender,
-                input.IdentityType,
+                IdentityType.CitizenId,
                 identityNumber,
-                NormalizeOptional(input.PermanentAddress),
-                NormalizeOptional(input.EmergencyContactName),
-                NormalizeOptional(input.EmergencyContactPhone),
-                NormalizeOptional(input.Notes)
+                NormalizeOptional(
+                    input.PermanentAddress
+                ),
+                NormalizeOptional(
+                    input.EmergencyContactName
+                ),
+                NormalizeOptional(
+                    input.EmergencyContactPhone
+                ),
+                NormalizeOptional(
+                    input.Notes
+                )
             );
 
-            await _tenantRepository.UpdateAsync(
-                tenant,
-                autoSave: true
-            );
+            await _tenantRepository
+                .UpdateAsync(
+                    tenant,
+                    autoSave: true
+                );
 
-            return ObjectMapper.Map<Tenant, TenantDto>(
-                tenant
-            );
+            return ObjectMapper.Map<
+                Tenant,
+                TenantDto
+            >(tenant);
         }
 
-        public async Task DeleteAsync(Guid id)
+        public async Task DeleteAsync(
+            Guid id)
         {
             var tenant =
                 await GetExistingTenantAsync(id);
 
             var contractTenants =
-                await _contractTenantRepository.GetListAsync(
-                    x => x.TenantId == id
-                );
+                await _contractTenantRepository
+                    .GetListAsync(
+                        x => x.TenantId == id
+                    );
 
             if (contractTenants.Count > 0)
             {
                 var contractIds =
                     contractTenants
-                        .Select(x => x.ContractId)
+                        .Select(
+                            x => x.ContractId
+                        )
                         .ToList();
 
                 var hasActiveContract =
-                    await _contractRepository.AnyAsync(
-                        x =>
-                            contractIds.Contains(x.Id)
-                            &&
-                            x.Status ==
-                                ContractStatus.Active
-                    );
+                    await _contractRepository
+                        .AnyAsync(
+                            x =>
+                                contractIds.Contains(
+                                    x.Id
+                                )
+                                &&
+                                x.Status ==
+                                    ContractStatus.Active
+                        );
 
                 if (hasActiveContract)
                 {
@@ -184,17 +249,20 @@ IRepository<ContractTenant, Guid> contractTenantRepository)
                 );
             }
 
-            await _tenantRepository.DeleteAsync(
-                tenant,
-                autoSave: true
-            );
+            await _tenantRepository
+                .DeleteAsync(
+                    tenant,
+                    autoSave: true
+                );
         }
 
-        private async Task<Tenant> GetExistingTenantAsync(
-            Guid id)
+        private async Task<Tenant>
+            GetExistingTenantAsync(
+                Guid id)
         {
             var tenant =
-                await _tenantRepository.FindAsync(id);
+                await _tenantRepository
+                    .FindAsync(id);
 
             if (tenant is null)
             {
@@ -207,81 +275,215 @@ IRepository<ContractTenant, Guid> contractTenantRepository)
             return tenant;
         }
 
-        private async Task EnsureIdentityUniqueAsync(
-    IdentityType? identityType,
-    string? identityNumber,
-    Guid? excludedTenantId = null)
+        private async Task
+            EnsurePhoneNumberUniqueAsync(
+                string phoneNumber,
+                Guid? excludedTenantId = null)
         {
-            if (!identityType.HasValue ||
-                string.IsNullOrWhiteSpace(identityNumber))
-            {
-                return;
-            }
-
             bool exists;
 
             using (_softDeleteFilter.Disable())
             {
-                exists = await _tenantRepository.AnyAsync(
-                    tenant =>
-                        tenant.IdentityType == identityType
-                        && tenant.IdentityNumber == identityNumber
-                        && (!excludedTenantId.HasValue
-                            || tenant.Id != excludedTenantId.Value)
-                );
+                exists =
+                    await _tenantRepository
+                        .AnyAsync(
+                            tenant =>
+                                tenant.PhoneNumber ==
+                                    phoneNumber
+                                &&
+                                (
+                                    !excludedTenantId
+                                        .HasValue
+                                    ||
+                                    tenant.Id !=
+                                        excludedTenantId
+                                            .Value
+                                )
+                        );
             }
 
             if (exists)
             {
                 throw new BusinessException(
-                        BuildingManagementErrorCodes
-                            .TenantIdentityAlreadyExists
-                    )
-                    .WithData(
-                        "IdentityNumber",
-                        identityNumber
-                    );
+                    BuildingManagementErrorCodes
+                        .TenantPhoneNumberAlreadyExists
+                )
+                .WithData(
+                    "PhoneNumber",
+                    phoneNumber
+                );
             }
         }
 
-        private static void ValidateIdentityInformation(
-            IdentityType? identityType,
-            string? identityNumber)
+        private async Task
+            EnsureIdentityUniqueAsync(
+                IdentityType identityType,
+                string identityNumber,
+                Guid? excludedTenantId = null)
         {
-            var hasIdentityType =
-                identityType.HasValue;
+            bool exists;
 
-            var hasIdentityNumber =
-                !string.IsNullOrWhiteSpace(
-                    identityNumber
-                );
+            using (_softDeleteFilter.Disable())
+            {
+                exists =
+                    await _tenantRepository
+                        .AnyAsync(
+                            tenant =>
+                                tenant.IdentityType ==
+                                    identityType
+                                &&
+                                tenant.IdentityNumber ==
+                                    identityNumber
+                                &&
+                                (
+                                    !excludedTenantId
+                                        .HasValue
+                                    ||
+                                    tenant.Id !=
+                                        excludedTenantId
+                                            .Value
+                                )
+                        );
+            }
 
-            if (hasIdentityType != hasIdentityNumber)
+            if (exists)
             {
                 throw new BusinessException(
                     BuildingManagementErrorCodes
-                        .InvalidTenantIdentityInformation
+                        .TenantIdentityAlreadyExists
+                )
+                .WithData(
+                    "IdentityNumber",
+                    identityNumber
                 );
             }
         }
 
-        private static string? NormalizeIdentityNumber(
-            string? value)
+        private static void
+            ValidateCitizenIdentityType(
+                IdentityType? identityType)
+        {
+            if (
+                !identityType.HasValue
+                ||
+                identityType.Value !=
+                    IdentityType.CitizenId
+            )
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes
+                        .TenantIdentityMustBeCitizenId
+                );
+            }
+        }
+
+        private static string
+            NormalizePhoneNumber(
+                string? value)
         {
             if (string.IsNullOrWhiteSpace(value))
             {
-                return null;
+                throw new BusinessException(
+                    BuildingManagementErrorCodes
+                        .InvalidTenantPhoneNumber
+                );
             }
 
-            return value
-                .Trim()
-                .ToUpperInvariant();
+            var normalized =
+                value
+                    .Trim()
+                    .Replace(
+                        " ",
+                        string.Empty
+                    )
+                    .Replace(
+                        "-",
+                        string.Empty
+                    )
+                    .Replace(
+                        ".",
+                        string.Empty
+                    );
+
+            if (
+                normalized.StartsWith(
+                    "+84"
+                )
+            )
+            {
+                normalized =
+                    "0" + normalized[3..];
+            }
+            else if (
+                normalized.StartsWith(
+                    "84"
+                )
+                &&
+                normalized.Length == 11
+            )
+            {
+                normalized =
+                    "0" + normalized[2..];
+            }
+
+            if (
+                normalized.Length != 10
+                ||
+                normalized[0] != '0'
+                ||
+                !normalized.All(
+                    char.IsDigit
+                )
+            )
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes
+                        .InvalidTenantPhoneNumber
+                );
+            }
+
+            return normalized;
         }
 
-        private static string? NormalizeOptional(
-            string? value)
+        private static string
+            NormalizeCitizenId(
+                string? value)
         {
-            return string.IsNullOrWhiteSpace(value)
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes
+                        .InvalidTenantCitizenId
+                );
+            }
+
+            var normalized =
+                value.Trim();
+
+            if (
+                normalized.Length != 12
+                ||
+                !normalized.All(
+                    char.IsDigit
+                )
+            )
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes
+                        .InvalidTenantCitizenId
+                );
+            }
+
+            return normalized;
+        }
+
+        private static string?
+            NormalizeOptional(
+                string? value)
+        {
+            return string.IsNullOrWhiteSpace(
+                value
+            )
                 ? null
                 : value.Trim();
         }

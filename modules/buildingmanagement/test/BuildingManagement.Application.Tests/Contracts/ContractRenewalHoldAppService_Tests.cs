@@ -10,6 +10,7 @@ using Volo.Abp.Domain.Repositories;
 using Volo.Abp.Modularity;
 using Volo.Abp.Timing;
 using Xunit;
+using System.Linq;
 
 namespace BuildingManagement.Contracts;
 
@@ -129,14 +130,39 @@ public abstract class ContractRenewalHoldAppService_Tests<TStartupModule>
 
     private async Task<TenantDto> CreateTenantAsync()
     {
-        return await _tenantAppService.CreateAsync(
-            new CreateTenantDto
-            {
-                FullName =
-                    $"Test Tenant {Guid.NewGuid():N}"
-            }
-        );
+        var input =
+            TenantTestData.Create();
+
+        try
+        {
+            return await _tenantAppService.CreateAsync(
+                input
+            );
+        }
+        catch (Volo.Abp.Validation.AbpValidationException ex)
+        {
+            var errors =
+                string.Join(
+                    " | ",
+                    ex.ValidationErrors.Select(
+                        x =>
+                            $"{string.Join(",", x.MemberNames)}: " +
+                            x.ErrorMessage
+                    )
+                );
+
+            throw new Exception(
+                $"Tenant validation failed. " +
+                $"FullName={input.FullName}, " +
+                $"PhoneNumber={input.PhoneNumber}, " +
+                $"IdentityType={input.IdentityType}, " +
+                $"IdentityNumber={input.IdentityNumber}. " +
+                $"ValidationErrors: {errors}",
+                ex
+            );
+        }
     }
+
 
     private async Task<ContractDto>
         CreateDraftContractAsync(

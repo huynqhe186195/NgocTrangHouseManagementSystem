@@ -278,4 +278,16 @@ public static class BuildingManagementErrorCodes
 
     public const string ActiveRenewalHoldBlocksReservationDeposit =
         "BuildingManagement:ActiveRenewalHoldBlocksReservationDeposit";
+
+    public const string InvalidTenantPhoneNumber =
+        "BuildingManagement:InvalidTenantPhoneNumber";
+
+    public const string TenantPhoneNumberAlreadyExists =
+        "BuildingManagement:TenantPhoneNumberAlreadyExists";
+
+    public const string InvalidTenantCitizenId =
+        "BuildingManagement:InvalidTenantCitizenId";
+
+    public const string TenantIdentityMustBeCitizenId =
+        "BuildingManagement:TenantIdentityMustBeCitizenId";
 } // Consolidate all of the module's error codes in one place.

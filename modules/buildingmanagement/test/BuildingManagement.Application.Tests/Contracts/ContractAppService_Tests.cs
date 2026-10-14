@@ -109,14 +109,10 @@ public abstract class ContractAppService_Tests<TStartupModule>
             .ActivateAsync(contract.Id);
     }
 
-    private async Task<TenantDto> CreateTenantAsync()
+    private Task<TenantDto> CreateTenantAsync()
     {
-        return await _tenantAppService.CreateAsync(
-            new CreateTenantDto
-            {
-                FullName =
-                    $"Test Tenant {Guid.NewGuid():N}"
-            }
+        return _tenantAppService.CreateAsync(
+            TenantTestData.Create()
         );
     }
 

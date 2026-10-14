@@ -96,6 +96,10 @@
     "BuildingManagement:ReservationDepositBelowMinimum": "Khoản cọc đầu tiên chưa đạt mức tối thiểu để giữ phòng.",
     "BuildingManagement:ReservationDepositExceedsRemaining": "Số tiền thanh toán vượt quá số tiền cọc còn lại.",
     "BuildingManagement:ReservationDepositAlreadyFullyPaid": "Tiền cọc của yêu cầu đặt phòng đã được thanh toán đầy đủ.",
-    "BuildingManagement:ActiveRenewalHoldBlocksReservationDeposit": "Phòng đang được giữ quyền gia hạn cho khách hiện tại nên chưa thể nhận tiền cọc đặt phòng."
+    "BuildingManagement:ActiveRenewalHoldBlocksReservationDeposit": "Phòng đang được giữ quyền gia hạn cho khách hiện tại nên chưa thể nhận tiền cọc đặt phòng.",
+    "BuildingManagement:InvalidTenantPhoneNumber": "Số điện thoại người thuê không hợp lệ.",
+    "BuildingManagement:TenantPhoneNumberAlreadyExists": "Số điện thoại này đã được sử dụng bởi một người thuê khác.",
+    "BuildingManagement:InvalidTenantCitizenId": "Số căn cước công dân không hợp lệ.",
+    "BuildingManagement:TenantIdentityMustBeCitizenId": "Người thuê phải sử dụng căn cước công dân để xác minh danh tính."
   }
 }

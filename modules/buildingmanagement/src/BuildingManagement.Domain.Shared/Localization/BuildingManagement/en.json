@@ -96,6 +96,10 @@
     "BuildingManagement:ReservationDepositBelowMinimum": "The first reservation deposit is below the minimum amount required to hold the room.",
     "BuildingManagement:ReservationDepositExceedsRemaining": "The payment exceeds the remaining reservation deposit.",
     "BuildingManagement:ReservationDepositAlreadyFullyPaid": "The reservation deposit has already been fully paid.",
-    "BuildingManagement:ActiveRenewalHoldBlocksReservationDeposit": "The room currently has an active renewal hold and cannot accept a reservation deposit."
+    "BuildingManagement:ActiveRenewalHoldBlocksReservationDeposit": "The room currently has an active renewal hold and cannot accept a reservation deposit.",
+    "BuildingManagement:InvalidTenantPhoneNumber": "The tenant phone number is invalid.",
+    "BuildingManagement:TenantPhoneNumberAlreadyExists": "The phone number is already used by another tenant.",
+    "BuildingManagement:InvalidTenantCitizenId": "The citizen ID number is invalid.",
+    "BuildingManagement:TenantIdentityMustBeCitizenId": "A tenant must use a citizen ID for identity verification."
   }
 }

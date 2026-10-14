@@ -758,10 +758,11 @@ namespace BuildingManagement.Migrations
                         .HasColumnType("integer");
 
                     b.Property<string>("IdentityNumber")
+                        .IsRequired()
                         .HasMaxLength(50)
                         .HasColumnType("character varying(50)");
 
-                    b.Property<int?>("IdentityType")
+                    b.Property<int>("IdentityType")
                         .HasColumnType("integer");
 
                     b.Property<bool>("IsDeleted")
@@ -787,10 +788,14 @@ namespace BuildingManagement.Migrations
                         .HasColumnType("character varying(256)");
 
                     b.Property<string>("PhoneNumber")
+                        .IsRequired()
                         .HasMaxLength(20)
                         .HasColumnType("character varying(20)");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("PhoneNumber")
+                        .IsUnique();
 
                     b.HasIndex("IdentityType", "IdentityNumber")
                         .IsUnique();

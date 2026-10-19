@@ -15,6 +15,10 @@ namespace BuildingManagement.Contracts
 
         public DateTime? EndDate { get; set; }
 
+        public DateTime? ActualEndedAt { get; set; }
+
+        public ContractEndReason? EndReason { get; set; }
+
         public decimal MonthlyRent { get; set; }
 
         public decimal DepositAmount { get; set; }

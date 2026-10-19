@@ -116,6 +116,139 @@ public abstract class ContractAppService_Tests<TStartupModule>
         );
     }
 
+    private async Task<ContractDto>
+    CreateActiveContractWithEndDateAsync(
+        DateTime? endDate)
+    {
+        var roomId = await CreateRoomAsync();
+
+        var contract =
+            await _contractAppService.CreateAsync(
+                new CreateContractDto
+                {
+                    ContractNumber = NewContractNumber(),
+                    RoomId = roomId,
+                    StartDate = _clock.Now.Date.AddMonths(-1),
+                    EndDate = endDate?.Date,
+                    MonthlyRent = 3_000_000,
+                    DepositAmount = 3_000_000
+                }
+            );
+
+        await AddPrimaryTenantAsync(contract.Id);
+
+        return await _contractAppService
+            .ActivateAsync(contract.Id);
+    }
+
+    [Fact]
+    public async Task Should_End_As_EarlyTermination_When_Ending_Before_EndDate()
+    {
+        var originalEndDate =
+            _clock.Now.Date.AddDays(30);
+
+        var contract =
+            await CreateActiveContractWithEndDateAsync(
+                originalEndDate
+            );
+
+        var result =
+            await _contractAppService.EndAsync(
+                contract.Id
+            );
+
+        result.Status.ShouldBe(
+            ContractStatus.Ended
+        );
+
+        result.EndReason.ShouldBe(
+            ContractEndReason.EarlyTermination
+        );
+
+        result.ActualEndedAt.ShouldNotBeNull();
+
+        result.EndDate.ShouldBe(
+            originalEndDate
+        );
+    }
+
+    [Fact]
+    public async Task Should_End_As_Normal_When_Ending_On_EndDate()
+    {
+        var endDate =
+            _clock.Now.Date;
+
+        var contract =
+            await CreateActiveContractWithEndDateAsync(
+                endDate
+            );
+
+        var result =
+            await _contractAppService.EndAsync(
+                contract.Id
+            );
+
+        result.Status.ShouldBe(
+            ContractStatus.Ended
+        );
+
+        result.EndReason.ShouldBe(
+            ContractEndReason.Normal
+        );
+
+        result.ActualEndedAt.ShouldNotBeNull();
+
+        result.EndDate.ShouldBe(
+            endDate
+        );
+    }
+
+    [Fact]
+    public async Task Should_End_As_Normal_When_Contract_Has_No_EndDate()
+    {
+        var contract =
+            await CreateActiveContractWithEndDateAsync(
+                null
+            );
+
+        var result =
+            await _contractAppService.EndAsync(
+                contract.Id
+            );
+
+        result.Status.ShouldBe(
+            ContractStatus.Ended
+        );
+
+        result.EndReason.ShouldBe(
+            ContractEndReason.Normal
+        );
+
+        result.ActualEndedAt.ShouldNotBeNull();
+
+        result.EndDate.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task Should_Throw_When_Ending_Non_Active_Contract()
+    {
+        var contract =
+            await CreateDraftContractAsync();
+
+        var exception =
+            await Assert.ThrowsAsync<BusinessException>(
+                () =>
+                    _contractAppService.EndAsync(
+                        contract.Id
+                    )
+            );
+
+        exception.Code.ShouldBe(
+            BuildingManagementErrorCodes
+                .ContractCannotBeEnded
+        );
+    }
+
     private async Task<Guid> CreateRoomAsync()
     {
         var buildingId = Guid.NewGuid();

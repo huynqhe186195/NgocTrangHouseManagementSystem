@@ -3,51 +3,89 @@ using Volo.Abp.Domain.Entities.Auditing;
 
 namespace BuildingManagement.Contracts
 {
-    public class Contract : FullAuditedAggregateRoot<Guid>
+    public class Contract
+        : FullAuditedAggregateRoot<Guid>
     {
         public string ContractNumber { get; private set; } = default!;
 
         public Guid RoomId { get; private set; }
 
-        public Guid? RenewedFromContractId { get; private set; }
+        public Guid? RenewedFromContractId
+        {
+            get;
+            private set;
+        }
 
         public DateTime StartDate { get; private set; }
 
         public DateTime? EndDate { get; private set; }
 
-        public decimal MonthlyRent { get; private set; }
+        public DateTime? ActualEndedAt
+        {
+            get;
+            private set;
+        }
 
-        public decimal DepositAmount { get; private set; }
+        public ContractEndReason? EndReason
+        {
+            get;
+            private set;
+        }
 
-        public ContractStatus Status { get; private set; }
+        public decimal MonthlyRent
+        {
+            get;
+            private set;
+        }
 
-        public string? Notes { get; private set; }
+        public decimal DepositAmount
+        {
+            get;
+            private set;
+        }
+
+        public ContractStatus Status
+        {
+            get;
+            private set;
+        }
+
+        public string? Notes
+        {
+            get;
+            private set;
+        }
 
         protected Contract()
         {
         }
 
         public Contract(
-    Guid id,
-    string contractNumber,
-    Guid roomId,
-    DateTime startDate,
-    DateTime? endDate,
-    decimal monthlyRent,
-    decimal depositAmount,
-    string? notes = null,
-    Guid? renewedFromContractId = null
-) : base(id)
+            Guid id,
+            string contractNumber,
+            Guid roomId,
+            DateTime startDate,
+            DateTime? endDate,
+            decimal monthlyRent,
+            decimal depositAmount,
+            string? notes = null,
+            Guid? renewedFromContractId = null
+        ) : base(id)
         {
             ContractNumber = contractNumber;
             RoomId = roomId;
             StartDate = startDate;
             EndDate = endDate;
+
             MonthlyRent = monthlyRent;
             DepositAmount = depositAmount;
+
             Status = ContractStatus.Draft;
+
             Notes = notes;
-            RenewedFromContractId = renewedFromContractId;
+
+            RenewedFromContractId =
+                renewedFromContractId;
         }
 
         public void Update(
@@ -63,8 +101,10 @@ namespace BuildingManagement.Contracts
             RoomId = roomId;
             StartDate = startDate;
             EndDate = endDate;
+
             MonthlyRent = monthlyRent;
             DepositAmount = depositAmount;
+
             Notes = notes;
         }
 
@@ -73,9 +113,14 @@ namespace BuildingManagement.Contracts
             Status = ContractStatus.Active;
         }
 
-        public void End()
+        public void End(
+            DateTime actualEndedAt,
+            ContractEndReason endReason)
         {
             Status = ContractStatus.Ended;
+
+            ActualEndedAt = actualEndedAt;
+            EndReason = endReason;
         }
 
         public void Cancel()

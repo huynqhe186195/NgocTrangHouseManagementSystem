@@ -32,6 +32,12 @@ namespace BuildingManagement.EntityFrameworkCore.EntityConfigurations
             builder.Property(x => x.EndDate)
                 .HasColumnType("date");
 
+            builder.Property(x => x.ActualEndedAt)
+                .IsRequired(false);
+
+            builder.Property(x => x.EndReason)
+                .IsRequired(false);
+
             builder.Property(x => x.MonthlyRent)
                 .HasPrecision(18, 0)
                 .IsRequired();
@@ -47,15 +53,15 @@ namespace BuildingManagement.EntityFrameworkCore.EntityConfigurations
                 .HasMaxLength(500);
 
             builder.Property(x => x.RenewedFromContractId)
-    .IsRequired(false);
+                .IsRequired(false);
 
             builder.HasIndex(x => x.RenewedFromContractId)
-    .IsUnique();
+                .IsUnique();
 
             builder.HasOne<Contract>()
-    .WithMany()
-    .HasForeignKey(x => x.RenewedFromContractId)
-    .OnDelete(DeleteBehavior.Restrict);
+                .WithMany()
+                .HasForeignKey(x => x.RenewedFromContractId)
+                .OnDelete(DeleteBehavior.Restrict);
 
             builder.HasIndex(x => x.ContractNumber)
                 .IsUnique();

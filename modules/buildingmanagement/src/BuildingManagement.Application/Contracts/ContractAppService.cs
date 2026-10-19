@@ -679,7 +679,15 @@ namespace BuildingManagement.Contracts
                 );
             }
 
-            contract.End();
+            var actualEndedAt = _clock.Now;
+
+            var endReason =contract.EndDate.HasValue &&
+                actualEndedAt.Date <
+                    contract.EndDate.Value.Date
+                    ? ContractEndReason.EarlyTermination
+                    : ContractEndReason.Normal;
+
+            contract.End(actualEndedAt, endReason);
 
             if (room.Status == RoomStatus.Occupied)
             {

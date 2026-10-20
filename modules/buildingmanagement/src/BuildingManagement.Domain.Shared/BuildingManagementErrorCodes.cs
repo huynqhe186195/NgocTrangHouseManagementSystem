@@ -313,4 +313,20 @@ public static class BuildingManagementErrorCodes
     public const string
         ReservationContractMismatch =
             "BuildingManagement:ReservationContractMismatch";
+
+    public const string
+    ReservationDepositCannotBeSettled =
+        "BuildingManagement:ReservationDepositCannotBeSettled";
+
+    public const string
+        ReservationDepositDispositionRequiresReview =
+            "BuildingManagement:ReservationDepositDispositionRequiresReview";
+
+    public const string
+        ReservationDepositAlreadyAllocated =
+            "BuildingManagement:ReservationDepositAlreadyAllocated";
+
+    public const string
+    InvalidReservationDepositPaymentAmount =
+        "BuildingManagement:InvalidReservationDepositPaymentAmount";
 } // Consolidate all of the module's error codes in one place.

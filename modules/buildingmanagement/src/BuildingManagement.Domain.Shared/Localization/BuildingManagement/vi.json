@@ -107,6 +107,10 @@
     "BuildingManagement:ContractDepositExceedsRemaining": "Số tiền cọc vượt quá số tiền còn phải đóng của hợp đồng.",
     "BuildingManagement:ContractDepositAlreadyFullyPaid": "Tiền cọc hợp đồng đã được đóng đủ.",
     "BuildingManagement:ReservationDepositCannotBeAllocated": "Tiền cọc giữ phòng không thể được chuyển sang cọc hợp đồng ở trạng thái hiện tại.",
-    "BuildingManagement:ReservationContractMismatch": "Thông tin đặt phòng không khớp với hợp đồng được chọn."
+    "BuildingManagement:ReservationContractMismatch": "Thông tin đặt phòng không khớp với hợp đồng được chọn.",
+    "BuildingManagement:ReservationDepositCannotBeSettled": "Tiền cọc giữ phòng không thể được xử lý ở trạng thái hiện tại.",
+    "BuildingManagement:ReservationDepositDispositionRequiresReview": "Số tiền cọc giữ phòng cần được kiểm tra thủ công trước khi xử lý.",
+    "BuildingManagement:ReservationDepositAlreadyAllocated": "Tiền cọc giữ phòng đã được chuyển sang cọc hợp đồng.",
+    "BuildingManagement:InvalidReservationDepositPaymentAmount": "Tiền cọc giữ phòng chỉ được thanh toán 500.000đ hoặc đúng số tiền còn thiếu để hoàn tất toàn bộ tiền cọc."
   }
 }

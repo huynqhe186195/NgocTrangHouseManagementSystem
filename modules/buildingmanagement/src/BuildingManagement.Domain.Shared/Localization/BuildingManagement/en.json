@@ -107,6 +107,10 @@
     "BuildingManagement:ContractDepositExceedsRemaining": "The contract deposit payment exceeds the remaining required deposit.",
     "BuildingManagement:ContractDepositAlreadyFullyPaid": "The contract deposit has already been fully paid.",
     "BuildingManagement:ReservationDepositCannotBeAllocated": "The reservation deposit cannot be allocated to a contract in its current state.",
-    "BuildingManagement:ReservationContractMismatch": "The reservation does not match the target contract."
+    "BuildingManagement:ReservationContractMismatch": "The reservation does not match the target contract.",
+    "BuildingManagement:ReservationDepositCannotBeSettled": "The reservation deposit cannot be settled in its current state.",
+    "BuildingManagement:ReservationDepositDispositionRequiresReview": "The reservation deposit amount requires manual review before it can be settled.",
+    "BuildingManagement:ReservationDepositAlreadyAllocated": "The reservation deposit has already been allocated to a contract.",
+    "BuildingManagement:InvalidReservationDepositPaymentAmount": "Reservation deposit payment must be either the standard holding deposit or the exact remaining amount required to complete the full deposit."
   }
 }

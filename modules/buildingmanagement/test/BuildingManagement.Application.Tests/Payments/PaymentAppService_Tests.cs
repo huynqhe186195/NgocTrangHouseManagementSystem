@@ -941,7 +941,7 @@ public abstract class PaymentAppService_Tests<TStartupModule>
         var second =
             await CreatePaymentAsync(
                 reservation.Id,
-                1_000_000
+                2_500_000
             );
 
         await CompletePaymentAsync(
@@ -962,15 +962,15 @@ public abstract class PaymentAppService_Tests<TStartupModule>
                 );
 
         result.AllocatedAmount.ShouldBe(
-            1_500_000
+            3_000_000
         );
 
         result.CoveredDeposit.ShouldBe(
-            1_500_000
+            3_000_000
         );
 
         result.RemainingDeposit.ShouldBe(
-            1_500_000
+            0
         );
 
         var settlements =
@@ -982,10 +982,10 @@ public abstract class PaymentAppService_Tests<TStartupModule>
         settlements.Count.ShouldBe(2);
 
         settlements.Sum(
-            x => x.Amount
-        ).ShouldBe(
-            1_500_000
-        );
+                x => x.Amount
+            ).ShouldBe(
+                3_000_000
+            );
     }
 
     // PAY32
@@ -1719,8 +1719,7 @@ public abstract class PaymentAppService_Tests<TStartupModule>
 
     // PAY07
     [Fact]
-    public async Task
-        Should_Not_Complete_First_Deposit_Below_Minimum()
+    public async Task Should_Not_Create_Invalid_First_Reservation_Deposit()
     {
         var roomId =
             await CreateRoomAsync();
@@ -1734,33 +1733,19 @@ public abstract class PaymentAppService_Tests<TStartupModule>
                 tenant.Id
             );
 
-        var payment =
-            await CreatePaymentAsync(
-                reservation.Id,
-                amount: 100_000
-            );
-
         var exception =
             await Assert.ThrowsAsync<
                 BusinessException>(
                 () =>
-                    CompletePaymentAsync(
-                        payment.Id
+                    CreatePaymentAsync(
+                        reservation.Id,
+                        amount: 100_000
                     )
             );
 
         exception.Code.ShouldBe(
             BuildingManagementErrorCodes
-                .ReservationDepositBelowMinimum
-        );
-
-        var paymentAfterFailure =
-            await _paymentAppService.GetAsync(
-                payment.Id
-            );
-
-        paymentAfterFailure.Status.ShouldBe(
-            PaymentStatus.Pending
+                .InvalidReservationDepositPaymentAmount
         );
 
         var reservationAfterFailure =
@@ -1862,7 +1847,7 @@ public abstract class PaymentAppService_Tests<TStartupModule>
     // PAY09
     [Fact]
     public async Task
-        Should_Allow_Subsequent_Deposit_Below_Minimum()
+        Should_Allow_Exact_Remaining_Deposit_After_Standard_Hold()
     {
         var roomId =
             await CreateRoomAsync();
@@ -1876,25 +1861,25 @@ public abstract class PaymentAppService_Tests<TStartupModule>
                 tenant.Id
             );
 
-        var firstPayment =
+        var first =
             await CreatePaymentAsync(
                 reservation.Id,
-                amount: 500_000
+                500_000
             );
 
         await CompletePaymentAsync(
-            firstPayment.Id
+            first.Id
         );
 
-        var secondPayment =
+        var second =
             await CreatePaymentAsync(
                 reservation.Id,
-                amount: 100_000
+                2_500_000
             );
 
         var completed =
             await CompletePaymentAsync(
-                secondPayment.Id
+                second.Id
             );
 
         completed.Status.ShouldBe(
@@ -1902,11 +1887,7 @@ public abstract class PaymentAppService_Tests<TStartupModule>
         );
 
         completed.Amount.ShouldBe(
-            100_000
-        );
-
-        completed.DepositDisposition.ShouldBe(
-            DepositDisposition.Unapplied
+            2_500_000
         );
     }
 
@@ -1956,8 +1937,7 @@ public abstract class PaymentAppService_Tests<TStartupModule>
 
     // PAY11
     [Fact]
-    public async Task
-        Should_Recheck_Remaining_Amount_When_Completing_Pending_Payment()
+    public async Task Should_Recheck_Remaining_Amount_When_Completing_Pending_Payment()
     {
         var roomId =
             await CreateRoomAsync();
@@ -1971,22 +1951,37 @@ public abstract class PaymentAppService_Tests<TStartupModule>
                 tenant.Id
             );
 
+        /*
+         * Khi cả hai được Create:
+         * totalPaid vẫn = 0.
+         *
+         * 500k và full 3m đều là
+         * Payment Pending hợp lệ.
+         */
         var firstPayment =
             await CreatePaymentAsync(
                 reservation.Id,
-                amount: 2_000_000
+                amount: 500_000
             );
 
         var secondPayment =
             await CreatePaymentAsync(
                 reservation.Id,
-                amount: 2_000_000
+                amount: 3_000_000
             );
 
         await CompletePaymentAsync(
             firstPayment.Id
         );
 
+        /*
+         * Sau khi first hoàn tất:
+         *
+         * Paid      = 500k
+         * Remaining = 2.5m
+         *
+         * second = 3m không còn hợp lệ.
+         */
         var exception =
             await Assert.ThrowsAsync<
                 BusinessException>(
@@ -2439,6 +2434,631 @@ public abstract class PaymentAppService_Tests<TStartupModule>
         exception.Code.ShouldBe(
             BuildingManagementErrorCodes
                 .PaymentNotFound
+        );
+    }
+
+    private async Task<List<DepositSettlement>> GetReservationDispositionSettlementsAsync(
+        Guid reservationId)
+    {
+        var result =
+            new List<DepositSettlement>();
+
+        await WithUnitOfWorkAsync(
+            async () =>
+            {
+                result =
+                    await _depositSettlementRepository
+                        .GetListAsync(
+                            x =>
+                                x.SourceRoomReservationId ==
+                                    reservationId
+                                &&
+                                (
+                                    x.Type ==
+                                        DepositSettlementType
+                                            .Refund
+                                    ||
+                                    x.Type ==
+                                        DepositSettlementType
+                                            .Forfeit
+                                )
+                        );
+            }
+        );
+
+        return result;
+    }
+
+    // PAY37
+    [Fact]
+    public async Task
+        Should_Forfeit_Standard_Reservation_Hold_When_Cancelled()
+    {
+        var roomId =
+            await CreateRoomAsync();
+
+        var tenant =
+            await CreateTenantAsync();
+
+        var reservation =
+            await CreateReservationAsync(
+                roomId,
+                tenant.Id
+            );
+
+        var payment =
+            await CreatePaymentAsync(
+                reservation.Id,
+                500_000
+            );
+
+        await CompletePaymentAsync(
+            payment.Id
+        );
+
+        await _roomReservationAppService
+            .CancelAsync(
+                reservation.Id,
+                new CancelRoomReservationDto
+                {
+                    Reason =
+                        ReservationCancellationReason
+                            .CustomerCancelled,
+
+                    Notes =
+                        "Customer cancelled after holding room"
+                }
+            );
+
+        var result =
+            await _paymentAppService
+                .SettleCancelledReservationDepositAsync(
+                    reservation.Id
+                );
+
+        result.DispositionType.ShouldBe(
+            DepositSettlementType.Forfeit
+        );
+
+        result.TotalPaid.ShouldBe(
+            500_000
+        );
+
+        result.SettledNow.ShouldBe(
+            500_000
+        );
+
+        result.TotalSettled.ShouldBe(
+            500_000
+        );
+
+        var settlements =
+            await GetReservationDispositionSettlementsAsync(
+                reservation.Id
+            );
+
+        settlements.Count.ShouldBe(1);
+
+        settlements[0].Type.ShouldBe(
+            DepositSettlementType.Forfeit
+        );
+
+        settlements[0].Amount.ShouldBe(
+            500_000
+        );
+
+        settlements[0].PaymentId.ShouldBe(
+            payment.Id
+        );
+
+        settlements[0].Status.ShouldBe(
+            DepositSettlementStatus.Completed
+        );
+    }
+
+    // PAY38
+    [Fact]
+    public async Task
+        Should_Refund_Full_Reservation_Deposit_When_Cancelled()
+    {
+        var roomId =
+            await CreateRoomAsync();
+
+        var tenant =
+            await CreateTenantAsync();
+
+        var reservation =
+            await CreateReservationAsync(
+                roomId,
+                tenant.Id
+            );
+
+        var payment =
+            await CreatePaymentAsync(
+                reservation.Id,
+                3_000_000
+            );
+
+        await CompletePaymentAsync(
+            payment.Id
+        );
+
+        await _roomReservationAppService
+            .CancelAsync(
+                reservation.Id,
+                new CancelRoomReservationDto
+                {
+                    Reason =
+                        ReservationCancellationReason
+                            .CustomerCancelled
+                }
+            );
+
+        var result =
+            await _paymentAppService
+                .SettleCancelledReservationDepositAsync(
+                    reservation.Id
+                );
+
+        result.DispositionType.ShouldBe(
+            DepositSettlementType.Refund
+        );
+
+        result.TotalPaid.ShouldBe(
+            3_000_000
+        );
+
+        result.SettledNow.ShouldBe(
+            3_000_000
+        );
+
+        result.TotalSettled.ShouldBe(
+            3_000_000
+        );
+
+        var settlements =
+            await GetReservationDispositionSettlementsAsync(
+                reservation.Id
+            );
+
+        settlements.Count.ShouldBe(1);
+
+        settlements[0].Type.ShouldBe(
+            DepositSettlementType.Refund
+        );
+
+        settlements[0].Amount.ShouldBe(
+            3_000_000
+        );
+    }
+
+    // PAY39
+    [Fact]
+    public async Task
+        Should_Not_Duplicate_Reservation_Deposit_Settlement()
+    {
+        var roomId =
+            await CreateRoomAsync();
+
+        var tenant =
+            await CreateTenantAsync();
+
+        var reservation =
+            await CreateReservationAsync(
+                roomId,
+                tenant.Id
+            );
+
+        var payment =
+            await CreatePaymentAsync(
+                reservation.Id,
+                500_000
+            );
+
+        await CompletePaymentAsync(
+            payment.Id
+        );
+
+        await _roomReservationAppService
+            .CancelAsync(
+                reservation.Id,
+                new CancelRoomReservationDto
+                {
+                    Reason =
+                        ReservationCancellationReason
+                            .CustomerCancelled
+                }
+            );
+
+        await _paymentAppService
+            .SettleCancelledReservationDepositAsync(
+                reservation.Id
+            );
+
+        var second =
+            await _paymentAppService
+                .SettleCancelledReservationDepositAsync(
+                    reservation.Id
+                );
+
+        second.DispositionType.ShouldBe(
+            DepositSettlementType.Forfeit
+        );
+
+        second.SettledNow.ShouldBe(
+            0
+        );
+
+        second.TotalSettled.ShouldBe(
+            500_000
+        );
+
+        var settlements =
+            await GetReservationDispositionSettlementsAsync(
+                reservation.Id
+            );
+
+        settlements.Count.ShouldBe(1);
+
+        settlements.Sum(
+            x => x.Amount
+        ).ShouldBe(
+            500_000
+        );
+    }
+
+    // PAY40
+    [Fact]
+    public async Task
+        Should_Not_Create_Intermediate_Reservation_Deposit()
+    {
+        var roomId =
+            await CreateRoomAsync();
+
+        var tenant =
+            await CreateTenantAsync();
+
+        var reservation =
+            await CreateReservationAsync(
+                roomId,
+                tenant.Id
+            );
+
+        var exception =
+            await Assert.ThrowsAsync<
+                BusinessException>(
+                () =>
+                    CreatePaymentAsync(
+                        reservation.Id,
+                        1_500_000
+                    )
+            );
+
+        exception.Code.ShouldBe(
+            BuildingManagementErrorCodes
+                .InvalidReservationDepositPaymentAmount
+        );
+    }
+
+    // PAY41
+    [Fact]
+    public async Task
+        Should_Not_Settle_Reservation_Deposit_Before_Cancellation()
+    {
+        var roomId =
+            await CreateRoomAsync();
+
+        var tenant =
+            await CreateTenantAsync();
+
+        var reservation =
+            await CreateReservationAsync(
+                roomId,
+                tenant.Id
+            );
+
+        var payment =
+            await CreatePaymentAsync(
+                reservation.Id,
+                500_000
+            );
+
+        await CompletePaymentAsync(
+            payment.Id
+        );
+
+        var exception =
+            await Assert.ThrowsAsync<
+                BusinessException>(
+                () =>
+                    _paymentAppService
+                        .SettleCancelledReservationDepositAsync(
+                            reservation.Id
+                        )
+            );
+
+        exception.Code.ShouldBe(
+            BuildingManagementErrorCodes
+                .ReservationDepositCannotBeSettled
+        );
+    }
+
+    // PAY42
+    [Fact]
+    public async Task
+        Should_Not_Settle_When_No_Completed_Reservation_Payment()
+    {
+        var roomId =
+            await CreateRoomAsync();
+
+        var tenant =
+            await CreateTenantAsync();
+
+        var reservation =
+            await CreateReservationAsync(
+                roomId,
+                tenant.Id
+            );
+
+        await _roomReservationAppService
+            .CancelAsync(
+                reservation.Id,
+                new CancelRoomReservationDto
+                {
+                    Reason =
+                        ReservationCancellationReason
+                            .CustomerCancelled
+                }
+            );
+
+        var exception =
+            await Assert.ThrowsAsync<
+                BusinessException>(
+                () =>
+                    _paymentAppService
+                        .SettleCancelledReservationDepositAsync(
+                            reservation.Id
+                        )
+            );
+
+        exception.Code.ShouldBe(
+            BuildingManagementErrorCodes
+                .ReservationDepositCannotBeSettled
+        );
+    }
+
+    // PAY43
+    [Fact]
+    public async Task
+        Should_Refund_Multiple_Reservation_Payments_When_Total_Is_Full_Deposit()
+    {
+        var roomId =
+            await CreateRoomAsync();
+
+        var tenant =
+            await CreateTenantAsync();
+
+        var reservation =
+            await CreateReservationAsync(
+                roomId,
+                tenant.Id
+            );
+
+        var first =
+            await CreatePaymentAsync(
+                reservation.Id,
+                500_000
+            );
+
+        await CompletePaymentAsync(
+            first.Id
+        );
+
+        var second =
+            await CreatePaymentAsync(
+                reservation.Id,
+                2_500_000
+            );
+
+        await CompletePaymentAsync(
+            second.Id
+        );
+
+        await _roomReservationAppService
+            .CancelAsync(
+                reservation.Id,
+                new CancelRoomReservationDto
+                {
+                    Reason =
+                        ReservationCancellationReason
+                            .CustomerCancelled
+                }
+            );
+
+        var result =
+            await _paymentAppService
+                .SettleCancelledReservationDepositAsync(
+                    reservation.Id
+                );
+
+        result.DispositionType.ShouldBe(
+            DepositSettlementType.Refund
+        );
+
+        result.TotalPaid.ShouldBe(
+            3_000_000
+        );
+
+        result.TotalSettled.ShouldBe(
+            3_000_000
+        );
+
+        var settlements =
+            await GetReservationDispositionSettlementsAsync(
+                reservation.Id
+            );
+
+        settlements.Count.ShouldBe(2);
+
+        settlements.All(
+            x =>
+                x.Type ==
+                    DepositSettlementType.Refund
+        ).ShouldBeTrue();
+
+        settlements.Sum(
+            x => x.Amount
+        ).ShouldBe(
+            3_000_000
+        );
+    }
+
+    // PAY44
+    [Fact]
+    public async Task
+        Should_Keep_Payment_Completed_After_Forfeit()
+    {
+        var roomId =
+            await CreateRoomAsync();
+
+        var tenant =
+            await CreateTenantAsync();
+
+        var reservation =
+            await CreateReservationAsync(
+                roomId,
+                tenant.Id
+            );
+
+        var payment =
+            await CreatePaymentAsync(
+                reservation.Id,
+                500_000
+            );
+
+        await CompletePaymentAsync(
+            payment.Id
+        );
+
+        await _roomReservationAppService
+            .CancelAsync(
+                reservation.Id,
+                new CancelRoomReservationDto
+                {
+                    Reason =
+                        ReservationCancellationReason
+                            .CustomerCancelled
+                }
+            );
+
+        await _paymentAppService
+            .SettleCancelledReservationDepositAsync(
+                reservation.Id
+            );
+
+        var paymentAfter =
+            await _paymentAppService.GetAsync(
+                payment.Id
+            );
+
+        paymentAfter.Status.ShouldBe(
+            PaymentStatus.Completed
+        );
+    }
+
+    // PAY45
+    [Fact]
+    public async Task
+        Should_Keep_Payment_Completed_After_Refund()
+    {
+        var roomId =
+            await CreateRoomAsync();
+
+        var tenant =
+            await CreateTenantAsync();
+
+        var reservation =
+            await CreateReservationAsync(
+                roomId,
+                tenant.Id
+            );
+
+        var payment =
+            await CreatePaymentAsync(
+                reservation.Id,
+                3_000_000
+            );
+
+        await CompletePaymentAsync(
+            payment.Id
+        );
+
+        await _roomReservationAppService
+            .CancelAsync(
+                reservation.Id,
+                new CancelRoomReservationDto
+                {
+                    Reason =
+                        ReservationCancellationReason
+                            .CustomerCancelled
+                }
+            );
+
+        await _paymentAppService
+            .SettleCancelledReservationDepositAsync(
+                reservation.Id
+            );
+
+        var paymentAfter =
+            await _paymentAppService.GetAsync(
+                payment.Id
+            );
+
+        paymentAfter.Status.ShouldBe(
+            PaymentStatus.Completed
+        );
+    }
+
+    // PAY46
+    [Fact]
+    public async Task
+        Should_Not_Allow_Intermediate_Payment_After_Standard_Hold()
+    {
+        var roomId =
+            await CreateRoomAsync();
+
+        var tenant =
+            await CreateTenantAsync();
+
+        var reservation =
+            await CreateReservationAsync(
+                roomId,
+                tenant.Id
+            );
+
+        var first =
+            await CreatePaymentAsync(
+                reservation.Id,
+                500_000
+            );
+
+        await CompletePaymentAsync(
+            first.Id
+        );
+
+        var exception =
+            await Assert.ThrowsAsync<
+                BusinessException>(
+                () =>
+                    CreatePaymentAsync(
+                        reservation.Id,
+                        1_000_000
+                    )
+            );
+
+        exception.Code.ShouldBe(
+            BuildingManagementErrorCodes
+                .InvalidReservationDepositPaymentAmount
         );
     }
 }

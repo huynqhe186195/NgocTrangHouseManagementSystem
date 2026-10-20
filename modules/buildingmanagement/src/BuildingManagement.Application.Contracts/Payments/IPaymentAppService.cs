@@ -29,6 +29,6 @@ namespace BuildingManagement.Payments
             Guid reservationId,
             Guid contractId);
 
-
+        Task<ReservationDepositSettlementDto> SettleCancelledReservationDepositAsync(Guid reservationId);
     }
 }

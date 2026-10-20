@@ -296,4 +296,13 @@ public static class BuildingManagementErrorCodes
 
     public const string DepositSettlementCannotBeCompleted =
         "BuildingManagement:DepositSettlementCannotBeCompleted";
+
+    public const string ContractDepositNotPayable =
+    "BuildingManagement:ContractDepositNotPayable";
+
+    public const string ContractDepositExceedsRemaining =
+        "BuildingManagement:ContractDepositExceedsRemaining";
+
+    public const string ContractDepositAlreadyFullyPaid =
+        "BuildingManagement:ContractDepositAlreadyFullyPaid";
 } // Consolidate all of the module's error codes in one place.

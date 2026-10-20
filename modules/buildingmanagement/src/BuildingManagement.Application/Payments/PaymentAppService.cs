@@ -1,4 +1,5 @@
 ﻿using BuildingManagement.Contracts;
+using BuildingManagement.DepositSettlements;
 using BuildingManagement.Payments.BuildingManagement.Payments;
 using BuildingManagement.RoomReservations;
 using BuildingManagement.Rooms;
@@ -36,6 +37,18 @@ namespace BuildingManagement.Payments
         private readonly IClock
             _clock;
 
+        private readonly IRepository<Contract, Guid>
+    _contractRepository;
+
+        private readonly IRepository<ContractTenant, Guid>
+            _contractTenantRepository;
+
+        private readonly IRepository<DepositSettlement, Guid>
+            _depositSettlementRepository;
+
+        private readonly IContractRepository
+    _contractLockRepository;
+
         public PaymentAppService(
             IRepository<Payment, Guid> paymentRepository,
             IRepository<RoomReservation, Guid>
@@ -44,7 +57,11 @@ namespace BuildingManagement.Payments
                 renewalHoldRepository,
             IRepository<Room, Guid> roomRepository,
             IDataFilter<ISoftDelete> softDeleteFilter,
-            IClock clock)
+            IClock clock,
+            IRepository<Contract, Guid> contractRepository,
+            IRepository<ContractTenant, Guid> contractTenantRepository,
+            IRepository<DepositSettlement, Guid> depositSettlementRepository,
+            IContractRepository contractLockRepository)
         {
             _paymentRepository =
                 paymentRepository;
@@ -63,6 +80,216 @@ namespace BuildingManagement.Payments
 
             _clock =
                 clock;
+
+            _contractRepository = contractRepository;
+
+            _contractTenantRepository = contractTenantRepository;
+
+            _depositSettlementRepository = depositSettlementRepository;
+            _contractLockRepository = contractLockRepository;
+        }
+
+        private async Task<decimal> GetCoveredContractDepositTotalAsync(
+        Guid contractId)
+        {
+            var queryable =
+                await _depositSettlementRepository
+                    .GetQueryableAsync();
+
+            var settlements =
+                await AsyncExecuter.ToListAsync(
+                    queryable.Where(
+                        x =>
+                            x.TargetContractId ==
+                                contractId
+                            &&
+                            x.Status ==
+                                DepositSettlementStatus.Completed
+                            &&
+                            (
+                                x.Type ==
+                                    DepositSettlementType
+                                        .AllocateToContractDeposit
+                                ||
+                                x.Type ==
+                                    DepositSettlementType
+                                        .ContractTransfer
+                                ||
+                                x.Type ==
+                                    DepositSettlementType
+                                        .RoomChangeCarryForward
+                            )
+                    )
+                );
+
+            return settlements.Sum(
+                x => x.Amount
+            );
+        }
+
+        private static void EnsureContractDepositIsPayable(
+        Contract contract)
+        {
+            if (
+                contract.Status !=
+                    ContractStatus.Signed
+                &&
+                contract.Status !=
+                    ContractStatus.Active
+            )
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes
+                        .ContractDepositNotPayable
+                );
+            }
+        }
+
+        private async Task<Contract> GetExistingContractAsync(Guid id)
+        {
+            var contract =
+                await _contractRepository.FindAsync(
+                    id
+                );
+
+            if (contract is null)
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes
+                        .ContractNotFound
+                );
+            }
+
+            return contract;
+        }
+
+        public async Task<PaymentDto> CreateContractDepositAsync(
+        CreateContractDepositPaymentDto input)
+        {
+            var paymentNumber =
+                NormalizeCode(
+                    input.PaymentNumber
+                );
+
+            if (string.IsNullOrWhiteSpace(
+                paymentNumber))
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes
+                        .InvalidPaymentNumber
+                );
+            }
+
+            if (input.Amount <= 0)
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes
+                        .InvalidPaymentAmount
+                );
+            }
+
+            ValidatePaymentMethodAndChannel(
+                input.Method,
+                input.Channel
+            );
+
+            var contract =
+                await GetExistingContractAsync(
+                    input.ContractId
+                );
+
+            EnsureContractDepositIsPayable(
+                contract
+            );
+
+            var primaryTenant =
+                await _contractTenantRepository
+                    .FindAsync(
+                        x =>
+                            x.ContractId ==
+                                contract.Id
+                            &&
+                            x.Role ==
+                                ContractTenantRole
+                                    .PrimaryTenant
+                    );
+
+            if (primaryTenant is null)
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes
+                        .ContractRequiresPrimaryTenant
+                );
+            }
+
+            await EnsurePaymentNumberIsUniqueAsync(
+                paymentNumber
+            );
+
+            var transactionReference =
+                NormalizeOptional(
+                    input.TransactionReference
+                );
+
+            if (transactionReference is not null)
+            {
+                await EnsureTransactionReferenceIsUniqueAsync(
+                    transactionReference
+                );
+            }
+
+            var coveredDeposit =
+                await GetCoveredContractDepositTotalAsync(
+                contract.Id
+            );
+
+            var remaining =
+                contract.DepositAmount
+                - coveredDeposit;
+
+            if (remaining <= 0)
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes
+                        .ContractDepositAlreadyFullyPaid
+                );
+            }
+
+            if (input.Amount > remaining)
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes
+                        .ContractDepositExceedsRemaining
+                );
+            }
+
+            var payment =
+                new Payment(
+                    GuidGenerator.Create(),
+                    paymentNumber,
+                    primaryTenant.TenantId,
+                    PaymentPurpose.ContractDeposit,
+                    input.Method,
+                    input.Channel,
+                    input.Amount,
+                    contractId: contract.Id,
+                    transactionReference:
+                        transactionReference,
+                    notes:
+                        NormalizeOptional(
+                            input.Notes
+                        )
+                );
+
+            await _paymentRepository.InsertAsync(
+                payment,
+                autoSave: true
+            );
+
+            return ObjectMapper.Map<
+                Payment,
+                PaymentDto
+            >(payment);
         }
 
         public async Task<PaymentDto>
@@ -219,8 +446,7 @@ namespace BuildingManagement.Payments
             >(payment);
         }
 
-        public async Task<PaymentDto>
-            CompleteAsync(
+        public async Task<PaymentDto>CompleteAsync(
                 Guid id,
                 CompletePaymentDto input)
         {
@@ -234,6 +460,14 @@ namespace BuildingManagement.Payments
                     BuildingManagementErrorCodes
                         .PaymentCannotBeCompleted
                 );
+            }
+
+            if (payment.Purpose == PaymentPurpose.ContractDeposit)
+            {
+                return await CompleteContractDepositAsync(
+                        payment,
+                        input
+                    );
             }
 
             if (
@@ -416,6 +650,161 @@ namespace BuildingManagement.Payments
                     );
                 }
             }
+
+            return ObjectMapper.Map<
+                Payment,
+                PaymentDto
+            >(payment);
+        }
+
+        private async Task<PaymentDto>
+    CompleteContractDepositAsync(
+        Payment payment,
+        CompletePaymentDto input)
+        {
+            if (!payment.ContractId.HasValue)
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes
+                        .PaymentCannotBeCompleted
+                );
+            }
+
+            var contract = await _contractLockRepository.FindForUpdateAsync(payment.ContractId.Value);
+
+            if (contract is null)
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes
+                        .ContractNotFound
+                );
+            }
+
+            EnsureContractDepositIsPayable(
+                contract
+            );
+
+            var primaryTenant =
+                await _contractTenantRepository
+                    .FindAsync(
+                        x =>
+                            x.ContractId ==
+                                contract.Id
+                            &&
+                            x.Role ==
+                                ContractTenantRole
+                                    .PrimaryTenant
+                    );
+
+            if (
+                primaryTenant is null
+                ||
+                primaryTenant.TenantId !=
+                    payment.TenantId
+            )
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes
+                        .PaymentCannotBeCompleted
+                );
+            }
+
+            var coveredDeposit =
+                await GetCoveredContractDepositTotalAsync(
+                    contract.Id
+                );
+
+            var remaining =
+                contract.DepositAmount
+                - coveredDeposit;
+
+            if (remaining <= 0)
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes
+                        .ContractDepositAlreadyFullyPaid
+                );
+            }
+
+            if (payment.Amount > remaining)
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes
+                        .ContractDepositExceedsRemaining
+                );
+            }
+
+            var inputTransactionReference =
+                NormalizeOptional(
+                    input.TransactionReference
+                );
+
+            var effectiveTransactionReference =
+                inputTransactionReference
+                ?? payment.TransactionReference;
+
+            if (
+                payment.Method !=
+                    PaymentMethod.Cash
+                &&
+                string.IsNullOrWhiteSpace(
+                    effectiveTransactionReference
+                )
+            )
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes
+                        .TransactionReferenceRequired
+                );
+            }
+
+            if (
+                effectiveTransactionReference
+                is not null
+            )
+            {
+                await EnsureTransactionReferenceIsUniqueAsync(
+                    effectiveTransactionReference,
+                    payment.Id
+                );
+            }
+
+            var paidAt =
+                _clock.Now;
+
+            payment.Complete(
+                paidAt,
+                inputTransactionReference
+            );
+
+            await _paymentRepository.UpdateAsync(
+                payment,
+                autoSave: true
+            );
+
+            var settlement =
+                new DepositSettlement(
+                    GuidGenerator.Create(),
+                    DepositSettlementType
+                        .AllocateToContractDeposit,
+                    payment.Amount,
+                    paymentId:
+                        payment.Id,
+                    targetContractId:
+                        contract.Id,
+                    notes:
+                        $"Contract deposit payment {payment.PaymentNumber}"
+                );
+
+            settlement.Complete(
+                paidAt
+            );
+
+            await _depositSettlementRepository
+                .InsertAsync(
+                    settlement,
+                    autoSave: true
+                );
 
             return ObjectMapper.Map<
                 Payment,

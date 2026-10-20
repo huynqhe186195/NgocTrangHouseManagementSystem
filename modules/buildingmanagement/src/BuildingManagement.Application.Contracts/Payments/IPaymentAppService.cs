@@ -22,5 +22,7 @@ namespace BuildingManagement.Payments
         );
 
         Task<PaymentDto> CancelAsync(Guid id);
+
+        Task<PaymentDto> CreateContractDepositAsync(CreateContractDepositPaymentDto input);
     }
 }

@@ -1,5 +1,6 @@
 ﻿using BuildingManagement.Buildings;
 using BuildingManagement.Contracts;
+using BuildingManagement.DepositSettlements;
 using BuildingManagement.Floors;
 using BuildingManagement.Payments.BuildingManagement.Payments;
 using BuildingManagement.RoomReservations;
@@ -47,6 +48,9 @@ public abstract class PaymentAppService_Tests<TStartupModule>
     private readonly IClock
         _clock;
 
+    private readonly IRepository<DepositSettlement, Guid>
+    _depositSettlementRepository;
+
     protected PaymentAppService_Tests()
     {
         _paymentAppService =
@@ -83,6 +87,10 @@ public abstract class PaymentAppService_Tests<TStartupModule>
 
         _clock =
             GetRequiredService<IClock>();
+
+        _depositSettlementRepository =
+    GetRequiredService<
+        IRepository<DepositSettlement, Guid>>();
     }
 
     private static string NewPaymentNumber()
@@ -214,8 +222,7 @@ public abstract class PaymentAppService_Tests<TStartupModule>
             );
     }
 
-    private Task<PaymentDto>
-        CreatePaymentAsync(
+    private Task<PaymentDto> CreatePaymentAsync(
             Guid reservationId,
             decimal amount = 500_000,
             PaymentMethod method =
@@ -254,8 +261,67 @@ public abstract class PaymentAppService_Tests<TStartupModule>
             );
     }
 
-    private Task<PaymentDto>
-        CompletePaymentAsync(
+    private Task<PaymentDto> CreateContractDepositPaymentAsync(
+        Guid contractId,
+        decimal amount = 500_000,
+        PaymentMethod method =
+            PaymentMethod.Cash,
+        PaymentChannel channel =
+            PaymentChannel.Manual,
+        string? paymentNumber = null,
+        string? transactionReference = null)
+    {
+        return _paymentAppService
+            .CreateContractDepositAsync(
+                new CreateContractDepositPaymentDto
+                {
+                    PaymentNumber =
+                        paymentNumber
+                        ?? NewPaymentNumber(),
+
+                    ContractId =
+                        contractId,
+
+                    Amount =
+                        amount,
+
+                    Method =
+                        method,
+
+                    Channel =
+                        channel,
+
+                    TransactionReference =
+                        transactionReference,
+
+                    Notes =
+                        "Contract deposit payment test"
+                }
+            );
+    }
+
+    private async Task<DepositSettlement?> FindSettlementByPaymentIdAsync(
+        Guid paymentId)
+    {
+        DepositSettlement? result = null;
+
+        await WithUnitOfWorkAsync(
+            async () =>
+            {
+                result =
+                    await _depositSettlementRepository
+                        .FindAsync(
+                            x =>
+                                x.PaymentId ==
+                                    paymentId
+                        );
+            }
+        );
+
+        return result;
+    }
+
+    private Task<PaymentDto> CompletePaymentAsync(
             Guid paymentId,
             string? transactionReference = null)
     {
@@ -269,8 +335,360 @@ public abstract class PaymentAppService_Tests<TStartupModule>
         );
     }
 
-    private async Task<ContractDto>
-        CreateActiveContractAsync(
+    // PAY21
+    [Fact]
+    public async Task Should_Create_Pending_Contract_Deposit_Payment()
+    {
+        var roomId =
+            await CreateRoomAsync();
+
+        var contract =
+            await CreateActiveContractAsync(
+                roomId,
+                _clock.Now.Date.AddMonths(6)
+            );
+
+        var payment =
+            await CreateContractDepositPaymentAsync(
+                contract.Id,
+                1_000_000
+            );
+
+        payment.Purpose.ShouldBe(
+            PaymentPurpose.ContractDeposit
+        );
+
+        payment.ContractId.ShouldBe(
+            contract.Id
+        );
+
+        payment.RoomReservationId
+            .ShouldBeNull();
+
+        payment.Amount.ShouldBe(
+            1_000_000
+        );
+
+        payment.Status.ShouldBe(
+            PaymentStatus.Pending
+        );
+
+        payment.PaidAt.ShouldBeNull();
+
+        payment.DepositDisposition
+            .ShouldBeNull();
+    }
+
+    // PAY22
+    [Fact]
+    public async Task Should_Create_Completed_Settlement_When_Contract_Deposit_Is_Completed()
+    {
+        var roomId =
+            await CreateRoomAsync();
+
+        var contract =
+            await CreateActiveContractAsync(
+                roomId,
+                _clock.Now.Date.AddMonths(6)
+            );
+
+        var payment =
+            await CreateContractDepositPaymentAsync(
+                contract.Id,
+                1_000_000
+            );
+
+        var completed =
+            await CompletePaymentAsync(
+                payment.Id
+            );
+
+        completed.Status.ShouldBe(
+            PaymentStatus.Completed
+        );
+
+        completed.PaidAt.ShouldNotBeNull();
+
+        var settlement =
+            await FindSettlementByPaymentIdAsync(
+                payment.Id
+            );
+
+        settlement.ShouldNotBeNull();
+
+        settlement!.Type.ShouldBe(
+            DepositSettlementType
+                .AllocateToContractDeposit
+        );
+
+        settlement.Status.ShouldBe(
+            DepositSettlementStatus.Completed
+        );
+
+        settlement.Amount.ShouldBe(
+            1_000_000
+        );
+
+        settlement.PaymentId.ShouldBe(
+            payment.Id
+        );
+
+        settlement.TargetContractId.ShouldBe(
+            contract.Id
+        );
+
+        settlement.SourceContractId
+            .ShouldBeNull();
+
+        settlement.SourceRoomReservationId
+            .ShouldBeNull();
+
+        settlement.CompletedAt
+            .ShouldNotBeNull();
+    }
+
+    // PAY23
+    [Fact]
+    public async Task Should_Recheck_Remaining_Contract_Deposit_When_Completing()
+    {
+        var roomId =
+            await CreateRoomAsync();
+
+        var contract =
+            await CreateActiveContractAsync(
+                roomId,
+                _clock.Now.Date.AddMonths(6)
+            );
+
+        var first =
+            await CreateContractDepositPaymentAsync(
+                contract.Id,
+                2_000_000
+            );
+
+        var second =
+            await CreateContractDepositPaymentAsync(
+                contract.Id,
+                2_000_000
+            );
+
+        await CompletePaymentAsync(
+            first.Id
+        );
+
+        var exception =
+            await Assert.ThrowsAsync<
+                BusinessException>(
+                () =>
+                    CompletePaymentAsync(
+                        second.Id
+                    )
+            );
+
+        exception.Code.ShouldBe(
+            BuildingManagementErrorCodes
+                .ContractDepositExceedsRemaining
+        );
+
+        var secondAfterFailure =
+            await _paymentAppService.GetAsync(
+                second.Id
+            );
+
+        secondAfterFailure.Status.ShouldBe(
+            PaymentStatus.Pending
+        );
+
+        var settlement =
+            await FindSettlementByPaymentIdAsync(
+                second.Id
+            );
+
+        settlement.ShouldBeNull();
+    }
+
+    // PAY24
+    [Fact]
+    public async Task Should_Not_Create_Contract_Deposit_When_Already_Fully_Paid()
+    {
+        var roomId =
+            await CreateRoomAsync();
+
+        var contract =
+            await CreateActiveContractAsync(
+                roomId,
+                _clock.Now.Date.AddMonths(6)
+            );
+
+        var payment =
+            await CreateContractDepositPaymentAsync(
+                contract.Id,
+                3_000_000
+            );
+
+        await CompletePaymentAsync(
+            payment.Id
+        );
+
+        var exception =
+            await Assert.ThrowsAsync<
+                BusinessException>(
+                () =>
+                    CreateContractDepositPaymentAsync(
+                        contract.Id,
+                        100_000
+                    )
+            );
+
+        exception.Code.ShouldBe(
+            BuildingManagementErrorCodes
+                .ContractDepositAlreadyFullyPaid
+        );
+    }
+
+    // PAY25
+    [Fact]
+    public async Task Should_Require_Transaction_Reference_For_Contract_Deposit()
+    {
+        var roomId =
+            await CreateRoomAsync();
+
+        var contract =
+            await CreateActiveContractAsync(
+                roomId,
+                _clock.Now.Date.AddMonths(6)
+            );
+
+        var payment =
+            await CreateContractDepositPaymentAsync(
+                contract.Id,
+                500_000,
+                method:
+                    PaymentMethod.BankTransfer,
+                channel:
+                    PaymentChannel.VietQr
+            );
+
+        var exception =
+            await Assert.ThrowsAsync<
+                BusinessException>(
+                () =>
+                    CompletePaymentAsync(
+                        payment.Id
+                    )
+            );
+
+        exception.Code.ShouldBe(
+            BuildingManagementErrorCodes
+                .TransactionReferenceRequired
+        );
+
+        var paymentAfterFailure =
+            await _paymentAppService.GetAsync(
+                payment.Id
+            );
+
+        paymentAfterFailure.Status.ShouldBe(
+            PaymentStatus.Pending
+        );
+
+        var settlement =
+            await FindSettlementByPaymentIdAsync(
+                payment.Id
+            );
+
+        settlement.ShouldBeNull();
+    }
+
+    // PAY26
+    [Fact]
+    public async Task Should_Not_Create_Contract_Deposit_For_Draft_Contract()
+    {
+        var roomId =
+            await CreateRoomAsync();
+
+        var contract =
+            await _contractAppService.CreateAsync(
+                new CreateContractDto
+                {
+                    ContractNumber =
+                        NewContractNumber(),
+
+                    RoomId =
+                        roomId,
+
+                    StartDate =
+                        _clock.Now.Date,
+
+                    EndDate =
+                        _clock.Now.Date
+                            .AddMonths(6),
+
+                    MonthlyRent =
+                        3_000_000
+                }
+            );
+
+        var exception =
+            await Assert.ThrowsAsync<
+                BusinessException>(
+                () =>
+                    CreateContractDepositPaymentAsync(
+                        contract.Id,
+                        500_000
+                    )
+            );
+
+        exception.Code.ShouldBe(
+            BuildingManagementErrorCodes
+                .ContractDepositNotPayable
+        );
+    }
+
+    // PAY27
+    [Fact]
+    public async Task Should_Not_Create_Contract_Deposit_Exceeding_Remaining()
+    {
+        var roomId =
+            await CreateRoomAsync();
+
+        var contract =
+            await CreateActiveContractAsync(
+                roomId,
+                _clock.Now.Date.AddMonths(6)
+            );
+
+        var first =
+            await CreateContractDepositPaymentAsync(
+                contract.Id,
+                500_000
+            );
+
+        await CompletePaymentAsync(
+            first.Id
+        );
+
+        // Required = 3,000,000
+        // Covered  =   500,000
+        // Remaining = 2,500,000
+
+        var exception =
+            await Assert.ThrowsAsync<
+                BusinessException>(
+                () =>
+                    CreateContractDepositPaymentAsync(
+                        contract.Id,
+                        2_600_000
+                    )
+            );
+
+        exception.Code.ShouldBe(
+            BuildingManagementErrorCodes
+                .ContractDepositExceedsRemaining
+        );
+    }
+
+    private async Task<ContractDto> CreateActiveContractAsync(
             Guid roomId,
             DateTime endDate)
     {

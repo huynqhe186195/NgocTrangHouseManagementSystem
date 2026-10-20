@@ -1,7 +1,10 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+﻿using BuildingManagement.EntityFrameworkCore.Contracts;
+using Microsoft.Extensions.DependencyInjection;
 using Volo.Abp.EntityFrameworkCore;
 using Volo.Abp.EntityFrameworkCore.PostgreSql;
 using Volo.Abp.Modularity;
+using BuildingManagement.Contracts;
+using BuildingManagement.EntityFrameworkCore.Contracts;
 
 namespace BuildingManagement.EntityFrameworkCore;
 
@@ -13,13 +16,18 @@ public class BuildingManagementEntityFrameworkCoreModule : AbpModule
 {
     public override void ConfigureServices(ServiceConfigurationContext context)
     {
-        context.Services.AddAbpDbContext<BuildingManagementDbContext>(options =>
-        {
-            options.AddDefaultRepositories<IBuildingManagementDbContext>(includeAllEntities: true);
+        context.Services.AddAbpDbContext<BuildingManagementDbContext>(
+    options =>
+    {
+        options.AddDefaultRepositories(
+            includeAllEntities: true
+        );
 
-            /* Add custom repositories here. Example:
-            * options.AddRepository<Question, EfCoreQuestionRepository>();
-            */
-        });
+        options.AddRepository<
+            Contract,
+            EfCoreContractRepository
+        >();
+    }
+);
     }
 }

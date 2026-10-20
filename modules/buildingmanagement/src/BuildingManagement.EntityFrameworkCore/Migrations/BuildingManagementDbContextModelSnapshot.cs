@@ -324,6 +324,84 @@ namespace BuildingManagement.Migrations
                     b.ToTable("BuildingManagementContractTenants", (string)null);
                 });
 
+            modelBuilder.Entity("BuildingManagement.DepositSettlements.DepositSettlement", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(18)
+                        .HasColumnType("numeric(18,0)");
+
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("timestamp without time zone");
+
+                    b.Property<string>("ConcurrencyStamp")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasColumnName("ConcurrencyStamp");
+
+                    b.Property<DateTime>("CreationTime")
+                        .HasColumnType("timestamp without time zone")
+                        .HasColumnName("CreationTime");
+
+                    b.Property<Guid?>("CreatorId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("CreatorId");
+
+                    b.Property<string>("ExtraProperties")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("ExtraProperties");
+
+                    b.Property<DateTime?>("LastModificationTime")
+                        .HasColumnType("timestamp without time zone")
+                        .HasColumnName("LastModificationTime");
+
+                    b.Property<Guid?>("LastModifierId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("LastModifierId");
+
+                    b.Property<string>("Notes")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<Guid?>("PaymentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("SourceContractId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("SourceRoomReservationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid?>("TargetContractId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Type")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PaymentId");
+
+                    b.HasIndex("SourceContractId");
+
+                    b.HasIndex("SourceRoomReservationId");
+
+                    b.HasIndex("TargetContractId");
+
+                    b.HasIndex("Type", "Status");
+
+                    b.ToTable("BuildingManagementDepositSettlements", (string)null);
+                });
+
             modelBuilder.Entity("BuildingManagement.Floors.Floor", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1097,6 +1175,30 @@ namespace BuildingManagement.Migrations
                         .HasForeignKey("TenantId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("BuildingManagement.DepositSettlements.DepositSettlement", b =>
+                {
+                    b.HasOne("BuildingManagement.Payments.Payment", null)
+                        .WithMany()
+                        .HasForeignKey("PaymentId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("BuildingManagement.Contracts.Contract", null)
+                        .WithMany()
+                        .HasForeignKey("SourceContractId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("BuildingManagement.RoomReservations.RoomReservation", null)
+                        .WithMany()
+                        .HasForeignKey("SourceRoomReservationId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("BuildingManagement.Contracts.Contract", null)
+                        .WithMany()
+                        .HasForeignKey("TargetContractId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("FK_BuildingManagementDepositSettlements_BuildingManagementCon~1");
                 });
 
             modelBuilder.Entity("BuildingManagement.Floors.Floor", b =>

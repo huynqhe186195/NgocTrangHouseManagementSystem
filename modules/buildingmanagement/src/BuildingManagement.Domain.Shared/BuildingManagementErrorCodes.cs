@@ -287,4 +287,13 @@ public static class BuildingManagementErrorCodes
 
     public const string TenantIdentityMustBeCitizenId =
         "BuildingManagement:TenantIdentityMustBeCitizenId";
+
+    public const string InvalidDepositSettlementAmount =
+    "BuildingManagement:InvalidDepositSettlementAmount";
+
+    public const string InvalidDepositSettlementReference =
+        "BuildingManagement:InvalidDepositSettlementReference";
+
+    public const string DepositSettlementCannotBeCompleted =
+        "BuildingManagement:DepositSettlementCannotBeCompleted";
 } // Consolidate all of the module's error codes in one place.

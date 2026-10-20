@@ -99,6 +99,9 @@
     "BuildingManagement:InvalidTenantPhoneNumber": "Số điện thoại người thuê không hợp lệ.",
     "BuildingManagement:TenantPhoneNumberAlreadyExists": "Số điện thoại này đã được sử dụng bởi một người thuê khác.",
     "BuildingManagement:InvalidTenantCitizenId": "Số căn cước công dân không hợp lệ.",
-    "BuildingManagement:TenantIdentityMustBeCitizenId": "Người thuê phải sử dụng căn cước công dân để xác minh danh tính."
+    "BuildingManagement:TenantIdentityMustBeCitizenId": "Người thuê phải sử dụng căn cước công dân để xác minh danh tính.",
+    "BuildingManagement:InvalidDepositSettlementAmount": "Số tiền xử lý tiền cọc phải lớn hơn 0.",
+    "BuildingManagement:InvalidDepositSettlementReference": "Thông tin tham chiếu xử lý tiền cọc không hợp lệ.",
+    "BuildingManagement:DepositSettlementCannotBeCompleted": "Không thể hoàn tất xử lý tiền cọc ở trạng thái hiện tại."
   }
 }

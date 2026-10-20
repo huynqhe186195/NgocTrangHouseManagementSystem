@@ -1,5 +1,6 @@
 ﻿using BuildingManagement.Buildings;
 using BuildingManagement.Contracts;
+using BuildingManagement.DepositSettlements;
 using BuildingManagement.Floors;
 using BuildingManagement.Payments;
 using BuildingManagement.RoomReservations;
@@ -31,6 +32,7 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
     public DbSet<ContractRenewalHold> ContractRenewalHolds { get; set; } = default!;
     public DbSet<RoomReservation> RoomReservations { get; set; } = default!;
     public DbSet<Payment> Payments { get; set; } = default!;
+    public DbSet<DepositSettlement> DepositSettlements {get; set;} = default!;
 
     public BuildingManagementDbContext(DbContextOptions<BuildingManagementDbContext> options)
         : base(options)

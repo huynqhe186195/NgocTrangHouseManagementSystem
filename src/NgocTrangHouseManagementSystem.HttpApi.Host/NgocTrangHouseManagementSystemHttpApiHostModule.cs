@@ -708,11 +708,6 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule // syst
             );
 
             options.Map(
-                BuildingManagementErrorCodes.InvalidDepositAmount,
-                HttpStatusCode.BadRequest
-            );
-
-            options.Map(
                 BuildingManagementErrorCodes.TenantAlreadyInContract,
                 HttpStatusCode.Conflict
             );

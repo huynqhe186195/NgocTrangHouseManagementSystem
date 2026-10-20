@@ -99,6 +99,9 @@
     "BuildingManagement:InvalidTenantPhoneNumber": "The tenant phone number is invalid.",
     "BuildingManagement:TenantPhoneNumberAlreadyExists": "The phone number is already used by another tenant.",
     "BuildingManagement:InvalidTenantCitizenId": "The citizen ID number is invalid.",
-    "BuildingManagement:TenantIdentityMustBeCitizenId": "A tenant must use a citizen ID for identity verification."
+    "BuildingManagement:TenantIdentityMustBeCitizenId": "A tenant must use a citizen ID for identity verification.",
+    "BuildingManagement:InvalidDepositSettlementAmount": "Deposit settlement amount must be greater than 0.",
+    "BuildingManagement:InvalidDepositSettlementReference": "The deposit settlement references are invalid.",
+    "BuildingManagement:DepositSettlementCannotBeCompleted": "This deposit settlement cannot be completed in its current status."
   }
 }

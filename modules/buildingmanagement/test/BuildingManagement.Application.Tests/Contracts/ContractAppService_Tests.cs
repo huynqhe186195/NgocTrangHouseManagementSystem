@@ -90,7 +90,6 @@ public abstract class ContractAppService_Tests<TStartupModule>
                 StartDate = new DateTime(2026, 11, 1),
                 EndDate = new DateTime(2027, 10, 31),
                 MonthlyRent = 3_000_000,
-                DepositAmount = 3_000_000
             }
         );
     }
@@ -131,7 +130,6 @@ public abstract class ContractAppService_Tests<TStartupModule>
                     StartDate = _clock.Now.Date.AddMonths(-1),
                     EndDate = endDate?.Date,
                     MonthlyRent = 3_000_000,
-                    DepositAmount = 3_000_000
                 }
             );
 
@@ -319,7 +317,6 @@ public abstract class ContractAppService_Tests<TStartupModule>
                     StartDate = new DateTime(2026, 11, 1),
                     EndDate = new DateTime(2027, 10, 31),
                     MonthlyRent = 3_000_000,
-                    DepositAmount = 3_000_000,
                     Notes = "Test contract"
                 }
             );
@@ -355,7 +352,6 @@ public abstract class ContractAppService_Tests<TStartupModule>
                             new DateTime(2027, 10, 31),
 
                         MonthlyRent = 3_000_000,
-                        DepositAmount = 3_000_000
                     }
                 )
             );
@@ -388,7 +384,6 @@ public abstract class ContractAppService_Tests<TStartupModule>
                             new DateTime(2026, 10, 1),
 
                         MonthlyRent = 3_000_000,
-                        DepositAmount = 3_000_000
                     }
                 )
             );
@@ -425,7 +420,6 @@ public abstract class ContractAppService_Tests<TStartupModule>
                             new DateTime(2027, 10, 31),
 
                         MonthlyRent = monthlyRent,
-                        DepositAmount = 3_000_000
                     }
                 )
             );
@@ -438,35 +432,30 @@ public abstract class ContractAppService_Tests<TStartupModule>
 
     // C5
     [Fact]
-    public async Task Should_Throw_When_DepositAmount_Is_Negative()
+    public async Task Should_Automatically_Set_DepositAmount_From_MonthlyRent()
     {
         var roomId = await CreateRoomAsync();
 
-        var exception =
-            await Assert.ThrowsAsync<BusinessException>(
-                () => _contractAppService.CreateAsync(
-                    new CreateContractDto
-                    {
-                        ContractNumber =
-                            NewContractNumber(),
+        const decimal monthlyRent = 3_250_000;
 
-                        RoomId = roomId,
-
-                        StartDate =
-                            new DateTime(2026, 11, 1),
-
-                        EndDate =
-                            new DateTime(2027, 10, 31),
-
-                        MonthlyRent = 3_000_000,
-                        DepositAmount = -1
-                    }
-                )
+        var result =
+            await _contractAppService.CreateAsync(
+                new CreateContractDto
+                {
+                    ContractNumber = NewContractNumber(),
+                    RoomId = roomId,
+                    StartDate = new DateTime(2026, 11, 1),
+                    EndDate = new DateTime(2027, 10, 31),
+                    MonthlyRent = monthlyRent
+                }
             );
 
-        exception.Code.ShouldBe(
-            BuildingManagementErrorCodes
-                .InvalidDepositAmount
+        result.MonthlyRent.ShouldBe(
+            monthlyRent
+        );
+
+        result.DepositAmount.ShouldBe(
+            monthlyRent
         );
     }
 
@@ -494,7 +483,6 @@ public abstract class ContractAppService_Tests<TStartupModule>
                     new DateTime(2027, 10, 31),
 
                 MonthlyRent = 3_000_000,
-                DepositAmount = 3_000_000
             }
         );
 
@@ -516,7 +504,6 @@ public abstract class ContractAppService_Tests<TStartupModule>
                             new DateTime(2027, 12, 1),
 
                         MonthlyRent = 3_000_000,
-                        DepositAmount = 3_000_000
                     }
                 )
             );
@@ -549,7 +536,6 @@ public abstract class ContractAppService_Tests<TStartupModule>
                         new DateTime(2027, 10, 31),
 
                     MonthlyRent = 3_000_000,
-                    DepositAmount = 3_000_000
                 }
             );
 
@@ -600,7 +586,6 @@ public abstract class ContractAppService_Tests<TStartupModule>
                     StartDate = new DateTime(2026, 11, 1),
                     EndDate = new DateTime(2027, 10, 31),
                     MonthlyRent = 3_000_000,
-                    DepositAmount = 3_000_000
                 }
             );
 
@@ -614,7 +599,6 @@ public abstract class ContractAppService_Tests<TStartupModule>
                     StartDate = new DateTime(2026, 12, 1),
                     EndDate = new DateTime(2027, 11, 30),
                     MonthlyRent = 3_500_000,
-                    DepositAmount = 3_500_000,
                     Notes = "Updated contract"
                 }
             );
@@ -654,7 +638,6 @@ public abstract class ContractAppService_Tests<TStartupModule>
                     StartDate = new DateTime(2026, 11, 1),
                     EndDate = new DateTime(2027, 10, 31),
                     MonthlyRent = 3_000_000,
-                    DepositAmount = 3_000_000
                 }
             );
 
@@ -668,7 +651,6 @@ public abstract class ContractAppService_Tests<TStartupModule>
                     StartDate = new DateTime(2026, 11, 1),
                     EndDate = new DateTime(2027, 10, 31),
                     MonthlyRent = 3_200_000,
-                    DepositAmount = 3_000_000
                 }
             );
 
@@ -677,6 +659,10 @@ public abstract class ContractAppService_Tests<TStartupModule>
         );
 
         updated.MonthlyRent.ShouldBe(
+            3_200_000
+        );
+
+        updated.DepositAmount.ShouldBe(
             3_200_000
         );
     }
@@ -695,7 +681,6 @@ public abstract class ContractAppService_Tests<TStartupModule>
                     StartDate = new DateTime(2026, 11, 1),
                     EndDate = new DateTime(2027, 10, 31),
                     MonthlyRent = 3_000_000,
-                    DepositAmount = 3_000_000
                 }
             );
 
@@ -708,7 +693,6 @@ public abstract class ContractAppService_Tests<TStartupModule>
                     StartDate = new DateTime(2027, 11, 1),
                     EndDate = new DateTime(2028, 10, 31),
                     MonthlyRent = 3_000_000,
-                    DepositAmount = 3_000_000
                 }
             );
 
@@ -723,7 +707,6 @@ public abstract class ContractAppService_Tests<TStartupModule>
                         StartDate = new DateTime(2027, 11, 1),
                         EndDate = new DateTime(2028, 10, 31),
                         MonthlyRent = 3_000_000,
-                        DepositAmount = 3_000_000
                     }
                 )
             );
@@ -752,7 +735,6 @@ public abstract class ContractAppService_Tests<TStartupModule>
                         StartDate = new DateTime(2026, 11, 1),
                         EndDate = new DateTime(2027, 10, 31),
                         MonthlyRent = 3_000_000,
-                        DepositAmount = 3_000_000
                     }
                 )
             );
@@ -777,7 +759,6 @@ public abstract class ContractAppService_Tests<TStartupModule>
                     StartDate = new DateTime(2026, 11, 1),
                     EndDate = new DateTime(2027, 10, 31),
                     MonthlyRent = 3_000_000,
-                    DepositAmount = 3_000_000
                 }
             );
 
@@ -790,7 +771,6 @@ public abstract class ContractAppService_Tests<TStartupModule>
                     StartDate = new DateTime(2027, 11, 1),
                     EndDate = new DateTime(2028, 10, 31),
                     MonthlyRent = 3_500_000,
-                    DepositAmount = 3_500_000
                 }
             );
 
@@ -1173,7 +1153,6 @@ public abstract class ContractAppService_Tests<TStartupModule>
                 StartDate = new DateTime(2026, 11, 1),
                 EndDate = new DateTime(2027, 10, 31),
                 MonthlyRent = 3_000_000,
-                DepositAmount = 3_000_000
             }
         );
     }
@@ -1546,8 +1525,6 @@ public abstract class ContractAppService_Tests<TStartupModule>
 
                             MonthlyRent = 4_000_000,
 
-                            DepositAmount =
-                                contract.DepositAmount
                         }
                     )
             );
@@ -2116,11 +2093,18 @@ public abstract class ContractAppService_Tests<TStartupModule>
 
                     MonthlyRent = 3_500_000,
 
-                    DepositAmount = 3_500_000,
 
                     Notes = "Renewed contract"
                 }
             );
+
+        renewed.MonthlyRent.ShouldBe(
+            3_500_000
+        );
+
+        renewed.DepositAmount.ShouldBe(
+            3_500_000
+        );
 
         // Contract mới phải ở trạng thái Signed
         renewed.Status.ShouldBe(
@@ -2216,7 +2200,6 @@ public abstract class ContractAppService_Tests<TStartupModule>
                                 ),
 
                             MonthlyRent = 3_000_000,
-                            DepositAmount = 3_000_000
                         }
                     )
             );
@@ -2250,7 +2233,6 @@ public abstract class ContractAppService_Tests<TStartupModule>
                     EndDate = null,
 
                     MonthlyRent = 3_000_000,
-                    DepositAmount = 3_000_000
                 }
             );
 
@@ -2287,7 +2269,6 @@ public abstract class ContractAppService_Tests<TStartupModule>
                                 ),
 
                             MonthlyRent = 3_000_000,
-                            DepositAmount = 3_000_000
                         }
                     )
             );
@@ -2336,7 +2317,6 @@ public abstract class ContractAppService_Tests<TStartupModule>
                                 ),
 
                             MonthlyRent = 3_500_000,
-                            DepositAmount = 3_500_000
                         }
                     )
             );
@@ -2376,7 +2356,6 @@ public abstract class ContractAppService_Tests<TStartupModule>
                     new DateTime(2028, 10, 31),
 
                 MonthlyRent = 3_500_000,
-                DepositAmount = 3_500_000
             }
         );
 
@@ -2405,7 +2384,6 @@ public abstract class ContractAppService_Tests<TStartupModule>
                                 ),
 
                             MonthlyRent = 3_500_000,
-                            DepositAmount = 3_500_000
                         }
                     )
             );
@@ -2444,7 +2422,6 @@ public abstract class ContractAppService_Tests<TStartupModule>
                         new DateTime(2027, 12, 31),
 
                     MonthlyRent = 3_500_000,
-                    DepositAmount = 3_500_000
                 }
             );
 
@@ -2504,7 +2481,6 @@ public abstract class ContractAppService_Tests<TStartupModule>
                                 ),
 
                             MonthlyRent = 3_500_000,
-                            DepositAmount = 3_500_000
                         }
                     )
             );
@@ -2562,7 +2538,6 @@ public abstract class ContractAppService_Tests<TStartupModule>
                                 ),
 
                             MonthlyRent = 3_500_000,
-                            DepositAmount = 3_500_000
                         }
                     )
             );
@@ -2629,7 +2604,6 @@ public abstract class ContractAppService_Tests<TStartupModule>
                                 ),
 
                             MonthlyRent = 3_500_000,
-                            DepositAmount = 3_500_000
                         }
                     )
             );
@@ -2739,8 +2713,6 @@ public abstract class ContractAppService_Tests<TStartupModule>
                     MonthlyRent =
                         3_500_000,
 
-                    DepositAmount =
-                        3_500_000
                 }
             );
 
@@ -2810,8 +2782,6 @@ public abstract class ContractAppService_Tests<TStartupModule>
                 MonthlyRent =
                     3_500_000,
 
-                DepositAmount =
-                    3_500_000
             }
         );
 
@@ -2891,8 +2861,6 @@ public abstract class ContractAppService_Tests<TStartupModule>
                             MonthlyRent =
                                 3_500_000,
 
-                            DepositAmount =
-                                3_500_000
                         }
                     )
             );
@@ -2981,8 +2949,6 @@ public abstract class ContractAppService_Tests<TStartupModule>
                     MonthlyRent =
                         3_500_000,
 
-                    DepositAmount =
-                        3_500_000
                 }
             );
 
@@ -3159,8 +3125,6 @@ public abstract class ContractAppService_Tests<TStartupModule>
                     MonthlyRent =
                         3_500_000,
 
-                    DepositAmount =
-                        3_500_000
                 }
             );
 

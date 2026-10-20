@@ -281,20 +281,13 @@ public abstract class PaymentAppService_Tests<TStartupModule>
                     ContractNumber =
                         NewContractNumber(),
 
-                    RoomId =
-                        roomId,
+                    RoomId = roomId,
 
-                    StartDate =
-                        _clock.Now.Date.AddDays(-30),
+                    StartDate = _clock.Now.Date.AddDays(-30),
 
-                    EndDate =
-                        endDate.Date,
+                    EndDate = endDate.Date,
 
-                    MonthlyRent =
-                        3_000_000,
-
-                    DepositAmount =
-                        3_000_000
+                    MonthlyRent = 3_000_000,
                 }
             );
 

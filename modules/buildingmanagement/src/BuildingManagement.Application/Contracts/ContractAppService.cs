@@ -86,8 +86,7 @@ namespace BuildingManagement.Contracts
             ValidateContractValues(
                 input.StartDate,
                 input.EndDate,
-                input.MonthlyRent,
-                input.DepositAmount
+                input.MonthlyRent
             );
 
             var contractNumber =
@@ -106,7 +105,6 @@ namespace BuildingManagement.Contracts
                 input.StartDate.Date,
                 input.EndDate?.Date,
                 input.MonthlyRent,
-                input.DepositAmount,
                 NormalizeOptional(input.Notes)
             );
 
@@ -137,8 +135,7 @@ namespace BuildingManagement.Contracts
             ValidateContractValues(
                 input.StartDate,
                 input.EndDate,
-                input.MonthlyRent,
-                input.DepositAmount
+                input.MonthlyRent
             );
 
             var contractNumber =
@@ -157,7 +154,6 @@ namespace BuildingManagement.Contracts
                 input.StartDate.Date,
                 input.EndDate?.Date,
                 input.MonthlyRent,
-                input.DepositAmount,
                 NormalizeOptional(input.Notes)
             );
 
@@ -499,12 +495,10 @@ namespace BuildingManagement.Contracts
             }
         }
 
-        private static void
-            ValidateContractValues(
-                DateTime startDate,
-                DateTime? endDate,
-                decimal monthlyRent,
-                decimal depositAmount)
+        private static void ValidateContractValues(
+            DateTime startDate,
+            DateTime? endDate,
+            decimal monthlyRent)
         {
             if (endDate.HasValue &&
                 endDate.Value.Date <
@@ -521,14 +515,6 @@ namespace BuildingManagement.Contracts
                 throw new BusinessException(
                     BuildingManagementErrorCodes
                         .InvalidMonthlyRent
-                );
-            }
-
-            if (depositAmount < 0)
-            {
-                throw new BusinessException(
-                    BuildingManagementErrorCodes
-                        .InvalidDepositAmount
                 );
             }
         }
@@ -923,8 +909,7 @@ namespace BuildingManagement.Contracts
             ValidateContractValues(
                 input.StartDate,
                 input.EndDate,
-                input.MonthlyRent,
-                input.DepositAmount
+                input.MonthlyRent
             );
 
             if (input.StartDate.Date <=
@@ -975,7 +960,6 @@ namespace BuildingManagement.Contracts
                     input.StartDate.Date,
                     input.EndDate?.Date,
                     input.MonthlyRent,
-                    input.DepositAmount,
                     NormalizeOptional(input.Notes),
                     renewedFromContractId:
                         currentContract.Id

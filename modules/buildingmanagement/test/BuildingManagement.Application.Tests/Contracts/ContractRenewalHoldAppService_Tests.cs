@@ -192,8 +192,6 @@ public abstract class ContractRenewalHoldAppService_Tests<TStartupModule>
                         : null,
 
                 MonthlyRent = 3_000_000,
-
-                DepositAmount = 3_000_000
             }
         );
     }
@@ -393,7 +391,6 @@ public abstract class ContractRenewalHoldAppService_Tests<TStartupModule>
                     new DateTime(2027, 12, 31),
 
                 MonthlyRent = 3_500_000,
-                DepositAmount = 3_500_000
             }
         );
 

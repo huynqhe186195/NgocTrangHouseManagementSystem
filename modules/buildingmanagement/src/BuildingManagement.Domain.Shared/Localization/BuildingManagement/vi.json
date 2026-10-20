@@ -19,7 +19,6 @@
     "BuildingManagement:ContractNumberAlreadyExists": "Mã hợp đồng {ContractNumber} đã tồn tại trong hệ thống.",
     "BuildingManagement:InvalidContractPeriod": "Ngày kết thúc hợp đồng không được trước ngày bắt đầu.",
     "BuildingManagement:InvalidMonthlyRent": "Tiền thuê hàng tháng phải lớn hơn 0.",
-    "BuildingManagement:InvalidDepositAmount": "Tiền đặt cọc không được nhỏ hơn 0.",
     "BuildingManagement:TenantAlreadyInContract": "Người thuê đã có trong hợp đồng này.",
     "BuildingManagement:ContractTenantNotFound": "Không tìm thấy người thuê trong hợp đồng này.",
     "BuildingManagement:ContractAlreadyHasPrimaryTenant": "Hợp đồng đã có người thuê chính.",

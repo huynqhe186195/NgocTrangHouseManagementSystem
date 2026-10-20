@@ -67,7 +67,6 @@ namespace BuildingManagement.Contracts
             DateTime startDate,
             DateTime? endDate,
             decimal monthlyRent,
-            decimal depositAmount,
             string? notes = null,
             Guid? renewedFromContractId = null
         ) : base(id)
@@ -78,7 +77,7 @@ namespace BuildingManagement.Contracts
             EndDate = endDate;
 
             MonthlyRent = monthlyRent;
-            DepositAmount = depositAmount;
+            DepositAmount = monthlyRent;
 
             Status = ContractStatus.Draft;
 
@@ -94,7 +93,6 @@ namespace BuildingManagement.Contracts
             DateTime startDate,
             DateTime? endDate,
             decimal monthlyRent,
-            decimal depositAmount,
             string? notes)
         {
             ContractNumber = contractNumber;
@@ -103,7 +101,7 @@ namespace BuildingManagement.Contracts
             EndDate = endDate;
 
             MonthlyRent = monthlyRent;
-            DepositAmount = depositAmount;
+            DepositAmount = monthlyRent;
 
             Notes = notes;
         }

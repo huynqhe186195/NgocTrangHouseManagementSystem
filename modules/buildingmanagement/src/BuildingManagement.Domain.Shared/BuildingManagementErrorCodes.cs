@@ -46,9 +46,6 @@ public static class BuildingManagementErrorCodes
     public const string InvalidMonthlyRent =
         "BuildingManagement:InvalidMonthlyRent";
 
-    public const string InvalidDepositAmount =
-        "BuildingManagement:InvalidDepositAmount";
-
     public const string TenantAlreadyInContract =
         "BuildingManagement:TenantAlreadyInContract";
 

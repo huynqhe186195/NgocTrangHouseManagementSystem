@@ -19,7 +19,6 @@
     "BuildingManagement:ContractNumberAlreadyExists": "Contract number {ContractNumber} already exists.",
     "BuildingManagement:InvalidContractPeriod": "The contract end date cannot be earlier than the start date.",
     "BuildingManagement:InvalidMonthlyRent": "Monthly rent must be greater than 0.",
-    "BuildingManagement:InvalidDepositAmount": "Deposit amount cannot be less than 0.",
     "BuildingManagement:TenantAlreadyInContract": "The tenant is already included in this contract.",
     "BuildingManagement:ContractTenantNotFound": "The tenant was not found in this contract.",
     "BuildingManagement:ContractAlreadyHasPrimaryTenant": "The contract already has a primary tenant.",

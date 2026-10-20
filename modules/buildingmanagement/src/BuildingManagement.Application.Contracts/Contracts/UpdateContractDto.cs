@@ -17,8 +17,6 @@ namespace BuildingManagement.Contracts
 
         public decimal MonthlyRent { get; set; }
 
-        public decimal DepositAmount { get; set; }
-
         [MaxLength(500)]
         public string? Notes { get; set; }
     }

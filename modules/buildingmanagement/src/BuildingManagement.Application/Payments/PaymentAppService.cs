@@ -38,7 +38,7 @@ namespace BuildingManagement.Payments
             _clock;
 
         private readonly IRepository<Contract, Guid>
-    _contractRepository;
+            _contractRepository;
 
         private readonly IRepository<ContractTenant, Guid>
             _contractTenantRepository;
@@ -47,7 +47,10 @@ namespace BuildingManagement.Payments
             _depositSettlementRepository;
 
         private readonly IContractRepository
-    _contractLockRepository;
+            _contractLockRepository;
+
+        private readonly IRoomReservationRepository
+            _roomReservationLockRepository;
 
         public PaymentAppService(
             IRepository<Payment, Guid> paymentRepository,
@@ -61,7 +64,8 @@ namespace BuildingManagement.Payments
             IRepository<Contract, Guid> contractRepository,
             IRepository<ContractTenant, Guid> contractTenantRepository,
             IRepository<DepositSettlement, Guid> depositSettlementRepository,
-            IContractRepository contractLockRepository)
+            IContractRepository contractLockRepository, 
+            IRoomReservationRepository roomReservationLockRepository)
         {
             _paymentRepository =
                 paymentRepository;
@@ -78,15 +82,17 @@ namespace BuildingManagement.Payments
             _softDeleteFilter =
                 softDeleteFilter;
 
-            _clock =
-                clock;
+            _clock = clock;
 
             _contractRepository = contractRepository;
 
             _contractTenantRepository = contractTenantRepository;
 
             _depositSettlementRepository = depositSettlementRepository;
+
             _contractLockRepository = contractLockRepository;
+
+            _roomReservationLockRepository = roomReservationLockRepository;
         }
 
         private async Task<decimal> GetCoveredContractDepositTotalAsync(
@@ -290,6 +296,420 @@ namespace BuildingManagement.Payments
                 Payment,
                 PaymentDto
             >(payment);
+        }
+
+        public async Task<ContractDepositAllocationDto> AllocateReservationDepositToContractAsync(
+        Guid reservationId,
+        Guid contractId)
+        {
+            /*
+             * Lock SOURCE trước.
+             *
+             * Chặn cùng một Reservation bị allocate
+             * đồng thời sang hai Contract khác nhau.
+             */
+            var reservation =
+                await _roomReservationLockRepository
+                    .FindForUpdateAsync(
+                        reservationId
+                    );
+
+            if (reservation is null)
+            {
+                /*
+                 * Dùng helper hiện tại để giữ nguyên
+                 * error handling RoomReservationNotFound.
+                 */
+                await GetExistingReservationAsync(
+                    reservationId
+                );
+
+                throw new InvalidOperationException(
+                    "Unable to lock the room reservation."
+                );
+            }
+
+            /*
+             * Sau đó mới lock TARGET Contract.
+             *
+             * Lock này serialize:
+             * - Reservation allocation
+             * - ContractDeposit payment completion
+             * - nhiều nguồn tiền cùng cover một Contract
+             */
+            var contract =
+                await _contractLockRepository
+                    .FindForUpdateAsync(
+                        contractId
+                    );
+
+            if (contract is null)
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes
+                        .ContractNotFound
+                );
+            }
+
+            /*
+             * Reservation deposit chỉ được chuyển
+             * sang ContractDeposit khi khách thực sự
+             * đã vào ở => Contract phải Active.
+             */
+            if (contract.Status !=
+                ContractStatus.Active)
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes
+                        .ReservationDepositCannotBeAllocated
+                );
+            }
+
+            /*
+             * Reservation phải đang giữ phòng,
+             * hoặc đã được convert đúng sang Contract này.
+             */
+            if (
+                reservation.Status !=
+                    RoomReservationStatus.Reserved
+                &&
+                reservation.Status !=
+                    RoomReservationStatus.ConvertedToContract
+            )
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes
+                        .ReservationDepositCannotBeAllocated
+                );
+            }
+
+            /*
+             * Không được lấy tiền giữ phòng A
+             * sang Contract của phòng B.
+             */
+            if (reservation.RoomId !=
+                contract.RoomId)
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes
+                        .ReservationContractMismatch
+                );
+            }
+
+            /*
+             * Nếu Reservation đã convert rồi
+             * thì bắt buộc phải convert đúng Contract này.
+             */
+            if (
+                reservation.Status ==
+                    RoomReservationStatus.ConvertedToContract
+                &&
+                reservation.ConvertedContractId !=
+                    contract.Id
+            )
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes
+                        .ReservationContractMismatch
+                );
+            }
+
+            var primaryTenant =
+                await _contractTenantRepository
+                    .FindAsync(
+                        x =>
+                            x.ContractId ==
+                                contract.Id
+                            &&
+                            x.Role ==
+                                ContractTenantRole
+                                    .PrimaryTenant
+                    );
+
+            if (primaryTenant is null)
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes
+                        .ContractRequiresPrimaryTenant
+                );
+            }
+
+            /*
+             * Người đặt phòng phải chính là
+             * PrimaryTenant của Contract.
+             */
+            if (primaryTenant.TenantId !=
+                reservation.TenantId)
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes
+                        .ReservationContractMismatch
+                );
+            }
+
+            /*
+             * Lấy toàn bộ Payment ReservationDeposit
+             * đã thực sự Completed.
+             */
+            var paymentQueryable =
+                await _paymentRepository
+                    .GetQueryableAsync();
+
+            var completedPayments =
+                await AsyncExecuter.ToListAsync(
+                    paymentQueryable
+                        .Where(
+                            x =>
+                                x.RoomReservationId ==
+                                    reservation.Id
+                                &&
+                                x.Purpose ==
+                                    PaymentPurpose
+                                        .ReservationDeposit
+                                &&
+                                x.Status ==
+                                    PaymentStatus.Completed
+                        )
+                        .OrderBy(x => x.PaidAt)
+                        .ThenBy(x => x.CreationTime)
+                );
+
+            if (completedPayments.Count == 0)
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes
+                        .ReservationDepositCannotBeAllocated
+                );
+            }
+
+            /*
+             * Lấy settlement đã tồn tại cho
+             * Reservation này.
+             */
+            var settlementQueryable =
+                await _depositSettlementRepository
+                    .GetQueryableAsync();
+
+            var existingAllocations =
+                await AsyncExecuter.ToListAsync(
+                    settlementQueryable.Where(
+                        x =>
+                            x.Type ==
+                                DepositSettlementType
+                                    .AllocateToContractDeposit
+                            &&
+                            x.Status ==
+                                DepositSettlementStatus
+                                    .Completed
+                            &&
+                            x.SourceRoomReservationId ==
+                                reservation.Id
+                    )
+                );
+
+            /*
+             * Một Reservation không được phân bổ
+             * sang hai Contract khác nhau.
+             */
+            if (
+                existingAllocations.Any(
+                    x =>
+                        x.TargetContractId !=
+                            contract.Id
+                )
+            )
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes
+                        .ReservationContractMismatch
+                );
+            }
+
+            /*
+             * Payment có thể đã được allocate một phần
+             * ở lần xử lý trước.
+             *
+             * Không được allocate lại cùng một đồng tiền.
+             */
+            var allocatedByPayment =
+                existingAllocations
+                    .Where(x => x.PaymentId.HasValue)
+                    .GroupBy(x => x.PaymentId!.Value)
+                    .ToDictionary(
+                        x => x.Key,
+                        x => x.Sum(y => y.Amount)
+                    );
+
+            var coveredDeposit =
+                await GetCoveredContractDepositTotalAsync(
+                    contract.Id
+                );
+
+            var remainingDeposit =
+                contract.DepositAmount
+                - coveredDeposit;
+
+            decimal allocatedNow = 0;
+
+            foreach (var payment in completedPayments)
+            {
+                var alreadyAllocated =
+                    allocatedByPayment.TryGetValue(
+                        payment.Id,
+                        out var value
+                    )
+                        ? value
+                        : 0m;
+
+                var availableAmount =
+                    payment.Amount
+                    - alreadyAllocated;
+
+                if (availableAmount <= 0)
+                {
+                    continue;
+                }
+
+                /*
+                 * Contract đã đủ cọc nhưng Reservation
+                 * vẫn còn tiền chưa disposition.
+                 *
+                 * Không tự ý refund/rent-credit ở đây.
+                 */
+                if (remainingDeposit <= 0)
+                {
+                    break;
+                }
+
+                var amountToAllocate =
+                    Math.Min(
+                        availableAmount,
+                        remainingDeposit
+                    );
+
+                var settlement =
+                    new DepositSettlement(
+                        GuidGenerator.Create(),
+                        DepositSettlementType
+                            .AllocateToContractDeposit,
+                        amountToAllocate,
+                        paymentId:
+                            payment.Id,
+                        sourceRoomReservationId:
+                            reservation.Id,
+                        targetContractId:
+                            contract.Id,
+                        notes:
+                            $"Reservation deposit allocation from {reservation.ReservationNumber}"
+                    );
+
+                settlement.Complete(
+                    _clock.Now
+                );
+
+                await _depositSettlementRepository
+                    .InsertAsync(
+                        settlement,
+                        autoSave: true
+                    );
+
+                allocatedNow +=
+                    amountToAllocate;
+
+                remainingDeposit -=
+                    amountToAllocate;
+
+                if (remainingDeposit <= 0)
+                {
+                    break;
+                }
+            }
+
+            /*
+             * Nếu không allocate được thêm đồng nào:
+             *
+             * - Nếu Reservation đã được allocation trước
+             *   vào đúng Contract này => operation idempotent,
+             *   trả kết quả hiện tại.
+             *
+             * - Nếu Contract đã đủ bởi nguồn khác nhưng
+             *   Reservation còn tiền chưa xử lý => không tự
+             *   quyết định disposition.
+             */
+            if (allocatedNow == 0)
+            {
+                var totalReservationPaid =
+                    completedPayments.Sum(
+                        x => x.Amount
+                    );
+
+                var totalReservationAllocated =
+                    existingAllocations.Sum(
+                        x => x.Amount
+                    );
+
+                if (
+                    totalReservationAllocated <
+                        totalReservationPaid
+                    &&
+                    remainingDeposit <= 0
+                )
+                {
+                    throw new BusinessException(
+                        BuildingManagementErrorCodes
+                            .ContractDepositAlreadyFullyPaid
+                    );
+                }
+            }
+
+            /*
+             * Đây chính là Reservation đã tạo ra
+             * Contract mà khách đang ở.
+             */
+            if (
+                reservation.Status ==
+                    RoomReservationStatus.Reserved
+            )
+            {
+                reservation.ConvertToContract(
+                    contract.Id
+                );
+
+                await _roomReservationRepository
+                    .UpdateAsync(
+                        reservation,
+                        autoSave: true
+                    );
+            }
+
+            var coveredAfter =
+                coveredDeposit
+                + allocatedNow;
+
+            var remainingAfter =
+                Math.Max(
+                    contract.DepositAmount
+                    - coveredAfter,
+                    0m
+                );
+
+            return new ContractDepositAllocationDto
+            {
+                RoomReservationId =
+                    reservation.Id,
+
+                ContractId =
+                    contract.Id,
+
+                AllocatedAmount =
+                    allocatedNow,
+
+                CoveredDeposit =
+                    coveredAfter,
+
+                RemainingDeposit =
+                    remainingAfter
+            };
         }
 
         public async Task<PaymentDto>

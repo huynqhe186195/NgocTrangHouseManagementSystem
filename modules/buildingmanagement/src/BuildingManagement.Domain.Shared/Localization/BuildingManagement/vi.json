@@ -105,6 +105,8 @@
     "BuildingManagement:DepositSettlementCannotBeCompleted": "Không thể hoàn tất xử lý tiền cọc ở trạng thái hiện tại.",
     "BuildingManagement:ContractDepositNotPayable": "Hợp đồng hiện không thể nhận thêm tiền cọc.",
     "BuildingManagement:ContractDepositExceedsRemaining": "Số tiền cọc vượt quá số tiền còn phải đóng của hợp đồng.",
-    "BuildingManagement:ContractDepositAlreadyFullyPaid": "Tiền cọc hợp đồng đã được đóng đủ."
+    "BuildingManagement:ContractDepositAlreadyFullyPaid": "Tiền cọc hợp đồng đã được đóng đủ.",
+    "BuildingManagement:ReservationDepositCannotBeAllocated": "Tiền cọc giữ phòng không thể được chuyển sang cọc hợp đồng ở trạng thái hiện tại.",
+    "BuildingManagement:ReservationContractMismatch": "Thông tin đặt phòng không khớp với hợp đồng được chọn."
   }
 }

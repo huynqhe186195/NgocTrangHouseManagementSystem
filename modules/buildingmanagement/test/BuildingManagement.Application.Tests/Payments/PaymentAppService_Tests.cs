@@ -8,6 +8,8 @@ using BuildingManagement.Rooms;
 using BuildingManagement.Tenants;
 using Shouldly;
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using Volo.Abp;
 using Volo.Abp.Domain.Repositories;
@@ -685,6 +687,681 @@ public abstract class PaymentAppService_Tests<TStartupModule>
         exception.Code.ShouldBe(
             BuildingManagementErrorCodes
                 .ContractDepositExceedsRemaining
+        );
+    }
+
+    private async Task<ContractDto> CreateActiveContractForTenantAsync(
+        Guid roomId,
+        Guid tenantId,
+        DateTime? endDate = null)
+    {
+        var contract =
+            await _contractAppService.CreateAsync(
+                new CreateContractDto
+                {
+                    ContractNumber =
+                        NewContractNumber(),
+
+                    RoomId =
+                        roomId,
+
+                    StartDate =
+                        _clock.Now.Date,
+
+                    EndDate =
+                        (endDate
+                         ?? _clock.Now.Date.AddMonths(6))
+                        .Date,
+
+                    MonthlyRent =
+                        3_000_000
+                }
+            );
+
+        await _contractAppService.AddTenantAsync(
+            contract.Id,
+            new AddContractTenantDto
+            {
+                TenantId =
+                    tenantId,
+
+                Role =
+                    ContractTenantRole.PrimaryTenant
+            }
+        );
+
+        return await _contractAppService
+            .ActivateAsync(
+                contract.Id
+            );
+    }
+
+    private async Task<
+    List<DepositSettlement>>
+    GetReservationAllocationsAsync(
+        Guid reservationId,
+        Guid contractId)
+    {
+        var result =
+            new List<DepositSettlement>();
+
+        await WithUnitOfWorkAsync(
+            async () =>
+            {
+                result =
+                    await _depositSettlementRepository
+                        .GetListAsync(
+                            x =>
+                                x.SourceRoomReservationId ==
+                                    reservationId
+                                &&
+                                x.TargetContractId ==
+                                    contractId
+                                &&
+                                x.Type ==
+                                    DepositSettlementType
+                                        .AllocateToContractDeposit
+                        );
+            }
+        );
+
+        return result;
+    }
+
+    // PAY28
+    [Fact]
+    public async Task
+        Should_Allocate_Reservation_Deposit_To_Contract_Deposit()
+    {
+        var roomId =
+            await CreateRoomAsync();
+
+        var tenant =
+            await CreateTenantAsync();
+
+        var reservation =
+            await CreateReservationAsync(
+                roomId,
+                tenant.Id
+            );
+
+        var payment =
+            await CreatePaymentAsync(
+                reservation.Id,
+                500_000
+            );
+
+        await CompletePaymentAsync(
+            payment.Id
+        );
+
+        var contract =
+            await CreateActiveContractForTenantAsync(
+                roomId,
+                tenant.Id
+            );
+
+        var result =
+            await _paymentAppService
+                .AllocateReservationDepositToContractAsync(
+                    reservation.Id,
+                    contract.Id
+                );
+
+        result.AllocatedAmount.ShouldBe(
+            500_000
+        );
+
+        result.CoveredDeposit.ShouldBe(
+            500_000
+        );
+
+        result.RemainingDeposit.ShouldBe(
+            2_500_000
+        );
+
+        var reservationAfter =
+            await _roomReservationAppService
+                .GetAsync(
+                    reservation.Id
+                );
+
+        reservationAfter.Status.ShouldBe(
+            RoomReservationStatus
+                .ConvertedToContract
+        );
+
+        reservationAfter
+            .ConvertedContractId
+            .ShouldBe(
+                contract.Id
+            );
+
+        var settlements =
+            await GetReservationAllocationsAsync(
+                reservation.Id,
+                contract.Id
+            );
+
+        settlements.Count.ShouldBe(1);
+
+        settlements[0].PaymentId.ShouldBe(
+            payment.Id
+        );
+
+        settlements[0].Amount.ShouldBe(
+            500_000
+        );
+
+        settlements[0].Status.ShouldBe(
+            DepositSettlementStatus.Completed
+        );
+    }
+
+    // PAY30
+    [Fact]
+    public async Task
+        Should_Fully_Cover_Contract_Deposit_From_Full_Reservation_Deposit()
+    {
+        var roomId =
+            await CreateRoomAsync();
+
+        var tenant =
+            await CreateTenantAsync();
+
+        var reservation =
+            await CreateReservationAsync(
+                roomId,
+                tenant.Id
+            );
+
+        var payment =
+            await CreatePaymentAsync(
+                reservation.Id,
+                3_000_000
+            );
+
+        await CompletePaymentAsync(
+            payment.Id
+        );
+
+        var contract =
+            await CreateActiveContractForTenantAsync(
+                roomId,
+                tenant.Id
+            );
+
+        var result =
+            await _paymentAppService
+                .AllocateReservationDepositToContractAsync(
+                    reservation.Id,
+                    contract.Id
+                );
+
+        result.AllocatedAmount.ShouldBe(
+            3_000_000
+        );
+
+        result.CoveredDeposit.ShouldBe(
+            3_000_000
+        );
+
+        result.RemainingDeposit.ShouldBe(
+            0
+        );
+    }
+
+    // PAY31
+    [Fact]
+    public async Task
+        Should_Allocate_Multiple_Reservation_Deposit_Payments()
+    {
+        var roomId =
+            await CreateRoomAsync();
+
+        var tenant =
+            await CreateTenantAsync();
+
+        var reservation =
+            await CreateReservationAsync(
+                roomId,
+                tenant.Id
+            );
+
+        var first =
+            await CreatePaymentAsync(
+                reservation.Id,
+                500_000
+            );
+
+        await CompletePaymentAsync(
+            first.Id
+        );
+
+        var second =
+            await CreatePaymentAsync(
+                reservation.Id,
+                1_000_000
+            );
+
+        await CompletePaymentAsync(
+            second.Id
+        );
+
+        var contract =
+            await CreateActiveContractForTenantAsync(
+                roomId,
+                tenant.Id
+            );
+
+        var result =
+            await _paymentAppService
+                .AllocateReservationDepositToContractAsync(
+                    reservation.Id,
+                    contract.Id
+                );
+
+        result.AllocatedAmount.ShouldBe(
+            1_500_000
+        );
+
+        result.CoveredDeposit.ShouldBe(
+            1_500_000
+        );
+
+        result.RemainingDeposit.ShouldBe(
+            1_500_000
+        );
+
+        var settlements =
+            await GetReservationAllocationsAsync(
+                reservation.Id,
+                contract.Id
+            );
+
+        settlements.Count.ShouldBe(2);
+
+        settlements.Sum(
+            x => x.Amount
+        ).ShouldBe(
+            1_500_000
+        );
+    }
+
+    // PAY32
+    [Fact]
+    public async Task
+        Should_Not_Allocate_Reservation_Deposit_To_Different_Room()
+    {
+        var reservationRoomId =
+            await CreateRoomAsync();
+
+        var contractRoomId =
+            await CreateRoomAsync();
+
+        var tenant =
+            await CreateTenantAsync();
+
+        var reservation =
+            await CreateReservationAsync(
+                reservationRoomId,
+                tenant.Id
+            );
+
+        var payment =
+            await CreatePaymentAsync(
+                reservation.Id,
+                500_000
+            );
+
+        await CompletePaymentAsync(
+            payment.Id
+        );
+
+        var contract =
+            await CreateActiveContractForTenantAsync(
+                contractRoomId,
+                tenant.Id
+            );
+
+        var exception =
+            await Assert.ThrowsAsync<
+                BusinessException>(
+                () =>
+                    _paymentAppService
+                        .AllocateReservationDepositToContractAsync(
+                            reservation.Id,
+                            contract.Id
+                        )
+            );
+
+        exception.Code.ShouldBe(
+            BuildingManagementErrorCodes
+                .ReservationContractMismatch
+        );
+    }
+
+    // PAY33
+    [Fact]
+    public async Task
+        Should_Not_Allocate_When_Primary_Tenant_Does_Not_Match()
+    {
+        var roomId =
+            await CreateRoomAsync();
+
+        var reservationTenant =
+            await CreateTenantAsync();
+
+        var contractTenant =
+            await CreateTenantAsync();
+
+        var reservation =
+            await CreateReservationAsync(
+                roomId,
+                reservationTenant.Id
+            );
+
+        var payment =
+            await CreatePaymentAsync(
+                reservation.Id,
+                500_000
+            );
+
+        await CompletePaymentAsync(
+            payment.Id
+        );
+
+        var contract =
+            await CreateActiveContractForTenantAsync(
+                roomId,
+                contractTenant.Id
+            );
+
+        var exception =
+            await Assert.ThrowsAsync<
+                BusinessException>(
+                () =>
+                    _paymentAppService
+                        .AllocateReservationDepositToContractAsync(
+                            reservation.Id,
+                            contract.Id
+                        )
+            );
+
+        exception.Code.ShouldBe(
+            BuildingManagementErrorCodes
+                .ReservationContractMismatch
+        );
+    }
+
+    // PAY34
+    [Fact]
+    public async Task
+        Should_Not_Allocate_To_Non_Active_Contract()
+    {
+        var roomId =
+            await CreateRoomAsync();
+
+        var tenant =
+            await CreateTenantAsync();
+
+        var reservation =
+            await CreateReservationAsync(
+                roomId,
+                tenant.Id
+            );
+
+        var payment =
+            await CreatePaymentAsync(
+                reservation.Id,
+                500_000
+            );
+
+        await CompletePaymentAsync(
+            payment.Id
+        );
+
+        var contract =
+            await _contractAppService.CreateAsync(
+                new CreateContractDto
+                {
+                    ContractNumber =
+                        NewContractNumber(),
+
+                    RoomId =
+                        roomId,
+
+                    StartDate =
+                        _clock.Now.Date,
+
+                    EndDate =
+                        _clock.Now.Date
+                            .AddMonths(6),
+
+                    MonthlyRent =
+                        3_000_000
+                }
+            );
+
+        await _contractAppService.AddTenantAsync(
+            contract.Id,
+            new AddContractTenantDto
+            {
+                TenantId =
+                    tenant.Id,
+
+                Role =
+                    ContractTenantRole.PrimaryTenant
+            }
+        );
+
+        var exception =
+            await Assert.ThrowsAsync<
+                BusinessException>(
+                () =>
+                    _paymentAppService
+                        .AllocateReservationDepositToContractAsync(
+                            reservation.Id,
+                            contract.Id
+                        )
+            );
+
+        exception.Code.ShouldBe(
+            BuildingManagementErrorCodes
+                .ReservationDepositCannotBeAllocated
+        );
+    }
+
+    // PAY35
+    [Fact]
+    public async Task
+        Should_Not_Allocate_Uncompleted_Reservation_Deposit()
+    {
+        var roomId =
+            await CreateRoomAsync();
+
+        var tenant =
+            await CreateTenantAsync();
+
+        var reservation =
+            await CreateReservationAsync(
+                roomId,
+                tenant.Id
+            );
+
+        await CreatePaymentAsync(
+            reservation.Id,
+            500_000
+        );
+
+        var contract =
+            await CreateActiveContractForTenantAsync(
+                roomId,
+                tenant.Id
+            );
+
+        var exception =
+            await Assert.ThrowsAsync<
+                BusinessException>(
+                () =>
+                    _paymentAppService
+                        .AllocateReservationDepositToContractAsync(
+                            reservation.Id,
+                            contract.Id
+                        )
+            );
+
+        exception.Code.ShouldBe(
+            BuildingManagementErrorCodes
+                .ReservationDepositCannotBeAllocated
+        );
+    }
+
+    // PAY36
+    [Fact]
+    public async Task
+        Should_Allocate_Only_Remaining_Contract_Deposit()
+    {
+        var roomId =
+            await CreateRoomAsync();
+
+        var tenant =
+            await CreateTenantAsync();
+
+        var reservation =
+            await CreateReservationAsync(
+                roomId,
+                tenant.Id
+            );
+
+        var reservationPayment =
+            await CreatePaymentAsync(
+                reservation.Id,
+                500_000
+            );
+
+        await CompletePaymentAsync(
+            reservationPayment.Id
+        );
+
+        var contract =
+            await CreateActiveContractForTenantAsync(
+                roomId,
+                tenant.Id
+            );
+
+        var contractPayment =
+            await CreateContractDepositPaymentAsync(
+                contract.Id,
+                2_700_000
+            );
+
+        await CompletePaymentAsync(
+            contractPayment.Id
+        );
+
+        var result =
+            await _paymentAppService
+                .AllocateReservationDepositToContractAsync(
+                    reservation.Id,
+                    contract.Id
+                );
+
+        result.AllocatedAmount.ShouldBe(
+            300_000
+        );
+
+        result.CoveredDeposit.ShouldBe(
+            3_000_000
+        );
+
+        result.RemainingDeposit.ShouldBe(
+            0
+        );
+
+        var settlements =
+            await GetReservationAllocationsAsync(
+                reservation.Id,
+                contract.Id
+            );
+
+        settlements.Sum(
+            x => x.Amount
+        ).ShouldBe(
+            300_000
+        );
+    }
+
+    // PAY29
+    [Fact]
+    public async Task
+        Should_Not_Duplicate_Reservation_Deposit_Allocation()
+    {
+        var roomId =
+            await CreateRoomAsync();
+
+        var tenant =
+            await CreateTenantAsync();
+
+        var reservation =
+            await CreateReservationAsync(
+                roomId,
+                tenant.Id
+            );
+
+        var payment =
+            await CreatePaymentAsync(
+                reservation.Id,
+                500_000
+            );
+
+        await CompletePaymentAsync(
+            payment.Id
+        );
+
+        var contract =
+            await CreateActiveContractForTenantAsync(
+                roomId,
+                tenant.Id
+            );
+
+        await _paymentAppService
+            .AllocateReservationDepositToContractAsync(
+                reservation.Id,
+                contract.Id
+            );
+
+        var second =
+            await _paymentAppService
+                .AllocateReservationDepositToContractAsync(
+                    reservation.Id,
+                    contract.Id
+                );
+
+        second.AllocatedAmount.ShouldBe(
+            0
+        );
+
+        second.CoveredDeposit.ShouldBe(
+            500_000
+        );
+
+        second.RemainingDeposit.ShouldBe(
+            2_500_000
+        );
+
+        var settlements =
+            await GetReservationAllocationsAsync(
+                reservation.Id,
+                contract.Id
+            );
+
+        settlements.Count.ShouldBe(1);
+
+        settlements.Sum(
+            x => x.Amount
+        ).ShouldBe(
+            500_000
         );
     }
 

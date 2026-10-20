@@ -1,10 +1,12 @@
-﻿using BuildingManagement.EntityFrameworkCore.Contracts;
+﻿using BuildingManagement.Contracts;
+using BuildingManagement.EntityFrameworkCore.Contracts;
+using BuildingManagement.EntityFrameworkCore.Contracts;
+using BuildingManagement.EntityFrameworkCore.RoomReservations;
+using BuildingManagement.RoomReservations;
 using Microsoft.Extensions.DependencyInjection;
 using Volo.Abp.EntityFrameworkCore;
 using Volo.Abp.EntityFrameworkCore.PostgreSql;
 using Volo.Abp.Modularity;
-using BuildingManagement.Contracts;
-using BuildingManagement.EntityFrameworkCore.Contracts;
 
 namespace BuildingManagement.EntityFrameworkCore;
 
@@ -27,7 +29,10 @@ public class BuildingManagementEntityFrameworkCoreModule : AbpModule
             Contract,
             EfCoreContractRepository
         >();
-    }
+        options.AddRepository<
+        RoomReservation,
+        EfCoreRoomReservationRepository>();
+        }
 );
     }
 }

@@ -305,4 +305,12 @@ public static class BuildingManagementErrorCodes
 
     public const string ContractDepositAlreadyFullyPaid =
         "BuildingManagement:ContractDepositAlreadyFullyPaid";
+
+    public const string
+    ReservationDepositCannotBeAllocated =
+        "BuildingManagement:ReservationDepositCannotBeAllocated";
+
+    public const string
+        ReservationContractMismatch =
+            "BuildingManagement:ReservationContractMismatch";
 } // Consolidate all of the module's error codes in one place.

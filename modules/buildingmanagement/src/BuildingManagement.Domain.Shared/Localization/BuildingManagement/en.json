@@ -105,6 +105,8 @@
     "BuildingManagement:DepositSettlementCannotBeCompleted": "This deposit settlement cannot be completed in its current status.",
     "BuildingManagement:ContractDepositNotPayable": "This contract cannot receive deposit payments in its current status.",
     "BuildingManagement:ContractDepositExceedsRemaining": "The contract deposit payment exceeds the remaining required deposit.",
-    "BuildingManagement:ContractDepositAlreadyFullyPaid": "The contract deposit has already been fully paid."
+    "BuildingManagement:ContractDepositAlreadyFullyPaid": "The contract deposit has already been fully paid.",
+    "BuildingManagement:ReservationDepositCannotBeAllocated": "The reservation deposit cannot be allocated to a contract in its current state.",
+    "BuildingManagement:ReservationContractMismatch": "The reservation does not match the target contract."
   }
 }

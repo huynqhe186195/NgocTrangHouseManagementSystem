@@ -12,8 +12,6 @@ public class BuildingManagementDbContextFactory : IDesignTimeDbContextFactory<Bu
 {
     public BuildingManagementDbContext CreateDbContext(string[] args)
     {
-        AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
-
         var configuration = BuildConfiguration();
 
         var builder = new DbContextOptionsBuilder<BuildingManagementDbContext>()

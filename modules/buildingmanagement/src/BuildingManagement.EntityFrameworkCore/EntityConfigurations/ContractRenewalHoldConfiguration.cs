@@ -25,11 +25,11 @@ namespace BuildingManagement.EntityFrameworkCore.EntityConfigurations
                 .IsRequired();
 
             builder.Property(x => x.RequestedAt)
-                .HasColumnType("timestamp without time zone")
+                .HasColumnType("timestamp with time zone")
                 .IsRequired();
 
             builder.Property(x => x.ExpiresAt)
-                .HasColumnType("timestamp without time zone")
+                .HasColumnType("timestamp with time zone")
                 .IsRequired();
 
             builder.Property(x => x.Status)

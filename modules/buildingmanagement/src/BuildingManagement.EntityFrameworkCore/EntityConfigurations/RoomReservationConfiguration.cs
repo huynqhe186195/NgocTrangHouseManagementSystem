@@ -46,7 +46,7 @@ namespace BuildingManagement.EntityFrameworkCore.EntityConfigurations
                 .IsRequired();
 
             builder.Property(x => x.ReservedAt)
-                .HasColumnType("timestamp without time zone")
+                .HasColumnType("timestamp with time zone")
                 .IsRequired(false);
 
             builder.Property(x => x.DepositDueDate)
@@ -57,7 +57,7 @@ namespace BuildingManagement.EntityFrameworkCore.EntityConfigurations
                 .IsRequired(false);
 
             builder.Property(x => x.CancelledAt)
-                .HasColumnType("timestamp without time zone")
+                .HasColumnType("timestamp with time zone")
                 .IsRequired(false);
 
             builder.Property(x => x.CancellationReason)

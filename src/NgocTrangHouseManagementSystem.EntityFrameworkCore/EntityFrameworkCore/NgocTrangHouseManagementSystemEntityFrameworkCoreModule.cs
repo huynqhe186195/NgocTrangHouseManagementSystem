@@ -34,8 +34,6 @@ public class NgocTrangHouseManagementSystemEntityFrameworkCoreModule : AbpModule
 {
     public override void PreConfigureServices(ServiceConfigurationContext context)
     {
-        // https://www.npgsql.org/efcore/release-notes/6.0.html#opting-out-of-the-new-timestamp-mapping-logic
-        AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
 
         NgocTrangHouseManagementSystemEfCoreEntityExtensionMappings.Configure();
     }

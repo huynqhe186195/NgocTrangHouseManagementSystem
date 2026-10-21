@@ -45,7 +45,7 @@ namespace BuildingManagement.EntityFrameworkCore.EntityConfigurations
 
             builder.Property(x => x.PaidAt)
                 .HasColumnType(
-                    "timestamp without time zone"
+                    "timestamp with time zone"
                 )
                 .IsRequired(false);
 

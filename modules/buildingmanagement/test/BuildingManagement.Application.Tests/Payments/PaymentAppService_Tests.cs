@@ -2524,9 +2524,7 @@ public abstract class PaymentAppService_Tests<TStartupModule>
             500_000
         );
 
-        result.SettledNow.ShouldBe(
-            500_000
-        );
+        result.SettledNow.ShouldBe(0m);
 
         result.TotalSettled.ShouldBe(
             500_000
@@ -2608,9 +2606,7 @@ public abstract class PaymentAppService_Tests<TStartupModule>
             3_000_000
         );
 
-        result.SettledNow.ShouldBe(
-            3_000_000
-        );
+        result.SettledNow.ShouldBe(0m);
 
         result.TotalSettled.ShouldBe(
             3_000_000

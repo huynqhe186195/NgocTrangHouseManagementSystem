@@ -1,4 +1,5 @@
 ﻿using BuildingManagement.Contracts;
+using BuildingManagement.Payments;
 using BuildingManagement.Rooms;
 using BuildingManagement.Tenants;
 using System;
@@ -10,6 +11,7 @@ using Volo.Abp.Application.Services;
 using Volo.Abp.Data;
 using Volo.Abp.Domain.Repositories;
 using Volo.Abp.Timing;
+using Volo.Abp.Uow;
 
 namespace BuildingManagement.RoomReservations
 {
@@ -35,6 +37,15 @@ namespace BuildingManagement.RoomReservations
         private readonly IClock
             _clock;
 
+        private readonly IRoomReservationRepository
+            _roomReservationLockRepository;
+
+        private readonly IRepository<Payment, Guid>
+            _paymentRepository;
+
+        private readonly IPaymentAppService
+            _paymentAppService;
+
         public RoomReservationAppService(
             IRepository<RoomReservation, Guid>
                 roomReservationRepository,
@@ -46,7 +57,12 @@ namespace BuildingManagement.RoomReservations
                 contractRepository,
             IDataFilter<ISoftDelete>
                 softDeleteFilter,
-            IClock clock)
+            IClock clock,
+            IRoomReservationRepository
+                roomReservationLockRepository,
+            IRepository<Payment, Guid>
+                paymentRepository,
+            IPaymentAppService paymentAppService)
         {
             _roomReservationRepository =
                 roomReservationRepository;
@@ -65,10 +81,18 @@ namespace BuildingManagement.RoomReservations
 
             _clock =
                 clock;
+
+            _roomReservationLockRepository =
+                roomReservationLockRepository;
+
+            _paymentRepository =
+                paymentRepository;
+
+            _paymentAppService =
+                paymentAppService;
         }
 
-        public async Task<RoomReservationDto>
-            GetAsync(Guid id)
+        public async Task<RoomReservationDto> GetAsync(Guid id)
         {
             var reservation =
                 await GetExistingReservationAsync(
@@ -81,8 +105,7 @@ namespace BuildingManagement.RoomReservations
             >(reservation);
         }
 
-        public async Task<List<RoomReservationDto>>
-            GetListAsync()
+        public async Task<List<RoomReservationDto>> GetListAsync()
         {
             var queryable =
                 await _roomReservationRepository
@@ -101,8 +124,7 @@ namespace BuildingManagement.RoomReservations
             >(reservations);
         }
 
-        public async Task<RoomReservationDto> CreateAsync(
-                CreateRoomReservationDto input)
+        public async Task<RoomReservationDto> CreateAsync(CreateRoomReservationDto input)
         {
             var reservationNumber =
                 NormalizeReservationNumber(
@@ -225,65 +247,80 @@ namespace BuildingManagement.RoomReservations
             >(reservation);
         }
 
-        public async Task<RoomReservationDto> CancelAsync(
-                Guid id,
-                CancelRoomReservationDto input)
+        [UnitOfWork(isTransactional: true)]
+        public virtual async Task<RoomReservationDto> CancelAsync(Guid id, CancelRoomReservationDto input)
         {
+            // Take the reservation lock before checking or changing its state.
             var reservation =
-                await GetExistingReservationAsync(
-                    id
+                await _roomReservationLockRepository.FindForUpdateAsync(id);
+
+            if (reservation is null)
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes.RoomReservationNotFound
                 );
+            }
 
             if (
-                reservation.Status !=
-                    RoomReservationStatus.PendingPayment
+                reservation.Status != RoomReservationStatus.PendingPayment
                 &&
-                reservation.Status !=
-                    RoomReservationStatus.Reserved
+                reservation.Status != RoomReservationStatus.Reserved
             )
             {
                 throw new BusinessException(
-                    BuildingManagementErrorCodes
-                        .RoomReservationCannotBeCancelled
+                    BuildingManagementErrorCodes.RoomReservationCannotBeCancelled
                 );
             }
 
-            if (!Enum.IsDefined(typeof(ReservationCancellationReason),input.Reason)||input.Reason ==
-        ReservationCancellationReason.NoShow
-                    ||
-                    input.Reason ==
-                        ReservationCancellationReason.SupersededByRenewal
-                )
+            // Preserve the cancellation reasons supported by this API.
+            if (
+                !Enum.IsDefined(typeof(ReservationCancellationReason), input.Reason)
+                ||
+                input.Reason == ReservationCancellationReason.NoShow
+                ||
+                input.Reason == ReservationCancellationReason.SupersededByRenewal
+            )
             {
                 throw new BusinessException(
-                    BuildingManagementErrorCodes
-                        .InvalidReservationCancellationReason
+                    BuildingManagementErrorCodes.InvalidReservationCancellationReason
                 );
             }
+
+            var hasCompletedDeposit =
+                await _paymentRepository.AnyAsync(
+                    payment =>
+                        payment.RoomReservationId == reservation.Id
+                        &&
+                        payment.Purpose == PaymentPurpose.ReservationDeposit
+                        &&
+                        payment.Status == PaymentStatus.Completed
+                );
 
             reservation.Cancel(
                 _clock.Now,
                 input.Reason,
-                NormalizeOptional(
-                    input.Notes
-                )
+                NormalizeOptional(input.Notes)
             );
 
-            await _roomReservationRepository
-                .UpdateAsync(
-                    reservation,
-                    autoSave: true
-                );
+            // Flush the cancelled state without committing the enclosing UOW.
+            await _roomReservationRepository.UpdateAsync(
+                reservation,
+                autoSave: true
+            );
 
-            return ObjectMapper.Map<
-                RoomReservation,
-                RoomReservationDto
-            >(reservation);
+            // No completed deposit means there is no money to settle.
+            // Do not swallow settlement errors or start a separate transaction.
+            if (hasCompletedDeposit)
+            {
+                await _paymentAppService.SettleCancelledReservationDepositAsync(
+                    reservation.Id
+                );
+            }
+
+            return ObjectMapper.Map<RoomReservation, RoomReservationDto>(reservation);
         }
 
-        private async Task<RoomReservation>
-            GetExistingReservationAsync(
-                Guid id)
+        private async Task<RoomReservation> GetExistingReservationAsync(Guid id)
         {
             var reservation =
                 await _roomReservationRepository
@@ -300,9 +337,7 @@ namespace BuildingManagement.RoomReservations
             return reservation;
         }
 
-        private async Task
-            EnsureReservationNumberIsUniqueAsync(
-                string reservationNumber)
+        private async Task EnsureReservationNumberIsUniqueAsync(string reservationNumber)
         {
             bool exists;
 
@@ -326,10 +361,7 @@ namespace BuildingManagement.RoomReservations
             }
         }
 
-        private async Task
-            EnsureTenantDoesNotAlreadyHaveReservationAsync(
-                Guid roomId,
-                Guid tenantId)
+        private async Task EnsureTenantDoesNotAlreadyHaveReservationAsync(Guid roomId, Guid tenantId)
         {
             var exists =
                 await _roomReservationRepository
@@ -359,10 +391,7 @@ namespace BuildingManagement.RoomReservations
             }
         }
 
-        private async Task
-            EnsureRoomCanBeReservedAsync(
-                Room room,
-                DateTime expectedMoveInDate)
+        private async Task EnsureRoomCanBeReservedAsync(Room room, DateTime expectedMoveInDate)
         {
             if (
                 room.Status ==
@@ -460,9 +489,7 @@ namespace BuildingManagement.RoomReservations
             }
         }
 
-        private static string
-            NormalizeReservationNumber(
-                string? value)
+        private static string NormalizeReservationNumber(string? value)
         {
             return string.IsNullOrWhiteSpace(value)
                 ? string.Empty
@@ -471,9 +498,7 @@ namespace BuildingManagement.RoomReservations
                     .ToUpperInvariant();
         }
 
-        private static string?
-            NormalizeOptional(
-                string? value)
+        private static string? NormalizeOptional(string? value)
         {
             return string.IsNullOrWhiteSpace(value)
                 ? null

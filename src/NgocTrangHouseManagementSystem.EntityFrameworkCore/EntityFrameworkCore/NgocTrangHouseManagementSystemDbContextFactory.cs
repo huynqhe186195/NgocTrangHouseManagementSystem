@@ -12,9 +12,6 @@ public class NgocTrangHouseManagementSystemDbContextFactory : IDesignTimeDbConte
 {
     public NgocTrangHouseManagementSystemDbContext CreateDbContext(string[] args)
     {
-        // https://www.npgsql.org/efcore/release-notes/6.0.html#opting-out-of-the-new-timestamp-mapping-logic
-        AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", true);
-        
         var configuration = BuildConfiguration();
         
         NgocTrangHouseManagementSystemEfCoreEntityExtensionMappings.Configure();

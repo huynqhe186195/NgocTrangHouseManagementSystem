@@ -45,7 +45,7 @@ public class DepositSettlementConfiguration
 
         builder.Property(x => x.CompletedAt)
             .HasColumnType(
-                "timestamp without time zone"
+                "timestamp with time zone"
             )
             .IsRequired(false);
 

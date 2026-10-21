@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="..\..\common.props" />
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <RootNamespace>BuildingManagement</RootNamespace>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+    <PackageReference Include="Shouldly" Version="4.3.0" />
+    <ProjectReference Include="..\BuildingManagement.Application.Tests\BuildingManagement.Application.Tests.csproj" />
+    <ProjectReference Include="..\..\src\BuildingManagement.EntityFrameworkCore\BuildingManagement.EntityFrameworkCore.csproj" />
+  </ItemGroup>
+</Project>

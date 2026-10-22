@@ -12,6 +12,7 @@ using Volo.Abp.Application.Services;
 using Volo.Abp.Data;
 using Volo.Abp.Domain.Repositories;
 using Volo.Abp.Timing;
+using Volo.Abp.Uow;
 
 namespace BuildingManagement.Payments
 {
@@ -1252,7 +1253,8 @@ namespace BuildingManagement.Payments
         }
 
 
-        public async Task<PaymentDto> CompleteAsync(Guid id, CompletePaymentDto input)
+        [UnitOfWork(isTransactional: true)]
+        public virtual async Task<PaymentDto> CompleteAsync(Guid id, CompletePaymentDto input)
         {
             var payment = await GetExistingPaymentAsync(id);
 
@@ -1285,10 +1287,56 @@ namespace BuildingManagement.Payments
             }
 
             /*
-             * Lock Reservation trước khi kiểm tra và hoàn tất
-             * thanh toán.
+             * Shared gate for an occupied room:
+             * - First reservation deposit takes the Active Contract row lock.
+             * - Creating a renewal hold takes the SAME Contract row lock.
              *
-             * Serialize các Payment cùng một Reservation.
+             * Lookup IDs with scalar projections so the Reservation is not
+             * attached to EF's change tracker before FindForUpdateAsync.
+             * Payment lock order: Active Contract -> Reservation -> Payment.
+             */
+            var reservationSnapshotQuery =
+                (await _roomReservationRepository.GetQueryableAsync())
+                .Where(x => x.Id == payment.RoomReservationId.Value)
+                .Select(x => new { x.RoomId, x.Status });
+            var reservationSnapshot = await AsyncExecuter.FirstOrDefaultAsync(
+                reservationSnapshotQuery);
+            var roomId = reservationSnapshot?.RoomId ?? Guid.Empty;
+
+            if (roomId != Guid.Empty)
+            {
+                var activeContractIdQuery = (await _contractRepository.GetQueryableAsync())
+                    .Where(x => x.RoomId == roomId &&
+                                x.Status == ContractStatus.Active)
+                    .Select(x => x.Id);
+
+                var activeContractId = await AsyncExecuter.FirstOrDefaultAsync(
+                    activeContractIdQuery);
+
+                if (activeContractId != Guid.Empty)
+                {
+                    var lockedContract = await _contractLockRepository
+                        .FindForUpdateAsync(activeContractId);
+
+                    if (lockedContract is null)
+                    {
+                        throw new BusinessException(
+                            BuildingManagementErrorCodes.RoomNotAvailableForReservation);
+                    }
+                }
+            }
+
+            // Fast-fail a first deposit against a Hold that already exists.
+            // Keep the later check under Reservation lock too. Avoid taking
+            // Reservation here when renewal may be waiting for that row.
+            if (reservationSnapshot?.Status == RoomReservationStatus.PendingPayment)
+            {
+                await EnsureNoActiveRenewalHoldAsync(roomId);
+            }
+
+            /*
+             * Lock Reservation after the shared Contract gate. This still
+             * serializes multiple pending Payments for the same Reservation.
              */
             var reservation =
                 await _roomReservationLockRepository.FindForUpdateAsync(

@@ -7,6 +7,7 @@ using Volo.Abp.Application.Services;
 using Volo.Abp.Data;
 using Volo.Abp.Domain.Repositories;
 using Volo.Abp.Timing;
+using Volo.Abp.Uow;
 
 namespace BuildingManagement.Contracts
 {
@@ -20,6 +21,9 @@ namespace BuildingManagement.Contracts
         private readonly IRepository<Contract, Guid>
             _contractRepository;
 
+        // Shared concurrency gate for the current Active Contract.
+        private readonly IContractRepository _contractLockRepository;
+
         private readonly IDataFilter<ISoftDelete>
             _softDeleteFilter;
 
@@ -30,7 +34,8 @@ namespace BuildingManagement.Contracts
             IRepository<ContractRenewalHold, Guid> renewalHoldRepository,
             IRepository<Contract, Guid> contractRepository,
             IDataFilter<ISoftDelete> softDeleteFilter,
-            IClock clock)
+            IClock clock,
+            IContractRepository contractLockRepository)
         {
             _renewalHoldRepository =
                 renewalHoldRepository;
@@ -43,6 +48,8 @@ namespace BuildingManagement.Contracts
 
             _clock =
                 clock;
+
+            _contractLockRepository = contractLockRepository;
         }
 
         public async Task<ContractRenewalHoldDto>
@@ -88,10 +95,14 @@ namespace BuildingManagement.Contracts
             >(holds);
         }
 
-        public async Task<ContractRenewalHoldDto>CreateAsync(CreateContractRenewalHoldDto input)
+        [UnitOfWork(isTransactional: true)]
+        public virtual async Task<ContractRenewalHoldDto> CreateAsync(
+            CreateContractRenewalHoldDto input)
         {
+            // Contract lock is the shared gate with PaymentAppService.CompleteAsync.
+            // It must be held until the Hold insert commits or rolls back.
             var currentContract =
-                await _contractRepository.FindAsync(
+                await _contractLockRepository.FindForUpdateAsync(
                     input.CurrentContractId
                 );
 

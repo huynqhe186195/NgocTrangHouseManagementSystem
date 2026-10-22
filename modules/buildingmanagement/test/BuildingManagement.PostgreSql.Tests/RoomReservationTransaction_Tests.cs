@@ -277,10 +277,9 @@ public sealed class RoomReservationTransaction_Tests
     // Reservation becomes Reserved. The two independent UOWs must not both
     // commit their first deposits for the same future move-in date.
     //
-    // The test deliberately locks BOTH Payment rows (not the Room row) to
-    // make both transactions finish their reservation checks before either
-    // Payment can be persisted. This test should expose a double-booking bug
-    // until Room-scoped serialization or an equivalent guard is implemented.
+    // The test blocks BOTH Payment rows to exercise shared Active Contract
+    // serialization: one Payment waits on its row; the other waits on the
+    // Contract gate until the first transaction commits or rolls back.
     [Fact]
     public async Task PG06_Should_Allow_Only_One_Concurrent_Deposit_For_Occupied_Room()
     {
@@ -308,6 +307,7 @@ public sealed class RoomReservationTransaction_Tests
 
         var (paymentTable, paymentIdColumn, paymentTableName) =
             GetPaymentTableAndIdColumn();
+        var (_, _, contractTableName) = GetContractTableAndIdColumn();
 
         await using var blocker = new NpgsqlConnection(
             BuildingManagementPostgreSqlTestModule.RequireSafeConnectionString());
@@ -316,7 +316,7 @@ public sealed class RoomReservationTransaction_Tests
 
         Task<Exception?>? firstAttempt = null;
         Task<Exception?>? secondAttempt = null;
-        var bothReachedPaymentUpdate = false;
+        var bothBlockedOnSharedGate = false;
 
         try
         {
@@ -340,10 +340,11 @@ public sealed class RoomReservationTransaction_Tests
             secondAttempt = Task.Run(() =>
                 CompleteInIndependentScopeAsync(second.PaymentId));
 
-            // Require evidence that BOTH requests have reached a blocked
-            // Payment UPDATE. Otherwise their timing proves nothing.
-            bothReachedPaymentUpdate = await WaitForTwoBlockedTableOperationsAsync(
-                paymentTableName, TimeSpan.FromSeconds(20));
+            // With the shared Contract lock, only ONE call reaches Payment UPDATE.
+            // The other waits on the Contract. Observe both waiters, not two
+            // Payment UPDATEs (which would indicate the shared gate is missing).
+            bothBlockedOnSharedGate = await WaitForTwoBlockedOperationsAcrossTablesAsync(
+                paymentTableName, contractTableName, TimeSpan.FromSeconds(20));
         }
         finally
         {
@@ -355,8 +356,8 @@ public sealed class RoomReservationTransaction_Tests
             throw new InvalidOperationException("PG06 did not start both payment attempts.");
 
         var errors = await Task.WhenAll(firstAttempt, secondAttempt);
-        bothReachedPaymentUpdate.ShouldBeTrue(
-            "PG06 did not observe two Payment UPDATEs waiting on locks. " +
+        bothBlockedOnSharedGate.ShouldBeTrue(
+            "PG06 did not observe one Payment waiter and one Contract waiter. " +
             "Do not treat a sequential run as concurrency evidence. " +
             $"A: {errors[0]?.GetType().Name ?? "success"}; " +
             $"B: {errors[1]?.GetType().Name ?? "success"}.");
@@ -456,12 +457,12 @@ public sealed class RoomReservationTransaction_Tests
 
         Task<Exception?>? renewAttempt = null;
         Task<Exception?>? paymentAttempt = null;
-        var bothReachedReservation = false;
+        var renewalReachedReservation = false;
 
         try
         {
             // Keep the pending Reservation row locked without modifying it.
-            // Both application requests must reach this row before release.
+            // Renewal must reach the row; Payment may fast-fail on active Hold.
             await using (var hold = new NpgsqlCommand(
                 $"SELECT 1 FROM {reservationTable} " +
                 $"WHERE {reservationIdColumn} = @reservationId FOR UPDATE",
@@ -477,8 +478,10 @@ public sealed class RoomReservationTransaction_Tests
             paymentAttempt = Task.Run(() =>
                 CompleteInIndependentScopeAsync(future.PaymentId));
 
-            bothReachedReservation = await WaitForTwoBlockedTableOperationsAsync(
-                reservationTableName, TimeSpan.FromSeconds(20));
+            // Renewal waits on Reservation while Payment may reject an
+            // existing Hold before reaching the Reservation lock.
+            renewalReachedReservation = await WaitForBlockedTableOperationsAsync(
+                reservationTableName, minimumBlocked: 1, timeout: TimeSpan.FromSeconds(20));
         }
         finally
         {
@@ -491,8 +494,8 @@ public sealed class RoomReservationTransaction_Tests
 
         var errors = await Task.WhenAll(renewAttempt, paymentAttempt);
 
-        bothReachedReservation.ShouldBeTrue(
-            "PG07 did not observe both operations waiting on the Reservation. " +
+        renewalReachedReservation.ShouldBeTrue(
+            "PG07 did not observe renewal waiting on the Reservation row. " +
             "Do not interpret a sequential run as concurrency evidence. " +
             $"Renew: {errors[0]?.GetType().Name ?? "success"}; " +
             $"Payment: {errors[1]?.GetType().Name ?? "success"}.");
@@ -525,6 +528,121 @@ public sealed class RoomReservationTransaction_Tests
             .Status.ShouldBe(ContractStatus.Signed);
         currentAfter.Status.ShouldBe(ContractStatus.Active);
         roomAfter.ShouldBe(RoomStatus.Occupied);
+    }
+
+    // PG08: A first deposit which has acquired the Active Contract row lock
+    // must commit before a concurrent renewal Hold can proceed. The Hold may
+    // subsequently be created (existing C59/C60 behavior), but RenewAsync
+    // must reject a period overlapping B's already Reserved reservation.
+    // PG07 separately verifies the Hold-first path.
+    [Fact]
+    public async Task PG08_Should_Serialize_InFlight_Deposit_And_Renewal_Hold()
+    {
+        var roomId = await CreateTestRoomAsync();
+        var today = GetTodayInVietnam();
+        var moveInDate = new DateTime(today.Year, today.Month, 1).AddMonths(1);
+
+        var current = await CreateActiveContractForRoomAsync(
+            roomId, today.AddDays(-30), moveInDate.AddDays(-1));
+        current.Status.ShouldBe(ContractStatus.Active);
+
+        var future = await CreatePendingPaymentForRoomAsync(
+            roomId, 500_000m, moveInDate);
+
+        var (paymentTable, paymentIdColumn, paymentTableName) =
+            GetPaymentTableAndIdColumn();
+        var (_, _, contractTableName) = GetContractTableAndIdColumn();
+
+        await using var blocker = new NpgsqlConnection(
+            BuildingManagementPostgreSqlTestModule.RequireSafeConnectionString());
+        await blocker.OpenAsync();
+        await using var blockerTransaction = await blocker.BeginTransactionAsync();
+
+        Task<Exception?>? paymentAttempt = null;
+        Task<ContractRenewalHoldDto>? holdAttempt = null;
+        var paymentReachedUpdate = false;
+        var holdWaitedForContract = false;
+
+        try
+        {
+            await using (var lockPayment = new NpgsqlCommand(
+                $"SELECT 1 FROM {paymentTable} " +
+                $"WHERE {paymentIdColumn} = @paymentId FOR UPDATE",
+                blocker, blockerTransaction))
+            {
+                lockPayment.Parameters.AddWithValue("paymentId", future.PaymentId);
+                (await lockPayment.ExecuteScalarAsync()).ShouldNotBeNull(
+                    "PG08 pending Payment row must exist.");
+            }
+
+            // Payment gets the Contract lock and reaches Payment UPDATE,
+            // where the external test transaction forces it to wait.
+            paymentAttempt = Task.Run(() =>
+                CompleteInIndependentScopeAsync(future.PaymentId));
+
+            paymentReachedUpdate = await WaitForBlockedTableOperationsAsync(
+                paymentTableName, minimumBlocked: 1, timeout: TimeSpan.FromSeconds(20));
+
+            if (paymentReachedUpdate)
+            {
+                holdAttempt = Task.Run(() =>
+                    CreateHoldInIndependentScopeAsync(current.Id));
+
+                // Hold must wait on the shared Contract lock instead of
+                // overtaking Payment while Payment is blocked on its row.
+                holdWaitedForContract = await WaitForBlockedTableOperationsAsync(
+                    contractTableName, minimumBlocked: 1, timeout: TimeSpan.FromSeconds(20));
+            }
+        }
+        finally
+        {
+            await blockerTransaction.RollbackAsync();
+        }
+
+        if (paymentAttempt is null || holdAttempt is null)
+            throw new InvalidOperationException(
+                "PG08 did not start both Payment and Hold requests.");
+
+        var paymentError = await paymentAttempt;
+        var createdHold = await holdAttempt;
+
+        paymentReachedUpdate.ShouldBeTrue(
+            "PG08 did not observe an in-flight Payment blocked on UPDATE.");
+        holdWaitedForContract.ShouldBeTrue(
+            "PG08 expected the renewal Hold to wait on the shared Contract " +
+            "row until the in-flight first deposit commits.");
+        paymentError.ShouldBeNull(
+            $"The Payment holding the Contract lock should finish first: {paymentError}");
+        createdHold.Status.ShouldBe(ContractRenewalHoldStatus.Active);
+
+        (await _payments.GetAsync(future.PaymentId)).Status
+            .ShouldBe(PaymentStatus.Completed);
+        (await _reservations.GetAsync(future.ReservationId)).Status
+            .ShouldBe(RoomReservationStatus.Reserved);
+        (await _contracts.GetAsync(current.Id)).Status
+            .ShouldBe(ContractStatus.Active);
+        (await WithUnitOfWorkAsync(async () =>
+            (await _rooms.GetAsync(roomId)).Status)).ShouldBe(RoomStatus.Occupied);
+
+        // Consistent with existing C59/C60: creating a Hold does not choose
+        // renewal dates. Overlapping renewal is rejected, while a shorter,
+        // non-overlapping renewal can still be valid.
+        var renewalError = await Assert.ThrowsAsync<BusinessException>(
+            () => _contracts.RenewAsync(current.Id, new RenewContractDto
+            {
+                ContractNumber = $"HD-PG08-RENEW-{Guid.NewGuid():N}",
+                StartDate = moveInDate,
+                EndDate = moveInDate.AddMonths(1).AddDays(-1),
+                MonthlyRent = 3_500_000m
+            }));
+        renewalError.Code.ShouldBe(BuildingManagementErrorCodes.RoomAlreadyReserved);
+
+        (await _reservations.GetAsync(future.ReservationId)).Status
+            .ShouldBe(RoomReservationStatus.Reserved);
+        (await _payments.GetAsync(future.PaymentId)).Status
+            .ShouldBe(PaymentStatus.Completed);
+        (await _renewalHolds.GetAsync(createdHold.Id)).Status
+            .ShouldBe(ContractRenewalHoldStatus.Active);
     }
 
     private static CancelRoomReservationDto CustomerCancelled() => new()
@@ -668,6 +786,20 @@ public sealed class RoomReservationTransaction_Tests
         }
     }
 
+    private async Task<ContractRenewalHoldDto> CreateHoldInIndependentScopeAsync(
+        Guid currentContractId)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var holdService =
+            scope.ServiceProvider.GetRequiredService<IContractRenewalHoldAppService>();
+
+        return await holdService.CreateAsync(new CreateContractRenewalHoldDto
+        {
+            CurrentContractId = currentContractId,
+            Notes = "PG08 hold committed before in-flight deposit"
+        });
+    }
+
     private async Task<Exception?> CompleteInIndependentScopeAsync(Guid paymentId)
     {
         using var scope = _scopeFactory.CreateScope();
@@ -683,9 +815,47 @@ public sealed class RoomReservationTransaction_Tests
         }
     }
 
-    private static async Task<bool> WaitForTwoBlockedTableOperationsAsync(
-        string roomTableName,
-        TimeSpan timeout)
+    private static async Task<bool> WaitForTwoBlockedOperationsAcrossTablesAsync(
+        string firstTable, string secondTable, TimeSpan timeout)
+    {
+        await using var monitor = new NpgsqlConnection(
+            BuildingManagementPostgreSqlTestModule.RequireSafeConnectionString());
+        await monitor.OpenAsync();
+
+        const string sql = @"
+    SELECT COUNT(*)
+    FROM pg_stat_activity
+    WHERE datname = current_database()
+      AND state = 'active'
+      AND wait_event_type = 'Lock'
+      AND (query ILIKE @firstPattern OR query ILIKE @secondPattern)";
+
+        await using var command = new NpgsqlCommand(sql, monitor);
+        command.Parameters.AddWithValue("firstPattern", "%" + Quote(firstTable) + "%");
+        command.Parameters.AddWithValue("secondPattern", "%" + Quote(secondTable) + "%");
+
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (Convert.ToInt32(await command.ExecuteScalarAsync()) >= 2)
+                return true;
+
+            await Task.Delay(100);
+        }
+
+        return false;
+    }
+
+    private static Task<bool> WaitForTwoBlockedTableOperationsAsync(
+        string tableName, TimeSpan timeout)
+    {
+        // Retain the PG05-PG07 behaviour (two blocked operations).
+        return WaitForBlockedTableOperationsAsync(
+            tableName, minimumBlocked: 2, timeout: timeout);
+    }
+
+    private static async Task<bool> WaitForBlockedTableOperationsAsync(
+        string tableName, int minimumBlocked, TimeSpan timeout)
     {
         await using var monitor = new NpgsqlConnection(
             BuildingManagementPostgreSqlTestModule.RequireSafeConnectionString());
@@ -701,13 +871,13 @@ public sealed class RoomReservationTransaction_Tests
 
         await using var command = new NpgsqlCommand(sql, monitor);
         command.Parameters.AddWithValue(
-            "roomTablePattern", "%" + Quote(roomTableName) + "%");
+            "roomTablePattern", "%" + Quote(tableName) + "%");
 
         var deadline = DateTime.UtcNow + timeout;
         while (DateTime.UtcNow < deadline)
         {
             var count = Convert.ToInt32(await command.ExecuteScalarAsync());
-            if (count >= 2)
+            if (count >= minimumBlocked)
             {
                 return true;
             }
@@ -716,6 +886,31 @@ public sealed class RoomReservationTransaction_Tests
         }
 
         return false;
+    }
+
+    private static (string QualifiedTable, string IdColumn, string TableName)
+        GetContractTableAndIdColumn()
+    {
+        var connection = BuildingManagementPostgreSqlTestModule.RequireSafeConnectionString();
+        using var db = new BuildingManagementDbContext(
+            new DbContextOptionsBuilder<BuildingManagementDbContext>()
+                .UseNpgsql(connection).Options);
+
+        var entity = db.Model.FindEntityType(typeof(Contract))
+            ?? throw new InvalidOperationException("Missing Contract mapping");
+        var name = entity.GetTableName()
+            ?? throw new InvalidOperationException("Missing Contract table");
+        var schema = entity.GetSchema();
+        var table = string.IsNullOrWhiteSpace(schema)
+            ? Quote(name)
+            : $"{Quote(schema)}.{Quote(name)}";
+
+        var property = entity.FindProperty(nameof(Contract.Id))
+            ?? throw new InvalidOperationException("Missing Contract Id mapping");
+        var column = property.GetColumnName(StoreObjectIdentifier.Table(name, schema))
+            ?? throw new InvalidOperationException("Missing Contract Id column");
+
+        return (table, Quote(column), name);
     }
 
     private static (string QualifiedTable, string IdColumn, string TableName)

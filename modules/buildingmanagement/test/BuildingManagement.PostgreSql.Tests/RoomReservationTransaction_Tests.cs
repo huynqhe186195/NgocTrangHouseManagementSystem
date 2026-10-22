@@ -763,6 +763,168 @@ public sealed class RoomReservationTransaction_Tests
             .ShouldBe(RoomStatus.Occupied);
     }
 
+    // PG10: Allocation previously acquired Reservation -> Contract, while
+    // a second ReservationDeposit completion uses Contract -> Reservation.
+    // A ContractDeposit payment alone does not form that two-row cycle.
+    //
+    // Hold Contract externally, start Allocation, and prove it has NOT
+    // locked Reservation while waiting for Contract. Then let the
+    // top-up Payment compete. Either may win, but no money can be counted
+    // twice and neither operation should deadlock.
+    [Fact]
+    public async Task PG10_Should_Lock_Contract_Before_Reservation_During_Allocation()
+    {
+        var roomId = await CreateTestRoomAsync();
+        var first = await CreatePendingPaymentForRoomAsync(roomId, 500_000m);
+        await _payments.CompleteAsync(first.PaymentId, new CompletePaymentDto());
+        var reservation = await _reservations.GetAsync(first.ReservationId);
+        reservation.Status.ShouldBe(RoomReservationStatus.Reserved);
+
+        // A Pending second instalment is legitimate only for the exact remainder.
+        var topUp = await _payments.CreateReservationDepositAsync(
+            new CreateReservationDepositPaymentDto
+            {
+                PaymentNumber = $"PAY-PG10-{Guid.NewGuid():N}",
+                RoomReservationId = first.ReservationId,
+                Amount = 2_500_000m,
+                Method = PaymentMethod.Cash,
+                Channel = PaymentChannel.Manual
+            });
+
+        // Activation deliberately precedes allocation: this is when the
+        // reservation deposit may become the active contract's deposit.
+        var startDate = GetTomorrowInVietnam();
+        var draft = await _contracts.CreateAsync(new CreateContractDto
+        {
+            ContractNumber = $"HD-PG10-{Guid.NewGuid():N}",
+            RoomId = roomId,
+            StartDate = startDate,
+            EndDate = startDate.AddMonths(12).AddDays(-1),
+            MonthlyRent = 3_000_000m
+        });
+        await _contracts.AddTenantAsync(draft.Id, new AddContractTenantDto
+        {
+            TenantId = reservation.TenantId,
+            Role = ContractTenantRole.PrimaryTenant
+        });
+        var activeContract = await _contracts.ActivateAsync(draft.Id);
+        activeContract.Status.ShouldBe(ContractStatus.Active);
+
+        var (contractTable, contractIdColumn, contractTableName) =
+            GetContractTableAndIdColumn();
+        var (reservationTable, reservationIdColumn, _) =
+            GetReservationTableAndIdColumn();
+
+        await using var blocker = new NpgsqlConnection(
+            BuildingManagementPostgreSqlTestModule.RequireSafeConnectionString());
+        await blocker.OpenAsync();
+        await using var blockerTransaction = await blocker.BeginTransactionAsync();
+
+        Task<(ContractDepositAllocationDto? Result, Exception? Error)>? allocationAttempt = null;
+        Task<Exception?>? paymentAttempt = null;
+        var allocationBlockedOnContract = false;
+        var reservationFreeWhileAllocationWaits = false;
+        var bothBlockedOnContract = false;
+
+        try
+        {
+            // The external blocker touches no business data.
+            await using (var hold = new NpgsqlCommand(
+                $"SELECT 1 FROM {contractTable} " +
+                $"WHERE {contractIdColumn} = @id FOR UPDATE",
+                blocker, blockerTransaction))
+            {
+                hold.Parameters.AddWithValue("id", activeContract.Id);
+                (await hold.ExecuteScalarAsync()).ShouldNotBeNull();
+            }
+
+            allocationAttempt = Task.Run(() =>
+                AllocateInIndependentScopeAsync(first.ReservationId, activeContract.Id));
+            allocationBlockedOnContract = await WaitForBlockedTableOperationsAsync(
+                contractTableName, minimumBlocked: 1, timeout: TimeSpan.FromSeconds(20));
+
+            if (allocationBlockedOnContract)
+            {
+                // This probe must succeed with correct Contract -> Reservation order.
+                // The original Reservation -> Contract order returns PostgreSQL 55P03.
+                await using var probe = new NpgsqlConnection(
+                    BuildingManagementPostgreSqlTestModule.RequireSafeConnectionString());
+                await probe.OpenAsync();
+                await using var nowait = new NpgsqlCommand(
+                    $"SELECT 1 FROM {reservationTable} " +
+                    $"WHERE {reservationIdColumn} = @id FOR UPDATE NOWAIT", probe);
+                nowait.Parameters.AddWithValue("id", first.ReservationId);
+                try
+                {
+                    (await nowait.ExecuteScalarAsync()).ShouldNotBeNull();
+                    reservationFreeWhileAllocationWaits = true;
+                }
+                catch (PostgresException error) when (error.SqlState == "55P03")
+                {
+                    reservationFreeWhileAllocationWaits = false;
+                }
+
+                paymentAttempt = Task.Run(() =>
+                    CompleteInIndependentScopeAsync(topUp.Id));
+                bothBlockedOnContract = await WaitForBlockedTableOperationsAsync(
+                    contractTableName, minimumBlocked: 2,
+                    timeout: TimeSpan.FromSeconds(20));
+            }
+        }
+        finally
+        {
+            // Never leave the database row locked if an assertion fails.
+            await blockerTransaction.RollbackAsync();
+        }
+
+        if (allocationAttempt is null || paymentAttempt is null)
+            throw new InvalidOperationException(
+                "PG10 failed to start both competing business operations.");
+
+        await Task.WhenAll((Task)allocationAttempt, paymentAttempt)
+            .WaitAsync(TimeSpan.FromSeconds(30));
+
+        allocationBlockedOnContract.ShouldBeTrue(
+            "PG10 did not see allocation waiting for the Contract lock.");
+        bothBlockedOnContract.ShouldBeTrue(
+            "PG10 did not see both operations queued on the Contract row.");
+        reservationFreeWhileAllocationWaits.ShouldBeTrue(
+            "PG10 LOCK ORDER VIOLATION: allocation locked Reservation BEFORE " +
+            "obtaining Contract; concurrent reservation payment locks in reverse order.");
+
+        var allocation = await allocationAttempt;
+        allocation.Error.ShouldBeNull(
+            $"Allocation should eventually succeed without deadlock: {allocation.Error}");
+        allocation.Result.ShouldNotBeNull();
+
+        var paymentError = await paymentAttempt;
+        if (paymentError is not null)
+        {
+            paymentError.ShouldBeOfType<BusinessException>(
+                "Top-up may only fail because Reservation was already converted.");
+        }
+
+        var reservationAfter = await _reservations.GetAsync(first.ReservationId);
+        var topUpAfter = await _payments.GetAsync(topUp.Id);
+        reservationAfter.Status.ShouldBe(RoomReservationStatus.ConvertedToContract);
+        reservationAfter.ConvertedContractId.ShouldBe(activeContract.Id);
+        topUpAfter.Status.ShouldBe(
+            paymentError is null ? PaymentStatus.Completed : PaymentStatus.Pending);
+
+        var allocated = await WithUnitOfWorkAsync(async () =>
+            await _settlements.GetListAsync(x =>
+                x.SourceRoomReservationId == first.ReservationId &&
+                x.TargetContractId == activeContract.Id &&
+                x.Status == DepositSettlementStatus.Completed &&
+                x.Type == DepositSettlementType.AllocateToContractDeposit));
+        var expectedAllocated = topUpAfter.Status == PaymentStatus.Completed
+            ? 3_000_000m : 500_000m;
+        allocated.Sum(x => x.Amount).ShouldBe(expectedAllocated);
+        allocation.Result!.AllocatedAmount.ShouldBe(expectedAllocated);
+        (await _payments.GetAsync(first.PaymentId)).Status
+            .ShouldBe(PaymentStatus.Completed);
+    }
+
     private static CancelRoomReservationDto CustomerCancelled() => new()
     {
         Reason = ReservationCancellationReason.CustomerCancelled,
@@ -916,6 +1078,24 @@ public sealed class RoomReservationTransaction_Tests
             CurrentContractId = currentContractId,
             Notes = "PG08 hold committed before in-flight deposit"
         });
+    }
+
+    private async Task<(ContractDepositAllocationDto? Result, Exception? Error)>
+        AllocateInIndependentScopeAsync(Guid reservationId, Guid contractId)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        try
+        {
+            var paymentService =
+                scope.ServiceProvider.GetRequiredService<IPaymentAppService>();
+            var result = await paymentService.AllocateReservationDepositToContractAsync(
+                reservationId, contractId);
+            return (result, null);
+        }
+        catch (Exception error)
+        {
+            return (null, error);
+        }
     }
 
     private async Task<Exception?> CompleteInIndependentScopeAsync(Guid paymentId)

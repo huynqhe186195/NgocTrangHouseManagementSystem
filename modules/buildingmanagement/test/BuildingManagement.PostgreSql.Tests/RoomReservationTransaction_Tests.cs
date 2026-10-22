@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using BuildingManagement.Buildings;
+using BuildingManagement.Contracts;
 using BuildingManagement.DepositSettlements;
 using BuildingManagement.EntityFrameworkCore;
 using BuildingManagement.Floors;
@@ -38,6 +39,7 @@ public sealed class RoomReservationTransaction_Tests
     private readonly IPaymentAppService _payments;
     private readonly IClock _clock;
     private readonly IServiceScopeFactory _scopeFactory;
+    private readonly IContractAppService _contracts;
 
     public RoomReservationTransaction_Tests()
     {
@@ -50,6 +52,7 @@ public sealed class RoomReservationTransaction_Tests
         _payments = GetRequiredService<IPaymentAppService>();
         _clock = GetRequiredService<IClock>();
         _scopeFactory = GetRequiredService<IServiceScopeFactory>();
+        _contracts = GetRequiredService<IContractAppService>();
     }
 
     // PG01: Reservation cancellation and Forfeit are committed together.
@@ -184,7 +187,7 @@ public sealed class RoomReservationTransaction_Tests
             secondAttempt = Task.Run(() => CompleteInIndependentScopeAsync(second.PaymentId));
 
             // Insist on TWO blocked Room row operations, not merely two launched Tasks.
-            bothReachedRoomUpdate = await WaitForTwoBlockedRoomOperationsAsync(
+            bothReachedRoomUpdate = await WaitForTwoBlockedTableOperationsAsync(
                 roomTableName,
                 TimeSpan.FromSeconds(20));
         }
@@ -268,19 +271,165 @@ public sealed class RoomReservationTransaction_Tests
         }
     }
 
+    // PG06: Unlike PG05, an Occupied Room is NOT updated when a future
+    // Reservation becomes Reserved. The two independent UOWs must not both
+    // commit their first deposits for the same future move-in date.
+    //
+    // The test deliberately locks BOTH Payment rows (not the Room row) to
+    // make both transactions finish their reservation checks before either
+    // Payment can be persisted. This test should expose a double-booking bug
+    // until Room-scoped serialization or an equivalent guard is implemented.
+    [Fact]
+    public async Task PG06_Should_Allow_Only_One_Concurrent_Deposit_For_Occupied_Room()
+    {
+        var roomId = await CreateTestRoomAsync();
+        var todayInVietnam = GetTodayInVietnam();
+        var firstDayOfNextMonth =
+            new DateTime(todayInVietnam.Year, todayInVietnam.Month, 1).AddMonths(1);
+
+        // Current occupant's agreement ends on the last day of this month.
+        // A move-in on the 1st of next month is valid under MoveInDatePolicy.
+        var oldContract = await CreateActiveContractForRoomAsync(
+            roomId,
+            todayInVietnam.AddDays(-30),
+            firstDayOfNextMonth.AddDays(-1));
+        oldContract.Status.ShouldBe(ContractStatus.Active);
+
+        var before = await WithUnitOfWorkAsync(async () =>
+            (await _rooms.GetAsync(roomId)).Status);
+        before.ShouldBe(RoomStatus.Occupied);
+
+        var first = await CreatePendingPaymentForRoomAsync(
+            roomId, 500_000m, firstDayOfNextMonth);
+        var second = await CreatePendingPaymentForRoomAsync(
+            roomId, 500_000m, firstDayOfNextMonth);
+
+        var (paymentTable, paymentIdColumn, paymentTableName) =
+            GetPaymentTableAndIdColumn();
+
+        await using var blocker = new NpgsqlConnection(
+            BuildingManagementPostgreSqlTestModule.RequireSafeConnectionString());
+        await blocker.OpenAsync();
+        await using var blockerTransaction = await blocker.BeginTransactionAsync();
+
+        Task<Exception?>? firstAttempt = null;
+        Task<Exception?>? secondAttempt = null;
+        var bothReachedPaymentUpdate = false;
+
+        try
+        {
+            // Lock two DIFFERENT Payment rows, leaving all Room and
+            // Reservation rows available for the business-rule reads.
+            await using (var hold = new NpgsqlCommand(
+                $"SELECT {paymentIdColumn} FROM {paymentTable} " +
+                $"WHERE {paymentIdColumn} IN (@firstId, @secondId) FOR UPDATE",
+                blocker, blockerTransaction))
+            {
+                hold.Parameters.AddWithValue("firstId", first.PaymentId);
+                hold.Parameters.AddWithValue("secondId", second.PaymentId);
+                await using var reader = await hold.ExecuteReaderAsync();
+                var lockedPaymentRows = 0;
+                while (await reader.ReadAsync()) lockedPaymentRows++;
+                lockedPaymentRows.ShouldBe(2, "Both pending Payment rows must exist.");
+            }
+
+            firstAttempt = Task.Run(() =>
+                CompleteInIndependentScopeAsync(first.PaymentId));
+            secondAttempt = Task.Run(() =>
+                CompleteInIndependentScopeAsync(second.PaymentId));
+
+            // Require evidence that BOTH requests have reached a blocked
+            // Payment UPDATE. Otherwise their timing proves nothing.
+            bothReachedPaymentUpdate = await WaitForTwoBlockedTableOperationsAsync(
+                paymentTableName, TimeSpan.FromSeconds(20));
+        }
+        finally
+        {
+            // Unblock both requests, regardless of monitoring outcome.
+            await blockerTransaction.RollbackAsync();
+        }
+
+        if (firstAttempt is null || secondAttempt is null)
+            throw new InvalidOperationException("PG06 did not start both payment attempts.");
+
+        var errors = await Task.WhenAll(firstAttempt, secondAttempt);
+        bothReachedPaymentUpdate.ShouldBeTrue(
+            "PG06 did not observe two Payment UPDATEs waiting on locks. " +
+            "Do not treat a sequential run as concurrency evidence. " +
+            $"A: {errors[0]?.GetType().Name ?? "success"}; " +
+            $"B: {errors[1]?.GetType().Name ?? "success"}.");
+
+        // Read fresh committed state after BOTH UOWs have ended.
+        var firstPayment = await _payments.GetAsync(first.PaymentId);
+        var secondPayment = await _payments.GetAsync(second.PaymentId);
+        var firstReservation = await _reservations.GetAsync(first.ReservationId);
+        var secondReservation = await _reservations.GetAsync(second.ReservationId);
+
+        var completedCount = new[] { firstPayment, secondPayment }
+            .Count(p => p.Status == PaymentStatus.Completed);
+        var reservedCount = new[] { firstReservation, secondReservation }
+            .Count(r => r.Status == RoomReservationStatus.Reserved);
+
+        // RED expectation for current implementation if both transactions
+        // see no committed Reserved reservation before their Payment UPDATE.
+        completedCount.ShouldBe(1,
+            "PG06 DOUBLE BOOKING: Exactly one first deposit may be Completed " +
+            "for an Occupied Room with the same future move-in date.");
+        reservedCount.ShouldBe(1,
+            "PG06 DOUBLE BOOKING: Exactly one future Reservation may be Reserved.");
+
+        errors.Count(error => error is not null).ShouldBe(1,
+            "The losing Payment must not silently succeed.");
+
+        var losingError = errors.Single(error => error is not null)!;
+        if (losingError is BusinessException businessError)
+        {
+            businessError.Code.ShouldBe(
+                BuildingManagementErrorCodes.RoomAlreadyReserved);
+        }
+        else
+        {
+            losingError.ShouldBeOfType<Volo.Abp.Data.AbpDbConcurrencyException>();
+        }
+
+        var after = await WithUnitOfWorkAsync(async () =>
+            (await _rooms.GetAsync(roomId)).Status);
+        after.ShouldBe(RoomStatus.Occupied);
+
+        var contractAfter = await _contracts.GetAsync(oldContract.Id);
+        contractAfter.Status.ShouldBe(ContractStatus.Active);
+
+        // The unsuccessful Payment and Reservation must remain pending.
+        if (firstPayment.Status == PaymentStatus.Completed)
+        {
+            firstReservation.Status.ShouldBe(RoomReservationStatus.Reserved);
+            secondPayment.Status.ShouldBe(PaymentStatus.Pending);
+            secondReservation.Status.ShouldBe(RoomReservationStatus.PendingPayment);
+        }
+        else
+        {
+            secondPayment.Status.ShouldBe(PaymentStatus.Completed);
+            secondReservation.Status.ShouldBe(RoomReservationStatus.Reserved);
+            firstPayment.Status.ShouldBe(PaymentStatus.Pending);
+            firstReservation.Status.ShouldBe(RoomReservationStatus.PendingPayment);
+        }
+    }
+
     private static CancelRoomReservationDto CustomerCancelled() => new()
     {
         Reason = ReservationCancellationReason.CustomerCancelled,
         Notes = "PostgreSQL integration test"
     };
 
-    private DateTime GetTomorrowInVietnam()
+    private DateTime GetTodayInVietnam()
     {
         return TimeZoneInfo.ConvertTimeFromUtc(
             _clock.Now,
             TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh"))
-            .Date.AddDays(1);
+            .Date;
     }
+
+    private DateTime GetTomorrowInVietnam() => GetTodayInVietnam().AddDays(1);
 
     private async Task<Guid> CreateTestRoomAsync()
     {
@@ -306,8 +455,41 @@ public sealed class RoomReservationTransaction_Tests
         return roomId;
     }
 
+    private async Task<ContractDto> CreateActiveContractForRoomAsync(
+        Guid roomId,
+        DateTime startDate,
+        DateTime endDate)
+    {
+        var contract = await _contracts.CreateAsync(new CreateContractDto
+        {
+            ContractNumber = $"HD-PG-{Guid.NewGuid():N}",
+            RoomId = roomId,
+            StartDate = startDate.Date,
+            EndDate = endDate.Date,
+            MonthlyRent = 3_000_000m
+        });
+
+        var n = Interlocked.Increment(ref _tenantSequence);
+        var tenant = await _tenants.CreateAsync(new CreateTenantDto
+        {
+            FullName = $"PostgreSQL contract tenant {Guid.NewGuid():N}",
+            PhoneNumber = $"09{n % 100_000_000:D8}",
+            IdentityType = IdentityType.CitizenId,
+            IdentityNumber = $"079{n % 1_000_000_000:D9}"
+        });
+
+        await _contracts.AddTenantAsync(contract.Id, new AddContractTenantDto
+        {
+            TenantId = tenant.Id,
+            Role = ContractTenantRole.PrimaryTenant
+        });
+
+        return await _contracts.ActivateAsync(contract.Id);
+    }
+
     private async Task<(Guid ReservationId, Guid PaymentId)>
-        CreatePendingPaymentForRoomAsync(Guid roomId, decimal deposit)
+        CreatePendingPaymentForRoomAsync(
+            Guid roomId, decimal deposit, DateTime? expectedMoveInDate = null)
     {
         var n = Interlocked.Increment(ref _tenantSequence);
         var tenant = await _tenants.CreateAsync(new CreateTenantDto
@@ -324,7 +506,7 @@ public sealed class RoomReservationTransaction_Tests
                 ReservationNumber = $"RSV-PG-{Guid.NewGuid():N}",
                 RoomId = roomId,
                 TenantId = tenant.Id,
-                ExpectedMoveInDate = GetTomorrowInVietnam(),
+                ExpectedMoveInDate = (expectedMoveInDate ?? GetTomorrowInVietnam()).Date,
                 QuotedMonthlyRent = 3_000_000m,
                 RequiredDepositAmount = 3_000_000m,
                 MinimumReservationDepositAmount = 500_000m
@@ -366,7 +548,7 @@ public sealed class RoomReservationTransaction_Tests
         }
     }
 
-    private static async Task<bool> WaitForTwoBlockedRoomOperationsAsync(
+    private static async Task<bool> WaitForTwoBlockedTableOperationsAsync(
         string roomTableName,
         TimeSpan timeout)
     {
@@ -422,6 +604,31 @@ public sealed class RoomReservationTransaction_Tests
             ?? throw new InvalidOperationException("Missing Room Id mapping");
         var column = property.GetColumnName(StoreObjectIdentifier.Table(name, schema))
             ?? throw new InvalidOperationException("Missing Room Id column");
+
+        return (table, Quote(column), name);
+    }
+
+    private static (string QualifiedTable, string IdColumn, string TableName)
+        GetPaymentTableAndIdColumn()
+    {
+        var connection = BuildingManagementPostgreSqlTestModule.RequireSafeConnectionString();
+        using var db = new BuildingManagementDbContext(
+            new DbContextOptionsBuilder<BuildingManagementDbContext>()
+                .UseNpgsql(connection).Options);
+
+        var entity = db.Model.FindEntityType(typeof(Payment))
+            ?? throw new InvalidOperationException("Missing Payment mapping");
+        var name = entity.GetTableName()
+            ?? throw new InvalidOperationException("Missing Payment table");
+        var schema = entity.GetSchema();
+        var table = string.IsNullOrWhiteSpace(schema)
+            ? Quote(name)
+            : $"{Quote(schema)}.{Quote(name)}";
+
+        var property = entity.FindProperty(nameof(Payment.Id))
+            ?? throw new InvalidOperationException("Missing Payment Id mapping");
+        var column = property.GetColumnName(StoreObjectIdentifier.Table(name, schema))
+            ?? throw new InvalidOperationException("Missing Payment Id column");
 
         return (table, Quote(column), name);
     }

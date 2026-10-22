@@ -2,6 +2,7 @@
 using BuildingManagement.Contracts;
 using BuildingManagement.DepositSettlements;
 using BuildingManagement.Floors;
+using BuildingManagement.MoveOuts;
 using BuildingManagement.Payments;
 using BuildingManagement.RoomReservations;
 using BuildingManagement.Rooms;
@@ -33,6 +34,8 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
     public DbSet<RoomReservation> RoomReservations { get; set; } = default!;
     public DbSet<Payment> Payments { get; set; } = default!;
     public DbSet<DepositSettlement> DepositSettlements {get; set;} = default!;
+    public DbSet<MoveOutRequest> MoveOutRequests { get; set; } = default!;
+    public DbSet<MoveOutChecklistTask> MoveOutChecklistTasks { get; set; } = default!;
 
     public BuildingManagementDbContext(DbContextOptions<BuildingManagementDbContext> options)
         : base(options)
@@ -42,6 +45,7 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
+        BuildingManagement.EntityFrameworkCore.MoveOutModelBuilderExtensions.ConfigureMoveOutRequests(builder);
         base.OnModelCreating(builder);
 
         builder.ConfigureBuildingManagement();

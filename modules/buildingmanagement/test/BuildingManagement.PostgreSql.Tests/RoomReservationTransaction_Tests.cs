@@ -40,6 +40,7 @@ public sealed class RoomReservationTransaction_Tests
     private readonly IClock _clock;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IContractAppService _contracts;
+    private readonly IContractRenewalHoldAppService _renewalHolds;
 
     public RoomReservationTransaction_Tests()
     {
@@ -53,6 +54,7 @@ public sealed class RoomReservationTransaction_Tests
         _clock = GetRequiredService<IClock>();
         _scopeFactory = GetRequiredService<IServiceScopeFactory>();
         _contracts = GetRequiredService<IContractAppService>();
+        _renewalHolds = GetRequiredService<IContractRenewalHoldAppService>();
     }
 
     // PG01: Reservation cancellation and Forfeit are committed together.
@@ -415,6 +417,116 @@ public sealed class RoomReservationTransaction_Tests
         }
     }
 
+    // PG07: A tenant's active 24-hour renewal hold has priority over an
+    // unpaid third-party Reservation. Force RenewAsync and CompleteAsync to
+    // contend on the SAME pending Reservation row in separate transactions.
+    // The renewal must succeed, the competing deposit must NOT complete,
+    // and the pending Reservation must be cancelled as SupersededByRenewal.
+    [Fact]
+    public async Task PG07_Should_Prioritize_Renewal_Over_Concurrent_First_Deposit()
+    {
+        var roomId = await CreateTestRoomAsync();
+        var today = GetTodayInVietnam();
+        var moveInDate = new DateTime(today.Year, today.Month, 1).AddMonths(1);
+
+        var current = await CreateActiveContractForRoomAsync(
+            roomId, today.AddDays(-30), moveInDate.AddDays(-1));
+        current.Status.ShouldBe(ContractStatus.Active);
+
+        // B has a pending future Reservation and an unpaid 500k Payment.
+        var future = await CreatePendingPaymentForRoomAsync(
+            roomId, 500_000m, moveInDate);
+
+        // A acquired renewal priority before B paid.
+        var renewalHold = await _renewalHolds.CreateAsync(
+            new CreateContractRenewalHoldDto
+            {
+                CurrentContractId = current.Id,
+                Notes = "PG07 concurrent renewal priority"
+            });
+        renewalHold.Status.ShouldBe(ContractRenewalHoldStatus.Active);
+
+        var (reservationTable, reservationIdColumn, reservationTableName) =
+            GetReservationTableAndIdColumn();
+
+        await using var blocker = new NpgsqlConnection(
+            BuildingManagementPostgreSqlTestModule.RequireSafeConnectionString());
+        await blocker.OpenAsync();
+        await using var blockerTransaction = await blocker.BeginTransactionAsync();
+
+        Task<Exception?>? renewAttempt = null;
+        Task<Exception?>? paymentAttempt = null;
+        var bothReachedReservation = false;
+
+        try
+        {
+            // Keep the pending Reservation row locked without modifying it.
+            // Both application requests must reach this row before release.
+            await using (var hold = new NpgsqlCommand(
+                $"SELECT 1 FROM {reservationTable} " +
+                $"WHERE {reservationIdColumn} = @reservationId FOR UPDATE",
+                blocker, blockerTransaction))
+            {
+                hold.Parameters.AddWithValue("reservationId", future.ReservationId);
+                var found = await hold.ExecuteScalarAsync();
+                found.ShouldNotBeNull("PG07 Reservation row must exist.");
+            }
+
+            renewAttempt = Task.Run(() => RenewInIndependentScopeAsync(
+                current.Id, moveInDate, moveInDate.AddMonths(1).AddDays(-1)));
+            paymentAttempt = Task.Run(() =>
+                CompleteInIndependentScopeAsync(future.PaymentId));
+
+            bothReachedReservation = await WaitForTwoBlockedTableOperationsAsync(
+                reservationTableName, TimeSpan.FromSeconds(20));
+        }
+        finally
+        {
+            // Always unblock both requests, including failed monitoring runs.
+            await blockerTransaction.RollbackAsync();
+        }
+
+        if (renewAttempt is null || paymentAttempt is null)
+            throw new InvalidOperationException("PG07 did not start both requests.");
+
+        var errors = await Task.WhenAll(renewAttempt, paymentAttempt);
+
+        bothReachedReservation.ShouldBeTrue(
+            "PG07 did not observe both operations waiting on the Reservation. " +
+            "Do not interpret a sequential run as concurrency evidence. " +
+            $"Renew: {errors[0]?.GetType().Name ?? "success"}; " +
+            $"Payment: {errors[1]?.GetType().Name ?? "success"}.");
+
+        errors[0].ShouldBeNull(
+            $"The current tenant must be able to renew with an active hold. " +
+            $"Actual error: {errors[0]}");
+        errors[1].ShouldNotBeNull(
+            "A first reservation deposit must fail while the tenant's renewal " +
+            "hold has priority over the same move-in period.");
+        (errors[1] is BusinessException ||
+         errors[1] is Volo.Abp.Data.AbpDbConcurrencyException).ShouldBeTrue(
+            $"Expected a domain or concurrency conflict, got {errors[1]}");
+
+        // Observe committed state in fresh service calls AFTER both UOWs end.
+        var paymentAfter = await _payments.GetAsync(future.PaymentId);
+        var reservationAfter = await _reservations.GetAsync(future.ReservationId);
+        var holdAfter = await _renewalHolds.GetAsync(renewalHold.Id);
+        var currentAfter = await _contracts.GetAsync(current.Id);
+        var roomAfter = await WithUnitOfWorkAsync(async () =>
+            (await _rooms.GetAsync(roomId)).Status);
+
+        paymentAfter.Status.ShouldBe(PaymentStatus.Pending);
+        reservationAfter.Status.ShouldBe(RoomReservationStatus.Cancelled);
+        reservationAfter.CancellationReason.ShouldBe(
+            ReservationCancellationReason.SupersededByRenewal);
+        holdAfter.Status.ShouldBe(ContractRenewalHoldStatus.Completed);
+        holdAfter.CompletedContractId.ShouldNotBeNull();
+        (await _contracts.GetAsync(holdAfter.CompletedContractId!.Value))
+            .Status.ShouldBe(ContractStatus.Signed);
+        currentAfter.Status.ShouldBe(ContractStatus.Active);
+        roomAfter.ShouldBe(RoomStatus.Occupied);
+    }
+
     private static CancelRoomReservationDto CustomerCancelled() => new()
     {
         Reason = ReservationCancellationReason.CustomerCancelled,
@@ -533,6 +645,29 @@ public sealed class RoomReservationTransaction_Tests
         return pending.ReservationId;
     }
 
+    private async Task<Exception?> RenewInIndependentScopeAsync(
+        Guid currentContractId, DateTime startDate, DateTime endDate)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        try
+        {
+            var contractService =
+                scope.ServiceProvider.GetRequiredService<IContractAppService>();
+            await contractService.RenewAsync(currentContractId, new RenewContractDto
+            {
+                ContractNumber = $"HD-PG-RENEW-{Guid.NewGuid():N}",
+                StartDate = startDate.Date,
+                EndDate = endDate.Date,
+                MonthlyRent = 3_500_000m
+            });
+            return null;
+        }
+        catch (Exception error)
+        {
+            return error;
+        }
+    }
+
     private async Task<Exception?> CompleteInIndependentScopeAsync(Guid paymentId)
     {
         using var scope = _scopeFactory.CreateScope();
@@ -604,6 +739,31 @@ public sealed class RoomReservationTransaction_Tests
             ?? throw new InvalidOperationException("Missing Room Id mapping");
         var column = property.GetColumnName(StoreObjectIdentifier.Table(name, schema))
             ?? throw new InvalidOperationException("Missing Room Id column");
+
+        return (table, Quote(column), name);
+    }
+
+    private static (string QualifiedTable, string IdColumn, string TableName)
+        GetReservationTableAndIdColumn()
+    {
+        var connection = BuildingManagementPostgreSqlTestModule.RequireSafeConnectionString();
+        using var db = new BuildingManagementDbContext(
+            new DbContextOptionsBuilder<BuildingManagementDbContext>()
+                .UseNpgsql(connection).Options);
+
+        var entity = db.Model.FindEntityType(typeof(RoomReservation))
+            ?? throw new InvalidOperationException("Missing RoomReservation mapping");
+        var name = entity.GetTableName()
+            ?? throw new InvalidOperationException("Missing RoomReservation table");
+        var schema = entity.GetSchema();
+        var table = string.IsNullOrWhiteSpace(schema)
+            ? Quote(name)
+            : $"{Quote(schema)}.{Quote(name)}";
+
+        var property = entity.FindProperty(nameof(RoomReservation.Id))
+            ?? throw new InvalidOperationException("Missing RoomReservation Id mapping");
+        var column = property.GetColumnName(StoreObjectIdentifier.Table(name, schema))
+            ?? throw new InvalidOperationException("Missing RoomReservation Id column");
 
         return (table, Quote(column), name);
     }

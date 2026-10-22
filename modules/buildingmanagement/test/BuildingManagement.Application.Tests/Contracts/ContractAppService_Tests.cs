@@ -2614,6 +2614,55 @@ public abstract class ContractAppService_Tests<TStartupModule>
         );
     }
 
+    // Phase 2F.1A: only allow new reservations in the current/next-month window.
+    // A short renewal is intentional here: both overlapping and non-overlapping
+    // move-in dates must be reachable within that permitted reservation window.
+    private (
+        DateTime CurrentContractEnd,
+        DateTime RenewalStart,
+        DateTime RenewalEnd,
+        DateTime AfterRenewalMoveIn
+    ) GetCurrentMoveInWindowScenario()
+    {
+        var vietnamNow = TimeZoneInfo.ConvertTimeFromUtc(
+            _clock.Now,
+            TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh")
+        );
+
+        var renewalStart = new DateTime(
+            vietnamNow.Year,
+            vietnamNow.Month,
+            1
+        ).AddMonths(1);
+
+        return (
+            CurrentContractEnd: renewalStart.AddDays(-1),
+            RenewalStart: renewalStart,
+            RenewalEnd: renewalStart.AddDays(2),
+            AfterRenewalMoveIn: renewalStart.AddDays(3)
+        );
+    }
+
+    private async Task<ContractDto> CreateActiveContractEndingOnAsync(
+        Guid roomId,
+        DateTime endDate)
+    {
+        var contract = await _contractAppService.CreateAsync(
+            new CreateContractDto
+            {
+                ContractNumber = NewContractNumber(),
+                RoomId = roomId,
+                StartDate = endDate.AddMonths(-1),
+                EndDate = endDate,
+                MonthlyRent = 3_000_000
+            }
+        );
+
+        await AddPrimaryTenantAsync(contract.Id);
+
+        return await _contractAppService.ActivateAsync(contract.Id);
+    }
+
     private async Task<RoomReservationDto> CreatePendingReservationForRoomAsync(
         Guid roomId,
         DateTime expectedMoveInDate)
@@ -2681,15 +2730,18 @@ public abstract class ContractAppService_Tests<TStartupModule>
         var roomId =
             await CreateRoomAsync();
 
+        var scenario = GetCurrentMoveInWindowScenario();
+
         var currentContract =
-            await CreateActiveContractForRoomAsync(
-                roomId
+            await CreateActiveContractEndingOnAsync(
+                roomId,
+                scenario.CurrentContractEnd
             );
 
         var pendingReservation =
             await CreatePendingReservationForRoomAsync(
                 roomId,
-                new DateTime(2027, 11, 1)
+                scenario.RenewalStart
             );
 
         await CreateRenewalHoldAsync(
@@ -2705,10 +2757,10 @@ public abstract class ContractAppService_Tests<TStartupModule>
                         NewContractNumber(),
 
                     StartDate =
-                        new DateTime(2027, 11, 1),
+                        scenario.RenewalStart,
 
                     EndDate =
-                        new DateTime(2028, 10, 31),
+                        scenario.RenewalEnd,
 
                     MonthlyRent =
                         3_500_000,
@@ -2751,15 +2803,18 @@ public abstract class ContractAppService_Tests<TStartupModule>
         var roomId =
             await CreateRoomAsync();
 
+        var scenario = GetCurrentMoveInWindowScenario();
+
         var currentContract =
-            await CreateActiveContractForRoomAsync(
-                roomId
+            await CreateActiveContractEndingOnAsync(
+                roomId,
+                scenario.CurrentContractEnd
             );
 
         var pendingReservation =
             await CreatePendingReservationForRoomAsync(
                 roomId,
-                new DateTime(2028, 11, 1)
+                scenario.AfterRenewalMoveIn
             );
 
         await CreateRenewalHoldAsync(
@@ -2774,10 +2829,10 @@ public abstract class ContractAppService_Tests<TStartupModule>
                     NewContractNumber(),
 
                 StartDate =
-                    new DateTime(2027, 11, 1),
+                    scenario.RenewalStart,
 
                 EndDate =
-                    new DateTime(2028, 10, 31),
+                    scenario.RenewalEnd,
 
                 MonthlyRent =
                     3_500_000,
@@ -2813,15 +2868,18 @@ public abstract class ContractAppService_Tests<TStartupModule>
         var roomId =
             await CreateRoomAsync();
 
+        var scenario = GetCurrentMoveInWindowScenario();
+
         var currentContract =
-            await CreateActiveContractForRoomAsync(
-                roomId
+            await CreateActiveContractEndingOnAsync(
+                roomId,
+                scenario.CurrentContractEnd
             );
 
         var reservation =
             await CreatePendingReservationForRoomAsync(
                 roomId,
-                new DateTime(2027, 11, 1)
+                scenario.RenewalStart
             );
 
         await MarkReservationAsReservedAsync(
@@ -2845,18 +2903,10 @@ public abstract class ContractAppService_Tests<TStartupModule>
                                 NewContractNumber(),
 
                             StartDate =
-                                new DateTime(
-                                    2027,
-                                    11,
-                                    1
-                                ),
+                                scenario.RenewalStart,
 
                             EndDate =
-                                new DateTime(
-                                    2028,
-                                    10,
-                                    31
-                                ),
+                                scenario.RenewalEnd,
 
                             MonthlyRent =
                                 3_500_000,
@@ -2904,15 +2954,18 @@ public abstract class ContractAppService_Tests<TStartupModule>
         var roomId =
             await CreateRoomAsync();
 
+        var scenario = GetCurrentMoveInWindowScenario();
+
         var currentContract =
-            await CreateActiveContractForRoomAsync(
-                roomId
+            await CreateActiveContractEndingOnAsync(
+                roomId,
+                scenario.CurrentContractEnd
             );
 
         var reservation =
             await CreatePendingReservationForRoomAsync(
                 roomId,
-                new DateTime(2028, 11, 1)
+                scenario.AfterRenewalMoveIn
             );
 
         await MarkReservationAsReservedAsync(
@@ -2933,18 +2986,10 @@ public abstract class ContractAppService_Tests<TStartupModule>
                         NewContractNumber(),
 
                     StartDate =
-                        new DateTime(
-                            2027,
-                            11,
-                            1
-                        ),
+                        scenario.RenewalStart,
 
                     EndDate =
-                        new DateTime(
-                            2028,
-                            10,
-                            31
-                        ),
+                        scenario.RenewalEnd,
 
                     MonthlyRent =
                         3_500_000,
@@ -2994,15 +3039,18 @@ public abstract class ContractAppService_Tests<TStartupModule>
         var roomId =
             await CreateRoomAsync();
 
+        var scenario = GetCurrentMoveInWindowScenario();
+
         var currentContract =
-            await CreateActiveContractForRoomAsync(
-                roomId
+            await CreateActiveContractEndingOnAsync(
+                roomId,
+                scenario.CurrentContractEnd
             );
 
         var reservation =
             await CreatePendingReservationForRoomAsync(
                 roomId,
-                new DateTime(2027, 11, 1)
+                scenario.RenewalStart
             );
 
         await MarkReservationAsReservedAsync(
@@ -3047,15 +3095,18 @@ public abstract class ContractAppService_Tests<TStartupModule>
         var roomId =
             await CreateRoomAsync();
 
+        var scenario = GetCurrentMoveInWindowScenario();
+
         var currentContract =
-            await CreateActiveContractForRoomAsync(
-                roomId
+            await CreateActiveContractEndingOnAsync(
+                roomId,
+                scenario.CurrentContractEnd
             );
 
         var pendingReservation =
             await CreatePendingReservationForRoomAsync(
                 roomId,
-                new DateTime(2027, 11, 1)
+                scenario.RenewalStart
             );
 
         await _contractAppService.EndAsync(

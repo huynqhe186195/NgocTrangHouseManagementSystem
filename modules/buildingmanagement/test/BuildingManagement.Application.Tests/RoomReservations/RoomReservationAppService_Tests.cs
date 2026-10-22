@@ -76,6 +76,37 @@ public abstract class
             GetRequiredService<IClock>();
     }
 
+    // Business dates are interpreted in Vietnam, not in the UTC calendar day.
+    private DateTime GetVietnamToday()
+    {
+        return TimeZoneInfo.ConvertTimeFromUtc(
+            _clock.Now,
+            TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh")
+        ).Date;
+    }
+
+    private static DateTime GetLastDayOfMonth(DateTime date)
+    {
+        return new DateTime(date.Year, date.Month, 1)
+            .AddMonths(1)
+            .AddDays(-1);
+    }
+
+    // Cutoff = the first Sunday on or after day 7 of next month.
+    private static DateTime GetNextMonthCutoff(DateTime vietnamToday)
+    {
+        var seventhOfNextMonth = new DateTime(
+            vietnamToday.Year,
+            vietnamToday.Month,
+            1
+        ).AddMonths(1).AddDays(6);
+
+        var daysUntilSunday =
+            (7 - (int)seventhOfNextMonth.DayOfWeek) % 7;
+
+        return seventhOfNextMonth.AddDays(daysUntilSunday);
+    }
+
     private static string NewReservationNumber()
     {
         return $"RSV-TEST-{Guid.NewGuid():N}";
@@ -86,8 +117,7 @@ public abstract class
         return $"HD-RSV-{Guid.NewGuid():N}";
     }
 
-    private async Task<Guid> CreateRoomAsync(
-        RoomStatus status = RoomStatus.Available)
+    private async Task<Guid> CreateRoomAsync(RoomStatus status = RoomStatus.Available)
     {
         var buildingId =
             Guid.NewGuid();
@@ -154,12 +184,8 @@ public abstract class
         );
     }
 
-    private Task<RoomReservationDto>
-        CreateReservationAsync(
-            Guid roomId,
-            Guid tenantId,
-            string? reservationNumber = null,
-            DateTime? expectedMoveInDate = null)
+    private Task<RoomReservationDto> CreateReservationAsync(Guid roomId,
+        Guid tenantId, string? reservationNumber = null, DateTime? expectedMoveInDate = null)
     {
         return _roomReservationAppService.CreateAsync(
             new CreateRoomReservationDto
@@ -172,8 +198,7 @@ public abstract class
                 TenantId = tenantId,
 
                 ExpectedMoveInDate =
-                    expectedMoveInDate
-                    ?? _clock.Now.Date.AddDays(30),
+                    expectedMoveInDate ?? GetVietnamToday().AddDays(1),
 
                 QuotedMonthlyRent =
                     3_000_000,
@@ -190,10 +215,7 @@ public abstract class
         );
     }
 
-    private async Task<ContractDto>
-        CreateActiveContractAsync(
-            Guid roomId,
-            DateTime endDate)
+    private async Task<ContractDto> CreateActiveContractAsync(Guid roomId, DateTime endDate)
     {
         var contract =
             await _contractAppService.CreateAsync(
@@ -234,10 +256,7 @@ public abstract class
             );
     }
 
-    private async Task<RoomReservation>
-        CreateReservedReservationAsync(
-            Guid roomId,
-            Guid tenantId)
+    private async Task<RoomReservation> CreateReservedReservationAsync( Guid roomId, Guid tenantId)
     {
         var reservation =
             new RoomReservation(
@@ -331,8 +350,7 @@ public abstract class
 
     // RR02
     [Fact]
-    public async Task
-        Should_Throw_When_Room_Does_Not_Exist()
+    public async Task Should_Throw_When_Room_Does_Not_Exist()
     {
         var tenant =
             await CreateTenantAsync();
@@ -357,8 +375,7 @@ public abstract class
 
     // RR03
     [Fact]
-    public async Task
-        Should_Throw_When_Tenant_Does_Not_Exist()
+    public async Task Should_Throw_When_Tenant_Does_Not_Exist()
     {
         var roomId =
             await CreateRoomAsync();
@@ -383,8 +400,7 @@ public abstract class
 
     // RR04
     [Fact]
-    public async Task
-        Should_Throw_When_Reservation_Number_Already_Exists()
+    public async Task Should_Throw_When_Reservation_Number_Already_Exists()
     {
         var firstRoomId =
             await CreateRoomAsync();
@@ -427,8 +443,7 @@ public abstract class
 
     // RR05
     [Fact]
-    public async Task
-        Should_Throw_When_Quoted_Monthly_Rent_Is_Invalid()
+    public async Task Should_Throw_When_Quoted_Monthly_Rent_Is_Invalid()
     {
         var roomId =
             await CreateRoomAsync();
@@ -454,8 +469,7 @@ public abstract class
                                     tenant.Id,
 
                                 ExpectedMoveInDate =
-                                    _clock.Now.Date
-                                        .AddDays(30),
+                                    GetVietnamToday().AddDays(1),
 
                                 QuotedMonthlyRent =
                                     0,
@@ -477,8 +491,7 @@ public abstract class
 
     // RR06
     [Fact]
-    public async Task
-        Should_Throw_When_Required_Deposit_Is_Invalid()
+    public async Task Should_Throw_When_Required_Deposit_Is_Invalid()
     {
         var roomId =
             await CreateRoomAsync();
@@ -504,8 +517,7 @@ public abstract class
                                     tenant.Id,
 
                                 ExpectedMoveInDate =
-                                    _clock.Now.Date
-                                        .AddDays(30),
+                                    GetVietnamToday().AddDays(1),
 
                                 QuotedMonthlyRent =
                                     3_000_000,
@@ -527,8 +539,7 @@ public abstract class
 
     // RR07
     [Fact]
-    public async Task
-        Should_Throw_When_Move_In_Date_Is_In_The_Past()
+    public async Task Should_Throw_When_Move_In_Date_Is_In_The_Past()
     {
         var roomId =
             await CreateRoomAsync();
@@ -544,8 +555,7 @@ public abstract class
                         roomId,
                         tenant.Id,
                         expectedMoveInDate:
-                            _clock.Now.Date
-                                .AddDays(-1)
+                            GetVietnamToday().AddDays(-1)
                     )
             );
 
@@ -557,8 +567,7 @@ public abstract class
 
     // RR08
     [Fact]
-    public async Task
-        Should_Not_Reserve_Maintenance_Room()
+    public async Task Should_Not_Reserve_Maintenance_Room()
     {
         var roomId =
             await CreateRoomAsync(
@@ -586,8 +595,7 @@ public abstract class
 
     // RR09
     [Fact]
-    public async Task
-        Should_Not_Create_Duplicate_Active_Reservation_For_Same_Tenant_And_Room()
+    public async Task Should_Not_Create_Duplicate_Active_Reservation_For_Same_Tenant_And_Room()
     {
         var roomId =
             await CreateRoomAsync();
@@ -618,8 +626,7 @@ public abstract class
 
     // RR10
     [Fact]
-    public async Task
-        Should_Allow_Multiple_Pending_Reservations_From_Different_Tenants()
+    public async Task Should_Allow_Multiple_Pending_Reservations_From_Different_Tenants()
     {
         var roomId =
             await CreateRoomAsync();
@@ -657,14 +664,13 @@ public abstract class
 
     // RR11
     [Fact]
-    public async Task
-        Should_Allow_Future_Reservation_After_Active_Contract_Ends()
+    public async Task Should_Allow_Future_Reservation_After_Active_Contract_Ends()
     {
         var roomId =
             await CreateRoomAsync();
 
         var contractEndDate =
-            _clock.Now.Date.AddDays(10);
+            GetLastDayOfMonth(GetVietnamToday());
 
         await CreateActiveContractAsync(
             roomId,
@@ -693,14 +699,13 @@ public abstract class
 
     // RR12
     [Fact]
-    public async Task
-        Should_Not_Allow_Reservation_Overlapping_Active_Contract()
+    public async Task Should_Not_Allow_Reservation_Overlapping_Active_Contract()
     {
         var roomId =
             await CreateRoomAsync();
 
         var contractEndDate =
-            _clock.Now.Date.AddDays(10);
+            GetLastDayOfMonth(GetVietnamToday());
 
         await CreateActiveContractAsync(
             roomId,
@@ -730,8 +735,7 @@ public abstract class
 
     // RR13
     [Fact]
-    public async Task
-        Should_Not_Allow_New_Reservation_When_Room_Already_Has_Reserved_Reservation()
+    public async Task Should_Not_Allow_New_Reservation_When_Room_Already_Has_Reserved_Reservation()
     {
         var roomId =
             await CreateRoomAsync();
@@ -765,8 +769,7 @@ public abstract class
 
     // RR14
     [Fact]
-    public async Task
-        Should_Get_Existing_Room_Reservation()
+    public async Task Should_Get_Existing_Room_Reservation()
     {
         var roomId =
             await CreateRoomAsync();
@@ -801,8 +804,7 @@ public abstract class
 
     // RR15
     [Fact]
-    public async Task
-        Should_Throw_When_Room_Reservation_Does_Not_Exist()
+    public async Task Should_Throw_When_Room_Reservation_Does_Not_Exist()
     {
         var exception =
             await Assert.ThrowsAsync<
@@ -824,8 +826,7 @@ public abstract class
 
     // RR16
     [Fact]
-    public async Task
-        Should_Get_Room_Reservation_List()
+    public async Task Should_Get_Room_Reservation_List()
     {
         var firstRoomId =
             await CreateRoomAsync();
@@ -866,8 +867,7 @@ public abstract class
 
     // RR17
     [Fact]
-    public async Task
-        Should_Cancel_Pending_Room_Reservation()
+    public async Task Should_Cancel_Pending_Room_Reservation()
     {
         var roomId =
             await CreateRoomAsync();
@@ -914,8 +914,7 @@ public abstract class
 
     // RR18
     [Fact]
-    public async Task
-        Should_Not_Cancel_Room_Reservation_Twice()
+    public async Task Should_Not_Cancel_Room_Reservation_Twice()
     {
         var roomId =
             await CreateRoomAsync();
@@ -964,8 +963,7 @@ public abstract class
 
     // RR19
     [Fact]
-    public async Task
-        Should_Not_Allow_Frontend_To_Set_NoShow()
+    public async Task Should_Not_Allow_Frontend_To_Set_NoShow()
     {
         var roomId =
             await CreateRoomAsync();
@@ -1003,8 +1001,7 @@ public abstract class
 
     // RR20
     [Fact]
-    public async Task
-        Should_Not_Allow_Frontend_To_Set_Superseded_By_Renewal()
+    public async Task Should_Not_Allow_Frontend_To_Set_Superseded_By_Renewal()
     {
         var roomId =
             await CreateRoomAsync();
@@ -1043,8 +1040,7 @@ public abstract class
     //RR21 — Minimum deposit bằng 0 phải bị chặn
     // RR21
     [Fact]
-    public async Task
-        Should_Throw_When_Minimum_Reservation_Deposit_Is_Zero()
+    public async Task Should_Throw_When_Minimum_Reservation_Deposit_Is_Zero()
     {
         var roomId =
             await CreateRoomAsync();
@@ -1068,7 +1064,7 @@ public abstract class
                                 tenant.Id,
 
                             ExpectedMoveInDate =
-                                _clock.Now.Date.AddDays(30),
+                                GetVietnamToday().AddDays(1),
 
                             QuotedMonthlyRent =
                                 3_000_000,
@@ -1091,8 +1087,7 @@ public abstract class
     //RR22 — Minimum không được lớn hơn tổng tiền cọc
     // RR22
     [Fact]
-    public async Task
-        Should_Throw_When_Minimum_Reservation_Deposit_Exceeds_Required_Deposit()
+    public async Task Should_Throw_When_Minimum_Reservation_Deposit_Exceeds_Required_Deposit()
     {
         var roomId =
             await CreateRoomAsync();
@@ -1116,7 +1111,7 @@ public abstract class
                                 tenant.Id,
 
                             ExpectedMoveInDate =
-                                _clock.Now.Date.AddDays(30),
+                                GetVietnamToday().AddDays(1),
 
                             QuotedMonthlyRent =
                                 3_000_000,
@@ -1139,8 +1134,7 @@ public abstract class
     //RR23 — 500k hợp lệ và phải được trả đúng ra DTO
     // RR23
     [Fact]
-    public async Task
-        Should_Create_Reservation_With_Minimum_Deposit_Amount()
+    public async Task Should_Create_Reservation_With_Minimum_Deposit_Amount()
     {
         var roomId =
             await CreateRoomAsync();
@@ -1161,8 +1155,10 @@ public abstract class
                     TenantId =
                         tenant.Id,
 
-                    ExpectedMoveInDate =
-                        _clock.Now.Date.AddDays(30),
+                    ExpectedMoveInDate = TimeZoneInfo.ConvertTimeFromUtc(
+                        _clock.Now,
+                        TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh")
+                    ).Date.AddDays(1),
 
                     QuotedMonthlyRent =
                         3_000_000,
@@ -1188,6 +1184,221 @@ public abstract class
 
         result.MinimumReservationDepositAmount.ShouldBe(
             500_000
+        );
+    }
+
+
+    // RR24 - An empty room accepts move-in today (Vietnam calendar date).
+    [Fact]
+    public async Task Should_Allow_Available_Room_Move_In_Today()
+    {
+        var roomId = await CreateRoomAsync();
+        var tenant = await CreateTenantAsync();
+        var today = GetVietnamToday();
+
+        var result = await CreateReservationAsync(
+            roomId,
+            tenant.Id,
+            expectedMoveInDate: today
+        );
+
+        result.ExpectedMoveInDate.ShouldBe(today);
+        result.Status.ShouldBe(RoomReservationStatus.PendingPayment);
+    }
+
+    // RR25 - The published cutoff is inclusive for an available room.
+    [Fact]
+    public async Task Should_Allow_Available_Room_Move_In_On_Cutoff()
+    {
+        var roomId = await CreateRoomAsync();
+        var tenant = await CreateTenantAsync();
+        var cutoff = GetNextMonthCutoff(GetVietnamToday());
+
+        var result = await CreateReservationAsync(
+            roomId,
+            tenant.Id,
+            expectedMoveInDate: cutoff
+        );
+
+        result.ExpectedMoveInDate.ShouldBe(cutoff);
+        result.Status.ShouldBe(RoomReservationStatus.PendingPayment);
+    }
+
+    // RR26 - Exactly one day after the cutoff is not allowed.
+    [Fact]
+    public async Task Should_Reject_Available_Room_Move_In_After_Cutoff()
+    {
+        var roomId = await CreateRoomAsync();
+        var tenant = await CreateTenantAsync();
+        var afterCutoff = GetNextMonthCutoff(GetVietnamToday()).AddDays(1);
+
+        var exception = await Assert.ThrowsAsync<BusinessException>(
+            () => CreateReservationAsync(
+                roomId,
+                tenant.Id,
+                expectedMoveInDate: afterCutoff
+            )
+        );
+
+        exception.Code.ShouldBe(
+            BuildingManagementErrorCodes.InvalidExpectedMoveInDate
+        );
+    }
+
+    // RR27 - A future tenant may choose the cutoff while the current
+    // contract ends on the last day of this month.
+    [Fact]
+    public async Task Should_Allow_Occupied_Room_Move_In_On_Cutoff_After_Contract_End()
+    {
+        var roomId = await CreateRoomAsync();
+        var today = GetVietnamToday();
+        await CreateActiveContractAsync(
+            roomId,
+            GetLastDayOfMonth(today)
+        );
+
+        var futureTenant = await CreateTenantAsync();
+        var cutoff = GetNextMonthCutoff(today);
+
+        var result = await CreateReservationAsync(
+            roomId,
+            futureTenant.Id,
+            expectedMoveInDate: cutoff
+        );
+
+        result.ExpectedMoveInDate.ShouldBe(cutoff);
+        result.Status.ShouldBe(RoomReservationStatus.PendingPayment);
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var room = await _roomRepository.GetAsync(roomId);
+            room.Status.ShouldBe(RoomStatus.Occupied);
+        });
+    }
+
+    // RR28 - An existing contract does not extend the cutoff window.
+    [Fact]
+    public async Task Should_Reject_Occupied_Room_Move_In_After_Cutoff()
+    {
+        var roomId = await CreateRoomAsync();
+        var today = GetVietnamToday();
+        await CreateActiveContractAsync(
+            roomId,
+            GetLastDayOfMonth(today)
+        );
+
+        var futureTenant = await CreateTenantAsync();
+        var afterCutoff = GetNextMonthCutoff(today).AddDays(1);
+
+        var exception = await Assert.ThrowsAsync<BusinessException>(
+            () => CreateReservationAsync(
+                roomId,
+                futureTenant.Id,
+                expectedMoveInDate: afterCutoff
+            )
+        );
+
+        exception.Code.ShouldBe(
+            BuildingManagementErrorCodes.InvalidExpectedMoveInDate
+        );
+    }
+
+    // RR29 - An occupied room without a recorded active contract cannot
+    // be assumed to be available for a future reservation.
+    [Fact]
+    public async Task Should_Reject_Occupied_Room_Without_Active_Contract()
+    {
+        var roomId = await CreateRoomAsync(RoomStatus.Occupied);
+        var tenant = await CreateTenantAsync();
+
+        var exception = await Assert.ThrowsAsync<BusinessException>(
+            () => CreateReservationAsync(roomId, tenant.Id)
+        );
+
+        exception.Code.ShouldBe(
+            BuildingManagementErrorCodes.RoomNotAvailableForReservation
+        );
+    }
+
+    // RR30 - An open-ended active contract has no assured handover date.
+    [Fact]
+    public async Task Should_Reject_Occupied_Room_With_Open_Ended_Active_Contract()
+    {
+        var roomId = await CreateRoomAsync();
+
+        // Arrange an open-ended active contract without changing the
+        // shared CreateActiveContractAsync fixture used by older tests.
+        var currentContract = await _contractAppService.CreateAsync(
+            new CreateContractDto
+            {
+                ContractNumber = NewContractNumber(),
+                RoomId = roomId,
+                StartDate = _clock.Now.Date.AddDays(-30),
+                EndDate = null,
+                MonthlyRent = 3_000_000
+            }
+        );
+
+        var currentTenant = await CreateTenantAsync();
+        await _contractAppService.AddTenantAsync(
+            currentContract.Id,
+            new AddContractTenantDto
+            {
+                TenantId = currentTenant.Id,
+                Role = ContractTenantRole.PrimaryTenant
+            }
+        );
+        await _contractAppService.ActivateAsync(currentContract.Id);
+
+        var tenant = await CreateTenantAsync();
+        var firstDayOfNextMonth = new DateTime(
+            GetVietnamToday().Year,
+            GetVietnamToday().Month,
+            1
+        ).AddMonths(1);
+
+        var exception = await Assert.ThrowsAsync<BusinessException>(
+            () => CreateReservationAsync(
+                roomId,
+                tenant.Id,
+                expectedMoveInDate: firstDayOfNextMonth
+            )
+        );
+
+        exception.Code.ShouldBe(
+            BuildingManagementErrorCodes.RoomNotAvailableForReservation
+        );
+    }
+
+    // RR31 - An inactive room must not be offered for move-in.
+    [Fact]
+    public async Task Should_Reject_Reservation_For_Inactive_Room()
+    {
+        var roomId = await CreateRoomAsync(RoomStatus.Inactive);
+        var tenant = await CreateTenantAsync();
+
+        var exception = await Assert.ThrowsAsync<BusinessException>(
+            () => CreateReservationAsync(roomId, tenant.Id)
+        );
+
+        exception.Code.ShouldBe(
+            BuildingManagementErrorCodes.RoomNotAvailableForReservation
+        );
+    }
+
+    // RR32 - Do not offer a room marked Reserved even when a matching
+    // reservation record is not found. This is a fail-closed condition.
+    [Fact]
+    public async Task Should_Reject_Room_Marked_Reserved()
+    {
+        var roomId = await CreateRoomAsync(RoomStatus.Reserved);
+        var tenant = await CreateTenantAsync();
+
+        var exception = await Assert.ThrowsAsync<BusinessException>(
+            () => CreateReservationAsync(roomId, tenant.Id)
+        );
+
+        exception.Code.ShouldBe(
+            BuildingManagementErrorCodes.RoomAlreadyReserved
         );
     }
 }

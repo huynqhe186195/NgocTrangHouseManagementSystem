@@ -205,9 +205,14 @@ public abstract class PaymentAppService_Tests<TStartupModule>
                     TenantId =
                         tenantId,
 
+
                     ExpectedMoveInDate =
                         expectedMoveInDate
-                        ?? _clock.Now.Date.AddDays(30),
+                        ?? TimeZoneInfo.ConvertTimeFromUtc(
+                            _clock.Now,
+                            TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh")
+                        ).Date.AddDays(1),
+
 
                     QuotedMonthlyRent =
                         3_000_000,
@@ -1365,9 +1370,7 @@ public abstract class PaymentAppService_Tests<TStartupModule>
         );
     }
 
-    private async Task<ContractDto> CreateActiveContractAsync(
-            Guid roomId,
-            DateTime endDate)
+    private async Task<ContractDto> CreateActiveContractAsync(Guid roomId, DateTime endDate)
     {
         var contract =
             await _contractAppService.CreateAsync(
@@ -2199,8 +2202,7 @@ public abstract class PaymentAppService_Tests<TStartupModule>
 
     // PAY15
     [Fact]
-    public async Task
-        Should_Cancel_Pending_Payment()
+    public async Task Should_Cancel_Pending_Payment()
     {
         var roomId =
             await CreateRoomAsync();
@@ -2245,8 +2247,7 @@ public abstract class PaymentAppService_Tests<TStartupModule>
 
     // PAY16
     [Fact]
-    public async Task
-        Should_Not_Cancel_Completed_Payment()
+    public async Task Should_Not_Cancel_Completed_Payment()
     {
         var roomId =
             await CreateRoomAsync();
@@ -2287,8 +2288,7 @@ public abstract class PaymentAppService_Tests<TStartupModule>
 
     // PAY17
     [Fact]
-    public async Task
-        Should_Not_Complete_Payment_Twice()
+    public async Task Should_Not_Complete_Payment_Twice()
     {
         var roomId =
             await CreateRoomAsync();
@@ -2328,8 +2328,7 @@ public abstract class PaymentAppService_Tests<TStartupModule>
 
     // PAY18
     [Fact]
-    public async Task
-        Should_Not_Create_Payment_For_Cancelled_Reservation()
+    public async Task Should_Not_Create_Payment_For_Cancelled_Reservation()
     {
         var roomId =
             await CreateRoomAsync();
@@ -2374,8 +2373,7 @@ public abstract class PaymentAppService_Tests<TStartupModule>
 
     // PAY19
     [Fact]
-    public async Task
-        Should_Get_Existing_Payment_And_List()
+    public async Task Should_Get_Existing_Payment_And_List()
     {
         var roomId =
             await CreateRoomAsync();
@@ -2417,8 +2415,7 @@ public abstract class PaymentAppService_Tests<TStartupModule>
 
     // PAY20
     [Fact]
-    public async Task
-        Should_Throw_When_Payment_Does_Not_Exist()
+    public async Task Should_Throw_When_Payment_Does_Not_Exist()
     {
         var exception =
             await Assert.ThrowsAsync<
@@ -2437,8 +2434,7 @@ public abstract class PaymentAppService_Tests<TStartupModule>
         );
     }
 
-    private async Task<List<DepositSettlement>> GetReservationDispositionSettlementsAsync(
-        Guid reservationId)
+    private async Task<List<DepositSettlement>> GetReservationDispositionSettlementsAsync(Guid reservationId)
     {
         var result =
             new List<DepositSettlement>();
@@ -2471,8 +2467,7 @@ public abstract class PaymentAppService_Tests<TStartupModule>
 
     // PAY37
     [Fact]
-    public async Task
-        Should_Forfeit_Standard_Reservation_Hold_When_Cancelled()
+    public async Task Should_Forfeit_Standard_Reservation_Hold_When_Cancelled()
     {
         var roomId =
             await CreateRoomAsync();
@@ -2556,8 +2551,7 @@ public abstract class PaymentAppService_Tests<TStartupModule>
 
     // PAY38
     [Fact]
-    public async Task
-        Should_Refund_Full_Reservation_Deposit_When_Cancelled()
+    public async Task Should_Refund_Full_Reservation_Deposit_When_Cancelled()
     {
         var roomId =
             await CreateRoomAsync();
@@ -2630,8 +2624,7 @@ public abstract class PaymentAppService_Tests<TStartupModule>
 
     // PAY39
     [Fact]
-    public async Task
-        Should_Not_Duplicate_Reservation_Deposit_Settlement()
+    public async Task Should_Not_Duplicate_Reservation_Deposit_Settlement()
     {
         var roomId =
             await CreateRoomAsync();
@@ -2705,8 +2698,7 @@ public abstract class PaymentAppService_Tests<TStartupModule>
 
     // PAY40
     [Fact]
-    public async Task
-        Should_Not_Create_Intermediate_Reservation_Deposit()
+    public async Task Should_Not_Create_Intermediate_Reservation_Deposit()
     {
         var roomId =
             await CreateRoomAsync();
@@ -2738,8 +2730,7 @@ public abstract class PaymentAppService_Tests<TStartupModule>
 
     // PAY41
     [Fact]
-    public async Task
-        Should_Not_Settle_Reservation_Deposit_Before_Cancellation()
+    public async Task Should_Not_Settle_Reservation_Deposit_Before_Cancellation()
     {
         var roomId =
             await CreateRoomAsync();
@@ -2781,8 +2772,7 @@ public abstract class PaymentAppService_Tests<TStartupModule>
 
     // PAY42
     [Fact]
-    public async Task
-        Should_Not_Settle_When_No_Completed_Reservation_Payment()
+    public async Task Should_Not_Settle_When_No_Completed_Reservation_Payment()
     {
         var roomId =
             await CreateRoomAsync();
@@ -2825,8 +2815,7 @@ public abstract class PaymentAppService_Tests<TStartupModule>
 
     // PAY43
     [Fact]
-    public async Task
-        Should_Refund_Multiple_Reservation_Payments_When_Total_Is_Full_Deposit()
+    public async Task Should_Refund_Multiple_Reservation_Payments_When_Total_Is_Full_Deposit()
     {
         var roomId =
             await CreateRoomAsync();
@@ -2911,8 +2900,7 @@ public abstract class PaymentAppService_Tests<TStartupModule>
 
     // PAY44
     [Fact]
-    public async Task
-        Should_Keep_Payment_Completed_After_Forfeit()
+    public async Task Should_Keep_Payment_Completed_After_Forfeit()
     {
         var roomId =
             await CreateRoomAsync();
@@ -2964,8 +2952,7 @@ public abstract class PaymentAppService_Tests<TStartupModule>
 
     // PAY45
     [Fact]
-    public async Task
-        Should_Keep_Payment_Completed_After_Refund()
+    public async Task Should_Keep_Payment_Completed_After_Refund()
     {
         var roomId =
             await CreateRoomAsync();
@@ -3017,8 +3004,7 @@ public abstract class PaymentAppService_Tests<TStartupModule>
 
     // PAY46
     [Fact]
-    public async Task
-        Should_Not_Allow_Intermediate_Payment_After_Standard_Hold()
+    public async Task Should_Not_Allow_Intermediate_Payment_After_Standard_Hold()
     {
         var roomId =
             await CreateRoomAsync();
@@ -3057,4 +3043,355 @@ public abstract class PaymentAppService_Tests<TStartupModule>
                 .InvalidReservationDepositPaymentAmount
         );
     }
+
+
+    [Fact]
+    public async Task Should_Not_Complete_Second_Deposit_When_Room_Already_Reserved()
+    {
+        var roomId = await CreateRoomAsync();
+
+        var tenantA = await CreateTenantAsync();
+        var tenantB = await CreateTenantAsync();
+
+        var reservationA = await CreateReservationAsync(
+            roomId, tenantA.Id
+        );
+
+        var reservationB = await CreateReservationAsync(
+            roomId, tenantB.Id
+        );
+
+        var paymentA = await CreatePaymentAsync(
+            reservationA.Id, 500_000
+        );
+
+        var paymentB = await CreatePaymentAsync(
+            reservationB.Id, 500_000
+        );
+
+        // Khách A thanh toán trước.
+        await CompletePaymentAsync(paymentA.Id);
+
+        // Khách B không được giữ cùng phòng lần nữa.
+        var exception = await Assert.ThrowsAsync<BusinessException>(
+            () => CompletePaymentAsync(paymentB.Id)
+        );
+
+        exception.Code.ShouldBe(
+            BuildingManagementErrorCodes.RoomAlreadyReserved
+        );
+
+        var reservationAfter =
+            await _roomReservationAppService.GetAsync(reservationB.Id);
+
+        reservationAfter.Status.ShouldBe(
+            RoomReservationStatus.PendingPayment
+        );
+
+        var paymentAfter =
+            await _paymentAppService.GetAsync(paymentB.Id);
+
+        paymentAfter.Status.ShouldBe(PaymentStatus.Pending);
+
+        var roomStatus = await GetRoomStatusAsync(roomId);
+
+        roomStatus.ShouldBe(RoomStatus.Reserved);
+    }
+
+
+
+    [Fact]
+    public async Task Should_Block_Deposit_When_Room_Becomes_Maintenance()
+    {
+        // 1. Tạo phòng Available
+        var roomId = await CreateRoomAsync();
+
+        var tenant = await CreateTenantAsync();
+
+        // 2. Khách tạo Reservation nhưng chưa thanh toán
+        var reservation = await CreateReservationAsync(
+            roomId,
+            tenant.Id
+        );
+
+        var payment = await CreatePaymentAsync(
+            reservation.Id,
+            500_000
+        );
+
+        // 3. Chủ trọ chuyển phòng sang Maintenance
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var room = await _roomRepository.GetAsync(roomId);
+
+            room.ChangeStatus(RoomStatus.Maintenance);
+
+            await _roomRepository.UpdateAsync(
+                room,
+                autoSave: true
+            );
+        });
+
+        // 4. Không được hoàn tất tiền giữ phòng
+        var exception = await Assert.ThrowsAsync<BusinessException>(
+            () => CompletePaymentAsync(payment.Id)
+        );
+
+        exception.Code.ShouldBe(
+            BuildingManagementErrorCodes.RoomNotAvailableForReservation
+        );
+
+        // 5. Payment vẫn Pending
+        var paymentAfter =
+            await _paymentAppService.GetAsync(payment.Id);
+
+        paymentAfter.Status.ShouldBe(PaymentStatus.Pending);
+
+        // 6. Reservation vẫn PendingPayment
+        var reservationAfter =
+            await _roomReservationAppService.GetAsync(reservation.Id);
+
+        reservationAfter.Status.ShouldBe(
+            RoomReservationStatus.PendingPayment
+        );
+
+        // 7. Phòng vẫn Maintenance
+        var roomStatus = await GetRoomStatusAsync(roomId);
+
+        roomStatus.ShouldBe(RoomStatus.Maintenance);
+    }
+
+
+    [Fact]
+    public async Task Should_Block_Deposit_When_New_Active_Contract_Overlaps_MoveIn()
+    {
+        var roomId = await CreateRoomAsync();
+
+        var tenantA = await CreateTenantAsync();
+
+        // Khách A tạo Reservation khi phòng còn trống.
+        var reservation = await CreateReservationAsync(
+            roomId,
+            tenantA.Id
+        );
+
+        var payment = await CreatePaymentAsync(
+            reservation.Id,
+            500_000
+        );
+
+        // Sau đó khách B nhận phòng với hợp đồng Active
+        // còn hiệu lực qua ngày dự kiến vào ở của A.
+        await CreateActiveContractAsync(
+            roomId,
+            _clock.Now.Date.AddMonths(6)
+        );
+
+        var roomStatus = await GetRoomStatusAsync(roomId);
+        roomStatus.ShouldBe(RoomStatus.Occupied);
+
+        // Khách A không được thanh toán giữ phòng nữa.
+        var exception = await Assert.ThrowsAsync<BusinessException>(
+            () => CompletePaymentAsync(payment.Id)
+        );
+
+        exception.Code.ShouldBe(
+            BuildingManagementErrorCodes.RoomNotAvailableForReservation
+        );
+
+        var paymentAfter = await _paymentAppService.GetAsync(payment.Id);
+        paymentAfter.Status.ShouldBe(PaymentStatus.Pending);
+
+        var reservationAfter =
+            await _roomReservationAppService.GetAsync(reservation.Id);
+
+        reservationAfter.Status.ShouldBe(
+            RoomReservationStatus.PendingPayment
+        );
+
+        var roomStatusAfter = await GetRoomStatusAsync(roomId);
+        roomStatusAfter.ShouldBe(RoomStatus.Occupied);
+    }
+
+
+    [Fact]
+    public async Task Should_Block_Deposit_When_Signed_Contract_Overlaps_MoveIn()
+    {
+        // Khach A dat phong khi phong con trong.
+        var roomId = await CreateRoomAsync();
+        var tenantA = await CreateTenantAsync();
+
+        var reservation = await CreateReservationAsync(
+            roomId,
+            tenantA.Id
+        );
+
+        var payment = await CreatePaymentAsync(
+            reservation.Id,
+            500_000
+        );
+
+        // Khach B ky hop dong cung phong.
+        var tenantB = await CreateTenantAsync();
+
+        var contract = await _contractAppService.CreateAsync(
+            new CreateContractDto
+            {
+                ContractNumber = NewContractNumber(),
+                RoomId = roomId,
+                StartDate = reservation.ExpectedMoveInDate.Date,
+                EndDate = reservation.ExpectedMoveInDate.Date.AddMonths(6),
+                MonthlyRent = 3_000_000
+            }
+        );
+
+        await _contractAppService.AddTenantAsync(
+            contract.Id,
+            new AddContractTenantDto
+            {
+                TenantId = tenantB.Id,
+                Role = ContractTenantRole.PrimaryTenant
+            }
+        );
+
+        var signedContract =
+            await _contractAppService.SignAsync(contract.Id);
+
+        signedContract.Status.ShouldBe(ContractStatus.Signed);
+
+        // Khach A khong duoc hoan tat coc.
+        var exception = await Assert.ThrowsAsync<BusinessException>(
+            () => CompletePaymentAsync(payment.Id)
+        );
+
+        exception.Code.ShouldBe(
+            BuildingManagementErrorCodes
+                .RoomNotAvailableForReservation
+        );
+
+        // Payment khong thay doi.
+        var paymentAfter =
+            await _paymentAppService.GetAsync(payment.Id);
+
+        paymentAfter.Status.ShouldBe(PaymentStatus.Pending);
+
+        // Reservation khong thay doi.
+        var reservationAfter =
+            await _roomReservationAppService.GetAsync(reservation.Id);
+
+        reservationAfter.Status.ShouldBe(
+            RoomReservationStatus.PendingPayment
+        );
+
+        // Phong van Available vi Contract chua Active.
+        var roomStatus = await GetRoomStatusAsync(roomId);
+
+        roomStatus.ShouldBe(RoomStatus.Available);
+    }
+
+
+    [Fact]
+    public async Task Should_Allow_Deposit_When_Signed_Contract_Ends_Before_MoveIn()
+    {
+        var todayInVietnam = TimeZoneInfo.ConvertTimeFromUtc(
+            _clock.Now,
+            TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh")
+        ).Date;
+
+        var firstDayOfNextMonth =
+            new DateTime(todayInVietnam.Year, todayInVietnam.Month, 1)
+                .AddMonths(1);
+
+        // Ngay 7 thang sau luon nam trong reservation window.
+        var expectedMoveInDate = firstDayOfNextMonth.AddDays(6);
+
+        var roomId = await CreateRoomAsync();
+
+        var tenantA = await CreateTenantAsync();
+
+        var reservation = await CreateReservationAsync(
+            roomId,
+            tenantA.Id,
+            expectedMoveInDate
+        );
+
+        var payment = await CreatePaymentAsync(
+            reservation.Id,
+            500_000
+        );
+
+        // Khach B co hop dong Signed ket thuc truoc ngay A vao.
+        var tenantB = await CreateTenantAsync();
+
+        var contract = await _contractAppService.CreateAsync(
+            new CreateContractDto
+            {
+                ContractNumber = NewContractNumber(),
+                RoomId = roomId,
+                StartDate = todayInVietnam,
+                EndDate = expectedMoveInDate.AddDays(-1),
+                MonthlyRent = 3_000_000
+            }
+        );
+
+        await _contractAppService.AddTenantAsync(
+            contract.Id,
+            new AddContractTenantDto
+            {
+                TenantId = tenantB.Id,
+                Role = ContractTenantRole.PrimaryTenant
+            }
+        );
+
+        var signed = await _contractAppService.SignAsync(contract.Id);
+        signed.Status.ShouldBe(ContractStatus.Signed);
+
+        // Lich khong trung: duoc phep hoan tat coc.
+        var completed = await CompletePaymentAsync(payment.Id);
+
+        completed.Status.ShouldBe(PaymentStatus.Completed);
+
+        var reservationAfter =
+            await _roomReservationAppService.GetAsync(reservation.Id);
+
+        reservationAfter.Status.ShouldBe(
+            RoomReservationStatus.Reserved
+        );
+
+        reservationAfter.ExpectedMoveInDate.ShouldBe(
+            expectedMoveInDate
+        );
+
+
+        // Khach A da giu phong cho tuong lai.
+        // Chua co nguoi o thuc te nen Room la Reserved.
+        var roomBeforeActivation =
+            await GetRoomStatusAsync(roomId);
+
+        roomBeforeActivation.ShouldBe(RoomStatus.Reserved);
+
+        // Khach B bat dau thue theo hop dong Signed.
+        var activatedContract =
+            await _contractAppService.ActivateAsync(contract.Id);
+
+        activatedContract.Status.ShouldBe(ContractStatus.Active);
+
+        // Khach B dang o thuc te.
+        var roomAfterActivation =
+            await GetRoomStatusAsync(roomId);
+
+        roomAfterActivation.ShouldBe(RoomStatus.Occupied);
+
+        // Khach A van giu duoc cho da dat.
+        var reservationAfterActivation =
+            await _roomReservationAppService.GetAsync(
+                reservation.Id
+            );
+
+        reservationAfterActivation.Status.ShouldBe(
+            RoomReservationStatus.Reserved
+        );
+
+    }
+
 }

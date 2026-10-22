@@ -1251,30 +1251,22 @@ namespace BuildingManagement.Payments
             >(payment);
         }
 
+
         public async Task<PaymentDto> CompleteAsync(Guid id, CompletePaymentDto input)
         {
-            var payment =
-                await GetExistingPaymentAsync(id);
+            var payment = await GetExistingPaymentAsync(id);
 
-            if (
-                payment.Status !=
-                    PaymentStatus.Pending
-            )
+            if (payment.Status != PaymentStatus.Pending)
             {
                 throw new BusinessException(
-                    BuildingManagementErrorCodes
-                        .PaymentCannotBeCompleted
+                    BuildingManagementErrorCodes.PaymentCannotBeCompleted
                 );
             }
 
             /*
-             * ContractDeposit có workflow riêng
-             * và lock Contract riêng.
+             * ContractDeposit sử dụng workflow riêng.
              */
-            if (
-                payment.Purpose ==
-                    PaymentPurpose.ContractDeposit
-            )
+            if (payment.Purpose == PaymentPurpose.ContractDeposit)
             {
                 return await CompleteContractDepositAsync(
                     payment,
@@ -1283,37 +1275,28 @@ namespace BuildingManagement.Payments
             }
 
             if (
-                payment.Purpose !=
-                    PaymentPurpose.ReservationDeposit
-                ||
+                payment.Purpose != PaymentPurpose.ReservationDeposit ||
                 !payment.RoomReservationId.HasValue
             )
             {
                 throw new BusinessException(
-                    BuildingManagementErrorCodes
-                        .PaymentCannotBeCompleted
+                    BuildingManagementErrorCodes.PaymentCannotBeCompleted
                 );
             }
 
             /*
-             * Lock Reservation trước khi đọc lại tổng tiền
-             * đã Completed.
+             * Lock Reservation trước khi kiểm tra và hoàn tất
+             * thanh toán.
              *
-             * Việc này serialize nhiều Payment Pending
-             * cùng thuộc một Reservation.
+             * Serialize các Payment cùng một Reservation.
              */
             var reservation =
-                await _roomReservationLockRepository
-                    .FindForUpdateAsync(
-                        payment.RoomReservationId.Value
-                    );
+                await _roomReservationLockRepository.FindForUpdateAsync(
+                    payment.RoomReservationId.Value
+                );
 
             if (reservation is null)
             {
-                /*
-                 * Giữ nguyên business error
-                 * RoomReservationNotFound.
-                 */
                 await GetExistingReservationAsync(
                     payment.RoomReservationId.Value
                 );
@@ -1323,25 +1306,23 @@ namespace BuildingManagement.Payments
                 );
             }
 
-            EnsureReservationIsPayable(
-                reservation
-            );
+            EnsureReservationIsPayable(reservation);
 
-            if (
-                reservation.TenantId !=
-                    payment.TenantId
-            )
+            if (reservation.TenantId != payment.TenantId)
             {
                 throw new BusinessException(
-                    BuildingManagementErrorCodes
-                        .PaymentCannotBeCompleted
+                    BuildingManagementErrorCodes.PaymentCannotBeCompleted
                 );
             }
 
-            if (
-                reservation.Status ==
-                    RoomReservationStatus.PendingPayment
-            )
+            /*
+             * Kiểm tra lại điều kiện giữ phòng khi Reservation
+             * vẫn đang PendingPayment.
+             *
+             * Không áp dụng kiểm tra này cho Reservation đã
+             * Reserved và đang thanh toán phần cọc còn lại.
+             */
+            if (reservation.Status == RoomReservationStatus.PendingPayment)
             {
                 await EnsureNoOtherReservedReservationAsync(
                     reservation
@@ -1350,10 +1331,129 @@ namespace BuildingManagement.Payments
                 await EnsureNoActiveRenewalHoldAsync(
                     reservation.RoomId
                 );
+
+                /*
+                 * Kiểm tra lại trạng thái vật lý của phòng.
+                 */
+                var room = await _roomRepository.FindAsync(
+                    reservation.RoomId
+                );
+
+                if (room is null)
+                {
+                    throw new BusinessException(
+                        BuildingManagementErrorCodes.RoomNotFound
+                    );
+                }
+
+                if (
+                    room.Status == RoomStatus.Maintenance ||
+                    room.Status == RoomStatus.Inactive
+                )
+                {
+                    throw new BusinessException(
+                        BuildingManagementErrorCodes
+                            .RoomNotAvailableForReservation
+                    );
+                }
+
+                /*
+                 * Phòng đã Reserved không được tiếp nhận
+                 * khoản cọc giữ phòng đầu tiên của khách khác.
+                 */
+                if (room.Status == RoomStatus.Reserved)
+                {
+                    throw new BusinessException(
+                        BuildingManagementErrorCodes.RoomAlreadyReserved
+                    );
+                }
+
+
+                /*
+                 * Kiem tra Signed Contract phat sinh sau
+                 * khi Reservation duoc tao.
+                 *
+                 * Signed Contract co EndDate truoc
+                 * ExpectedMoveInDate thi khong xung dot.
+                 *
+                 * Signed Contract chua co EndDate
+                 * hoac EndDate >= ExpectedMoveInDate
+                 * thi khong duoc xac nhan coc.
+                 */
+                var hasConflictingSignedContract =
+                    await _contractRepository.AnyAsync(
+                        x =>
+                            x.RoomId == room.Id &&
+                            x.Status == ContractStatus.Signed &&
+                            (
+                                !x.EndDate.HasValue ||
+                                x.EndDate.Value.Date >=
+                                    reservation.ExpectedMoveInDate.Date
+                            )
+                    );
+
+                if (hasConflictingSignedContract)
+                {
+                    throw new BusinessException(
+                        BuildingManagementErrorCodes
+                            .RoomNotAvailableForReservation
+                    );
+                }
+
+
+                /*
+                 * KIỂM TRA MỚI:
+                 *
+                 * Phòng có thể đã phát sinh Active Contract
+                 * sau thời điểm khách tạo Reservation.
+                 *
+                 * Phải kiểm tra lại trước khi nhận tiền cọc.
+                 */
+                var activeContract =
+                    await _contractRepository.FirstOrDefaultAsync(
+                        x =>
+                            x.RoomId == room.Id &&
+                            x.Status == ContractStatus.Active
+                    );
+
+                if (activeContract is not null)
+                {
+                    /*
+                     * Chỉ được giữ phòng nếu:
+                     *
+                     * 1. Phòng thực sự đang Occupied.
+                     * 2. Active Contract có EndDate.
+                     * 3. EndDate < ExpectedMoveInDate.
+                     */
+                    if (
+                        room.Status != RoomStatus.Occupied ||
+                        !activeContract.EndDate.HasValue ||
+                        activeContract.EndDate.Value.Date >=
+                            reservation.ExpectedMoveInDate.Date
+                    )
+                    {
+                        throw new BusinessException(
+                            BuildingManagementErrorCodes
+                                .RoomNotAvailableForReservation
+                        );
+                    }
+                }
+                else if (room.Status == RoomStatus.Occupied)
+                {
+                    /*
+                     * Phòng Occupied nhưng không có
+                     * Active Contract hợp lệ.
+                     */
+                    throw new BusinessException(
+                        BuildingManagementErrorCodes
+                            .RoomNotAvailableForReservation
+                    );
+                }
             }
 
             /*
-             * Sau khi đã lock mới tính lại tổng tiền.
+             * Sau khi lock Reservation, tính lại tổng tiền
+             * đã hoàn tất.
              */
             var totalPaid =
                 await GetCompletedReservationDepositTotalAsync(
@@ -1361,8 +1461,7 @@ namespace BuildingManagement.Payments
                 );
 
             var remaining =
-                reservation.RequiredDepositAmount
-                - totalPaid;
+                reservation.RequiredDepositAmount - totalPaid;
 
             if (remaining <= 0)
             {
@@ -1372,10 +1471,6 @@ namespace BuildingManagement.Payments
                 );
             }
 
-            /*
-             * Giữ error cũ cho trường hợp vượt quá
-             * RequiredDepositAmount.
-             */
             if (payment.Amount > remaining)
             {
                 throw new BusinessException(
@@ -1385,13 +1480,13 @@ namespace BuildingManagement.Payments
             }
 
             /*
-             * Recheck invariant sau lock.
+             * Quy tắc thanh toán:
              *
-             * Hợp lệ duy nhất:
+             * 0    -> 500.000 VND
+             * 0    -> 100% RequiredDepositAmount
+             * 500k -> Chính xác số tiền còn thiếu
              *
-             * 0       -> 500k
-             * 0       -> full deposit
-             * 500k    -> exact remaining
+             * Không cho phép mức thanh toán trung gian.
              */
             ValidateReservationDepositPaymentAmount(
                 reservation,
@@ -1400,21 +1495,15 @@ namespace BuildingManagement.Payments
             );
 
             var inputTransactionReference =
-                NormalizeOptional(
-                    input.TransactionReference
-                );
+                NormalizeOptional(input.TransactionReference);
 
             var effectiveTransactionReference =
                 inputTransactionReference
                 ?? payment.TransactionReference;
 
             if (
-                payment.Method !=
-                    PaymentMethod.Cash
-                &&
-                string.IsNullOrWhiteSpace(
-                    effectiveTransactionReference
-                )
+                payment.Method != PaymentMethod.Cash &&
+                string.IsNullOrWhiteSpace(effectiveTransactionReference)
             )
             {
                 throw new BusinessException(
@@ -1423,10 +1512,7 @@ namespace BuildingManagement.Payments
                 );
             }
 
-            if (
-                effectiveTransactionReference
-                is not null
-            )
+            if (effectiveTransactionReference is not null)
             {
                 await EnsureTransactionReferenceIsUniqueAsync(
                     effectiveTransactionReference,
@@ -1434,8 +1520,11 @@ namespace BuildingManagement.Payments
                 );
             }
 
-            var paidAt =
-                _clock.Now;
+            /*
+             * Tất cả điều kiện hợp lệ.
+             * Bắt đầu hoàn tất thanh toán.
+             */
+            var paidAt = _clock.Now;
 
             payment.Complete(
                 paidAt,
@@ -1448,48 +1537,42 @@ namespace BuildingManagement.Payments
             );
 
             /*
-             * Payment đầu tiên thành công
-             * sẽ chuyển Reservation sang Reserved.
+             * Chỉ khoản cọc đầu tiên mới chuyển Reservation
+             * từ PendingPayment sang Reserved.
              */
-            if (
-                reservation.Status ==
-                    RoomReservationStatus.PendingPayment
-            )
+            if (reservation.Status == RoomReservationStatus.PendingPayment)
             {
                 reservation.MarkReserved(
                     paidAt,
-                    GetEndOfMonth(
-                        paidAt
-                    )
+                    GetEndOfMonth(paidAt)
                 );
 
-                await _roomReservationRepository
-                    .UpdateAsync(
-                        reservation,
-                        autoSave: true
-                    );
+                await _roomReservationRepository.UpdateAsync(
+                    reservation,
+                    autoSave: true
+                );
 
-                var room =
-                    await _roomRepository.FindAsync(
-                        reservation.RoomId
-                    );
+                var room = await _roomRepository.FindAsync(
+                    reservation.RoomId
+                );
 
                 if (room is null)
                 {
                     throw new BusinessException(
-                        BuildingManagementErrorCodes
-                            .RoomNotFound
+                        BuildingManagementErrorCodes.RoomNotFound
                     );
                 }
 
-                if (
-                    room.Status ==
-                        RoomStatus.Available
-                )
+                /*
+                 * Chỉ đổi trạng thái vật lý khi phòng Available.
+                 *
+                 * Nếu phòng đang Occupied bởi khách cũ
+                 * và lịch nhận phòng mới hợp lệ,
+                 * tiếp tục giữ nguyên Occupied.
+                 */
+                if (room.Status == RoomStatus.Available)
                 {
-                    room.ChangeStatus(
-                        RoomStatus.Reserved
-                    );
+                    room.ChangeStatus(RoomStatus.Reserved);
 
                     await _roomRepository.UpdateAsync(
                         room,
@@ -1498,11 +1581,9 @@ namespace BuildingManagement.Payments
                 }
             }
 
-            return ObjectMapper.Map<
-                Payment,
-                PaymentDto
-            >(payment);
+            return ObjectMapper.Map<Payment, PaymentDto>(payment);
         }
+
 
         private async Task<PaymentDto> CompleteContractDepositAsync(Payment payment, CompletePaymentDto input)
         {
@@ -1838,8 +1919,7 @@ namespace BuildingManagement.Payments
             }
         }
 
-        private async Task EnsureTransactionReferenceIsUniqueAsync(
-            string transactionReference,
+        private async Task EnsureTransactionReferenceIsUniqueAsync(string transactionReference,
             Guid? excludedPaymentId = null)
         {
             bool exists;

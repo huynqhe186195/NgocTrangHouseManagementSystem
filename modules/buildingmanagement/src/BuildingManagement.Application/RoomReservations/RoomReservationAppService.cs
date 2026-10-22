@@ -171,15 +171,6 @@ namespace BuildingManagement.RoomReservations
             var expectedMoveInDate =
                 input.ExpectedMoveInDate.Date;
 
-            if (expectedMoveInDate <
-                _clock.Now.Date)
-            {
-                throw new BusinessException(
-                    BuildingManagementErrorCodes
-                        .InvalidExpectedMoveInDate
-                );
-            }
-
             var room =
                 await _roomRepository.FindAsync(
                     input.RoomId
@@ -456,37 +447,69 @@ namespace BuildingManagement.RoomReservations
 
             if (activeContract is not null)
             {
-                if (
-                    !activeContract.EndDate.HasValue
-                    ||
-                    activeContract.EndDate.Value.Date >=
-                        expectedMoveInDate
-                )
+                // A future reservation is permitted only while the old
+                // occupant is still recorded as occupying the room.
+                if (room.Status != RoomStatus.Occupied ||
+                    !activeContract.EndDate.HasValue ||
+                    activeContract.EndDate.Value.Date >= expectedMoveInDate)
                 {
                     throw new BusinessException(
-                        BuildingManagementErrorCodes
-                            .RoomNotAvailableForReservation
+                        BuildingManagementErrorCodes.RoomNotAvailableForReservation
+                    );
+                }
+            }
+            else
+            {
+                if (room.Status == RoomStatus.Occupied)
+                {
+                    throw new BusinessException(
+                        BuildingManagementErrorCodes.RoomNotAvailableForReservation
                     );
                 }
 
-                return;
+                if (room.Status == RoomStatus.Reserved)
+                {
+                    throw new BusinessException(
+                        BuildingManagementErrorCodes.RoomAlreadyReserved
+                    );
+                }
             }
 
-            if (room.Status == RoomStatus.Occupied)
+            // The business calendar is Vietnam time, not the UTC date.
+            // Use the already-tested domain policy for the inclusive cutoff.
+            var todayInVietnam = GetTodayInVietnam();
+            var firstDayOfNextMonth = new DateOnly(
+                todayInVietnam.Year, todayInVietnam.Month, 1).AddMonths(1);
+            var earliest = activeContract is null
+                ? todayInVietnam
+                : firstDayOfNextMonth;
+            var window = new MoveInDateWindow(
+                earliest,
+                MoveInDatePolicy.GetNextMonthCutoff(todayInVietnam));
+            var selected = DateOnly.FromDateTime(expectedMoveInDate);
+
+            if (!window.Contains(selected))
             {
                 throw new BusinessException(
-                    BuildingManagementErrorCodes
-                        .RoomNotAvailableForReservation
+                    BuildingManagementErrorCodes.InvalidExpectedMoveInDate
                 );
+            }
+        }
+
+        private DateOnly GetTodayInVietnam()
+        {
+            var nowUtc = _clock.Now;
+            if (nowUtc.Kind != DateTimeKind.Utc)
+            {
+                throw new AbpException(
+                    "IClock must use UTC for move-in date validation.");
             }
 
-            if (room.Status == RoomStatus.Reserved)
-            {
-                throw new BusinessException(
-                    BuildingManagementErrorCodes
-                        .RoomAlreadyReserved
-                );
-            }
+            var vietnamTimeZone = TimeZoneInfo.FindSystemTimeZoneById(
+                "Asia/Ho_Chi_Minh");
+            var localNow = TimeZoneInfo.ConvertTimeFromUtc(
+                nowUtc, vietnamTimeZone);
+            return DateOnly.FromDateTime(localNow);
         }
 
         private static string NormalizeReservationNumber(string? value)

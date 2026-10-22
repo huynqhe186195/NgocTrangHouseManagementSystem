@@ -645,6 +645,124 @@ public sealed class RoomReservationTransaction_Tests
             .ShouldBe(ContractRenewalHoldStatus.Active);
     }
 
+    // PG09: Renewal and first-deposit completion must use the SAME lock order:
+    // Active Contract -> Reservation. Block the pending Reservation externally,
+    // wait until RenewAsync holds Contract and waits on Reservation, then
+    // verify CompleteAsync must wait on Contract rather than overtaking Renew.
+    // Releasing the external lock must let both finish WITHOUT a deadlock.
+    [Fact]
+    public async Task PG09_Should_Serialize_Renewal_And_Deposit_Without_Deadlock()
+    {
+        var roomId = await CreateTestRoomAsync();
+        var today = GetTodayInVietnam();
+        var moveInDate = new DateTime(today.Year, today.Month, 1).AddMonths(1);
+
+        var current = await CreateActiveContractForRoomAsync(
+            roomId, today.AddDays(-30), moveInDate.AddDays(-1));
+        current.Status.ShouldBe(ContractStatus.Active);
+
+        var future = await CreatePendingPaymentForRoomAsync(
+            roomId, 500_000m, moveInDate);
+
+        var hold = await _renewalHolds.CreateAsync(
+            new CreateContractRenewalHoldDto
+            {
+                CurrentContractId = current.Id,
+                Notes = "PG09 renewal vs deposit lock ordering"
+            });
+        hold.Status.ShouldBe(ContractRenewalHoldStatus.Active);
+
+        var (reservationTable, reservationIdColumn, reservationTableName) =
+            GetReservationTableAndIdColumn();
+        var (_, _, contractTableName) = GetContractTableAndIdColumn();
+
+        await using var blocker = new NpgsqlConnection(
+            BuildingManagementPostgreSqlTestModule.RequireSafeConnectionString());
+        await blocker.OpenAsync();
+        await using var blockerTransaction = await blocker.BeginTransactionAsync();
+
+        Task<Exception?>? renewAttempt = null;
+        Task<Exception?>? paymentAttempt = null;
+        var renewalBlockedOnReservation = false;
+        var paymentBlockedOnContract = false;
+
+        try
+        {
+            await using (var lockReservation = new NpgsqlCommand(
+                $"SELECT 1 FROM {reservationTable} " +
+                $"WHERE {reservationIdColumn} = @id FOR UPDATE",
+                blocker, blockerTransaction))
+            {
+                lockReservation.Parameters.AddWithValue("id", future.ReservationId);
+                (await lockReservation.ExecuteScalarAsync()).ShouldNotBeNull(
+                    "PG09 pending Reservation row must exist.");
+            }
+
+            // Renewal must obtain the Contract gate before touching Reservation.
+            renewAttempt = Task.Run(() => RenewInIndependentScopeAsync(
+                current.Id, moveInDate, moveInDate.AddMonths(1).AddDays(-1)));
+
+            renewalBlockedOnReservation = await WaitForBlockedTableOperationsAsync(
+                reservationTableName,
+                minimumBlocked: 1,
+                timeout: TimeSpan.FromSeconds(20));
+
+            if (renewalBlockedOnReservation)
+            {
+                paymentAttempt = Task.Run(() =>
+                    CompleteInIndependentScopeAsync(future.PaymentId));
+
+                // Payment must now wait for Contract, not lock Reservation first.
+                paymentBlockedOnContract = await WaitForBlockedTableOperationsAsync(
+                    contractTableName,
+                    minimumBlocked: 1,
+                    timeout: TimeSpan.FromSeconds(20));
+            }
+        }
+        finally
+        {
+            // Always release the test-only lock, even when monitoring fails.
+            await blockerTransaction.RollbackAsync();
+        }
+
+        if (renewAttempt is null || paymentAttempt is null)
+            throw new InvalidOperationException(
+                "PG09 did not start both concurrent application operations.");
+
+        var errors = await Task.WhenAll(renewAttempt, paymentAttempt)
+            .WaitAsync(TimeSpan.FromSeconds(30));
+
+        renewalBlockedOnReservation.ShouldBeTrue(
+            "PG09 did not observe Renewal waiting for Reservation.");
+        paymentBlockedOnContract.ShouldBeTrue(
+            "PG09 did not observe Payment waiting on the Active Contract " +
+            "while Renewal was blocked on Reservation. Verify lock ordering.");
+
+        errors[0].ShouldBeNull(
+            $"Renewal should finish after Reservation unlock: {errors[0]}");
+        errors[1].ShouldBeOfType<BusinessException>(
+            "The first deposit must be rejected after Renewal cancels its Reservation.");
+
+        var paymentAfter = await _payments.GetAsync(future.PaymentId);
+        var reservationAfter = await _reservations.GetAsync(future.ReservationId);
+        var holdAfter = await _renewalHolds.GetAsync(hold.Id);
+
+        paymentAfter.Status.ShouldBe(PaymentStatus.Pending);
+        reservationAfter.Status.ShouldBe(RoomReservationStatus.Cancelled);
+        reservationAfter.CancellationReason.ShouldBe(
+            ReservationCancellationReason.SupersededByRenewal);
+        holdAfter.Status.ShouldBe(ContractRenewalHoldStatus.Completed);
+        holdAfter.CompletedContractId.ShouldNotBeNull();
+
+        (await _contracts.GetAsync(holdAfter.CompletedContractId!.Value))
+            .Status.ShouldBe(ContractStatus.Signed);
+        (await _contracts.GetAsync(current.Id))
+            .Status.ShouldBe(ContractStatus.Active);
+        (await WithUnitOfWorkAsync(async () =>
+            (await _rooms.GetAsync(roomId)).Status))
+            .ShouldBe(RoomStatus.Occupied);
+    }
+
     private static CancelRoomReservationDto CustomerCancelled() => new()
     {
         Reason = ReservationCancellationReason.CustomerCancelled,

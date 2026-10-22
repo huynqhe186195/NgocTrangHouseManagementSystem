@@ -10,6 +10,7 @@ using Volo.Abp.Application.Services;
 using Volo.Abp.Data;
 using Volo.Abp.Domain.Repositories;
 using Volo.Abp.Timing;
+using Volo.Abp.Uow;
 
 namespace BuildingManagement.Contracts
 {
@@ -18,6 +19,9 @@ namespace BuildingManagement.Contracts
           IContractAppService
     {
         private readonly IRepository<Contract, Guid> _contractRepository;
+
+        // Lock gate shared with reservation payments and renewal holds.
+        private readonly IContractRepository _contractLockRepository;
 
         private readonly IRepository<ContractTenant, Guid> _contractTenantRepository;
 
@@ -40,7 +44,9 @@ namespace BuildingManagement.Contracts
             IRepository<Tenant, Guid> tenantRepository,
             IDataFilter<ISoftDelete> softDeleteFilter,
             IRepository<ContractRenewalHold, Guid> contractRenewalHoldRepository,
-            IClock clock, IRepository<RoomReservation, Guid>roomReservationRepository)
+            IClock clock,
+            IRepository<RoomReservation, Guid> roomReservationRepository,
+            IContractRepository contractLockRepository)
         {
             _contractRepository = contractRepository;
             _contractTenantRepository = contractTenantRepository;
@@ -50,6 +56,7 @@ namespace BuildingManagement.Contracts
             _contractRenewalHoldRepository = contractRenewalHoldRepository;
             _clock = clock;
             _roomReservationRepository = roomReservationRepository;
+            _contractLockRepository = contractLockRepository;
         }
 
         public async Task<ContractDto> GetAsync(
@@ -884,10 +891,21 @@ namespace BuildingManagement.Contracts
             }
         }
 
-        public async Task<ContractDto> RenewAsync(Guid id, RenewContractDto input)
+        [UnitOfWork(isTransactional: true)]
+        public virtual async Task<ContractDto> RenewAsync(Guid id, RenewContractDto input)
         {
+            // Always lock the Active Contract BEFORE examining the Hold
+            // or reading/updating Reservations. Matches Payment.CompleteAsync
+            // and ContractRenewalHold.CreateAsync; lock is held until UOW ends.
             var currentContract =
-                await GetExistingContractAsync(id);
+                await _contractLockRepository.FindForUpdateAsync(id);
+
+            if (currentContract is null)
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes.ContractNotFound
+                );
+            }
 
             if (currentContract.Status !=
                 ContractStatus.Active)

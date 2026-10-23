@@ -63,6 +63,15 @@ Audited against *Business Process Specification — Phase 2G & 2H*, v1.0,
 6. **Exceptional meter history** — manual deactivation without a replacement
    closing snapshot, broken chain, imported readings and meter rollover
    require explicit treatment before invoice issuance.
+7. **Utility applicability** — the current final-meter evidence preflight
+   conservatively expects electricity and water separately per room. Before
+   Final Bill, specify how a room without individual water/electric meters
+   (shared meters, fixed fee, included rent, temporarily unavailable)
+   is evidenced/waived by an authorized operator. Never interpret a
+   missing meter as measured zero consumption.
+8. **Authorization and race with invoicing** — scope these read APIs to
+   authorized building operators and add a transactional issuance lock:
+   preview data can change before an invoice snapshot is committed.
 
 ## Gate to Phase 2G.3
 

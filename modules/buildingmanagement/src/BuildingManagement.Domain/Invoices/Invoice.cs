@@ -21,7 +21,7 @@ public sealed class Invoice : AuditedAggregateRoot<Guid>
     public decimal? ProvisionalUtilityTotal { get; private set; }
     public IReadOnlyCollection<InvoiceItem> Items => _items.AsReadOnly();
 
-    protected Invoice() { }
+    private Invoice() { }
 
     private Invoice(Guid id, InvoiceDraftSnapshot snapshot) : base(id)
     {

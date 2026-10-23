@@ -92,7 +92,7 @@ public sealed class UtilityIntegrityPostgreSql_Tests
         await using var tableQuery = new NpgsqlCommand(
             @"SELECT to_regclass('public.""BuildingManagementMeterReplacements""') IS NOT NULL",
             connection);
-        (await tableQuery.ExecuteScalarAsync()).ShouldBe(true,
+        Convert.ToBoolean(await tableQuery.ExecuteScalarAsync()).ShouldBeTrue(
             "Missing BuildingManagementMeterReplacements. Check the test database schema.");
 
         await using var uniqueIndexQuery = new NpgsqlCommand(

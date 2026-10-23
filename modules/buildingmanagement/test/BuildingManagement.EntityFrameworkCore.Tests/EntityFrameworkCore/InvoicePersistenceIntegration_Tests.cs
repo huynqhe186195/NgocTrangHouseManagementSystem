@@ -290,4 +290,48 @@ public sealed class InvoicePersistenceIntegration_Tests
             StringComparison.OrdinalIgnoreCase);
     }
 
+
+    [Fact]
+    public async Task INVDB06_Source_Reading_SoftDelete_Does_Not_Erase_Draft_Evidence()
+    {
+        var fixture = await SeedAsync();
+        var physicalReadId = Guid.NewGuid();
+        await WithUnitOfWorkAsync(async () =>
+        {
+            await _readings.InsertAsync(new MeterReading(
+                physicalReadId, fixture.ElectricityMeterId,
+                2026, 10, 10m, 20m,
+                new DateTime(2026, 10, 31)), autoSave: true);
+        });
+
+        var invoice = CreateDraft(fixture, physicalReadId, Guid.NewGuid());
+        await WithUnitOfWorkAsync(async () =>
+        {
+            await _invoices.InsertAsync(invoice, autoSave: true);
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            await _readings.DeleteAsync(physicalReadId, autoSave: true);
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var query = await _invoices.GetQueryableAsync();
+            var stored = await query.Include(x => x.Items)
+                .ThenInclude(x => x.MeterSources)
+                .SingleAsync(x => x.Id == invoice.Id);
+            var electric = stored.Items.Single(x =>
+                x.UtilityType == UtilityType.Electricity);
+            var evidence = Assert.Single(electric.MeterSources);
+
+            Assert.Equal(physicalReadId, evidence.SourceId);
+            Assert.Equal(10m, evidence.PreviousReading);
+            Assert.Equal(20m, evidence.CurrentReading);
+            Assert.Equal(10m, evidence.Quantity);
+            Assert.Equal(3500m, electric.UnitPrice);
+            Assert.Equal(35000m, electric.ProvisionalAmount);
+        });
+    }
+
 }

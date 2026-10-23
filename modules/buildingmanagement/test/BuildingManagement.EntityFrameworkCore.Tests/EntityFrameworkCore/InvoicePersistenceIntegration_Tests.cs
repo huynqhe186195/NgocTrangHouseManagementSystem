@@ -127,7 +127,9 @@ public sealed class InvoicePersistenceIntegration_Tests
         var draft = CreateDraft(fixture, electricSource, waterSource);
 
         await WithUnitOfWorkAsync(async () =>
-            await _invoices.InsertAsync(draft, autoSave: true));
+        {
+            await _invoices.InsertAsync(draft, autoSave: true);
+        });
 
         await WithUnitOfWorkAsync(async () =>
         {
@@ -163,12 +165,18 @@ public sealed class InvoicePersistenceIntegration_Tests
         var fixture = await SeedAsync();
         var first = CreateDraft(fixture, Guid.NewGuid(), Guid.NewGuid());
         await WithUnitOfWorkAsync(async () =>
-            await _invoices.InsertAsync(first, autoSave: true));
+        {
+            await _invoices.InsertAsync(first, autoSave: true);
+        });
 
         var second = CreateDraft(fixture, Guid.NewGuid(), Guid.NewGuid());
         var failure = await Record.ExceptionAsync(async () =>
+        {
             await WithUnitOfWorkAsync(async () =>
-                await _invoices.InsertAsync(second, autoSave: true)));
+            {
+                await _invoices.InsertAsync(second, autoSave: true);
+            });
+        });
 
         Assert.NotNull(failure);
         Assert.Contains("UNIQUE", failure.ToString(),
@@ -182,20 +190,28 @@ public sealed class InvoicePersistenceIntegration_Tests
         var electricSource = Guid.NewGuid();
         var first = CreateDraft(fixture, electricSource, Guid.NewGuid());
         await WithUnitOfWorkAsync(async () =>
-            await _invoices.InsertAsync(first, autoSave: true));
+        {
+            await _invoices.InsertAsync(first, autoSave: true);
+        });
 
         var otherContractId = Guid.NewGuid();
         await WithUnitOfWorkAsync(async () =>
+        {
             await _contracts.InsertAsync(new Contract(
                 otherContractId, "INV-OTHER-" + Guid.NewGuid().ToString("N"),
                 fixture.RoomId, new DateTime(2026, 1, 1),
-                new DateTime(2027, 12, 31), 3_000_000m), autoSave: true));
+                new DateTime(2027, 12, 31), 3_000_000m), autoSave: true);
+        });
 
         var second = CreateDraft(
             fixture, electricSource, Guid.NewGuid(), otherContractId);
         var failure = await Record.ExceptionAsync(async () =>
+        {
             await WithUnitOfWorkAsync(async () =>
-                await _invoices.InsertAsync(second, autoSave: true)));
+            {
+                await _invoices.InsertAsync(second, autoSave: true);
+            });
+        });
 
         Assert.NotNull(failure);
         Assert.Contains("UNIQUE", failure.ToString(),

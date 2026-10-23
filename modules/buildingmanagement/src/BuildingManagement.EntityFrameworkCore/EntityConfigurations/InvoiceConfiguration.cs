@@ -30,10 +30,15 @@ public sealed class InvoiceConfiguration : IEntityTypeConfiguration<Invoice>
             x.ContractId, x.BillingYear, x.BillingMonth
         }).IsUnique().HasDatabaseName("UX_BM_Invoice_Contract_Period");
 
+        // Current draft business rule: the WHOLE room-month is attributed
+        // to at most one contract. The contract-period unique index alone
+        // cannot prevent duplicate billing under two contract identifiers.
+        // A future approved split-tenancy policy will need a separately
+        // designed allocation key, not removal of this safety check ad hoc.
         builder.HasIndex(x => new
         {
             x.RoomId, x.BillingYear, x.BillingMonth
-        });
+        }).IsUnique().HasDatabaseName("UX_BM_Invoice_Room_Period");
 
         builder.HasOne<Contract>().WithMany()
             .HasForeignKey(x => x.ContractId)

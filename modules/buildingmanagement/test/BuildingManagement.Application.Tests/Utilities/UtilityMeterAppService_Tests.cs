@@ -2137,4 +2137,33 @@ public abstract class UtilityMeterAppService_Tests<TStartupModule>
         error.Code.ShouldBe(InvoiceDraftErrorCodes.CandidateNotReady);
     }
 
+    [Fact]
+    public async Task ID13_Ended_Contract_Overlapping_Month_Blocks_Attribution()
+    {
+        var room = await CreateRoomAsync();
+        var current = await CreateCandidateContractAsync(
+            room, new DateTime(2026, 1, 1));
+        var previous = await CreateCandidateContractAsync(
+            room, new DateTime(2026, 1, 1));
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var old = await _contractRepository.GetAsync(previous);
+            old.End(new DateTime(2026, 10, 10), ContractEndReason.Normal);
+            await _contractRepository.UpdateAsync(old, autoSave: true);
+        });
+        await SeedHealthyOctoberUsageAsync(room);
+
+        var candidate = await _invoiceDraftCandidates.GetMonthlyCandidateAsync(
+            current, 2026, 10);
+
+        candidate.Blockers.ShouldContain("OverlappingActiveContractInRoom");
+        candidate.ProvisionalTotal.ShouldBeNull();
+        var error = await Assert.ThrowsAsync<BusinessException>(() =>
+            _invoiceDraftStorage.CreateAsync(new CreateInvoiceDraftDto
+            {
+                ContractId = current, BillingYear = 2026, BillingMonth = 10
+            }));
+        error.Code.ShouldBe(InvoiceDraftErrorCodes.CandidateNotReady);
+    }
+
 }

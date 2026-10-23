@@ -269,7 +269,13 @@ namespace BuildingManagement.Utilities
                 );
             }
 
-            if (unitPrice <= 0)
+            // Both the existing UtilityRate table and the invoice's
+            // immutable copied UnitPrice use PostgreSQL numeric(18,0).
+            // Reject unsupported fractional / overflowing price values
+            // before persistence, never silently round a tariff.
+            if (unitPrice <= 0 ||
+                unitPrice != decimal.Truncate(unitPrice) ||
+                unitPrice >= 1_000_000_000_000_000_000m)
             {
                 throw new BusinessException(
                     BuildingManagementErrorCodes

@@ -1112,6 +1112,88 @@ namespace BuildingManagement.Migrations
                     b.ToTable("BuildingManagementMeterReadings", (string)null);
                 });
 
+            modelBuilder.Entity("BuildingManagement.Utilities.MeterReplacement", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ConcurrencyStamp")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasColumnName("ConcurrencyStamp");
+
+                    b.Property<DateTime>("CreationTime")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("CreationTime");
+
+                    b.Property<Guid?>("CreatorId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("CreatorId");
+
+                    b.Property<string>("ExtraProperties")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("ExtraProperties");
+
+                    b.Property<DateTime?>("LastModificationTime")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("LastModificationTime");
+
+                    b.Property<Guid?>("LastModifierId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("LastModifierId");
+
+                    b.Property<decimal>("NewInitialReading")
+                        .HasPrecision(18, 3)
+                        .HasColumnType("numeric(18,3)");
+
+                    b.Property<Guid>("NewMeterId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Notes")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<decimal>("OldFinalReading")
+                        .HasPrecision(18, 3)
+                        .HasColumnType("numeric(18,3)");
+
+                    b.Property<Guid>("OldMeterId")
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("OldPreviousReading")
+                        .HasPrecision(18, 3)
+                        .HasColumnType("numeric(18,3)");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<DateTime>("ReplacementDate")
+                        .HasColumnType("date");
+
+                    b.Property<Guid>("RoomId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("UtilityType")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("NewMeterId")
+                        .IsUnique();
+
+                    b.HasIndex("OldMeterId")
+                        .IsUnique();
+
+                    b.HasIndex("RoomId", "ReplacementDate");
+
+                    b.ToTable("BuildingManagementMeterReplacements", (string)null);
+                });
+
             modelBuilder.Entity("BuildingManagement.Utilities.UtilityMeter", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1435,6 +1517,30 @@ namespace BuildingManagement.Migrations
                         .HasForeignKey("UtilityMeterId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("BuildingManagement.Utilities.MeterReplacement", b =>
+                {
+                    b.HasOne("BuildingManagement.Utilities.UtilityMeter", null)
+                        .WithMany()
+                        .HasForeignKey("NewMeterId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_BM_MeterReplacements_NewMeter");
+
+                    b.HasOne("BuildingManagement.Utilities.UtilityMeter", null)
+                        .WithMany()
+                        .HasForeignKey("OldMeterId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_BM_MeterReplacements_OldMeter");
+
+                    b.HasOne("BuildingManagement.Rooms.Room", null)
+                        .WithMany()
+                        .HasForeignKey("RoomId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_BM_MeterReplacements_Room");
                 });
 
             modelBuilder.Entity("BuildingManagement.Utilities.UtilityMeter", b =>

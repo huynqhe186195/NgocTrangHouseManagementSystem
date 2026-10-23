@@ -1855,7 +1855,9 @@ public abstract class UtilityMeterAppService_Tests<TStartupModule>
             start, new DateTime(2027, 12, 31), 3_000_000m);
         if (active) contract.Activate();
         await WithUnitOfWorkAsync(async () =>
-            await _contractRepository.InsertAsync(contract, autoSave: true));
+        {
+            await _contractRepository.InsertAsync(contract, autoSave: true);
+        });
         return id;
     }
 

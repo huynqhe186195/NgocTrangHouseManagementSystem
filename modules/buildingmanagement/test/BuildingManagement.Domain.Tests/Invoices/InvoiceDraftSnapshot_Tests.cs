@@ -123,4 +123,24 @@ public sealed class InvoiceDraftSnapshot_Tests
         Assert.Null(snapshot.ProvisionalTotal);
         Assert.False(snapshot.CanIssue);
     }
+
+    [Fact]
+    public void Refuses_Same_Reading_Across_Two_Utility_Lines()
+    {
+        var sameSource = new InvoiceDraftMeterSegmentSnapshot(
+            Guid.NewGuid(), Guid.NewGuid(), MeterUsageSourceType.MonthlyReading,
+            new DateTime(2026, 10, 31), 10m, 15m);
+        var electricity = new InvoiceDraftUtilityLineSnapshot(
+            UtilityType.Electricity, null, "NoRate", 5m, null, null,
+            new[] { sameSource }, Array.Empty<string>());
+        var water = new InvoiceDraftUtilityLineSnapshot(
+            UtilityType.Water, null, "NoRate", 5m, null, null,
+            new[] { sameSource }, Array.Empty<string>());
+
+        Assert.Throws<ArgumentException>(() =>
+            InvoiceDraftSnapshot.Capture(
+                Guid.NewGuid(), Guid.NewGuid(), 2026, 10,
+                new[] { electricity, water }));
+    }
+
 }

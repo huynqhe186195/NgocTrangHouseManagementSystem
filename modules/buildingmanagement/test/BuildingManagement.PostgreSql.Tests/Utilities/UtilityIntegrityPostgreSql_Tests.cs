@@ -79,6 +79,48 @@ public sealed class UtilityIntegrityPostgreSql_Tests
         Convert.ToInt32(await exclusionQuery.ExecuteScalarAsync()).ShouldBe(1);
     }
 
+
+    // Phase 2G.2B.1 migration preflight. EnsureCreated() cannot upgrade an
+    // already-existing integration DB, so fail explicitly if its schema is stale.
+    [Fact]
+    public async Task PGUTIL05_MeterReplacement_Schema_Has_Unique_Indexes_And_Foreign_Keys()
+    {
+        await using var connection = new NpgsqlConnection(
+            BuildingManagementPostgreSqlTestModule.RequireSafeConnectionString());
+        await connection.OpenAsync();
+
+        await using var tableQuery = new NpgsqlCommand(
+            @"SELECT to_regclass('public.""BuildingManagementMeterReplacements""') IS NOT NULL",
+            connection);
+        (await tableQuery.ExecuteScalarAsync()).ShouldBe(true,
+            "Missing BuildingManagementMeterReplacements. Check the test database schema.");
+
+        await using var uniqueIndexQuery = new NpgsqlCommand(
+            @"SELECT COUNT(*)
+                FROM pg_indexes
+                WHERE schemaname = 'public'
+                  AND tablename = 'BuildingManagementMeterReplacements'
+                  AND indexname IN (
+                      'IX_BuildingManagementMeterReplacements_OldMeterId',
+                      'IX_BuildingManagementMeterReplacements_NewMeterId'
+                  )
+                  AND indexdef ILIKE '%UNIQUE%'", connection);
+        Convert.ToInt32(await uniqueIndexQuery.ExecuteScalarAsync()).ShouldBe(2);
+
+        await using var foreignKeyQuery = new NpgsqlCommand(
+            @"SELECT COUNT(*)
+                FROM pg_constraint c
+                JOIN pg_class t ON t.oid = c.conrelid
+                WHERE t.relname = 'BuildingManagementMeterReplacements'
+                  AND c.contype = 'f'
+                  AND c.conname IN (
+                      'FK_BM_MeterReplacements_OldMeter',
+                      'FK_BM_MeterReplacements_NewMeter',
+                      'FK_BM_MeterReplacements_Room'
+                  )", connection);
+        Convert.ToInt32(await foreignKeyQuery.ExecuteScalarAsync()).ShouldBe(3);
+    }
+
     [Fact]
     public async Task PGUTIL01_Concurrent_ActiveMeters_Only_One_Succeeds()
     {

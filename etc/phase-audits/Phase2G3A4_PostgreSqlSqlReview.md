@@ -37,7 +37,7 @@ Precision is `numeric(18,3)` for quantities / amounts, `numeric(18,0)`
 for flat unit price, with `date` for source reading date and
 `timestamp with time zone` for ABP audit fields.
 
-**SQL structure review: PASS. Actual PostgreSQL execution: NOT YET VERIFIED.**
+**SQL structure review: PASS. Actual isolated-schema PostgreSQL DDL test: 1/1 PASS (user report, 23/10/2026).**
 
 ## Critical test-harness distinction
 
@@ -89,7 +89,7 @@ git pull --ff-only origin wip/phase-2g2
 dotnet test .\modules\buildingmanagement\test\BuildingManagement.PostgreSql.Tests\BuildingManagement.PostgreSql.Tests.csproj --filter "FullyQualifiedName~InvoiceMigrationSqlPostgreSql_Tests"
 ```
 
-**Expected: 1/1 PASS (UNVERIFIED).**
+**Verified: 1/1 PASS**, per user's PostgreSQL test result on 23/10/2026. Four pre-existing Mapperly RMG012 warnings remain.
 
 ## Limits and next gate
 

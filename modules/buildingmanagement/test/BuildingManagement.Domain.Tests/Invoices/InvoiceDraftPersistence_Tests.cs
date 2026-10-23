@@ -77,7 +77,7 @@ public sealed class InvoiceDraftPersistence_Tests
     public void Unpriced_Water_Keeps_Null_Not_Zero_Total()
     {
         var invoice = Invoice.CreateDraft(
-            Guid.NewGuid(), Snapshot(bothPriced: false), Guid.NewGuid());
+            Guid.NewGuid(), Snapshot(bothPriced: false), Guid.NewGuid);
 
         Assert.Null(invoice.ProvisionalUtilityTotal);
         Assert.Null(invoice.Items.Single(x =>

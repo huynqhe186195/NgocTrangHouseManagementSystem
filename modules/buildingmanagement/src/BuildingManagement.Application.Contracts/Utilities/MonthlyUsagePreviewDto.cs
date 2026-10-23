@@ -14,6 +14,15 @@ public sealed class MonthlyUsagePreviewDto
     public int BillingYear { get; set; }
     public int BillingMonth { get; set; }
     public decimal RecordedUsage { get; set; }
+
+    /// <summary>
+    /// Conservative warnings about missing reads, month boundaries, or
+    /// inconsistent meter handovers. These do NOT replace final bill approval.
+    /// </summary>
+    public List<string> CoverageIssues { get; set; } = new();
+
+    public bool IsSafeForProvisionalPricing => CoverageIssues.Count == 0;
+
     public List<MeterUsageSegmentDto> Segments { get; set; } = new();
 }
 

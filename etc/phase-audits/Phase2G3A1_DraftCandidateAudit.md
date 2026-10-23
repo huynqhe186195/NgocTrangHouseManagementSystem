@@ -36,7 +36,8 @@ payment allocation is introduced by this increment.
   `InvoiceDraftSnapshot_Tests` and five EF Core service tests
   `ID01-ID05`: contract source attribution, partial occupancy,
   draft status, unknown contract and one missing utility price.
-- Confirmed by user on 23/10/2026: 72/72 Application/EF Core tests and\n  8/8 invoice draft snapshot Domain tests passed.
+- Confirmed by user on 23/10/2026: 72/72 Application/EF Core tests and
+  8/8 invoice draft snapshot Domain tests passed.
 
 ## Still blocking actual draft persistence and invoice issuance
 

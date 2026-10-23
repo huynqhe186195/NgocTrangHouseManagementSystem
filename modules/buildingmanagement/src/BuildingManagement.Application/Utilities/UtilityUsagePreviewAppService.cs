@@ -83,8 +83,9 @@ public class UtilityUsagePreviewAppService
                 var readingQuery = await _readings.GetQueryableAsync();
                 readings = await AsyncExecuter.ToListAsync(
                     readingQuery.Where(x => meterIds.Contains(x.UtilityMeterId) &&
-                                            x.BillingYear == billingYear &&
-                                            x.BillingMonth == billingMonth));
+                                            (x.BillingYear < billingYear ||
+                                             (x.BillingYear == billingYear &&
+                                              x.BillingMonth <= billingMonth))));
             }
 
             var replacementQuery = await _replacements.GetQueryableAsync();
@@ -115,6 +116,9 @@ public class UtilityUsagePreviewAppService
             BillingYear = billingYear,
             BillingMonth = billingMonth,
             RecordedUsage = result.RecordedUsage,
+            CoverageIssues = MonthlyUsageCoverageAssessor.Assess(
+                roomId, utilityType, billingYear, billingMonth,
+                meters, readings, replacements).ToList(),
             Segments = result.Segments.Select(x => new MeterUsageSegmentDto
             {
                 SourceId = x.SourceId,

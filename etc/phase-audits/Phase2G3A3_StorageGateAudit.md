@@ -8,7 +8,14 @@ invoice persistence roundtrip, tariff snapshot consistency and 73
 utility/candidate application cases. Build succeeded with four existing
 Mapperly RMG012 warnings; they are not resolved by this increment.
 
-## New implementation (test results pending)
+## Verified regression checkpoint
+
+The user confirmed **87/87 PASS**, build successful with four
+Mapperly RMG012 warnings, on 23/10/2026. This covers the seven new
+ID07-ID13 tests as well as the prior SQLite invoice tests. The latest
+business-audit repairs and new INVDB05-INVDB06 tests have NOT yet run.
+
+## New implementation (verified before latest audit repairs)
 
 - Added an **internal-only** `InvoiceDraftStorageAppService` with
   `[RemoteService(IsEnabled = false)]`. No public draft-write HTTP endpoint
@@ -37,7 +44,7 @@ Mapperly RMG012 warnings; they are not resolved by this increment.
   debt ledger posting, contract termination, deposit settlement or
   tenant charge notification is implemented.
 
-## New regression cases (not yet verified)
+## Regression cases (verified at the 87-test checkpoint)
 
 Seven additional application tests ID07-ID13 cover:
 1. Snapshot persistence and retrieval with the exact billable source IDs
@@ -48,8 +55,34 @@ Seven additional application tests ID07-ID13 cover:
 6. Two overlapping active contracts in one room
 7. An ended previous contract overlapping the current billing month
 
-Previous test filter should grow from 80 to **87** (7 new app cases).
+This grew the previous filter from 80 to **87/87 PASS** (7 new app cases).
 No new standalone domain or EF metadata test groups were added.
+
+## Additional business loopholes found after 87/87 PASS
+
+- **Duplicate room-month across contract identities:** one contract-month
+  unique index cannot stop two separate contract IDs receiving the same
+  room's full-month consumption. While the business rule forbids partial
+  months, enforce UNIQUE (RoomId, BillingYear, BillingMonth) as well.
+  INVDB05 directly inserts two different contract drafts with separate
+  physical source identifiers, verifying the room-level index. A future
+  split-tenancy design requires a new allocation model and reviewed
+  migration rather than bypassing this index.
+- **Independent source uniqueness test:** INVDB03 was adjusted to
+  attempt reusing a physical reading in a different room. That ensures
+  the global source uniqueness test is not accidentally passing because
+  of the new room-month index instead.
+- **Snapshot survival after source soft deletion:** INVDB06 inserts a
+  historical meter reading, snapshots its counters into a draft, then
+  soft-deletes the source reading. The draft must still retain source ID,
+  prior/current counters and original amounts. This is a test, not a
+  public license to delete invoiced readings.
+- **Migration gate remains closed:** new indexes are in the EF model
+  used by isolated SQLite tests, but no PostgreSQL migration has been
+  generated or run in production.
+
+The above two new tests, INVDB05 and INVDB06, are awaiting local .NET
+verification. Expected previous 87 + 2 = **89** selected tests.
 
 ## Remaining release blockers
 

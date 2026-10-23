@@ -171,8 +171,6 @@ public abstract class UtilityRateAppService_Tests<TStartupModule>
     [Theory]
     [InlineData(0)]
     [InlineData(-1)]
-    [InlineData(3500.5)]
-    [InlineData(1000000000000000000)]
     public async Task Should_Throw_When_UnitPrice_Is_Invalid(
         decimal unitPrice)
     {
@@ -691,4 +689,39 @@ public abstract class UtilityRateAppService_Tests<TStartupModule>
                 .UtilityRatePeriodOverlaps
         );
     }
+
+    // UR19: both UtilityRate and InvoiceItem.UnitPrice use numeric(18,0).
+    // Reject unsupported tariff precision instead of DB-side rounding.
+    [Fact]
+    public async Task UR19_Reject_Fractional_Unit_Price_Without_Rounding()
+    {
+        var buildingId = await CreateBuildingAsync();
+        var error = await Assert.ThrowsAsync<BusinessException>(() =>
+            _utilityRateAppService.CreateAsync(new CreateUtilityRateDto
+            {
+                BuildingId = buildingId,
+                UtilityType = UtilityType.Electricity,
+                UnitPrice = 3500.5m,
+                EffectiveFrom = new DateTime(2026, 10, 1)
+            }));
+
+        error.Code.ShouldBe(BuildingManagementErrorCodes.InvalidUtilityUnitPrice);
+    }
+
+    [Fact]
+    public async Task UR20_Reject_Rate_Larger_Than_Database_Numeric_18_0()
+    {
+        var buildingId = await CreateBuildingAsync();
+        var error = await Assert.ThrowsAsync<BusinessException>(() =>
+            _utilityRateAppService.CreateAsync(new CreateUtilityRateDto
+            {
+                BuildingId = buildingId,
+                UtilityType = UtilityType.Water,
+                UnitPrice = 1_000_000_000_000_000_000m,
+                EffectiveFrom = new DateTime(2026, 10, 1)
+            }));
+
+        error.Code.ShouldBe(BuildingManagementErrorCodes.InvalidUtilityUnitPrice);
+    }
+
 }

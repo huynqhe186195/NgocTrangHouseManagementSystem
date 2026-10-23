@@ -49,7 +49,7 @@ public sealed class InvoiceDraftSourceDto
 {
     public Guid SourceId { get; set; }
     public Guid UtilityMeterId { get; set; }
-    public MeterUsageSourceType SourceType { get; set; }
+    public string SourceType { get; set; } = string.Empty;
     public DateTime RecordedDate { get; set; }
     public decimal PreviousReading { get; set; }
     public decimal CurrentReading { get; set; }

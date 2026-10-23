@@ -1793,4 +1793,27 @@ public abstract class UtilityMeterAppService_Tests<TStartupModule>
             .Status.ShouldBe("FinalReadingMissingOrWrongDate");
     }
 
+    [Fact]
+    public async Task PR13_Reject_Interim_Month_Read_As_Whole_Month_Charge()
+    {
+        var room = await CreateRoomAsync();
+        var meter = await CreateMeterAsync(room, UtilityType.Electricity, initialReading: 100m);
+        await _meterReadingAppService.CreateAsync(new CreateMeterReadingDto
+        {
+            UtilityMeterId = meter.Id, BillingYear = 2026, BillingMonth = 9,
+            CurrentReading = 100m, ReadingDate = new DateTime(2026, 9, 30)
+        });
+        await _meterReadingAppService.CreateAsync(new CreateMeterReadingDto
+        {
+            UtilityMeterId = meter.Id, BillingYear = 2026, BillingMonth = 10,
+            CurrentReading = 110m, ReadingDate = new DateTime(2026, 10, 5)
+        });
+        await CreateRateForRoomAsync(room, UtilityType.Electricity,
+            3500m, new DateTime(2026, 10, 1));
+        var preview = await _chargePreviewAppService.GetMonthlyChargePreviewAsync(
+            room, UtilityType.Electricity, 2026, 10);
+        preview.ProvisionalAmount.ShouldBeNull();
+        preview.UsagePreview.CoverageIssues.ShouldContain("PeriodEndReadingNotVerified");
+    }
+
 }

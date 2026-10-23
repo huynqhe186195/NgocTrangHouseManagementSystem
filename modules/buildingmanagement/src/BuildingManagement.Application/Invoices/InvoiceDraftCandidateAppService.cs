@@ -64,6 +64,17 @@ public class InvoiceDraftCandidateAppService
         if (!wholeMonthOwned)
             blockers.Add("ContractDoesNotCoverWholeMonth");
 
+        // An unexpected second active contract for the same room and month
+        // makes whole-room utility attribution unsafe.
+        if (await _contracts.AnyAsync(x =>
+                x.Id != contract.Id &&
+                x.RoomId == contract.RoomId &&
+                x.Status == ContractStatus.Active &&
+                x.StartDate <= end &&
+                (!x.EndDate.HasValue || x.EndDate.Value >= start) &&
+                (!x.ActualEndedAt.HasValue || x.ActualEndedAt.Value >= start)))
+            blockers.Add("OverlappingActiveContractInRoom");
+
         var lines = new List<InvoiceDraftUtilityLineSnapshot>();
         foreach (var utilityType in Enum.GetValues<UtilityType>())
         {

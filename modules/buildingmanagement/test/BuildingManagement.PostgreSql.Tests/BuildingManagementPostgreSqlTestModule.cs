@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using BuildingManagement.DepositSettlements;
 using BuildingManagement.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
@@ -86,5 +87,43 @@ public sealed class BuildingManagementPostgreSqlTestModule : AbpModule
         }
 
         db.Database.EnsureCreated();
+
+        // An existing database is not upgraded by EnsureCreated().
+        // Keep this targeted compatibility patch strictly inside the safe
+        // localhost integration-test connection; never run against app data.
+        EnsureMeterReplacementTestSchema(connection);
+    }
+
+    private static void EnsureMeterReplacementTestSchema(string connectionString)
+    {
+        using var connection = new NpgsqlConnection(connectionString);
+        connection.Open();
+
+        // A fresh EnsureCreated() database already contains the current
+        // model. The patch is only for older test databases.
+        using (var existsCommand = new NpgsqlCommand(
+            @"SELECT to_regclass('public.""BuildingManagementMeterReplacements""') IS NOT NULL",
+            connection))
+        {
+            if (Convert.ToBoolean(existsCommand.ExecuteScalar()))
+                return;
+        }
+
+        using var scriptStream = typeof(BuildingManagementPostgreSqlTestModule)
+            .Assembly.GetManifestResourceStream("Phase2G2B1_TestSchema.sql")
+            ?? throw new InvalidOperationException(
+                "Missing embedded Phase2G2B1_TestSchema.sql test resource.");
+
+        using var reader = new StreamReader(scriptStream);
+        var script = reader.ReadToEnd();
+
+        // The script checks current_database(), creates only the missing
+        // table and its constraints, and rolls back entirely on failure.
+        // It intentionally does NOT write EF migration history.
+        using var apply = new NpgsqlCommand(script, connection)
+        {
+            CommandTimeout = 60
+        };
+        apply.ExecuteNonQuery();
     }
 }

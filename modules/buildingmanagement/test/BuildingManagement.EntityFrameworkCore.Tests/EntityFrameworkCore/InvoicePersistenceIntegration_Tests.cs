@@ -217,4 +217,41 @@ public sealed class InvoicePersistenceIntegration_Tests
         Assert.Contains("UNIQUE", failure.ToString(),
             StringComparison.OrdinalIgnoreCase);
     }
+
+    [Fact]
+    public async Task INVDB04_Changing_Rate_Does_Not_Reprice_Stored_Draft_Snapshot()
+    {
+        var fixture = await SeedAsync();
+        var draft = CreateDraft(fixture, Guid.NewGuid(), Guid.NewGuid());
+        await WithUnitOfWorkAsync(async () =>
+        {
+            await _invoices.InsertAsync(draft, autoSave: true);
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var rate = await _rates.GetAsync(fixture.ElectricityRateId);
+            rate.Update(
+                rate.BuildingId, rate.UtilityType, 9999m,
+                rate.EffectiveFrom, rate.EffectiveTo, rate.Notes);
+            await _rates.UpdateAsync(rate, autoSave: true);
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var query = await _invoices.GetQueryableAsync();
+            var stored = await query.Include(x => x.Items)
+                .ThenInclude(x => x.MeterSources)
+                .SingleAsync(x => x.Id == draft.Id);
+            var electricity = stored.Items.Single(x =>
+                x.UtilityType == UtilityType.Electricity);
+
+            Assert.Equal(3500m, electricity.UnitPrice);
+            Assert.Equal(35000m, electricity.ProvisionalAmount);
+            Assert.Equal(110000m, stored.ProvisionalUtilityTotal);
+            Assert.Equal(10m,
+                Assert.Single(electricity.MeterSources).Quantity);
+        });
+    }
+
 }

@@ -119,8 +119,14 @@ public class UtilityChargePreviewAppService
         preview.UtilityRateId = rate.Id;
         preview.UnitPrice = rate.UnitPrice;
 
+        // Do not quote a misleading amount if the monthly counter history
+        // is incomplete, even when a price covers the whole month.
+        // Inspect UsagePreview.CoverageIssues for the reason. Never infer
+        // that a missing monthly reading means zero chargeable consumption.
+        if (!usage.IsSafeForProvisionalPricing)
+            return preview;
+
         // No rounding until a separately approved invoice/currency policy.
-        // RecordedUsage can be zero even while the period is incomplete.
         preview.ProvisionalAmount = usage.RecordedUsage * rate.UnitPrice;
         return preview;
     }

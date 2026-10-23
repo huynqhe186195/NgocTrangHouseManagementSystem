@@ -51,6 +51,9 @@ public sealed class InvoiceSchema_Tests
         Assert.Contains(source.GetIndexes(), x =>
             x.IsUnique && x.Properties.Select(p => p.Name)
                 .SequenceEqual(new[] { "InvoiceItemId", "SourceType", "SourceId" }));
+        Assert.Contains(source.GetIndexes(), x =>
+            x.IsUnique && x.Properties.Select(p => p.Name)
+                .SequenceEqual(new[] { "SourceType", "SourceId" }));
     }
 
     [Fact]

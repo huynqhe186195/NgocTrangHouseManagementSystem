@@ -39,9 +39,14 @@ public static class MonthlyUsageCoverageAssessor
             .Where(x => x.BillingYear == billingYear &&
                         x.BillingMonth == billingMonth)
             .ToList();
-        var thisMonthReplacements = replacements
-            .Where(x => x.RoomId == roomId && x.UtilityType == utilityType &&
-                        x.ReplacementDate.Date >= monthStart &&
+        // Preserve ALL outgoing replacement dates, including replacements
+        // after this month. A meter inactive *today* may have been active in
+        // the period being previewed. Current IsActive is not historical state.
+        var replacementHistory = replacements
+            .Where(x => x.RoomId == roomId && x.UtilityType == utilityType)
+            .ToList();
+        var thisMonthReplacements = replacementHistory
+            .Where(x => x.ReplacementDate.Date >= monthStart &&
                         x.ReplacementDate.Date <= monthEnd)
             .ToList();
 
@@ -52,13 +57,28 @@ public static class MonthlyUsageCoverageAssessor
         if (history.Any(x => x.IsDeleted))
             issues.Add("SoftDeletedReadingHistoryRequiresReview");
 
-        // Do not quote a zero bill when the current active meter has no
-        // reading for this month (including a newly installed meter).
+        // Do not quote a zero bill when any meter that MAY HAVE BEEN
+        // installed/operating in the requested month lacks a closing proof.
+        // Physical deactivation has no timestamp in UtilityMeter; unless the
+        // meter was replaced before the month, an inactive meter with missing
+        // readings must also block pricing pending verification.
         foreach (var meter in relevantMeters
-                     .Where(x => x.IsActive && x.InstalledDate.Date <= monthEnd))
+                     .Where(x => x.InstalledDate.Date <= monthEnd))
         {
-            if (!thisMonthReadings.Any(x => x.UtilityMeterId == meter.Id))
-                issues.Add("ActiveMeterMissingMonthlyReading");
+            var replacedBeforeMonth = replacementHistory.Any(x =>
+                x.OldMeterId == meter.Id &&
+                x.ReplacementDate.Date < monthStart);
+            if (replacedBeforeMonth)
+                continue;
+
+            var hasMonthlyReading = thisMonthReadings.Any(x =>
+                x.UtilityMeterId == meter.Id);
+            var hasMonthlyClosing = thisMonthReplacements.Any(x =>
+                x.OldMeterId == meter.Id);
+            if (!hasMonthlyReading && !hasMonthlyClosing)
+                issues.Add(meter.IsActive
+                    ? "ActiveMeterMissingMonthlyReading"
+                    : "InactiveMeterPeriodUnverified");
         }
 
         // Billing month and physical reading date are distinct concepts.

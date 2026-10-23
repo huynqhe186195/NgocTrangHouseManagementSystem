@@ -1844,4 +1844,110 @@ public abstract class UtilityMeterAppService_Tests<TStartupModule>
             .ShouldContain("ManualMeterDeactivationRequiresReview");
     }
 
+
+    // Phase 2G.3A.1: no invoices or financial transactions are persisted.
+    private async Task<Guid> CreateCandidateContractAsync(
+        Guid roomId, DateTime start, bool active = true)
+    {
+        var id = Guid.NewGuid();
+        var contract = new Contract(
+            id, $"INV-DRAFT-{Guid.NewGuid():N}", roomId,
+            start, new DateTime(2027, 12, 31), 3_000_000m);
+        if (active) contract.Activate();
+        await _contractRepository.InsertAsync(contract, autoSave: true);
+        return id;
+    }
+
+    private async Task SeedHealthyOctoberUsageAsync(Guid roomId)
+    {
+        foreach (var type in new[] { UtilityType.Electricity, UtilityType.Water })
+        {
+            var opening = type == UtilityType.Electricity ? 1000m : 100m;
+            var added = type == UtilityType.Electricity ? 10m : 5m;
+            var meter = await CreateMeterAsync(roomId, type, initialReading: opening);
+            await _meterReadingAppService.CreateAsync(new CreateMeterReadingDto
+            {
+                UtilityMeterId = meter.Id, BillingYear = 2026, BillingMonth = 9,
+                CurrentReading = opening, ReadingDate = new DateTime(2026, 9, 30)
+            });
+            await _meterReadingAppService.CreateAsync(new CreateMeterReadingDto
+            {
+                UtilityMeterId = meter.Id, BillingYear = 2026, BillingMonth = 10,
+                CurrentReading = opening + added,
+                ReadingDate = new DateTime(2026, 10, 31)
+            });
+        }
+        await CreateRateForRoomAsync(roomId, UtilityType.Electricity,
+            3500m, new DateTime(2026, 10, 1));
+        await CreateRateForRoomAsync(roomId, UtilityType.Water,
+            15000m, new DateTime(2026, 10, 1));
+    }
+
+    [Fact]
+    public async Task ID01_Candidate_Records_Contract_Source_Lines_But_Cannot_Issue()
+    {
+        var room = await CreateRoomAsync();
+        var contractId = await CreateCandidateContractAsync(
+            room, new DateTime(2026, 1, 1));
+        await SeedHealthyOctoberUsageAsync(room);
+
+        var preview = await _invoiceDraftCandidates.GetMonthlyCandidateAsync(
+            contractId, 2026, 10);
+
+        preview.ContractId.ShouldBe(contractId);
+        preview.RoomId.ShouldBe(room);
+        preview.Blockers.ShouldBeEmpty();
+        preview.UtilityLines.Count.ShouldBe(2);
+        preview.ProvisionalTotal.ShouldBe(110000m);
+        preview.UtilityLines.Single(x => x.UtilityType == UtilityType.Electricity)
+            .RecordedQuantity.ShouldBe(10m);
+        preview.UtilityLines.Single(x => x.UtilityType == UtilityType.Water)
+            .ProvisionalAmount.ShouldBe(75000m);
+        preview.UtilityLines.All(x => x.MeterSegments.Count == 1).ShouldBeTrue();
+        preview.CanPersistDraft.ShouldBeFalse();
+        preview.CanIssue.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task ID02_New_Tenant_MidMonth_Cannot_Inherit_Full_Room_Usage()
+    {
+        var room = await CreateRoomAsync();
+        var contractId = await CreateCandidateContractAsync(
+            room, new DateTime(2026, 10, 15));
+        await SeedHealthyOctoberUsageAsync(room);
+
+        var preview = await _invoiceDraftCandidates.GetMonthlyCandidateAsync(
+            contractId, 2026, 10);
+
+        preview.Blockers.ShouldContain("ContractDoesNotCoverWholeMonth");
+        preview.ProvisionalTotal.ShouldBeNull();
+        preview.UtilityLines.All(x => x.ProvisionalAmount is null).ShouldBeTrue();
+        preview.CanIssue.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task ID03_Draft_Contract_Cannot_Price_An_Active_Tenants_Period()
+    {
+        var room = await CreateRoomAsync();
+        var contractId = await CreateCandidateContractAsync(
+            room, new DateTime(2026, 1, 1), active: false);
+        await SeedHealthyOctoberUsageAsync(room);
+
+        var preview = await _invoiceDraftCandidates.GetMonthlyCandidateAsync(
+            contractId, 2026, 10);
+
+        preview.Blockers.ShouldContain("ContractNotActive");
+        preview.ProvisionalTotal.ShouldBeNull();
+        preview.CanPersistDraft.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task ID04_Unknown_Contract_Fails_Closed()
+    {
+        var ex = await Assert.ThrowsAsync<BusinessException>(() =>
+            _invoiceDraftCandidates.GetMonthlyCandidateAsync(
+                Guid.NewGuid(), 2026, 10));
+        ex.Code.ShouldBe(BuildingManagementErrorCodes.ContractNotFound);
+    }
+
 }

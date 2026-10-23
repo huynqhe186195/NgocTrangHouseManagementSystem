@@ -25,7 +25,7 @@ public sealed class InvoiceItem : AuditedEntity<Guid>
     public string CoverageIssuesJson { get; private set; } = "[]";
     public IReadOnlyCollection<InvoiceItemMeterSource> MeterSources => _meterSources.AsReadOnly();
 
-    protected InvoiceItem() { }
+    private InvoiceItem() { }
 
     private InvoiceItem(Guid id, Guid invoiceId, InvoiceDraftUtilityLineSnapshot source)
         : base(id)

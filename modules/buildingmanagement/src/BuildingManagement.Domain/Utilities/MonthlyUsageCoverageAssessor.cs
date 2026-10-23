@@ -71,14 +71,29 @@ public static class MonthlyUsageCoverageAssessor
             if (replacedBeforeMonth)
                 continue;
 
-            var hasMonthlyReading = thisMonthReadings.Any(x =>
-                x.UtilityMeterId == meter.Id);
+            var meterReadings = thisMonthReadings.Where(x =>
+                x.UtilityMeterId == meter.Id).ToList();
+            var hasMonthlyReading = meterReadings.Count != 0;
             var hasMonthlyClosing = thisMonthReplacements.Any(x =>
                 x.OldMeterId == meter.Id);
             if (!hasMonthlyReading && !hasMonthlyClosing)
                 issues.Add(meter.IsActive
                     ? "ActiveMeterMissingMonthlyReading"
                     : "InactiveMeterPeriodUnverified");
+
+            // No approved cutoff policy exists for mid-month meter reads.
+            // An early reading cannot justify pricing the entire billing
+            // month when there was no physical replacement closing later.
+            if (hasMonthlyReading && !hasMonthlyClosing &&
+                meterReadings.All(x => x.ReadingDate.Date < monthEnd))
+                issues.Add("PeriodEndReadingNotVerified");
+
+            // Manual deactivation stores no timestamp or immutable closing
+            // record. Even if an earlier monthly read exists, there may be
+            // unrecorded consumption between that read and removal.
+            if (!meter.IsActive &&
+                !replacementHistory.Any(x => x.OldMeterId == meter.Id))
+                issues.Add("ManualMeterDeactivationRequiresReview");
         }
 
         // Billing month and physical reading date are distinct concepts.

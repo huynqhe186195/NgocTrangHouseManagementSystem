@@ -118,7 +118,8 @@ public class InvoiceDraftCandidateAppService
                 preview.RateStatus,
                 preview.RecordedUsage,
                 preview.UnitPrice,
-                wholeMonthOwned && contract.Status == ContractStatus.Active
+                wholeMonthOwned && contract.Status == ContractStatus.Active &&
+                !blockers.Contains("OverlappingActiveContractInRoom")
                     ? preview.ProvisionalAmount : null,
                 segments,
                 preview.UsagePreview.CoverageIssues));

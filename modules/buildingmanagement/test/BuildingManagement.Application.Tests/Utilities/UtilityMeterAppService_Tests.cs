@@ -36,6 +36,8 @@ public abstract class UtilityMeterAppService_Tests<TStartupModule>
         _meterReadingAppService;
 
     private readonly IUtilityUsagePreviewAppService _usagePreviewAppService;
+    private readonly IUtilityChargePreviewAppService _chargePreviewAppService;
+    private readonly IUtilityRateAppService _utilityRateAppService;
 
     protected UtilityMeterAppService_Tests()
     {
@@ -59,6 +61,12 @@ public abstract class UtilityMeterAppService_Tests<TStartupModule>
 
         _usagePreviewAppService =
             GetRequiredService<IUtilityUsagePreviewAppService>();
+
+        _chargePreviewAppService =
+            GetRequiredService<IUtilityChargePreviewAppService>();
+
+        _utilityRateAppService =
+            GetRequiredService<IUtilityRateAppService>();
     }
 
     private async Task<Guid> CreateRoomAsync()
@@ -1349,6 +1357,127 @@ public abstract class UtilityMeterAppService_Tests<TStartupModule>
         preview.RecordedUsage.ShouldBe(0m);
         preview.Segments.ShouldBeEmpty();
         // RecordedUsage=0 here does not certify the meter period is complete.
+    }
+
+
+    // Phase 2G.2C.1 - provisional monetary preview, no invoices emitted.
+    private async Task<UtilityRateDto> CreateRateForRoomAsync(
+        Guid roomId, UtilityType type, decimal price,
+        DateTime from, DateTime? to = null)
+    {
+        var room = await _roomRepository.GetAsync(roomId);
+        var floor = await _floorRepository.GetAsync(room.FloorId);
+        return await _utilityRateAppService.CreateAsync(new CreateUtilityRateDto
+        {
+            BuildingId = floor.BuildingId,
+            UtilityType = type,
+            UnitPrice = price,
+            EffectiveFrom = from,
+            EffectiveTo = to
+        });
+    }
+
+    [Fact]
+    public async Task PR01_Single_Rate_Whole_Month_Provides_Provisional_Charge()
+    {
+        var roomId = await CreateRoomAsync();
+        var meter = await CreateMeterAsync(roomId, UtilityType.Electricity,
+            initialReading: 1000m);
+        await _meterReadingAppService.CreateAsync(new CreateMeterReadingDto
+        {
+            UtilityMeterId = meter.Id,
+            BillingYear = 2026, BillingMonth = 10,
+            CurrentReading = 1050m, ReadingDate = new DateTime(2026, 10, 31)
+        });
+        var rate = await CreateRateForRoomAsync(roomId, UtilityType.Electricity,
+            3500m, new DateTime(2026, 10, 1), new DateTime(2026, 10, 31));
+
+        var preview = await _chargePreviewAppService.GetMonthlyChargePreviewAsync(
+            roomId, UtilityType.Electricity, 2026, 10);
+
+        preview.RateStatus.ShouldBe("SingleRateWholeMonth");
+        preview.UtilityRateId.ShouldBe(rate.Id);
+        preview.RecordedUsage.ShouldBe(50m);
+        preview.UnitPrice.ShouldBe(3500m);
+        preview.ProvisionalAmount.ShouldBe(175000m);
+        preview.IsFinalInvoice.ShouldBeFalse();
+        preview.UsagePreview.Segments.Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task PR02_Rate_Changes_During_Month_Does_Not_Invent_Daily_Usage()
+    {
+        var roomId = await CreateRoomAsync();
+        await CreateRateForRoomAsync(roomId, UtilityType.Electricity,
+            3000m, new DateTime(2026, 10, 1), new DateTime(2026, 10, 15));
+        await CreateRateForRoomAsync(roomId, UtilityType.Electricity,
+            3500m, new DateTime(2026, 10, 16), null);
+
+        var preview = await _chargePreviewAppService.GetMonthlyChargePreviewAsync(
+            roomId, UtilityType.Electricity, 2026, 10);
+
+        preview.RateStatus.ShouldBe("MultipleRatesInMonth");
+        preview.ProvisionalAmount.ShouldBeNull();
+        preview.UnitPrice.ShouldBeNull();
+        preview.IsFinalInvoice.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task PR03_Missing_Rate_Leaves_Charge_Unavailable()
+    {
+        var roomId = await CreateRoomAsync();
+        var preview = await _chargePreviewAppService.GetMonthlyChargePreviewAsync(
+            roomId, UtilityType.Water, 2026, 10);
+
+        preview.RateStatus.ShouldBe("NoRate");
+        preview.ProvisionalAmount.ShouldBeNull();
+        preview.RecordedUsage.ShouldBe(0m);
+    }
+
+    [Fact]
+    public async Task PR04_Partial_Rate_Coverage_Does_Not_Price_Whole_Month()
+    {
+        var roomId = await CreateRoomAsync();
+        await CreateRateForRoomAsync(roomId, UtilityType.Water,
+            15000m, new DateTime(2026, 10, 12), null);
+
+        var preview = await _chargePreviewAppService.GetMonthlyChargePreviewAsync(
+            roomId, UtilityType.Water, 2026, 10);
+
+        preview.RateStatus.ShouldBe("IncompleteRateCoverage");
+        preview.ProvisionalAmount.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task PR05_SoftDeleted_Rate_History_Requires_Review()
+    {
+        var roomId = await CreateRoomAsync();
+        var rate = await CreateRateForRoomAsync(roomId, UtilityType.Electricity,
+            3500m, new DateTime(2026, 10, 1), null);
+        await _utilityRateAppService.DeleteAsync(rate.Id);
+
+        var preview = await _chargePreviewAppService.GetMonthlyChargePreviewAsync(
+            roomId, UtilityType.Electricity, 2026, 10);
+
+        preview.RateStatus.ShouldBe("DeletedRateHistoryRequiresReview");
+        preview.ProvisionalAmount.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task PR06_Zero_Recorded_Units_Is_Only_A_Provisional_Zero()
+    {
+        var roomId = await CreateRoomAsync();
+        await CreateRateForRoomAsync(roomId, UtilityType.Water,
+            15000m, new DateTime(2026, 1, 1), null);
+
+        var preview = await _chargePreviewAppService.GetMonthlyChargePreviewAsync(
+            roomId, UtilityType.Water, 2026, 10);
+
+        preview.RateStatus.ShouldBe("SingleRateWholeMonth");
+        preview.RecordedUsage.ShouldBe(0m);
+        preview.ProvisionalAmount.ShouldBe(0m);
+        preview.UsagePreview.Segments.ShouldBeEmpty();
+        preview.IsFinalInvoice.ShouldBeFalse();
     }
 
 }

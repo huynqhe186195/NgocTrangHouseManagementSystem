@@ -1480,4 +1480,38 @@ public abstract class UtilityMeterAppService_Tests<TStartupModule>
         preview.IsFinalInvoice.ShouldBeFalse();
     }
 
+
+    [Fact]
+    public async Task PR07_Single_Month_Rate_Prices_Usage_Across_Replacement()
+    {
+        var roomId = await CreateRoomAsync();
+        var old = await CreateMeterAsync(roomId, UtilityType.Electricity,
+            initialReading: 1000m);
+        await _meterReadingAppService.CreateAsync(new CreateMeterReadingDto
+        {
+            UtilityMeterId = old.Id, BillingYear = 2026, BillingMonth = 10,
+            CurrentReading = 1050m, ReadingDate = new DateTime(2026, 10, 19)
+        });
+        var replacement = await _utilityMeterAppService.ReplaceAsync(
+            old.Id, NewReplacement(final: 1100m, opening: 15m,
+                date: new DateTime(2026, 10, 20)));
+        await _meterReadingAppService.CreateAsync(new CreateMeterReadingDto
+        {
+            UtilityMeterId = replacement.NewMeterId, BillingYear = 2026,
+            BillingMonth = 10, CurrentReading = 20m,
+            ReadingDate = new DateTime(2026, 10, 31)
+        });
+        await CreateRateForRoomAsync(roomId, UtilityType.Electricity,
+            3500m, new DateTime(2026, 10, 1));
+
+        var preview = await _chargePreviewAppService.GetMonthlyChargePreviewAsync(
+            roomId, UtilityType.Electricity, 2026, 10);
+
+        preview.RateStatus.ShouldBe("SingleRateWholeMonth");
+        preview.RecordedUsage.ShouldBe(105m);
+        preview.ProvisionalAmount.ShouldBe(367500m);
+        preview.UsagePreview.Segments.Count.ShouldBe(3);
+        preview.IsFinalInvoice.ShouldBeFalse();
+    }
+
 }

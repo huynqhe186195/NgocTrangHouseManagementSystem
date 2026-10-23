@@ -2088,4 +2088,53 @@ public abstract class UtilityMeterAppService_Tests<TStartupModule>
         error.Code.ShouldBe(InvoiceDraftErrorCodes.CandidateNotReady);
     }
 
+
+    [Fact]
+    public async Task ID10_Rejects_Partial_Month_Contract_For_Draft_Storage()
+    {
+        var room = await CreateRoomAsync();
+        var contractId = await CreateCandidateContractAsync(
+            room, new DateTime(2026, 10, 15));
+        await SeedHealthyOctoberUsageAsync(room);
+
+        var error = await Assert.ThrowsAsync<BusinessException>(() =>
+            _invoiceDraftStorage.CreateAsync(new CreateInvoiceDraftDto
+            {
+                ContractId = contractId, BillingYear = 2026, BillingMonth = 10
+            }));
+
+        error.Code.ShouldBe(InvoiceDraftErrorCodes.CandidateNotReady);
+    }
+
+    [Fact]
+    public async Task ID11_Unknown_Contract_Cannot_Create_Or_Forge_Invoice()
+    {
+        var error = await Assert.ThrowsAsync<BusinessException>(() =>
+            _invoiceDraftStorage.CreateAsync(new CreateInvoiceDraftDto
+            {
+                ContractId = Guid.NewGuid(), BillingYear = 2026, BillingMonth = 10
+            }));
+
+        error.Code.ShouldBe(BuildingManagementErrorCodes.ContractNotFound);
+    }
+
+    [Fact]
+    public async Task ID12_Overlapping_Room_Contracts_Cannot_Be_Stored_As_Drafts()
+    {
+        var room = await CreateRoomAsync();
+        var contractId = await CreateCandidateContractAsync(
+            room, new DateTime(2026, 1, 1));
+        await CreateCandidateContractAsync(
+            room, new DateTime(2026, 10, 15));
+        await SeedHealthyOctoberUsageAsync(room);
+
+        var error = await Assert.ThrowsAsync<BusinessException>(() =>
+            _invoiceDraftStorage.CreateAsync(new CreateInvoiceDraftDto
+            {
+                ContractId = contractId, BillingYear = 2026, BillingMonth = 10
+            }));
+
+        error.Code.ShouldBe(InvoiceDraftErrorCodes.CandidateNotReady);
+    }
+
 }

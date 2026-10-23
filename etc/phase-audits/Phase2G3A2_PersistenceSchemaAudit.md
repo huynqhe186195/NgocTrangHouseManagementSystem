@@ -55,6 +55,19 @@ Prior 2G.3A.1 preview tests passed on the user's workstation:
 - A full EF Core SQLite fixture build/test run is needed because new
   entities have been registered in `BuildingManagementDbContext`.
 
+## Build verification and fixes
+
+- User-reported attempt on 23/10/2026: both commands stopped during
+  compilation due to CS1503 at InvoiceDraftPersistence_Tests.cs:80,
+  which invoked Guid.NewGuid() instead of passing the Guid.NewGuid
+  delegate required by Invoice.CreateDraft.
+- Corrected the test, changed the nullable provisional-amount comparison
+  to definite-assignment pattern matching (CS8629), and removed one
+  duplicated EF Core using directive (CS0105).
+- These corrections have not yet been rerun on the user's workstation.
+  Four Mapperly RMG012 warnings from Tenant to TenantDto mapping remain;
+  avoid altering audit DTO fields without a separate API compatibility review.
+
 ## Remaining blockers
 
 1. **NO persisted draft workflow yet** — an operator-authorized write

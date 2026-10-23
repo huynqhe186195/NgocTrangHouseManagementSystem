@@ -6,6 +6,7 @@ using BuildingManagement.Buildings;
 using BuildingManagement.Floors;
 using BuildingManagement.Rooms;
 using BuildingManagement.Utilities;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
 using Shouldly;
@@ -34,6 +35,7 @@ public sealed class UtilityIntegrityPostgreSql_Tests
     private readonly IRepository<Room, Guid> _rooms;
     private readonly IRepository<UtilityMeter, Guid> _meters;
     private readonly IRepository<UtilityRate, Guid> _rates;
+    private readonly IRepository<MeterReplacement, Guid> _replacements;
     private readonly IServiceScopeFactory _scopeFactory;
 
     public UtilityIntegrityPostgreSql_Tests()
@@ -43,6 +45,7 @@ public sealed class UtilityIntegrityPostgreSql_Tests
         _rooms = GetRequiredService<IRepository<Room, Guid>>();
         _meters = GetRequiredService<IRepository<UtilityMeter, Guid>>();
         _rates = GetRequiredService<IRepository<UtilityRate, Guid>>();
+        _replacements = GetRequiredService<IRepository<MeterReplacement, Guid>>();
         _scopeFactory = GetRequiredService<IServiceScopeFactory>();
     }
 
@@ -155,6 +158,135 @@ public sealed class UtilityIntegrityPostgreSql_Tests
         var rates = await _rates.GetListAsync();
         rates.Count(x => x.BuildingId == buildingId &&
                          x.UtilityType == UtilityType.Electricity).ShouldBe(1);
+    }
+
+    // New Phase 2G.2B.1: two concurrent handovers of ONE old physical meter.
+    // One transaction must commit, the loser must not leave an active meter
+    // or an orphaned replacement record.
+    [Fact]
+    public async Task PGUTIL03_Concurrent_Replacements_Only_One_Commits()
+    {
+        var roomId = await CreateRoomAsync();
+        var created = await GetRequiredService<IUtilityMeterAppService>()
+            .CreateAsync(new CreateUtilityMeterDto
+            {
+                RoomId = roomId, UtilityType = UtilityType.Electricity,
+                MeterCode = "PGREPL-" + Guid.NewGuid().ToString("N"),
+                InitialReading = 1000m, InstalledDate = new DateTime(2026, 1, 1)
+            });
+
+        Task<Exception?> first;
+        Task<Exception?> second;
+        using (ExecutionContext.SuppressFlow())
+        {
+            first = Task.Run(() => TryReplaceAsync(created.Id, "PGREPL-" + Guid.NewGuid().ToString("N")));
+            second = Task.Run(() => TryReplaceAsync(created.Id, "PGREPL-" + Guid.NewGuid().ToString("N")));
+        }
+        var results = await Task.WhenAll(first, second).WaitAsync(TimeSpan.FromSeconds(35));
+        results.Count(x => x is null).ShouldBe(1);
+        results.Count(x => x is not null).ShouldBe(1);
+        var error = results.Single(x => x is not null)!;
+        var recognized = error is BusinessException be &&
+            (be.Code == MeterReplacementErrorCodes.OldMeterMustBeActive ||
+             be.Code == MeterReplacementErrorCodes.MeterReferencedByReplacement);
+        for (Exception? ex = error; ex is not null; ex = ex.InnerException)
+        {
+            if (ex is DbUpdateConcurrencyException ||
+                ex is PostgresException pg && pg.SqlState == PostgresErrorCodes.UniqueViolation)
+                recognized = true;
+        }
+        recognized.ShouldBeTrue("Unexpected competing replacement failure: " + error);
+
+        var records = await _replacements.GetListAsync();
+        var handovers = records.Where(x => x.OldMeterId == created.Id).ToList();
+        handovers.Count.ShouldBe(1);
+        var meters = await _meters.GetListAsync();
+        var active = meters.Where(x => x.RoomId == roomId &&
+            x.UtilityType == UtilityType.Electricity && x.IsActive).ToList();
+        active.Count.ShouldBe(1);
+        active.Single().Id.ShouldBe(handovers.Single().NewMeterId);
+        (await _meters.GetAsync(created.Id)).IsActive.ShouldBeFalse();
+    }
+
+    // The same physical-meter lock serializes a monthly posting with the
+    // closing snapshot. If the reading wins it is included; if replacement
+    // wins, the inactive old meter must reject the reading.
+    [Fact]
+    public async Task PGUTIL04_Reading_And_Replacement_Do_Not_Race()
+    {
+        var roomId = await CreateRoomAsync();
+        var created = await GetRequiredService<IUtilityMeterAppService>()
+            .CreateAsync(new CreateUtilityMeterDto
+            {
+                RoomId = roomId, UtilityType = UtilityType.Water,
+                MeterCode = "PGREPL-" + Guid.NewGuid().ToString("N"),
+                InitialReading = 1000m, InstalledDate = new DateTime(2026, 1, 1)
+            });
+        Task<Exception?> writeReading;
+        Task<Exception?> replace;
+        using (ExecutionContext.SuppressFlow())
+        {
+            writeReading = Task.Run(() => TryCreateReadingAsync(created.Id));
+            replace = Task.Run(() => TryReplaceAsync(
+                created.Id, "PGREPL-" + Guid.NewGuid().ToString("N")));
+        }
+        var results = await Task.WhenAll(writeReading, replace)
+            .WaitAsync(TimeSpan.FromSeconds(35));
+        results[1].ShouldBeNull("Replacement must finish successfully in either ordering.");
+        if (results[0] is BusinessException be)
+            be.Code.ShouldBe(BuildingManagementErrorCodes.UtilityMeterInactive);
+        else
+            results[0].ShouldBeNull("Posting may only fail because the old meter is inactive.");
+
+        var records = await _replacements.GetListAsync();
+        var record = records.Single(x => x.OldMeterId == created.Id);
+        var readings = await GetRequiredService<IRepository<MeterReading, Guid>>()
+            .GetListAsync();
+        var oldReadings = readings.Where(x => x.UtilityMeterId == created.Id).ToList();
+        oldReadings.Count.ShouldBe(results[0] is null ? 1 : 0);
+        record.OldPreviousReading.ShouldBe(results[0] is null ? 1050m : 1000m);
+        record.OldFinalReading.ShouldBe(1100m);
+    }
+
+    private async Task<Exception?> TryCreateReadingAsync(Guid meterId)
+    {
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var service = scope.ServiceProvider.GetRequiredService<IMeterReadingAppService>();
+            await service.CreateAsync(new CreateMeterReadingDto
+            {
+                UtilityMeterId = meterId, BillingYear = 2026, BillingMonth = 10,
+                CurrentReading = 1050m, ReadingDate = new DateTime(2026, 10, 19)
+            });
+            return null;
+        }
+        catch (Exception ex)
+        {
+            return ex;
+        }
+    }
+
+    private async Task<Exception?> TryReplaceAsync(Guid oldMeterId, string newCode)
+    {
+        try
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var service = scope.ServiceProvider.GetRequiredService<IUtilityMeterAppService>();
+            await service.ReplaceAsync(oldMeterId, new ReplaceUtilityMeterDto
+            {
+                NewMeterCode = newCode,
+                OldFinalReading = 1100m,
+                NewInitialReading = 15m,
+                ReplacementDate = new DateTime(2026, 10, 20),
+                Reason = "Concurrent replacement test"
+            });
+            return null;
+        }
+        catch (Exception ex)
+        {
+            return ex;
+        }
     }
 
     private async Task<Exception?> TryCreateMeterAsync(Guid roomId)

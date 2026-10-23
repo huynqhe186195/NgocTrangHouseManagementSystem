@@ -1,10 +1,11 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Volo.Abp;
 using Volo.Abp.Application.Services;
 using Volo.Abp.Domain.Repositories;
+using Volo.Abp.Uow;
 
 namespace BuildingManagement.Utilities
 {
@@ -18,15 +19,25 @@ namespace BuildingManagement.Utilities
         private readonly IRepository<UtilityMeter, Guid>
             _utilityMeterRepository;
 
+        private readonly IRepository<MeterReplacement, Guid>
+            _meterReplacementRepository;
+
+        private readonly IUtilityMeterLock _meterLock;
+
         public MeterReadingAppService(
             IRepository<MeterReading, Guid> meterReadingRepository,
-            IRepository<UtilityMeter, Guid> utilityMeterRepository)
+            IRepository<UtilityMeter, Guid> utilityMeterRepository,
+            IRepository<MeterReplacement, Guid> meterReplacementRepository,
+            IUtilityMeterLock meterLock)
         {
             _meterReadingRepository =
                 meterReadingRepository;
 
             _utilityMeterRepository =
                 utilityMeterRepository;
+
+            _meterReplacementRepository = meterReplacementRepository;
+            _meterLock = meterLock;
         }
 
         public async Task<MeterReadingDto> GetAsync(
@@ -63,9 +74,11 @@ namespace BuildingManagement.Utilities
             >(meterReadings);
         }
 
-        public async Task<MeterReadingDto> CreateAsync(
+        [UnitOfWork(isTransactional: true)]
+        public virtual async Task<MeterReadingDto> CreateAsync(
             CreateMeterReadingDto input)
         {
+            await _meterLock.AcquireAsync(input.UtilityMeterId);
             ValidateBillingYear(
                 input.BillingYear
             );
@@ -155,10 +168,19 @@ namespace BuildingManagement.Utilities
             >(meterReading);
         }
 
-        public async Task<MeterReadingDto> UpdateAsync(
+        [UnitOfWork(isTransactional: true)]
+        public virtual async Task<MeterReadingDto> UpdateAsync(
             Guid id,
             UpdateMeterReadingDto input)
         {
+            // Scalar first: don't materialize a tracked reading until AFTER
+            // locking its meter row, analogous to MoveOutRequest lock ordering.
+            var queryable = await _meterReadingRepository.GetQueryableAsync();
+            var meterId = await AsyncExecuter.FirstOrDefaultAsync(
+                queryable.Where(x => x.Id == id).Select(x => x.UtilityMeterId));
+            if (meterId == Guid.Empty)
+                throw new BusinessException(BuildingManagementErrorCodes.MeterReadingNotFound);
+            await _meterLock.AcquireAsync(meterId);
             var meterReading =
                 await GetExistingMeterReadingAsync(id);
 
@@ -180,6 +202,12 @@ namespace BuildingManagement.Utilities
                 await GetExistingUtilityMeterAsync(
                     meterReading.UtilityMeterId
                 );
+
+            // Historical monthly readings are frozen once a final replacement
+            // reading has been recorded for the old physical meter.
+            if (await _meterReplacementRepository.AnyAsync(
+                    x => x.OldMeterId == meterReading.UtilityMeterId))
+                throw new BusinessException(MeterReplacementErrorCodes.ReadingLockedByReplacement);
 
             ValidateCurrentReading(
                 input.CurrentReading,

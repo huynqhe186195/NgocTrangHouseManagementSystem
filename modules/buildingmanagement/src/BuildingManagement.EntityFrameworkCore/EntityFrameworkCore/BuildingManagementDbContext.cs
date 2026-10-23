@@ -1,4 +1,4 @@
-﻿using BuildingManagement.Buildings;
+using BuildingManagement.Buildings;
 using BuildingManagement.Contracts;
 using BuildingManagement.DepositSettlements;
 using BuildingManagement.Floors;
@@ -30,6 +30,7 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
     public DbSet<UtilityRate> UtilityRates { get; set; } = default!;
     public DbSet<UtilityMeter> UtilityMeters { get; set; } = default!;
     public DbSet<MeterReading> MeterReadings { get; set; } = default!;
+    public DbSet<MeterReplacement> MeterReplacements { get; set; } = default!;
     public DbSet<ContractRenewalHold> ContractRenewalHolds { get; set; } = default!;
     public DbSet<RoomReservation> RoomReservations { get; set; } = default!;
     public DbSet<Payment> Payments { get; set; } = default!;
@@ -49,5 +50,8 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
         base.OnModelCreating(builder);
 
         builder.ConfigureBuildingManagement();
+        // Explicit mapping: survives differing module model-builder conventions.
+        builder.ApplyConfiguration(
+            new BuildingManagement.EntityFrameworkCore.EntityConfigurations.MeterReplacementConfiguration());
     }
 }

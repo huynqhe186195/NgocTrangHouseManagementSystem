@@ -1,10 +1,12 @@
-﻿using BuildingManagement.Buildings;
+using BuildingManagement.Buildings;
 using BuildingManagement.Floors;
 using BuildingManagement.Rooms;
 using Shouldly;
 using System;
+using System.Linq;
 using System.Threading.Tasks;
 using Volo.Abp;
+using Volo.Abp.Validation;
 using Volo.Abp.Domain.Repositories;
 using Volo.Abp.Modularity;
 using Xunit;
@@ -938,6 +940,247 @@ public abstract class UtilityMeterAppService_Tests<TStartupModule>
         updated.Notes.ShouldBe("Maintenance observation");
         updated.InitialReading.ShouldBe(meter.InitialReading);
         updated.MeterCode.ShouldBe(meter.MeterCode);
+    }
+
+    // Phase 2G.2B.1 - physical meter replacement and immutable closing index.
+    private static ReplaceUtilityMeterDto NewReplacement(
+        decimal final = 1050m, decimal opening = 12m,
+        DateTime? date = null) => new()
+    {
+        NewMeterCode = NewMeterCode(),
+        OldFinalReading = final,
+        NewInitialReading = opening,
+        ReplacementDate = date ?? new DateTime(2026, 11, 1),
+        Reason = "Verified physical meter replacement"
+    };
+
+    [Fact]
+    public async Task RM01_Replace_Without_Monthly_Readings_Preserves_Closing_Usage()
+    {
+        var roomId = await CreateRoomAsync();
+        var old = await CreateMeterAsync(roomId, UtilityType.Electricity,
+            initialReading: 1000m);
+        var record = await _utilityMeterAppService.ReplaceAsync(old.Id,
+            NewReplacement(final: 1045.500m, opening: 8.125m));
+
+        record.Id.ShouldNotBe(Guid.Empty);
+        record.OldMeterId.ShouldBe(old.Id);
+        record.RoomId.ShouldBe(roomId);
+        record.UtilityType.ShouldBe(UtilityType.Electricity);
+        record.OldPreviousReading.ShouldBe(1000m);
+        record.OldFinalReading.ShouldBe(1045.500m);
+        record.ClosingUsage.ShouldBe(45.500m);
+        (await _utilityMeterAppService.GetAsync(old.Id)).IsActive.ShouldBeFalse();
+        var newest = await _utilityMeterAppService.GetAsync(record.NewMeterId);
+        newest.IsActive.ShouldBeTrue();
+        newest.RoomId.ShouldBe(roomId);
+        newest.UtilityType.ShouldBe(old.UtilityType);
+        newest.InitialReading.ShouldBe(8.125m);
+        newest.InstalledDate.ShouldBe(new DateTime(2026, 11, 1));
+        (await _utilityMeterAppService.GetReplacementAsync(record.Id))
+            .NewMeterId.ShouldBe(record.NewMeterId);
+        (await _utilityMeterAppService.GetReplacementsByRoomAsync(roomId))
+            .ShouldContain(x => x.Id == record.Id);
+    }
+
+    [Fact]
+    public async Task RM02_Replacement_Uses_Latest_Monthly_Reading_Not_Opening()
+    {
+        var roomId = await CreateRoomAsync();
+        var old = await CreateMeterAsync(roomId, UtilityType.Water,
+            initialReading: 1000m);
+        await AddHistoricalReadingAsync(old.Id); // 1200 on 2026-10-31
+        var record = await _utilityMeterAppService.ReplaceAsync(old.Id,
+            NewReplacement(final: 1212m, opening: 20m));
+
+        record.OldPreviousReading.ShouldBe(1200m);
+        record.OldFinalReading.ShouldBe(1212m);
+        record.ClosingUsage.ShouldBe(12m);
+    }
+
+    [Fact]
+    public async Task RM03_Reject_Closing_Reading_Below_Latest()
+    {
+        var roomId = await CreateRoomAsync();
+        var old = await CreateMeterAsync(roomId, UtilityType.Electricity, initialReading: 1000m);
+        await AddHistoricalReadingAsync(old.Id);
+        var error = await Assert.ThrowsAsync<BusinessException>(() =>
+            _utilityMeterAppService.ReplaceAsync(old.Id, NewReplacement(final: 1199m)));
+        error.Code.ShouldBe(MeterReplacementErrorCodes.InvalidClosingReading);
+        (await _utilityMeterAppService.GetAsync(old.Id)).IsActive.ShouldBeTrue();
+        (await _utilityMeterAppService.GetReplacementsByRoomAsync(roomId)).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task RM04_Reject_Date_Before_Last_Monthly_Reading()
+    {
+        var roomId = await CreateRoomAsync();
+        var old = await CreateMeterAsync(roomId, UtilityType.Electricity, initialReading: 1000m);
+        await AddHistoricalReadingAsync(old.Id);
+        var error = await Assert.ThrowsAsync<BusinessException>(() =>
+            _utilityMeterAppService.ReplaceAsync(old.Id,
+                NewReplacement(final: 1210m, date: new DateTime(2026, 10, 30))));
+        error.Code.ShouldBe(MeterReplacementErrorCodes.InvalidReplacementDate);
+        (await _utilityMeterAppService.GetAsync(old.Id)).IsActive.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task RM05_Reject_Blank_Reason()
+    {
+        var old = await CreateMeterAsync(await CreateRoomAsync(), UtilityType.Electricity,
+            initialReading: 1000m);
+        var dto = NewReplacement();
+        dto.Reason = "   ";
+
+        // [Required] on ReplaceUtilityMeterDto.Reason is evaluated by the ABP
+        // ValidationInterceptor before ReplaceAsync can throw BusinessException.
+        var error = await Assert.ThrowsAsync<AbpValidationException>(() =>
+            _utilityMeterAppService.ReplaceAsync(old.Id, dto));
+        Assert.Contains(error.ValidationErrors, validationError =>
+            validationError.MemberNames.Any(memberName =>
+                memberName == nameof(ReplaceUtilityMeterDto.Reason)));
+
+        // Invalid input must not deactivate the original meter.
+        (await _utilityMeterAppService.GetAsync(old.Id)).IsActive.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task RM06_Reject_Duplicate_New_MeterCode()
+    {
+        var old = await CreateMeterAsync(await CreateRoomAsync(), UtilityType.Electricity,
+            initialReading: 1000m);
+        var other = await CreateMeterAsync(await CreateRoomAsync(), UtilityType.Electricity);
+        var dto = NewReplacement();
+        dto.NewMeterCode = other.MeterCode;
+        var error = await Assert.ThrowsAsync<BusinessException>(() =>
+            _utilityMeterAppService.ReplaceAsync(old.Id, dto));
+        error.Code.ShouldBe(BuildingManagementErrorCodes.MeterCodeAlreadyExists);
+        (await _utilityMeterAppService.GetAsync(old.Id)).IsActive.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task RM07_Replacement_Locks_Old_And_New_Opening_Readings()
+    {
+        var old = await CreateMeterAsync(await CreateRoomAsync(), UtilityType.Electricity,
+            initialReading: 1000m);
+        var record = await _utilityMeterAppService.ReplaceAsync(old.Id, NewReplacement());
+        var currentNew = await _utilityMeterAppService.GetAsync(record.NewMeterId);
+        foreach (var meter in new[] { old, currentNew })
+        {
+            var error = await Assert.ThrowsAsync<BusinessException>(() =>
+                _utilityMeterAppService.UpdateAsync(meter.Id, new UpdateUtilityMeterDto
+                {
+                    MeterCode = meter.MeterCode,
+                    InitialReading = meter.InitialReading + 1m,
+                    InstalledDate = meter.InstalledDate
+                }));
+            error.Code.ShouldBe(MeterReplacementErrorCodes.MeterIdentityLockedByReplacement);
+        }
+        (await _utilityMeterAppService.UpdateAsync(record.NewMeterId, new UpdateUtilityMeterDto
+        {
+            MeterCode = currentNew.MeterCode,
+            InitialReading = currentNew.InitialReading,
+            InstalledDate = currentNew.InstalledDate,
+            Notes = "Maintenance note"
+        })).Notes.ShouldBe("Maintenance note");
+    }
+
+    [Fact]
+    public async Task RM08_Cannot_Delete_Either_Replaced_Meter()
+    {
+        var old = await CreateMeterAsync(await CreateRoomAsync(), UtilityType.Water,
+            initialReading: 1000m);
+        var record = await _utilityMeterAppService.ReplaceAsync(old.Id, NewReplacement());
+        foreach (var id in new[] { old.Id, record.NewMeterId })
+        {
+            var error = await Assert.ThrowsAsync<BusinessException>(() =>
+                _utilityMeterAppService.DeleteAsync(id));
+            error.Code.ShouldBe(MeterReplacementErrorCodes.MeterReferencedByReplacement);
+        }
+    }
+
+    [Fact]
+    public async Task RM09_Reject_Second_Replacement_Of_Inactive_Old_Meter()
+    {
+        var old = await CreateMeterAsync(await CreateRoomAsync(), UtilityType.Water,
+            initialReading: 1000m);
+        await _utilityMeterAppService.ReplaceAsync(old.Id, NewReplacement());
+        var error = await Assert.ThrowsAsync<BusinessException>(() =>
+            _utilityMeterAppService.ReplaceAsync(old.Id, NewReplacement()));
+        error.Code.ShouldBe(MeterReplacementErrorCodes.OldMeterMustBeActive);
+    }
+
+    [Fact]
+    public async Task RM10_Replacement_Freezes_Old_Latest_Monthly_Reading()
+    {
+        var old = await CreateMeterAsync(await CreateRoomAsync(), UtilityType.Electricity,
+            initialReading: 1000m);
+        var reading = await _meterReadingAppService.CreateAsync(new CreateMeterReadingDto
+        {
+            UtilityMeterId = old.Id, BillingYear = 2026, BillingMonth = 10,
+            CurrentReading = 1200m, ReadingDate = new DateTime(2026, 10, 31)
+        });
+        await _utilityMeterAppService.ReplaceAsync(old.Id, NewReplacement(final: 1210m));
+        var error = await Assert.ThrowsAsync<BusinessException>(() =>
+            _meterReadingAppService.UpdateAsync(reading.Id, new UpdateMeterReadingDto
+            {
+                CurrentReading = 1250m, ReadingDate = reading.ReadingDate
+            }));
+        error.Code.ShouldBe(MeterReplacementErrorCodes.ReadingLockedByReplacement);
+        (await _meterReadingAppService.GetAsync(reading.Id))
+            .CurrentReading.ShouldBe(1200m);
+    }
+
+    [Fact]
+    public async Task RM11_New_Meter_Uses_Its_Own_Opening_For_First_Reading()
+    {
+        var old = await CreateMeterAsync(await CreateRoomAsync(), UtilityType.Water,
+            initialReading: 1000m);
+        var record = await _utilityMeterAppService.ReplaceAsync(old.Id,
+            NewReplacement(final: 1050m, opening: 20m));
+        var reading = await _meterReadingAppService.CreateAsync(new CreateMeterReadingDto
+        {
+            UtilityMeterId = record.NewMeterId,
+            BillingYear = 2026, BillingMonth = 11,
+            CurrentReading = 30m, ReadingDate = new DateTime(2026, 11, 30)
+        });
+        reading.PreviousReading.ShouldBe(20m);
+        reading.Usage.ShouldBe(10m);
+    }
+
+    [Fact]
+    public async Task RM12_New_Meter_Can_Later_Be_Replaced_Again()
+    {
+        var roomId = await CreateRoomAsync();
+        var meterA = await CreateMeterAsync(roomId, UtilityType.Electricity,
+            initialReading: 1000m);
+        var ab = await _utilityMeterAppService.ReplaceAsync(meterA.Id,
+            NewReplacement(final: 1030m, opening: 10m,
+                date: new DateTime(2026, 10, 10)));
+        var bc = await _utilityMeterAppService.ReplaceAsync(ab.NewMeterId,
+            NewReplacement(final: 25m, opening: 0m,
+                date: new DateTime(2026, 10, 20)));
+
+        bc.OldMeterId.ShouldBe(ab.NewMeterId);
+        bc.OldPreviousReading.ShouldBe(10m);
+        bc.ClosingUsage.ShouldBe(15m);
+        (await _utilityMeterAppService.GetReplacementsByRoomAsync(roomId))
+            .Count.ShouldBe(2);
+        (await _utilityMeterAppService.GetAsync(ab.NewMeterId)).IsActive.ShouldBeFalse();
+        (await _utilityMeterAppService.GetAsync(bc.NewMeterId)).IsActive.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task RM13_Reject_Negative_Opening_Of_New_Meter()
+    {
+        var old = await CreateMeterAsync(await CreateRoomAsync(), UtilityType.Water,
+            initialReading: 1000m);
+        var dto = NewReplacement();
+        dto.NewInitialReading = -1m;
+        var error = await Assert.ThrowsAsync<BusinessException>(() =>
+            _utilityMeterAppService.ReplaceAsync(old.Id, dto));
+        error.Code.ShouldBe(MeterReplacementErrorCodes.InvalidNewInitialReading);
+        (await _utilityMeterAppService.GetAsync(old.Id)).IsActive.ShouldBeTrue();
     }
 
 }

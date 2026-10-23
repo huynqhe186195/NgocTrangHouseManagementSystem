@@ -1,11 +1,13 @@
-﻿using BuildingManagement.Rooms;
+using BuildingManagement.Rooms;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using Volo.Abp;
 using Volo.Abp.Application.Services;
 using Volo.Abp.Data;
 using Volo.Abp.Domain.Repositories;
+using Volo.Abp.Uow;
 
 namespace BuildingManagement.Utilities
 {
@@ -25,10 +27,17 @@ namespace BuildingManagement.Utilities
         private readonly IRepository<MeterReading, Guid>
             _meterReadingRepository;
 
+        private readonly IRepository<MeterReplacement, Guid>
+            _meterReplacementRepository;
+
+        private readonly IUtilityMeterLock _meterLock;
+
         public UtilityMeterAppService(
     IRepository<UtilityMeter, Guid> utilityMeterRepository,
     IRepository<Room, Guid> roomRepository,
     IRepository<MeterReading, Guid> meterReadingRepository,
+    IRepository<MeterReplacement, Guid> meterReplacementRepository,
+    IUtilityMeterLock meterLock,
     IDataFilter<ISoftDelete> softDeleteFilter)
         {
             _utilityMeterRepository =
@@ -39,6 +48,9 @@ namespace BuildingManagement.Utilities
 
             _meterReadingRepository =
                 meterReadingRepository;
+
+            _meterReplacementRepository = meterReplacementRepository;
+            _meterLock = meterLock;
 
             _softDeleteFilter =
                 softDeleteFilter;
@@ -127,10 +139,12 @@ namespace BuildingManagement.Utilities
             >(utilityMeter);
         }
 
-        public async Task<UtilityMeterDto> UpdateAsync(
+        [UnitOfWork(isTransactional: true)]
+        public virtual async Task<UtilityMeterDto> UpdateAsync(
             Guid id,
             UpdateUtilityMeterDto input)
         {
+            await _meterLock.AcquireAsync(id);
             var utilityMeter =
                 await GetExistingUtilityMeterAsync(id);
 
@@ -183,10 +197,12 @@ namespace BuildingManagement.Utilities
             >(utilityMeter);
         }
 
-        public async Task<UtilityMeterDto>
+        [UnitOfWork(isTransactional: true)]
+        public virtual async Task<UtilityMeterDto>
             DeactivateAsync(
                 Guid id)
         {
+            await _meterLock.AcquireAsync(id);
             var utilityMeter =
                 await GetExistingUtilityMeterAsync(id);
 
@@ -212,8 +228,133 @@ namespace BuildingManagement.Utilities
             >(utilityMeter);
         }
 
-        public async Task DeleteAsync(Guid id)
+        /// <summary>
+        /// Complete replacement in ONE ABP UOW. Never call Deactivate + Create
+        /// separately; those calls cannot preserve a closing-reading snapshot.
+        /// </summary>
+        [UnitOfWork(isTransactional: true)]
+        public virtual async Task<MeterReplacementDto> ReplaceAsync(
+            Guid oldMeterId, ReplaceUtilityMeterDto input)
         {
+            if (input is null) throw new ArgumentNullException(nameof(input));
+            await _meterLock.AcquireAsync(oldMeterId);
+            var oldMeter = await GetExistingUtilityMeterAsync(oldMeterId);
+            if (!oldMeter.IsActive)
+                throw new BusinessException(MeterReplacementErrorCodes.OldMeterMustBeActive);
+
+            var replacementDate = input.ReplacementDate.Date;
+            if (replacementDate == default ||
+                replacementDate < oldMeter.InstalledDate.Date)
+                throw new BusinessException(MeterReplacementErrorCodes.InvalidReplacementDate);
+
+            var newMeterCode = NormalizeMeterCode(input.NewMeterCode);
+            ValidateMeterCode(newMeterCode);
+            if (input.NewInitialReading < 0)
+                throw new BusinessException(MeterReplacementErrorCodes.InvalidNewInitialReading);
+            if (input.OldFinalReading < 0)
+                throw new BusinessException(MeterReplacementErrorCodes.InvalidClosingReading);
+
+            if (string.IsNullOrWhiteSpace(input.Reason))
+                throw new BusinessException(MeterReplacementErrorCodes.ReasonRequired);
+            var reason = input.Reason.Trim();
+            var notes = NormalizeOptional(input.Notes);
+            if (reason.Length > 500 || (notes?.Length ?? 0) > 500)
+                throw new BusinessException(MeterReplacementErrorCodes.InvalidReasonOrNotes);
+
+            await EnsureMeterCodeUniqueAsync(newMeterCode);
+            // A meter may be the NEW side of an earlier replacement and
+            // subsequently become OLD in another. Only duplicate outgoing
+            // replacement is forbidden; this preserves multi-hop history.
+            if (await _meterReplacementRepository.AnyAsync(x => x.OldMeterId == oldMeterId))
+                throw new BusinessException(MeterReplacementErrorCodes.MeterReferencedByReplacement);
+
+            // A soft-deleted reading must NEVER disappear from the closing basis.
+            // Reject it pending manual review instead of guessing the old index.
+            bool hasDeletedReading;
+            using (_softDeleteFilter.Disable())
+            {
+                hasDeletedReading = await _meterReadingRepository.AnyAsync(
+                    x => x.UtilityMeterId == oldMeterId && x.IsDeleted);
+            }
+            if (hasDeletedReading)
+                throw new BusinessException(
+                    MeterReplacementErrorCodes.SoftDeletedHistoryRequiresReview);
+
+            var readings = await _meterReadingRepository.GetQueryableAsync();
+            var latest = await AsyncExecuter.FirstOrDefaultAsync(
+                readings.Where(x => x.UtilityMeterId == oldMeterId)
+                    .OrderByDescending(x => x.BillingYear)
+                    .ThenByDescending(x => x.BillingMonth));
+
+            if (latest is not null && replacementDate < latest.ReadingDate.Date)
+                throw new BusinessException(MeterReplacementErrorCodes.InvalidReplacementDate);
+
+            var previous = latest?.CurrentReading ?? oldMeter.InitialReading;
+            if (input.OldFinalReading < previous)
+                throw new BusinessException(MeterReplacementErrorCodes.InvalidClosingReading)
+                    .WithData("PreviousReading", previous);
+
+            // Keep the historical meter untouched except for IsActive.
+            oldMeter.Deactivate();
+            await _utilityMeterRepository.UpdateAsync(oldMeter, autoSave: true);
+
+            var newMeter = new UtilityMeter(
+                GuidGenerator.Create(), oldMeter.RoomId, oldMeter.UtilityType,
+                newMeterCode, input.NewInitialReading, replacementDate, notes);
+            await _utilityMeterRepository.InsertAsync(newMeter, autoSave: true);
+
+            var record = new MeterReplacement(
+                GuidGenerator.Create(), oldMeter.Id, newMeter.Id, oldMeter.RoomId,
+                oldMeter.UtilityType, replacementDate, previous,
+                input.OldFinalReading, input.NewInitialReading, reason, notes);
+            await _meterReplacementRepository.InsertAsync(record, autoSave: true);
+            return ToReplacementDto(record);
+        }
+
+        public async Task<MeterReplacementDto> GetReplacementAsync(Guid id)
+        {
+            var record = await _meterReplacementRepository.FindAsync(id);
+            if (record is null)
+                throw new BusinessException(MeterReplacementErrorCodes.ReplacementNotFound);
+            return ToReplacementDto(record);
+        }
+
+        public async Task<List<MeterReplacementDto>> GetReplacementsByRoomAsync(Guid roomId)
+        {
+            await EnsureRoomExistsAsync(roomId);
+            var query = await _meterReplacementRepository.GetQueryableAsync();
+            var list = await AsyncExecuter.ToListAsync(
+                query.Where(x => x.RoomId == roomId)
+                    .OrderBy(x => x.ReplacementDate).ThenBy(x => x.CreationTime));
+            return list.Select(ToReplacementDto).ToList();
+        }
+
+        private async Task<bool> IsReferencedByReplacementAsync(Guid meterId)
+        {
+            return await _meterReplacementRepository.AnyAsync(
+                x => x.OldMeterId == meterId || x.NewMeterId == meterId);
+        }
+
+        private static MeterReplacementDto ToReplacementDto(MeterReplacement record) => new()
+        {
+            Id = record.Id,
+            OldMeterId = record.OldMeterId,
+            NewMeterId = record.NewMeterId,
+            RoomId = record.RoomId,
+            UtilityType = record.UtilityType,
+            ReplacementDate = record.ReplacementDate,
+            OldPreviousReading = record.OldPreviousReading,
+            OldFinalReading = record.OldFinalReading,
+            NewInitialReading = record.NewInitialReading,
+            Reason = record.Reason,
+            Notes = record.Notes,
+            CreationTime = record.CreationTime
+        };
+
+        [UnitOfWork(isTransactional: true)]
+        public virtual async Task DeleteAsync(Guid id)
+        {
+            await _meterLock.AcquireAsync(id);
             var utilityMeter =
                 await GetExistingUtilityMeterAsync(id);
 
@@ -237,6 +378,9 @@ namespace BuildingManagement.Utilities
                         .UtilityMeterHasReadingHistory
                 );
             }
+
+            if (await IsReferencedByReplacementAsync(id))
+                throw new BusinessException(MeterReplacementErrorCodes.MeterReferencedByReplacement);
 
             await _utilityMeterRepository
                 .DeleteAsync(
@@ -276,6 +420,12 @@ namespace BuildingManagement.Utilities
             {
                 return;
             }
+
+            // Even a meter without monthly readings cannot have its physical
+            // identity/initial reading changed after a replacement record exists.
+            if (await IsReferencedByReplacementAsync(utilityMeter.Id))
+                throw new BusinessException(
+                    MeterReplacementErrorCodes.MeterIdentityLockedByReplacement);
 
             // A soft-deleted reading is still part of the historical record.
             // Disable the filter to avoid allowing accidental history rewrites.

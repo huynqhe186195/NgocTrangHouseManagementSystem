@@ -24,8 +24,10 @@ public static class MonthlyUsageCoverageAssessor
         ArgumentNullException.ThrowIfNull(readings);
         ArgumentNullException.ThrowIfNull(replacements);
         var monthStart = new DateTime(billingYear, billingMonth, 1);
-        var monthEnd = monthStart.AddMonths(1).AddDays(-1);
-        var previousMonth = monthStart.AddMonths(-1);
+        var monthEnd = new DateTime(
+            billingYear, billingMonth, DateTime.DaysInMonth(billingYear, billingMonth));
+        var previousMonth = monthStart > DateTime.MinValue
+            ? monthStart.AddMonths(-1) : (DateTime?)null;
 
         var relevantMeters = meters
             .Where(x => x.RoomId == roomId && x.UtilityType == utilityType)
@@ -83,8 +85,9 @@ public static class MonthlyUsageCoverageAssessor
 
             var hasPreviousMonthReading = history.Any(x =>
                 x.UtilityMeterId == meter.Id &&
-                x.BillingYear == previousMonth.Year &&
-                x.BillingMonth == previousMonth.Month && !x.IsDeleted);
+                previousMonth.HasValue &&
+                x.BillingYear == previousMonth.Value.Year &&
+                x.BillingMonth == previousMonth.Value.Month && !x.IsDeleted);
 
             // A reading taken this month is a valid anchor for the closing
             // snapshot, but it still needs its own previous-month basis.

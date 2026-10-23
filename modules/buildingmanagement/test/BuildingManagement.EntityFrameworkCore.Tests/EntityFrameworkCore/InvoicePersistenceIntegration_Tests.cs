@@ -248,4 +248,44 @@ public sealed class InvoicePersistenceIntegration_Tests
         });
     }
 
+
+    [Fact]
+    public async Task INVDB05_Rejects_Two_Contracts_For_One_Room_Month()
+    {
+        var fixture = await SeedAsync();
+        var first = CreateDraft(fixture, Guid.NewGuid(), Guid.NewGuid());
+        await WithUnitOfWorkAsync(async () =>
+        {
+            await _invoices.InsertAsync(first, autoSave: true);
+        });
+
+        // Two different contract numbers are still the SAME physical room.
+        // Different meter source IDs bypass the global-source guard, so
+        // the room-month unique index must reject the second draft.
+        var otherContractId = Guid.NewGuid();
+        await WithUnitOfWorkAsync(async () =>
+        {
+            await _contracts.InsertAsync(new Contract(
+                otherContractId, "INV-ROOM-CONFLICT-" + Guid.NewGuid().ToString("N"),
+                fixture.RoomId, new DateTime(2026, 1, 1),
+                new DateTime(2027, 12, 31), 3_000_000m), autoSave: true);
+        });
+
+        var second = CreateDraft(
+            fixture, Guid.NewGuid(), Guid.NewGuid(), otherContractId);
+        var error = await Record.ExceptionAsync(async () =>
+        {
+            await WithUnitOfWorkAsync(async () =>
+            {
+                await _invoices.InsertAsync(second, autoSave: true);
+            });
+        });
+
+        Assert.NotNull(error);
+        Assert.Contains("UNIQUE", error.ToString(),
+            StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("BuildingManagementInvoices", error.ToString(),
+            StringComparison.OrdinalIgnoreCase);
+    }
+
 }

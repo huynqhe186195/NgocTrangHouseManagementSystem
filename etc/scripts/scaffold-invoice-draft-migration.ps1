@@ -30,10 +30,15 @@ if (@(Get-ChildItem -LiteralPath $migrationsDir -Filter "*_$migrationName*").Cou
     throw 'Aborted: this migration already exists. Review the existing migration instead.'
 }
 
-& dotnet ef --version
+$efVersionOutput = @(& dotnet ef --version)
 if ($LASTEXITCODE -ne 0) {
     throw 'The dotnet-ef tool is unavailable. Install/restore the compatible EF Core 10 CLI before retrying.'
 }
+$efVersionText = ($efVersionOutput -join ' ')
+if ($efVersionText -notmatch '(?:^|\s)10\.\d+(?:\.\d+)?(?:\s|$)') {
+    throw "Expected dotnet-ef version 10.x, got: $efVersionText"
+}
+Write-Host $efVersionText
 
 # The design-time DbContext factory sees only a non-routable dummy
 # PostgreSQL endpoint. The EF migrations add command does not apply schema.

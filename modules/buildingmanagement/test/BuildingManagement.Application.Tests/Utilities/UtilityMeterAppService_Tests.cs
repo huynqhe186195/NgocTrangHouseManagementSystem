@@ -1953,4 +1953,38 @@ public abstract class UtilityMeterAppService_Tests<TStartupModule>
         ex.Code.ShouldBe(BuildingManagementErrorCodes.ContractNotFound);
     }
 
+
+    [Fact]
+    public async Task ID05_One_Utility_Missing_Price_Makes_Total_Unavailable()
+    {
+        var room = await CreateRoomAsync();
+        var contractId = await CreateCandidateContractAsync(
+            room, new DateTime(2026, 1, 1));
+        var meter = await CreateMeterAsync(room, UtilityType.Electricity,
+            initialReading: 100m);
+        await _meterReadingAppService.CreateAsync(new CreateMeterReadingDto
+        {
+            UtilityMeterId = meter.Id, BillingYear = 2026, BillingMonth = 9,
+            CurrentReading = 100m, ReadingDate = new DateTime(2026, 9, 30)
+        });
+        await _meterReadingAppService.CreateAsync(new CreateMeterReadingDto
+        {
+            UtilityMeterId = meter.Id, BillingYear = 2026, BillingMonth = 10,
+            CurrentReading = 110m, ReadingDate = new DateTime(2026, 10, 31)
+        });
+        await CreateRateForRoomAsync(room, UtilityType.Electricity,
+            3500m, new DateTime(2026, 10, 1));
+
+        var candidate = await _invoiceDraftCandidates.GetMonthlyCandidateAsync(
+            contractId, 2026, 10);
+
+        candidate.UtilityLines.Single(x => x.UtilityType == UtilityType.Electricity)
+            .ProvisionalAmount.ShouldBe(35000m);
+        candidate.UtilityLines.Single(x => x.UtilityType == UtilityType.Water)
+            .ProvisionalAmount.ShouldBeNull();
+        candidate.Blockers.ShouldContain("Water:RateOrUsageNotReady");
+        candidate.ProvisionalTotal.ShouldBeNull();
+        candidate.CanIssue.ShouldBeFalse();
+    }
+
 }

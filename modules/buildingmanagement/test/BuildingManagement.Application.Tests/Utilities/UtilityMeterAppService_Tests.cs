@@ -1383,6 +1383,14 @@ public abstract class UtilityMeterAppService_Tests<TStartupModule>
         var roomId = await CreateRoomAsync();
         var meter = await CreateMeterAsync(roomId, UtilityType.Electricity,
             initialReading: 1000m);
+        // A previous-month anchor proves October is not silently charging
+        // consumption accumulated across several missing months.
+        await _meterReadingAppService.CreateAsync(new CreateMeterReadingDto
+        {
+            UtilityMeterId = meter.Id,
+            BillingYear = 2026, BillingMonth = 9,
+            CurrentReading = 1000m, ReadingDate = new DateTime(2026, 9, 30)
+        });
         await _meterReadingAppService.CreateAsync(new CreateMeterReadingDto
         {
             UtilityMeterId = meter.Id,
@@ -1464,7 +1472,7 @@ public abstract class UtilityMeterAppService_Tests<TStartupModule>
     }
 
     [Fact]
-    public async Task PR06_Zero_Recorded_Units_Is_Only_A_Provisional_Zero()
+    public async Task PR06_No_Meter_Is_Not_Assumed_To_Mean_Zero_Bill()
     {
         var roomId = await CreateRoomAsync();
         await CreateRateForRoomAsync(roomId, UtilityType.Water,
@@ -1475,8 +1483,10 @@ public abstract class UtilityMeterAppService_Tests<TStartupModule>
 
         preview.RateStatus.ShouldBe("SingleRateWholeMonth");
         preview.RecordedUsage.ShouldBe(0m);
-        preview.ProvisionalAmount.ShouldBe(0m);
+        preview.ProvisionalAmount.ShouldBeNull();
         preview.UsagePreview.Segments.ShouldBeEmpty();
+        preview.UsagePreview.IsSafeForProvisionalPricing.ShouldBeFalse();
+        preview.UsagePreview.CoverageIssues.ShouldContain("NoMeterForRoomAndUtility");
         preview.IsFinalInvoice.ShouldBeFalse();
     }
 
@@ -1487,6 +1497,11 @@ public abstract class UtilityMeterAppService_Tests<TStartupModule>
         var roomId = await CreateRoomAsync();
         var old = await CreateMeterAsync(roomId, UtilityType.Electricity,
             initialReading: 1000m);
+        await _meterReadingAppService.CreateAsync(new CreateMeterReadingDto
+        {
+            UtilityMeterId = old.Id, BillingYear = 2026, BillingMonth = 9,
+            CurrentReading = 1000m, ReadingDate = new DateTime(2026, 9, 30)
+        });
         await _meterReadingAppService.CreateAsync(new CreateMeterReadingDto
         {
             UtilityMeterId = old.Id, BillingYear = 2026, BillingMonth = 10,
@@ -1512,6 +1527,70 @@ public abstract class UtilityMeterAppService_Tests<TStartupModule>
         preview.ProvisionalAmount.ShouldBe(367500m);
         preview.UsagePreview.Segments.Count.ShouldBe(3);
         preview.IsFinalInvoice.ShouldBeFalse();
+    }
+
+
+    [Fact]
+    public async Task PR08_Missing_Previous_Month_Reading_Does_Not_Quote_MultiMonth_Usage()
+    {
+        var roomId = await CreateRoomAsync();
+        var meter = await CreateMeterAsync(roomId, UtilityType.Electricity,
+            initialReading: 1000m);
+        // No September reading: 150 units might cover Jan-Oct, not October.
+        await _meterReadingAppService.CreateAsync(new CreateMeterReadingDto
+        {
+            UtilityMeterId = meter.Id, BillingYear = 2026, BillingMonth = 10,
+            CurrentReading = 1150m, ReadingDate = new DateTime(2026, 10, 31)
+        });
+        await CreateRateForRoomAsync(roomId, UtilityType.Electricity, 3500m,
+            new DateTime(2026, 10, 1));
+
+        var preview = await _chargePreviewAppService.GetMonthlyChargePreviewAsync(
+            roomId, UtilityType.Electricity, 2026, 10);
+
+        preview.RecordedUsage.ShouldBe(150m);
+        preview.ProvisionalAmount.ShouldBeNull();
+        preview.UsagePreview.CoverageIssues.ShouldContain("MissingPreviousMonthReading");
+        preview.IsFinalInvoice.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task PR09_Reading_Date_Outside_Month_Requires_Cutoff_Policy()
+    {
+        var roomId = await CreateRoomAsync();
+        var meter = await CreateMeterAsync(roomId, UtilityType.Water,
+            initialReading: 0m);
+        await _meterReadingAppService.CreateAsync(new CreateMeterReadingDto
+        {
+            UtilityMeterId = meter.Id, BillingYear = 2026, BillingMonth = 10,
+            CurrentReading = 10m, ReadingDate = new DateTime(2026, 11, 1)
+        });
+        await CreateRateForRoomAsync(roomId, UtilityType.Water, 15000m,
+            new DateTime(2026, 10, 1));
+
+        var preview = await _chargePreviewAppService.GetMonthlyChargePreviewAsync(
+            roomId, UtilityType.Water, 2026, 10);
+
+        preview.RecordedUsage.ShouldBe(10m);
+        preview.ProvisionalAmount.ShouldBeNull();
+        preview.UsagePreview.CoverageIssues.ShouldContain("ReadingDateOutsideBillingMonth");
+    }
+
+    [Fact]
+    public async Task PR10_Active_Meter_Without_Monthly_Reading_Must_Not_Quote_Zero()
+    {
+        var roomId = await CreateRoomAsync();
+        await CreateMeterAsync(roomId, UtilityType.Electricity,
+            initialReading: 1000m);
+        await CreateRateForRoomAsync(roomId, UtilityType.Electricity, 3500m,
+            new DateTime(2026, 10, 1));
+
+        var preview = await _chargePreviewAppService.GetMonthlyChargePreviewAsync(
+            roomId, UtilityType.Electricity, 2026, 10);
+
+        preview.RecordedUsage.ShouldBe(0m);
+        preview.ProvisionalAmount.ShouldBeNull();
+        preview.UsagePreview.CoverageIssues.ShouldContain("ActiveMeterMissingMonthlyReading");
     }
 
 }

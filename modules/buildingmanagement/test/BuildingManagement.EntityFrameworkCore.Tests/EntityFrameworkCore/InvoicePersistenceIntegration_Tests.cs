@@ -194,17 +194,11 @@ public sealed class InvoicePersistenceIntegration_Tests
             await _invoices.InsertAsync(first, autoSave: true);
         });
 
-        var otherContractId = Guid.NewGuid();
-        await WithUnitOfWorkAsync(async () =>
-        {
-            await _contracts.InsertAsync(new Contract(
-                otherContractId, "INV-OTHER-" + Guid.NewGuid().ToString("N"),
-                fixture.RoomId, new DateTime(2026, 1, 1),
-                new DateTime(2027, 12, 31), 3_000_000m), autoSave: true);
-        });
-
+        // A different room + contract ensures this test exercises the
+        // global SOURCE uniqueness, not the new room-month constraint.
+        var separateRoom = await SeedAsync();
         var second = CreateDraft(
-            fixture, electricSource, Guid.NewGuid(), otherContractId);
+            separateRoom, electricSource, Guid.NewGuid());
         var failure = await Record.ExceptionAsync(async () =>
         {
             await WithUnitOfWorkAsync(async () =>

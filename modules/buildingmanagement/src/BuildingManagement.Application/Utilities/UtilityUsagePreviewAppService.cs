@@ -54,10 +54,6 @@ public class UtilityUsagePreviewAppService
         if (billingMonth is < 1 or > 12)
             throw new BusinessException(BuildingManagementErrorCodes.InvalidBillingMonth);
 
-        var firstDay = new DateTime(billingYear, billingMonth, 1);
-        var lastDay = new DateTime(
-            billingYear, billingMonth, DateTime.DaysInMonth(billingYear, billingMonth));
-
         List<UtilityMeter> meters;
         List<MeterReading> readings;
         List<MeterReplacement> replacements;
@@ -91,9 +87,7 @@ public class UtilityUsagePreviewAppService
             var replacementQuery = await _replacements.GetQueryableAsync();
             replacements = await AsyncExecuter.ToListAsync(
                 replacementQuery.Where(x => x.RoomId == roomId &&
-                                            x.UtilityType == utilityType &&
-                                            x.ReplacementDate >= firstDay &&
-                                            x.ReplacementDate <= lastDay));
+                                            x.UtilityType == utilityType));
         }
 
         MonthlyMeterUsageBreakdown result;

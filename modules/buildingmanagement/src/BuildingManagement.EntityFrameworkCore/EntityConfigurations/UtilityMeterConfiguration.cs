@@ -45,13 +45,18 @@ namespace BuildingManagement.EntityFrameworkCore.EntityConfigurations
             builder.HasIndex(x => x.MeterCode)
                 .IsUnique();
 
+            // At most one non-deleted ACTIVE meter per room and utility type.
+            // Database uniqueness also protects concurrent requests that pass
+            // an application-level AnyAsync() check at the same time.
             builder.HasIndex(
                 x => new
                 {
                     x.RoomId,
                     x.UtilityType
                 }
-            );
+            )
+                .IsUnique()
+                .HasFilter("\"IsActive\" = TRUE AND \"IsDeleted\" = FALSE");
 
             builder.HasOne<Room>()
                 .WithMany()

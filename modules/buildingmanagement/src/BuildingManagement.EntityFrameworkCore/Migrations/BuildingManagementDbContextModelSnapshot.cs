@@ -1189,7 +1189,9 @@ namespace BuildingManagement.Migrations
                     b.HasIndex("MeterCode")
                         .IsUnique();
 
-                    b.HasIndex("RoomId", "UtilityType");
+                    b.HasIndex("RoomId", "UtilityType")
+                        .IsUnique()
+                        .HasFilter("\"IsActive\" = TRUE AND \"IsDeleted\" = FALSE");
 
                     b.ToTable("BuildingManagementUtilityMeters", (string)null);
                 });

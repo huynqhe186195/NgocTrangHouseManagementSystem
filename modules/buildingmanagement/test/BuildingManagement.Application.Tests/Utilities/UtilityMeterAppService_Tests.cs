@@ -30,6 +30,9 @@ public abstract class UtilityMeterAppService_Tests<TStartupModule>
     private readonly IRoomAppService
     _roomAppService;
 
+    private readonly IMeterReadingAppService
+        _meterReadingAppService;
+
     protected UtilityMeterAppService_Tests()
     {
         _utilityMeterAppService =
@@ -46,6 +49,9 @@ public abstract class UtilityMeterAppService_Tests<TStartupModule>
 
         _roomAppService =
     GetRequiredService<IRoomAppService>();
+
+        _meterReadingAppService =
+            GetRequiredService<IMeterReadingAppService>();
     }
 
     private async Task<Guid> CreateRoomAsync()
@@ -829,4 +835,109 @@ public abstract class UtilityMeterAppService_Tests<TStartupModule>
             RoomStatus.Inactive
         );
     }
+
+    private async Task AddHistoricalReadingAsync(Guid meterId)
+    {
+        await _meterReadingAppService.CreateAsync(
+            new CreateMeterReadingDto
+            {
+                UtilityMeterId = meterId,
+                BillingYear = 2026,
+                BillingMonth = 10,
+                CurrentReading = 1200m,
+                ReadingDate = new DateTime(2026, 10, 31)
+            }
+        );
+    }
+
+    // Phase 2G.2A: the meter's opening reference must stay immutable
+    // once a reading has been recorded.
+    [Fact]
+    public async Task UM26_Should_Reject_InitialReading_Change_When_History_Exists()
+    {
+        var roomId = await CreateRoomAsync();
+        var meter = await CreateMeterAsync(
+            roomId, UtilityType.Electricity, initialReading: 1000m);
+        await AddHistoricalReadingAsync(meter.Id);
+
+        var error = await Assert.ThrowsAsync<BusinessException>(() =>
+            _utilityMeterAppService.UpdateAsync(meter.Id, new UpdateUtilityMeterDto
+            {
+                MeterCode = meter.MeterCode,
+                InitialReading = 900m,
+                InstalledDate = meter.InstalledDate
+            }));
+
+        error.Code.ShouldBe(
+            UtilityDataIntegrityErrorCodes.MeterIdentityLockedByReadings);
+        (await _utilityMeterAppService.GetAsync(meter.Id))
+            .InitialReading.ShouldBe(1000m);
+    }
+
+    [Fact]
+    public async Task UM27_Should_Reject_InstalledDate_Change_When_History_Exists()
+    {
+        var roomId = await CreateRoomAsync();
+        var meter = await CreateMeterAsync(
+            roomId, UtilityType.Electricity, initialReading: 1000m);
+        await AddHistoricalReadingAsync(meter.Id);
+
+        var error = await Assert.ThrowsAsync<BusinessException>(() =>
+            _utilityMeterAppService.UpdateAsync(meter.Id, new UpdateUtilityMeterDto
+            {
+                MeterCode = meter.MeterCode,
+                InitialReading = meter.InitialReading,
+                InstalledDate = meter.InstalledDate.AddDays(1)
+            }));
+
+        error.Code.ShouldBe(
+            UtilityDataIntegrityErrorCodes.MeterIdentityLockedByReadings);
+        (await _utilityMeterAppService.GetAsync(meter.Id))
+            .InstalledDate.ShouldBe(meter.InstalledDate);
+    }
+
+    [Fact]
+    public async Task UM28_Should_Reject_MeterCode_Change_When_History_Exists()
+    {
+        var roomId = await CreateRoomAsync();
+        var meter = await CreateMeterAsync(
+            roomId, UtilityType.Electricity, initialReading: 1000m);
+        await AddHistoricalReadingAsync(meter.Id);
+
+        var error = await Assert.ThrowsAsync<BusinessException>(() =>
+            _utilityMeterAppService.UpdateAsync(meter.Id, new UpdateUtilityMeterDto
+            {
+                MeterCode = NewMeterCode(),
+                InitialReading = meter.InitialReading,
+                InstalledDate = meter.InstalledDate
+            }));
+
+        error.Code.ShouldBe(
+            UtilityDataIntegrityErrorCodes.MeterIdentityLockedByReadings);
+        (await _utilityMeterAppService.GetAsync(meter.Id))
+            .MeterCode.ShouldBe(meter.MeterCode);
+    }
+
+    [Fact]
+    public async Task UM29_Should_Allow_Notes_Update_Without_Changing_History()
+    {
+        var roomId = await CreateRoomAsync();
+        var meter = await CreateMeterAsync(
+            roomId, UtilityType.Electricity, initialReading: 1000m);
+        await AddHistoricalReadingAsync(meter.Id);
+
+        var updated = await _utilityMeterAppService.UpdateAsync(
+            meter.Id, new UpdateUtilityMeterDto
+            {
+                MeterCode = meter.MeterCode,
+                InitialReading = meter.InitialReading,
+                InstalledDate = meter.InstalledDate,
+                Notes = "Maintenance observation"
+            });
+
+        updated.Notes.ShouldBe("Maintenance observation");
+        updated.InitialReading.ShouldBe(meter.InitialReading);
+        updated.MeterCode.ShouldBe(meter.MeterCode);
+    }
+
 }

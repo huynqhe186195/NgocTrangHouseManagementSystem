@@ -152,6 +152,16 @@ namespace BuildingManagement.Utilities
                 utilityMeter.Id
             );
 
+            // A meter with recorded consumption must retain its physical identity
+            // and the opening reference point. Corrections require a dedicated
+            // auditable workflow instead of rewriting existing history.
+            await EnsureMeterIdentityAndOpeningReadingNotChangedAsync(
+                utilityMeter,
+                meterCode,
+                input.InitialReading,
+                input.InstalledDate.Date
+            );
+
             utilityMeter.Update(
                 meterCode,
                 input.InitialReading,
@@ -252,6 +262,37 @@ namespace BuildingManagement.Utilities
             }
 
             return utilityMeter;
+        }
+
+        private async Task EnsureMeterIdentityAndOpeningReadingNotChangedAsync(
+            UtilityMeter utilityMeter,
+            string meterCode,
+            decimal initialReading,
+            DateTime installedDate)
+        {
+            if (utilityMeter.MeterCode == meterCode &&
+                utilityMeter.InitialReading == initialReading &&
+                utilityMeter.InstalledDate.Date == installedDate)
+            {
+                return;
+            }
+
+            // A soft-deleted reading is still part of the historical record.
+            // Disable the filter to avoid allowing accidental history rewrites.
+            bool hasReadingHistory;
+            using (_softDeleteFilter.Disable())
+            {
+                hasReadingHistory = await _meterReadingRepository.AnyAsync(
+                    reading => reading.UtilityMeterId == utilityMeter.Id
+                );
+            }
+
+            if (hasReadingHistory)
+            {
+                throw new BusinessException(
+                    UtilityDataIntegrityErrorCodes.MeterIdentityLockedByReadings
+                );
+            }
         }
 
         private async Task EnsureRoomExistsAsync(

@@ -99,6 +99,15 @@ Prior 2G.3A.1 preview tests passed on the user's workstation:
    exposed yet; existing preview routes need an authorization plan
    before tenant/public deployment.
 
+## Additional open data integrity gate
+
+The Invoice header has two independent foreign keys, ContractId and RoomId.
+They do not prove that the room belongs to the contract. Any future write
+service must derive the RoomId from the locked Contract in the same UoW.
+Likewise, polymorphic meter-source IDs must be verified against the
+correct physical reading/replacement record before insertion. Neither
+check is implemented by the current read-only draft schema.
+
 ## Test commands (repo root)
 
 ```powershell

@@ -1593,4 +1593,66 @@ public abstract class UtilityMeterAppService_Tests<TStartupModule>
         preview.UsagePreview.CoverageIssues.ShouldContain("ActiveMeterMissingMonthlyReading");
     }
 
+
+    [Fact]
+    public async Task PR11_Inactive_Meter_Now_Was_Active_In_Older_Month_Missing_Reading()
+    {
+        var roomId = await CreateRoomAsync();
+        var old = await CreateMeterAsync(roomId, UtilityType.Electricity,
+            initialReading: 1000m);
+        await _meterReadingAppService.CreateAsync(new CreateMeterReadingDto
+        {
+            UtilityMeterId = old.Id, BillingYear = 2026, BillingMonth = 9,
+            CurrentReading = 1000m, ReadingDate = new DateTime(2026, 9, 30)
+        });
+        // Replaced in November; October remains unrecorded.
+        // The historical meter must still be checked in October even though
+        // its IsActive flag is now false.
+        await _utilityMeterAppService.ReplaceAsync(
+            old.Id, NewReplacement(final: 1020m, opening: 0m,
+                date: new DateTime(2026, 11, 10)));
+        await CreateRateForRoomAsync(roomId, UtilityType.Electricity,
+            3500m, new DateTime(2026, 10, 1));
+
+        var preview = await _chargePreviewAppService.GetMonthlyChargePreviewAsync(
+            roomId, UtilityType.Electricity, 2026, 10);
+
+        preview.RecordedUsage.ShouldBe(0m);
+        preview.ProvisionalAmount.ShouldBeNull();
+        preview.UsagePreview.CoverageIssues
+            .ShouldContain("InactiveMeterPeriodUnverified");
+    }
+
+    [Fact]
+    public async Task PR12_Replaced_Before_Month_Does_Not_Require_Old_Meter_Reading()
+    {
+        var roomId = await CreateRoomAsync();
+        var old = await CreateMeterAsync(roomId, UtilityType.Water,
+            initialReading: 100m);
+        var replacement = await _utilityMeterAppService.ReplaceAsync(
+            old.Id, NewReplacement(final: 110m, opening: 0m,
+                date: new DateTime(2026, 9, 15)));
+        await _meterReadingAppService.CreateAsync(new CreateMeterReadingDto
+        {
+            UtilityMeterId = replacement.NewMeterId,
+            BillingYear = 2026, BillingMonth = 9,
+            CurrentReading = 5m, ReadingDate = new DateTime(2026, 9, 30)
+        });
+        await _meterReadingAppService.CreateAsync(new CreateMeterReadingDto
+        {
+            UtilityMeterId = replacement.NewMeterId,
+            BillingYear = 2026, BillingMonth = 10,
+            CurrentReading = 15m, ReadingDate = new DateTime(2026, 10, 31)
+        });
+        await CreateRateForRoomAsync(roomId, UtilityType.Water,
+            15000m, new DateTime(2026, 10, 1));
+
+        var preview = await _chargePreviewAppService.GetMonthlyChargePreviewAsync(
+            roomId, UtilityType.Water, 2026, 10);
+
+        preview.RecordedUsage.ShouldBe(10m);
+        preview.ProvisionalAmount.ShouldBe(150000m);
+        preview.UsagePreview.CoverageIssues.ShouldBeEmpty();
+    }
+
 }

@@ -3,6 +3,7 @@ using BuildingManagement.Contracts;
 using BuildingManagement.DepositSettlements;
 using BuildingManagement.Floors;
 using BuildingManagement.MoveOuts;
+using BuildingManagement.Invoices;
 using BuildingManagement.Payments;
 using BuildingManagement.RoomReservations;
 using BuildingManagement.Rooms;
@@ -37,6 +38,9 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
     public DbSet<DepositSettlement> DepositSettlements {get; set;} = default!;
     public DbSet<MoveOutRequest> MoveOutRequests { get; set; } = default!;
     public DbSet<MoveOutChecklistTask> MoveOutChecklistTasks { get; set; } = default!;
+    public DbSet<Invoice> Invoices { get; set; } = default!;
+    public DbSet<InvoiceItem> InvoiceItems { get; set; } = default!;
+    public DbSet<InvoiceItemMeterSource> InvoiceItemMeterSources { get; set; } = default!;
 
     public BuildingManagementDbContext(DbContextOptions<BuildingManagementDbContext> options)
         : base(options)
@@ -53,5 +57,12 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
         // Explicit mapping: survives differing module model-builder conventions.
         builder.ApplyConfiguration(
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.MeterReplacementConfiguration());
+        // Phase 2G.3A.2: draft-only invoice snapshot schema.
+        builder.ApplyConfiguration(
+            new BuildingManagement.EntityFrameworkCore.EntityConfigurations.InvoiceConfiguration());
+        builder.ApplyConfiguration(
+            new BuildingManagement.EntityFrameworkCore.EntityConfigurations.InvoiceItemConfiguration());
+        builder.ApplyConfiguration(
+            new BuildingManagement.EntityFrameworkCore.EntityConfigurations.InvoiceItemMeterSourceConfiguration());
     }
 }

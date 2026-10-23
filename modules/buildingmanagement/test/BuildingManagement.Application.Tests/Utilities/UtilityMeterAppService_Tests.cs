@@ -2008,4 +2008,84 @@ public abstract class UtilityMeterAppService_Tests<TStartupModule>
         candidate.CanIssue.ShouldBeFalse();
     }
 
+
+    [Fact]
+    public async Task ID07_Persists_Ready_Draft_From_Server_Meter_Sources()
+    {
+        var room = await CreateRoomAsync();
+        var contractId = await CreateCandidateContractAsync(
+            room, new DateTime(2026, 1, 1));
+        await SeedHealthyOctoberUsageAsync(room);
+
+        var stored = await _invoiceDraftStorage.CreateAsync(new CreateInvoiceDraftDto
+        {
+            ContractId = contractId,
+            BillingYear = 2026, BillingMonth = 10
+        });
+        var loaded = await _invoiceDraftStorage.GetAsync(stored.Id);
+
+        loaded.ContractId.ShouldBe(contractId);
+        loaded.RoomId.ShouldBe(room);
+        loaded.Status.ShouldBe(InvoiceStatus.Draft);
+        loaded.ProvisionalUtilityTotal.ShouldBe(110000m);
+        loaded.Items.Count.ShouldBe(2);
+        loaded.Items.Single(x => x.UtilityType == UtilityType.Electricity)
+            .ProvisionalAmount.ShouldBe(35000m);
+        loaded.Items.Single(x => x.UtilityType == UtilityType.Water)
+            .ProvisionalAmount.ShouldBe(75000m);
+        loaded.Items.All(x => x.Sources.Count == 1).ShouldBeTrue();
+        loaded.Items.All(x => x.Sources.All(z => z.SourceId != Guid.Empty)).ShouldBeTrue();
+        loaded.IsIssued.ShouldBeFalse();
+        loaded.HasRecognizedDebt.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task ID08_Rejects_Second_Stored_Draft_For_Same_Contract_Period()
+    {
+        var room = await CreateRoomAsync();
+        var contractId = await CreateCandidateContractAsync(
+            room, new DateTime(2026, 1, 1));
+        await SeedHealthyOctoberUsageAsync(room);
+        var input = new CreateInvoiceDraftDto
+        {
+            ContractId = contractId, BillingYear = 2026, BillingMonth = 10
+        };
+
+        await _invoiceDraftStorage.CreateAsync(input);
+        var error = await Assert.ThrowsAsync<BusinessException>(() =>
+            _invoiceDraftStorage.CreateAsync(input));
+
+        error.Code.ShouldBe(InvoiceDraftErrorCodes.AlreadyExists);
+    }
+
+    [Fact]
+    public async Task ID09_Rejects_Storage_When_Water_Has_No_Readings_Or_Rate()
+    {
+        var room = await CreateRoomAsync();
+        var contractId = await CreateCandidateContractAsync(
+            room, new DateTime(2026, 1, 1));
+        var meter = await CreateMeterAsync(
+            room, UtilityType.Electricity, initialReading: 100m);
+        await _meterReadingAppService.CreateAsync(new CreateMeterReadingDto
+        {
+            UtilityMeterId = meter.Id, BillingYear = 2026, BillingMonth = 9,
+            CurrentReading = 100m, ReadingDate = new DateTime(2026, 9, 30)
+        });
+        await _meterReadingAppService.CreateAsync(new CreateMeterReadingDto
+        {
+            UtilityMeterId = meter.Id, BillingYear = 2026, BillingMonth = 10,
+            CurrentReading = 120m, ReadingDate = new DateTime(2026, 10, 31)
+        });
+        await CreateRateForRoomAsync(room, UtilityType.Electricity,
+            3500m, new DateTime(2026, 10, 1));
+
+        var error = await Assert.ThrowsAsync<BusinessException>(() =>
+            _invoiceDraftStorage.CreateAsync(new CreateInvoiceDraftDto
+            {
+                ContractId = contractId, BillingYear = 2026, BillingMonth = 10
+            }));
+
+        error.Code.ShouldBe(InvoiceDraftErrorCodes.CandidateNotReady);
+    }
+
 }

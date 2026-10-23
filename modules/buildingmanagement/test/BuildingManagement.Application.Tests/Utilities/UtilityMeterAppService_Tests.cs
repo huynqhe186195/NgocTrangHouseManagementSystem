@@ -45,6 +45,7 @@ public abstract class UtilityMeterAppService_Tests<TStartupModule>
     private readonly IRepository<Contract, Guid> _contractRepository;
     private readonly IRepository<MoveOutRequest, Guid> _moveOutRepository;
     private readonly IInvoiceDraftCandidateAppService _invoiceDraftCandidates;
+    private readonly IInvoiceDraftStorageAppService _invoiceDraftStorage;
 
     protected UtilityMeterAppService_Tests()
     {
@@ -80,6 +81,7 @@ public abstract class UtilityMeterAppService_Tests<TStartupModule>
         _contractRepository = GetRequiredService<IRepository<Contract, Guid>>();
         _moveOutRepository = GetRequiredService<IRepository<MoveOutRequest, Guid>>();
         _invoiceDraftCandidates = GetRequiredService<IInvoiceDraftCandidateAppService>();
+        _invoiceDraftStorage = GetRequiredService<IInvoiceDraftStorageAppService>();
     }
 
     private async Task<Guid> CreateRoomAsync()

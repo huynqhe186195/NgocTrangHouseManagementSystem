@@ -1,6 +1,8 @@
 using BuildingManagement.Buildings;
 using BuildingManagement.Floors;
 using BuildingManagement.Rooms;
+using BuildingManagement.Contracts;
+using BuildingManagement.MoveOuts;
 using Shouldly;
 using System;
 using System.Linq;
@@ -38,6 +40,9 @@ public abstract class UtilityMeterAppService_Tests<TStartupModule>
     private readonly IUtilityUsagePreviewAppService _usagePreviewAppService;
     private readonly IUtilityChargePreviewAppService _chargePreviewAppService;
     private readonly IUtilityRateAppService _utilityRateAppService;
+    private readonly IMoveOutFinalMeterReadinessAppService _finalMeterReadinessAppService;
+    private readonly IRepository<Contract, Guid> _contractRepository;
+    private readonly IRepository<MoveOutRequest, Guid> _moveOutRepository;
 
     protected UtilityMeterAppService_Tests()
     {
@@ -67,6 +72,11 @@ public abstract class UtilityMeterAppService_Tests<TStartupModule>
 
         _utilityRateAppService =
             GetRequiredService<IUtilityRateAppService>();
+
+        _finalMeterReadinessAppService =
+            GetRequiredService<IMoveOutFinalMeterReadinessAppService>();
+        _contractRepository = GetRequiredService<IRepository<Contract, Guid>>();
+        _moveOutRepository = GetRequiredService<IRepository<MoveOutRequest, Guid>>();
     }
 
     private async Task<Guid> CreateRoomAsync()
@@ -1653,6 +1663,134 @@ public abstract class UtilityMeterAppService_Tests<TStartupModule>
         preview.RecordedUsage.ShouldBe(10m);
         preview.ProvisionalAmount.ShouldBe(150000m);
         preview.UsagePreview.CoverageIssues.ShouldBeEmpty();
+    }
+
+
+    private async Task<Guid> CreateMoveOutEvidenceFixtureAsync(
+        Guid roomId, bool approved)
+    {
+        var contractId = Guid.NewGuid();
+        var requestId = Guid.NewGuid();
+        await WithUnitOfWorkAsync(async () =>
+        {
+            // Direct fixture: readiness tests do not exercise the separate
+            // contract activation or move-out notice approval workflows.
+            var contract = new Contract(
+                contractId, $"METER-FINAL-{Guid.NewGuid():N}", roomId,
+                new DateTime(2026, 1, 1), new DateTime(2027, 12, 31),
+                3_000_000m);
+            contract.Activate();
+            await _contractRepository.InsertAsync(contract, autoSave: true);
+
+            var request = new MoveOutRequest(
+                requestId, contractId, roomId, new DateOnly(2026, 11, 30),
+                "Final meter evidence check");
+            if (approved)
+                request.Approve(new DateTime(2026, 10, 23), "Approved fixture");
+            await _moveOutRepository.InsertAsync(request, autoSave: true);
+        });
+        return requestId;
+    }
+
+    [Fact]
+    public async Task ME01_Pending_MoveOut_Does_Not_Admit_Final_Meter_Readings()
+    {
+        var roomId = await CreateRoomAsync();
+        var requestId = await CreateMoveOutEvidenceFixtureAsync(
+            roomId, approved: false);
+
+        var result = await _finalMeterReadinessAppService.GetAsync(requestId);
+
+        result.HasReadingEvidenceForBothUtilities.ShouldBeFalse();
+        result.IsFinalBillApproved.ShouldBeFalse();
+        result.Utilities.Count.ShouldBe(2);
+        result.Utilities.All(x => x.Status == "MoveOutNotApproved").ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task ME02_Both_Final_Readings_Present_Is_Still_Not_Bill_Approval()
+    {
+        var roomId = await CreateRoomAsync();
+        var electricity = await CreateMeterAsync(roomId, UtilityType.Electricity, initialReading: 1000m);
+        var water = await CreateMeterAsync(roomId, UtilityType.Water, initialReading: 100m);
+        foreach (var meter in new[] { electricity, water })
+        {
+            await _meterReadingAppService.CreateAsync(new CreateMeterReadingDto
+            {
+                UtilityMeterId = meter.Id, BillingYear = 2026, BillingMonth = 10,
+                CurrentReading = meter.InitialReading,
+                ReadingDate = new DateTime(2026, 10, 31)
+            });
+            await _meterReadingAppService.CreateAsync(new CreateMeterReadingDto
+            {
+                UtilityMeterId = meter.Id, BillingYear = 2026, BillingMonth = 11,
+                CurrentReading = meter.InitialReading + 20m,
+                ReadingDate = new DateTime(2026, 11, 30)
+            });
+        }
+        var requestId = await CreateMoveOutEvidenceFixtureAsync(
+            roomId, approved: true);
+
+        var result = await _finalMeterReadinessAppService.GetAsync(requestId);
+
+        result.HasReadingEvidenceForBothUtilities.ShouldBeTrue();
+        result.IsFinalBillApproved.ShouldBeFalse();
+        result.Utilities.All(x => x.Status == "ReadingEvidencePresent").ShouldBeTrue();
+        result.Utilities.All(x => x.MeterReadingId.HasValue).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task ME03_Missing_Water_Final_Read_Blocks_Evidence_Completeness()
+    {
+        var roomId = await CreateRoomAsync();
+        var electricity = await CreateMeterAsync(roomId, UtilityType.Electricity,
+            initialReading: 1000m);
+        await CreateMeterAsync(roomId, UtilityType.Water, initialReading: 100m);
+        await _meterReadingAppService.CreateAsync(new CreateMeterReadingDto
+        {
+            UtilityMeterId = electricity.Id, BillingYear = 2026, BillingMonth = 10,
+            CurrentReading = 1000m, ReadingDate = new DateTime(2026, 10, 31)
+        });
+        await _meterReadingAppService.CreateAsync(new CreateMeterReadingDto
+        {
+            UtilityMeterId = electricity.Id, BillingYear = 2026, BillingMonth = 11,
+            CurrentReading = 1010m, ReadingDate = new DateTime(2026, 11, 30)
+        });
+        var requestId = await CreateMoveOutEvidenceFixtureAsync(
+            roomId, approved: true);
+
+        var result = await _finalMeterReadinessAppService.GetAsync(requestId);
+
+        result.HasReadingEvidenceForBothUtilities.ShouldBeFalse();
+        result.IsFinalBillApproved.ShouldBeFalse();
+        result.Utilities.Single(x => x.UtilityType == UtilityType.Water)
+            .Status.ShouldBe("FinalReadingMissingOrWrongDate");
+    }
+
+    [Fact]
+    public async Task ME04_Reading_Day_Before_MoveOut_Is_Not_Final_Evidence()
+    {
+        var roomId = await CreateRoomAsync();
+        var meter = await CreateMeterAsync(roomId, UtilityType.Electricity,
+            initialReading: 100m);
+        await _meterReadingAppService.CreateAsync(new CreateMeterReadingDto
+        {
+            UtilityMeterId = meter.Id, BillingYear = 2026, BillingMonth = 10,
+            CurrentReading = 100m, ReadingDate = new DateTime(2026, 10, 31)
+        });
+        await _meterReadingAppService.CreateAsync(new CreateMeterReadingDto
+        {
+            UtilityMeterId = meter.Id, BillingYear = 2026, BillingMonth = 11,
+            CurrentReading = 110m, ReadingDate = new DateTime(2026, 11, 29)
+        });
+        var requestId = await CreateMoveOutEvidenceFixtureAsync(
+            roomId, approved: true);
+
+        var result = await _finalMeterReadinessAppService.GetAsync(requestId);
+
+        result.HasReadingEvidenceForBothUtilities.ShouldBeFalse();
+        result.Utilities.Single(x => x.UtilityType == UtilityType.Electricity)
+            .Status.ShouldBe("FinalReadingMissingOrWrongDate");
     }
 
 }

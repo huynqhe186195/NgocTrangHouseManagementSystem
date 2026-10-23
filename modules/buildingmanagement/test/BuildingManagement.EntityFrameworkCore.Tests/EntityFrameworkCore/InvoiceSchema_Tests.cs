@@ -32,6 +32,11 @@ public sealed class InvoiceSchema_Tests
                 new[] { "ContractId", "BillingYear", "BillingMonth" }));
         Assert.True(index.IsUnique);
         Assert.Equal("UX_BM_Invoice_Contract_Period", index.GetDatabaseName());
+        var roomPeriod = entity.GetIndexes().Single(x =>
+            x.Properties.Select(p => p.Name).SequenceEqual(
+                new[] { "RoomId", "BillingYear", "BillingMonth" }));
+        Assert.True(roomPeriod.IsUnique);
+        Assert.Equal("UX_BM_Invoice_Room_Period", roomPeriod.GetDatabaseName());
     }
 
     [Fact]

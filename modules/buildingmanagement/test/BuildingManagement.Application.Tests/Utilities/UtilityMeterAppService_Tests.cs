@@ -1987,4 +1987,23 @@ public abstract class UtilityMeterAppService_Tests<TStartupModule>
         candidate.CanIssue.ShouldBeFalse();
     }
 
+    [Fact]
+    public async Task ID06_Overlapping_Active_Contracts_Block_Room_Utility_Charges()
+    {
+        var room = await CreateRoomAsync();
+        var originalContract = await CreateCandidateContractAsync(
+            room, new DateTime(2026, 1, 1));
+        await CreateCandidateContractAsync(
+            room, new DateTime(2026, 10, 15));
+        await SeedHealthyOctoberUsageAsync(room);
+
+        var candidate = await _invoiceDraftCandidates.GetMonthlyCandidateAsync(
+            originalContract, 2026, 10);
+
+        candidate.Blockers.ShouldContain("OverlappingActiveContractInRoom");
+        candidate.ProvisionalTotal.ShouldBeNull();
+        candidate.UtilityLines.All(x => x.ProvisionalAmount is null).ShouldBeTrue();
+        candidate.CanIssue.ShouldBeFalse();
+    }
+
 }

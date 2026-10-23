@@ -147,18 +147,17 @@ public sealed class InvoiceDraftUtilityLineSnapshot
         if (issues.Any(string.IsNullOrWhiteSpace))
             throw new ArgumentException("Invalid coverage issue.", nameof(coverageIssues));
 
-        bool fullyPriced = provisionalAmount.HasValue;
-        if (fullyPriced)
+        if (provisionalAmount is decimal calculatedAmount)
         {
             if (issues.Length != 0 ||
                 rateStatus != "SingleRateWholeMonth" ||
                 utilityRateId.GetValueOrDefault() == Guid.Empty ||
-                !unitPrice.HasValue || unitPrice.Value <= 0 ||
-                provisionalAmount.Value != quantity * unitPrice.Value)
+                unitPrice is not decimal price || price <= 0 ||
+                calculatedAmount != quantity * price)
                 throw new ArgumentException(
                     "Provisional amount requires one covering rate, clean coverage and exact source quantity.");
         }
-        else if (unitPrice.HasValue && unitPrice.Value <= 0)
+        else if (unitPrice is decimal unpricedUnitPrice && unpricedUnitPrice <= 0)
             throw new ArgumentOutOfRangeException(nameof(unitPrice));
 
         UtilityType = utilityType;

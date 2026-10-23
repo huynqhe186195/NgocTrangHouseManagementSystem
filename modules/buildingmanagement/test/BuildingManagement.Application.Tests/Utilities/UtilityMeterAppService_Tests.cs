@@ -1816,4 +1816,29 @@ public abstract class UtilityMeterAppService_Tests<TStartupModule>
         preview.UsagePreview.CoverageIssues.ShouldContain("PeriodEndReadingNotVerified");
     }
 
+    [Fact]
+    public async Task PR14_Manual_Removal_Requires_Review_Before_Pricing()
+    {
+        var room = await CreateRoomAsync();
+        var meter = await CreateMeterAsync(room, UtilityType.Water, initialReading: 100m);
+        await _meterReadingAppService.CreateAsync(new CreateMeterReadingDto
+        {
+            UtilityMeterId = meter.Id, BillingYear = 2026, BillingMonth = 9,
+            CurrentReading = 100m, ReadingDate = new DateTime(2026, 9, 30)
+        });
+        await _meterReadingAppService.CreateAsync(new CreateMeterReadingDto
+        {
+            UtilityMeterId = meter.Id, BillingYear = 2026, BillingMonth = 10,
+            CurrentReading = 110m, ReadingDate = new DateTime(2026, 10, 31)
+        });
+        await _utilityMeterAppService.DeactivateAsync(meter.Id);
+        await CreateRateForRoomAsync(room, UtilityType.Water,
+            15000m, new DateTime(2026, 10, 1));
+        var preview = await _chargePreviewAppService.GetMonthlyChargePreviewAsync(
+            room, UtilityType.Water, 2026, 10);
+        preview.ProvisionalAmount.ShouldBeNull();
+        preview.UsagePreview.CoverageIssues
+            .ShouldContain("ManualMeterDeactivationRequiresReview");
+    }
+
 }

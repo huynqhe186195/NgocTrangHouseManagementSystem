@@ -3,6 +3,7 @@ using BuildingManagement.Floors;
 using BuildingManagement.Rooms;
 using BuildingManagement.Contracts;
 using BuildingManagement.MoveOuts;
+using BuildingManagement.Invoices;
 using Shouldly;
 using System;
 using System.Linq;
@@ -43,6 +44,7 @@ public abstract class UtilityMeterAppService_Tests<TStartupModule>
     private readonly IMoveOutFinalMeterReadinessAppService _finalMeterReadinessAppService;
     private readonly IRepository<Contract, Guid> _contractRepository;
     private readonly IRepository<MoveOutRequest, Guid> _moveOutRepository;
+    private readonly IInvoiceDraftCandidateAppService _invoiceDraftCandidates;
 
     protected UtilityMeterAppService_Tests()
     {
@@ -77,6 +79,7 @@ public abstract class UtilityMeterAppService_Tests<TStartupModule>
             GetRequiredService<IMoveOutFinalMeterReadinessAppService>();
         _contractRepository = GetRequiredService<IRepository<Contract, Guid>>();
         _moveOutRepository = GetRequiredService<IRepository<MoveOutRequest, Guid>>();
+        _invoiceDraftCandidates = GetRequiredService<IInvoiceDraftCandidateAppService>();
     }
 
     private async Task<Guid> CreateRoomAsync()

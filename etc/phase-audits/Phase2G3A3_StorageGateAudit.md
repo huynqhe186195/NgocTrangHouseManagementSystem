@@ -11,9 +11,8 @@ Mapperly RMG012 warnings; they are not resolved by this increment.
 ## Verified regression checkpoint
 
 The user confirmed **87/87 PASS**, build successful with four
-Mapperly RMG012 warnings, on 23/10/2026. This covers the seven new
-ID07-ID13 tests as well as the prior SQLite invoice tests. The latest
-business-audit repairs and new INVDB05-INVDB06 tests have NOT yet run.
+Mapperly RMG012 warnings, on 23/10/2026. Subsequent room-period uniqueness
+and immutable reading-source audit checks were also verified: **89/89 PASS**.
 
 ## New implementation (verified before latest audit repairs)
 
@@ -81,8 +80,9 @@ No new standalone domain or EF metadata test groups were added.
   used by isolated SQLite tests, but no PostgreSQL migration has been
   generated or run in production.
 
-The above two new tests, INVDB05 and INVDB06, are awaiting local .NET
-verification. Expected previous 87 + 2 = **89** selected tests.
+**Verified by the user on 23/10/2026:** the additional INVDB05 and
+INVDB06 tests passed. The selected regression suite reached **89/89 PASS**,
+with build success and four Mapperly RMG012 warnings.
 
 ## Remaining release blockers
 

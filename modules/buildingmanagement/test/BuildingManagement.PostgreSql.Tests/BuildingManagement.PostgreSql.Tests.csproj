@@ -11,6 +11,10 @@
          tests need no separate psql/pgAdmin setup after a model change. -->
     <EmbeddedResource Include="Phase2G2B1_TestSchema.sql"
                       LogicalName="Phase2G2B1_TestSchema.sql" />
+    <!-- The exact user-reviewed offline EF-generated SQL. Used ONLY in a
+         rollback-only, schema-isolated PostgreSQL smoke test. -->
+    <EmbeddedResource Include="..\..\..\..\etc\phase-audits\Phase2G3A4_InvoiceDraftSchema_Review.sql"
+                      LogicalName="Phase2G3A4_InvoiceDraftSchema_Review.sql" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />

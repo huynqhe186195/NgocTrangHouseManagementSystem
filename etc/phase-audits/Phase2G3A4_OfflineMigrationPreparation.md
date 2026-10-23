@@ -12,6 +12,26 @@
 - The internal service is still not an HTTP endpoint, and no issued
   invoice, debt, allocation or collection logic has been enabled.
 
+## Generated migration reviewed on 24/10/2026
+
+The user generated and pushed commit `ed8165e`:
+`20261023182226_Phase2G3A4_AddInvoiceDraftSnapshots`.
+Its `Up()` contains only three `CreateTable` operations with
+restrictive FKs, five unique indexes and two supporting FK indexes.
+Its `Down()` drops the invoice source, item and header tables in
+dependency order. The auto-generated Designer and current ModelSnapshot
+contain the three new entities. The user's offline EF Core CLI
+(`10.0.12`) reported no pending model changes.
+
+- **Migration schema review: PASS, subject to SQL/provider verification.**
+- **Not applied to PostgreSQL.** An EF schema diff alone does not prove
+  the generated SQL will execute on the user's isolated test database.
+- The new `UnitPrice` field uses `numeric(18,0)`, consistent with
+  the existing `UtilityRate` PostgreSQL mapping. The API previously
+  allowed fractional or out-of-range decimals, risking silent rounding
+  or DB failure. Create/update rate validation now rejects such input;
+  new UR19-UR20 tests must be run on the user's machine.
+
 ## What this change does
 
 The repository now provides:
@@ -59,6 +79,31 @@ git diff -- modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCor
 If the helper reports missing `dotnet ef`, stop and install/restore the
 EF Core 10 CLI using your project's approved tool setup. Do not switch
 to SQL manually.
+
+## Read-only PostgreSQL SQL preview
+
+After pulling the reviewed migration and the latest WIP scripts:
+
+```powershell
+git pull --ff-only origin wip/phase-2g2
+git status --short
+powershell -NoProfile -ExecutionPolicy Bypass -File .\etc\scripts\review-invoice-draft-migration-sql.ps1
+git status --short
+```
+
+The script uses the offline factory to render SQL **only for**
+`20261023103354_Phase2G2B1_AddMeterReplacements` to
+`20261023182226_Phase2G3A4_AddInvoiceDraftSnapshots`.
+It produces `etc/phase-audits/Phase2G3A4_InvoiceDraftSchema_Review.sql`,
+checks exactly three new tables, five expected unique indexes and no
+destructive commands. It does not connect to PostgreSQL or apply SQL.
+Review its output and the file content before considering a test DB.
+
+```powershell
+dotnet test .\modules\buildingmanagement\test\BuildingManagement.EntityFrameworkCore.Tests\BuildingManagement.EntityFrameworkCore.Tests.csproj --filter "FullyQualifiedName~UtilityRateAppService_Tests|FullyQualifiedName~InvoicePersistenceIntegration_Tests|FullyQualifiedName~InvoiceSchema_Tests|FullyQualifiedName~UtilityMeterAppService_Tests"
+```
+
+The two new tariff validation cases UR19-UR20 are not yet verified.
 
 ## Review gates before commit/deployment
 

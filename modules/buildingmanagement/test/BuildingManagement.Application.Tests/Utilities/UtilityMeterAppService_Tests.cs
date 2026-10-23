@@ -1183,4 +1183,36 @@ public abstract class UtilityMeterAppService_Tests<TStartupModule>
         (await _utilityMeterAppService.GetAsync(old.Id)).IsActive.ShouldBeTrue();
     }
 
+
+    [Fact]
+    public async Task RM14_Reject_Replacement_When_SoftDeleted_Reading_History_Exists()
+    {
+        var roomId = await CreateRoomAsync();
+        var old = await CreateMeterAsync(
+            roomId, UtilityType.Electricity, initialReading: 1000m);
+        var reading = await _meterReadingAppService.CreateAsync(new CreateMeterReadingDto
+        {
+            UtilityMeterId = old.Id,
+            BillingYear = 2026,
+            BillingMonth = 10,
+            CurrentReading = 1200m,
+            ReadingDate = new DateTime(2026, 10, 31)
+        });
+
+        // A deleted reading is still financial history. Replacement must not
+        // silently fall back to the physical meter's opening index.
+        var readings = GetRequiredService<IRepository<MeterReading, Guid>>();
+        await readings.DeleteAsync(reading.Id, autoSave: true);
+
+        var error = await Assert.ThrowsAsync<BusinessException>(() =>
+            _utilityMeterAppService.ReplaceAsync(
+                old.Id, NewReplacement(final: 1210m)));
+
+        error.Code.ShouldBe(
+            MeterReplacementErrorCodes.SoftDeletedHistoryRequiresReview);
+        (await _utilityMeterAppService.GetAsync(old.Id)).IsActive.ShouldBeTrue();
+        (await _utilityMeterAppService.GetReplacementsByRoomAsync(roomId))
+            .ShouldBeEmpty();
+    }
+
 }

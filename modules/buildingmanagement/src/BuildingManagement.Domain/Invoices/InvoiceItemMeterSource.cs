@@ -20,7 +20,7 @@ public sealed class InvoiceItemMeterSource : Entity<Guid>
     public decimal CurrentReading { get; private set; }
     public decimal Quantity => CurrentReading - PreviousReading;
 
-    protected InvoiceItemMeterSource() { }
+    private InvoiceItemMeterSource() { }
 
     internal InvoiceItemMeterSource(
         Guid id, Guid itemId, InvoiceDraftMeterSegmentSnapshot source)

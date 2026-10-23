@@ -171,6 +171,8 @@ public abstract class UtilityRateAppService_Tests<TStartupModule>
     [Theory]
     [InlineData(0)]
     [InlineData(-1)]
+    [InlineData(3500.5)]
+    [InlineData(1000000000000000000)]
     public async Task Should_Throw_When_UnitPrice_Is_Invalid(
         decimal unitPrice)
     {

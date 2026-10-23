@@ -21,7 +21,15 @@ Audited against *Business Process Specification — Phase 2G & 2H*, v1.0,
   charge or quotes multi-month consumption as one month's charge when the
   prior-period meter reading is missing. Reading-date/billing-month mismatch
   is reported for review pending an agreed cutoff policy. PR06/PR08-PR10
-  validate the new guards; these changes still require a fresh user test run.
+  validate the new guards; the user reported 59/59 passing on 23/10/2026.
+- **Audit repair, additional historical gap:** a meter may be inactive now
+  but have been the responsible physical meter during the month under review.
+  Do not treat `IsActive == false` as proof it needed no monthly reading in
+  the past. Use full replacement history to determine whether its outgoing
+  replacement happened before the billing month. If the meter may have been
+  in use but has neither a monthly reading nor a closing snapshot, add
+  `InactiveMeterPeriodUnverified` and suppress monetary estimates.
+  Regression tests PR11-PR12 added; new tests still require execution.
 
 ## Open / release-blocking business policy decisions
 

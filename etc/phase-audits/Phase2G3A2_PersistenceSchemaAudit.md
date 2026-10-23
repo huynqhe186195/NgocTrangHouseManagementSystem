@@ -44,7 +44,19 @@ Prior 2G.3A.1 preview tests passed on the user's workstation:
 - Rate ID is not the authority for historical invoicing; immutable
   unit-price and source counters are copied onto snapshot rows.
 
-## New checks (unverified until run on user's machine)
+## Checks and test status
+
+- **User verified:** on 23/10/2026, all 7/7 invoice persistence
+  domain tests and 75/75 schema + application tests passed.
+- **New follow-up checks, NOT YET RUN:** four actual SQLite persistence
+  tests `INVDB01-INVDB04` save/reload header, items and meter counter
+  evidence, enforce duplicate contract-period and global source-ID
+  uniqueness at the database, and prove modifying a UtilityRate does
+  not reprice a previously saved draft.
+- **New safety regression, NOT YET RUN:** `ID06` blocks quoting full
+  room-month charges when two Active contracts overlap the room-period.
+  Even an unexpected manually imported contract must not reassign an
+  entire month's utilities to multiple tenants.
 
 - Seven domain cases in `InvoiceDraftPersistence_Tests` for draft-only
   status, contract identity, preserved price/source, null instead of
@@ -52,8 +64,8 @@ Prior 2G.3A.1 preview tests passed on the user's workstation:
   outward collections.
 - Three EF metadata cases in `InvoiceSchema_Tests` for header period
   uniqueness, invoice-line/source indexes, and restrictive delete rules.
-- A full EF Core SQLite fixture build/test run is needed because new
-  entities have been registered in `BuildingManagementDbContext`.
+- EF Core model metadata was tested successfully, but the new roundtrip
+  SQLite persistence tests are still awaiting execution.
 
 ## Build verification and fixes
 
@@ -94,9 +106,11 @@ dotnet test .\modules\buildingmanagement\test\BuildingManagement.Domain.Tests\Bu
 
 dotnet test .\modules\buildingmanagement\test\BuildingManagement.EntityFrameworkCore.Tests\BuildingManagement.EntityFrameworkCore.Tests.csproj --filter "FullyQualifiedName~InvoiceSchema_Tests"
 
+dotnet test .\modules\buildingmanagement\test\BuildingManagement.EntityFrameworkCore.Tests\BuildingManagement.EntityFrameworkCore.Tests.csproj --filter "FullyQualifiedName~InvoicePersistenceIntegration_Tests"
+
 dotnet test .\modules\buildingmanagement\test\BuildingManagement.EntityFrameworkCore.Tests\BuildingManagement.EntityFrameworkCore.Tests.csproj --filter "FullyQualifiedName~UtilityMeterAppService_Tests"
 ```
 
 The two newly added groups should report 7 and 3 tests respectively;
-existing application tests should remain 72/72. The results are not
+existing application tests should now run 73/73 (ID06 added). The results are not
 assumed until the user runs them.

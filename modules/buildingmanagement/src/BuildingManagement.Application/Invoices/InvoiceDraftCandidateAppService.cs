@@ -69,7 +69,8 @@ public class InvoiceDraftCandidateAppService
         if (await _contracts.AnyAsync(x =>
                 x.Id != contract.Id &&
                 x.RoomId == contract.RoomId &&
-                x.Status == ContractStatus.Active &&
+                (x.Status == ContractStatus.Active ||
+                 (x.Status == ContractStatus.Ended && x.ActualEndedAt.HasValue)) &&
                 x.StartDate <= end &&
                 (!x.EndDate.HasValue || x.EndDate.Value >= start) &&
                 (!x.ActualEndedAt.HasValue || x.ActualEndedAt.Value >= start)))

@@ -33,9 +33,9 @@ payment allocation is introduced by this increment.
   67/67 EF Core app tests and 2/2 coverage domain tests passed.
   Earlier 7/7 final meter domain tests and 6/6 PostgreSQL PGUTIL00-05 passed.
 - Phase 2G.3A.1 added eight independent
-  `InvoiceDraftSnapshot_Tests` and four EF Core service tests
-  `ID01-ID04`: proper contract source attribution, missing/partial
-  occupancy safety, draft status and unknown contract.
+  `InvoiceDraftSnapshot_Tests` and five EF Core service tests
+  `ID01-ID05`: contract source attribution, partial occupancy,
+  draft status, unknown contract and one missing utility price.
 - The new tests still require execution on the user's .NET 10 machine.
 
 ## Still blocking actual draft persistence and invoice issuance

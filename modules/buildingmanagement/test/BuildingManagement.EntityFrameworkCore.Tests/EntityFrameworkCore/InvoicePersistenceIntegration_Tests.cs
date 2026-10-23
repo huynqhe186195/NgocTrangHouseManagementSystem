@@ -26,6 +26,7 @@ public sealed class InvoicePersistenceIntegration_Tests
     private readonly IRepository<Contract, Guid> _contracts;
     private readonly IRepository<UtilityRate, Guid> _rates;
     private readonly IRepository<UtilityMeter, Guid> _meters;
+    private readonly IRepository<MeterReading, Guid> _readings;
     private readonly IRepository<Invoice, Guid> _invoices;
 
     public InvoicePersistenceIntegration_Tests()
@@ -36,6 +37,7 @@ public sealed class InvoicePersistenceIntegration_Tests
         _contracts = GetRequiredService<IRepository<Contract, Guid>>();
         _rates = GetRequiredService<IRepository<UtilityRate, Guid>>();
         _meters = GetRequiredService<IRepository<UtilityMeter, Guid>>();
+        _readings = GetRequiredService<IRepository<MeterReading, Guid>>();
         _invoices = GetRequiredService<IRepository<Invoice, Guid>>();
     }
 

@@ -27,6 +27,13 @@ public sealed class InvoiceItemMeterSourceConfiguration
             x.InvoiceItemId, x.SourceType, x.SourceId
         }).IsUnique().HasDatabaseName("UX_BM_InvoiceSource_Item_Type_Source");
 
+        // A physical reading/replacement closing is a single accounting
+        // evidence source. Even a second draft from another contract cannot
+        // claim it. An eventual adjustment must reference an issued record,
+        // not bill the source a second time.
+        builder.HasIndex(x => new { x.SourceType, x.SourceId })
+            .IsUnique().HasDatabaseName("UX_BM_InvoiceSource_Global");
+
         builder.HasOne<UtilityMeter>().WithMany()
             .HasForeignKey(x => x.UtilityMeterId)
             .OnDelete(DeleteBehavior.Restrict);

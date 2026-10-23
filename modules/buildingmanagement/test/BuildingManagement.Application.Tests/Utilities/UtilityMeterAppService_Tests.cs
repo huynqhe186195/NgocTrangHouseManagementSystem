@@ -35,6 +35,8 @@ public abstract class UtilityMeterAppService_Tests<TStartupModule>
     private readonly IMeterReadingAppService
         _meterReadingAppService;
 
+    private readonly IUtilityUsagePreviewAppService _usagePreviewAppService;
+
     protected UtilityMeterAppService_Tests()
     {
         _utilityMeterAppService =
@@ -54,6 +56,9 @@ public abstract class UtilityMeterAppService_Tests<TStartupModule>
 
         _meterReadingAppService =
             GetRequiredService<IMeterReadingAppService>();
+
+        _usagePreviewAppService =
+            GetRequiredService<IUtilityUsagePreviewAppService>();
     }
 
     private async Task<Guid> CreateRoomAsync()
@@ -1213,6 +1218,137 @@ public abstract class UtilityMeterAppService_Tests<TStartupModule>
         (await _utilityMeterAppService.GetAsync(old.Id)).IsActive.ShouldBeTrue();
         (await _utilityMeterAppService.GetReplacementsByRoomAsync(roomId))
             .ShouldBeEmpty();
+    }
+
+
+    // Phase 2G.2B.2 - read-only preview built from actual repositories.
+    [Fact]
+    public async Task UP01_Preview_Combines_Recorded_Old_Closing_And_New_Usage()
+    {
+        var roomId = await CreateRoomAsync();
+        var old = await CreateMeterAsync(roomId, UtilityType.Electricity,
+            initialReading: 1000m);
+        await _meterReadingAppService.CreateAsync(new CreateMeterReadingDto
+        {
+            UtilityMeterId = old.Id, BillingYear = 2026, BillingMonth = 10,
+            CurrentReading = 1050m, ReadingDate = new DateTime(2026, 10, 19)
+        });
+        var replaced = await _utilityMeterAppService.ReplaceAsync(
+            old.Id, NewReplacement(final: 1100m, opening: 15m,
+                date: new DateTime(2026, 10, 20)));
+        await _meterReadingAppService.CreateAsync(new CreateMeterReadingDto
+        {
+            UtilityMeterId = replaced.NewMeterId, BillingYear = 2026, BillingMonth = 10,
+            CurrentReading = 20m, ReadingDate = new DateTime(2026, 10, 31)
+        });
+
+        var preview = await _usagePreviewAppService.GetMonthlyUsagePreviewAsync(
+            roomId, UtilityType.Electricity, 2026, 10);
+
+        preview.RoomId.ShouldBe(roomId);
+        preview.BillingMonth.ShouldBe(10);
+        preview.RecordedUsage.ShouldBe(105m);
+        preview.Segments.Count.ShouldBe(3);
+        preview.Segments.Count(x => x.SourceType == "ReplacementClosing")
+            .ShouldBe(1);
+        preview.Segments.Single(x => x.SourceType == "ReplacementClosing")
+            .SourceId.ShouldBe(replaced.Id);
+    }
+
+    [Fact]
+    public async Task UP02_Preview_Handles_Multiple_Replacements_In_Same_Billing_Month()
+    {
+        var roomId = await CreateRoomAsync();
+        var first = await CreateMeterAsync(roomId, UtilityType.Water,
+            initialReading: 1000m);
+        var ab = await _utilityMeterAppService.ReplaceAsync(first.Id,
+            NewReplacement(final: 1030m, opening: 10m,
+                date: new DateTime(2026, 10, 10)));
+        var bc = await _utilityMeterAppService.ReplaceAsync(ab.NewMeterId,
+            NewReplacement(final: 25m, opening: 2m,
+                date: new DateTime(2026, 10, 20)));
+        await _meterReadingAppService.CreateAsync(new CreateMeterReadingDto
+        {
+            UtilityMeterId = bc.NewMeterId, BillingYear = 2026, BillingMonth = 10,
+            CurrentReading = 7m, ReadingDate = new DateTime(2026, 10, 31)
+        });
+
+        var preview = await _usagePreviewAppService.GetMonthlyUsagePreviewAsync(
+            roomId, UtilityType.Water, 2026, 10);
+
+        preview.RecordedUsage.ShouldBe(50m);
+        preview.Segments.Count.ShouldBe(3);
+        preview.Segments.Count(x => x.SourceType == "ReplacementClosing")
+            .ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task UP03_Preview_Does_Not_Carry_Replacement_Into_Next_Billing_Month()
+    {
+        var roomId = await CreateRoomAsync();
+        var old = await CreateMeterAsync(roomId, UtilityType.Electricity,
+            initialReading: 100m);
+        var replacement = await _utilityMeterAppService.ReplaceAsync(
+            old.Id, NewReplacement(final: 105m, opening: 0m,
+                date: new DateTime(2026, 10, 20)));
+        await _meterReadingAppService.CreateAsync(new CreateMeterReadingDto
+        {
+            UtilityMeterId = replacement.NewMeterId,
+            BillingYear = 2026, BillingMonth = 11,
+            CurrentReading = 12m, ReadingDate = new DateTime(2026, 11, 30)
+        });
+
+        var october = await _usagePreviewAppService.GetMonthlyUsagePreviewAsync(
+            roomId, UtilityType.Electricity, 2026, 10);
+        var november = await _usagePreviewAppService.GetMonthlyUsagePreviewAsync(
+            roomId, UtilityType.Electricity, 2026, 11);
+
+        october.RecordedUsage.ShouldBe(5m);
+        november.RecordedUsage.ShouldBe(12m);
+        october.Segments.Single().SourceType.ShouldBe("ReplacementClosing");
+        november.Segments.Single().SourceType.ShouldBe("MonthlyReading");
+    }
+
+    [Fact]
+    public async Task UP04_Preview_Rejects_SoftDeleted_Monthly_Reading()
+    {
+        var roomId = await CreateRoomAsync();
+        var meter = await CreateMeterAsync(roomId, UtilityType.Electricity,
+            initialReading: 1000m);
+        var reading = await _meterReadingAppService.CreateAsync(new CreateMeterReadingDto
+        {
+            UtilityMeterId = meter.Id,
+            BillingYear = 2026, BillingMonth = 10,
+            CurrentReading = 1010m, ReadingDate = new DateTime(2026, 10, 31)
+        });
+        var repository = GetRequiredService<IRepository<MeterReading, Guid>>();
+        await repository.DeleteAsync(reading.Id, autoSave: true);
+
+        var error = await Assert.ThrowsAsync<BusinessException>(() =>
+            _usagePreviewAppService.GetMonthlyUsagePreviewAsync(
+                roomId, UtilityType.Electricity, 2026, 10));
+        error.Code.ShouldBe(UtilityUsagePreviewErrorCodes.HistoryRequiresReview);
+    }
+
+    [Fact]
+    public async Task UP05_Preview_Rejects_Unknown_Room()
+    {
+        var error = await Assert.ThrowsAsync<BusinessException>(() =>
+            _usagePreviewAppService.GetMonthlyUsagePreviewAsync(
+                Guid.NewGuid(), UtilityType.Water, 2026, 10));
+        error.Code.ShouldBe(BuildingManagementErrorCodes.RoomNotFound);
+    }
+
+    [Fact]
+    public async Task UP06_Preview_With_No_Readings_Has_Empty_Segments()
+    {
+        var roomId = await CreateRoomAsync();
+        await CreateMeterAsync(roomId, UtilityType.Water, initialReading: 100m);
+        var preview = await _usagePreviewAppService.GetMonthlyUsagePreviewAsync(
+            roomId, UtilityType.Water, 2026, 10);
+        preview.RecordedUsage.ShouldBe(0m);
+        preview.Segments.ShouldBeEmpty();
+        // RecordedUsage=0 here does not certify the meter period is complete.
     }
 
 }

@@ -2,6 +2,7 @@ using System;
 using System.Threading.Tasks;
 using BuildingManagement.Utilities;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Volo.Abp.DependencyInjection;
 using Volo.Abp.EntityFrameworkCore;
 
@@ -30,10 +31,24 @@ public sealed class EfCoreUtilityMeterLock : IUtilityMeterLock, ITransientDepend
             throw new InvalidOperationException(
                 "Physical meter mutations require a transactional unit of work.");
 
-        // Raw SELECT executed through the active EF transaction; row-level lock
-        // survives until the enclosing ABP UOW commits/rolls back.
-        await db.Database.ExecuteSqlInterpolatedAsync(
-            $@"SELECT ""Id"" FROM ""BuildingManagementUtilityMeters""
-                WHERE ""Id"" = {utilityMeterId} FOR UPDATE");
+        // SELECT FOR UPDATE returns a scalar. ExecuteSql* is intended for
+        // non-query statements; use the same EF connection and transaction
+        // with ExecuteScalarAsync to reliably acquire the PostgreSQL row lock.
+        await using var command = db.Database.GetDbConnection().CreateCommand();
+        command.Transaction = db.Database.CurrentTransaction.GetDbTransaction();
+        command.CommandText = """
+            SELECT "Id"
+            FROM "BuildingManagementUtilityMeters"
+            WHERE "Id" = @meterId
+            FOR UPDATE
+            """;
+
+        var meterIdParameter = command.CreateParameter();
+        meterIdParameter.ParameterName = "meterId";
+        meterIdParameter.Value = utilityMeterId;
+        command.Parameters.Add(meterIdParameter);
+
+        // The row lock stays held until the enclosing ABP UOW commits or rolls back.
+        await command.ExecuteScalarAsync();
     }
 }

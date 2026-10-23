@@ -29,14 +29,20 @@ Audited against *Business Process Specification — Phase 2G & 2H*, v1.0,
   replacement happened before the billing month. If the meter may have been
   in use but has neither a monthly reading nor a closing snapshot, add
   `InactiveMeterPeriodUnverified` and suppress monetary estimates.
-  Regression tests PR11-PR12 added; new tests still require execution.
+  Regression tests PR11-PR12 passed in the user's 61/61 run on 23/10/2026.
 
 ## Open / release-blocking business policy decisions
 
-1. **Final meter reading and handover** — source document requires a valid
-   final reading for Final Bill. There is no explicit FinalReading status,
-   handover evidence or read/approve command yet. Neither a usage preview
-   nor a monetary preview can stand in for that final approval.
+1. **Final meter reading and handover** — the document requires a final
+   counter reading for Final Bill. A new READ-ONLY preflight now links the
+   approved MoveOutRequest to physical meters and monthly reading evidence
+   on the approved move-out date, handles later physical replacements, and
+   checks usage coverage. It has a distinct
+   `HasReadingEvidenceForBothUtilities` flag and an explicit
+   `IsFinalBillApproved == false` guard. Domain cases and integration
+   checks ME01-ME04 have been added but still require a fresh test run.
+   A persisted handover sign-off, operator/tenant evidence, checklist
+   completion workflow, and final invoice authorization remain unimplemented.
 2. **Billing cutoff** — agreement needed on the billing month/date boundary,
    late meter reads, missed months, and incomplete/zero readings. The
    conservative coverage warning blocks provisional quotes in ambiguous
@@ -60,8 +66,8 @@ Audited against *Business Process Specification — Phase 2G & 2H*, v1.0,
 
 ## Gate to Phase 2G.3
 
-The Phase 2G.2 data and read-only previews can be used as an **input**
-to draft invoice modeling. Do not allow issuance, payment allocation,
+The Phase 2G.2 data and read-only previews (including the final-meter
+*evidence preflight*) can be used as an **input** to draft invoice modeling. Do not allow issuance, payment allocation,
 debt recognition or final move-out settlement until the open policies and
 invoice snapshot/approval guards are resolved.
 

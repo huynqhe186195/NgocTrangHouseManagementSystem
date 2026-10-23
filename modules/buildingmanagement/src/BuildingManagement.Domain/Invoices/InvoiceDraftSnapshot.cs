@@ -65,6 +65,14 @@ public sealed class InvoiceDraftSnapshot
             throw new ArgumentException("Duplicate utility type in draft snapshot.",
                 nameof(utilityLines));
 
+        // The same posted reading or handover snapshot cannot be attributed
+        // to two different utility charges in the same draft.
+        var sourceKeys = lines.SelectMany(x => x.MeterSegments)
+            .Select(x => (x.SourceType, x.SourceId)).ToArray();
+        if (sourceKeys.Distinct().Count() != sourceKeys.Length)
+            throw new ArgumentException("Meter source counted in multiple utility lines.",
+                nameof(utilityLines));
+
         // Make defensive copies of all source identifiers and counter ranges.
         // Future edits to DTOs or list objects cannot mutate this snapshot.
         var copies = lines.Select(x => x.Copy()).ToList().AsReadOnly();
@@ -124,6 +132,7 @@ public sealed class InvoiceDraftUtilityLineSnapshot
         if (segments.Any(x => x is null ||
                               x.SourceId == Guid.Empty ||
                               x.UtilityMeterId == Guid.Empty ||
+                              !Enum.IsDefined(typeof(MeterUsageSourceType), x.SourceType) ||
                               x.PreviousReading < 0 ||
                               x.CurrentReading < x.PreviousReading))
             throw new ArgumentException("Invalid meter segment snapshot.",

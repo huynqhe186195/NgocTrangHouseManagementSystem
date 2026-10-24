@@ -51,6 +51,31 @@ without connection strings, usernames or passwords. Then fix the
 identified cause and rerun the complete audit. The latest confirmed
 PostgreSQL success remains PGINV01 **1/1 PASS**; PGMIG01 is still open.
 
+## Third local run — PostgreSQL authentication failure (24/10/2026)
+
+The user supplied the complete detailed xUnit log. This time the .NET
+test project **compiled successfully**, but `PGMIG01` stopped in
+`NpgsqlConnection.OpenAsync()` with PostgreSQL SQLSTATE **28P01**
+(`password authentication failed`). The attempted username in the log
+was `postgre`; this may be a typo for the common `postgres` local
+role, but the actual test-role credentials must be confirmed locally.
+
+This failure occurred **before the scratch CREATE DATABASE operation**:
+no disposable test database or migration schema was created in this run.
+The failure is an environment/credential gate, not evidence of a broken
+migration chain. No connection string or password is stored here.
+
+Next step: securely retry with the **same valid local PostgreSQL test
+role** used for earlier successful PGINV01 runs. Prefer
+`Get-Credential -UserName 'postgres'` only if `postgres` really is the
+configured local role; otherwise enter the actual authorized test
+username. Do not paste credentials into GitHub or chat. A successful
+connection must still satisfy the existing `CREATEDB` permission
+preflight before scratch database creation.
+
+PGMIG01 still awaits its first authenticated execution; the separately
+verified PGINV01 remains **1/1 PASS**.
+
 ## What the new PGMIG01 test verifies
 
 This is the full sequence of migrations for

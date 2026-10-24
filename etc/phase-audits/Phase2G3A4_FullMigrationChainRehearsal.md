@@ -10,6 +10,21 @@
   invoice migration SQL preview, already manually audited.
 - No production or existing application database schema was modified.
 
+## First local run — compile-only blocker (24/10/2026)
+
+The user ran the isolated full-chain rehearsal with test credentials
+supplied through PowerShell's credential prompt. The build stopped at
+`FullInvoiceMigrationChainPostgreSql_Tests.cs:98` with **CS1061**:
+`DatabaseFacade.GetMigrationsAsync()` does not exist for the installed
+EF Core API. This was a test coding error rather than a database/migration
+failure. Changed it to the EF Core 10 supported synchronous API:
+`db.Database.GetMigrations().ToArray()`.
+
+All previous `109/109` application/SQLite checks and `PGINV01 1/1`
+rollback-only DDL test remain the latest independently confirmed passes.
+The updated `PGMIG01` has **not** been re-run. The failed compilation
+did not enter the test body or create a temporary database.
+
 ## What the new PGMIG01 test verifies
 
 This is the full sequence of migrations for

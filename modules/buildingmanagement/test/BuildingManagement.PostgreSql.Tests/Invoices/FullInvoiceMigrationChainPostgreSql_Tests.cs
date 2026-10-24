@@ -67,6 +67,7 @@ public sealed class FullInvoiceMigrationChainPostgreSql_Tests
         }
 
         var created = false;
+        var stage = "CREATE disposable local scratch database";
         try
         {
             // PostgreSQL CREATE DATABASE is not transactional; it creates
@@ -91,23 +92,29 @@ public sealed class FullInvoiceMigrationChainPostgreSql_Tests
                 .UseNpgsql(scratchOptions.ConnectionString)
                 .Options;
 
+            stage = "Initialize EF migration chain in scratch database";
             // Run actual EF migrations from the initial module baseline,
             // rather than EnsureCreated() or replay of a single invoice DDL.
             await using (var db = new BuildingManagementDbContext(dbOptions))
             {
+                stage = "Discover EF migrations in BuildingManagementDbContext";
                 var migrations = db.Database.GetMigrations().ToArray();
                 Assert.NotEmpty(migrations);
                 Assert.Equal(ExpectedLatestMigration, migrations[^1]);
 
+                stage = "Check initial EF migration history";
                 var before = (await db.Database.GetAppliedMigrationsAsync()).ToArray();
                 Assert.Empty(before);
 
+                stage = "Apply full EF migration chain";
                 await db.Database.MigrateAsync();
 
+                stage = "Verify all EF migrations were applied";
                 var applied = (await db.Database.GetAppliedMigrationsAsync()).ToArray();
                 Assert.Equal(migrations, applied);
                 Assert.Empty(await db.Database.GetPendingMigrationsAsync());
 
+                stage = "Repeat EF migration for idempotency";
                 // Repeat MigrateAsync to confirm an already fully migrated
                 // database requires no new DDL or duplicate version inserts.
                 await db.Database.MigrateAsync();
@@ -115,6 +122,7 @@ public sealed class FullInvoiceMigrationChainPostgreSql_Tests
                 Assert.Equal(migrations, second);
             }
 
+            stage = "Verify PostgreSQL invoice schema, indexes, constraints and extension";
             await using (var verification = new NpgsqlConnection(
                 scratchOptions.ConnectionString))
             {
@@ -174,6 +182,15 @@ public sealed class FullInvoiceMigrationChainPostgreSql_Tests
                         Convert.ToInt64(await extension.ExecuteScalarAsync()));
                 }
             }
+        }
+        catch (Exception ex)
+        {
+            var sqlState = ex is PostgresException pg
+                ? " (PostgreSQL SQLSTATE " + pg.SqlState + ")"
+                : string.Empty;
+            throw new InvalidOperationException(
+                "PGMIG01 failed at stage: " + stage + sqlState +
+                ". Inspect the inner exception for the actual cause.", ex);
         }
         finally
         {

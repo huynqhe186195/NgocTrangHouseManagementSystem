@@ -34,7 +34,11 @@ try {
     Write-Host 'Running isolated full EF migration chain test on LOCAL PostgreSQL.'
     Write-Host 'This temporarily creates a NEW randomly named test database and drops it.'
     Write-Host 'The existing integration test and application databases are not migrated.'
-    & dotnet test $project --filter 'FullyQualifiedName~FullInvoiceMigrationChainPostgreSql_Tests'
+    # Detailed console output shows the FIRST xUnit assertion / PostgreSQL
+    # exception, rather than only the final generic wrapper error.
+    & dotnet test $project `
+        --filter 'FullyQualifiedName~FullInvoiceMigrationChainPostgreSql_Tests' `
+        --logger 'console;verbosity=detailed'
     if ($LASTEXITCODE -ne 0) {
         throw 'Full migration rehearsal failed. Check the test log for safe cleanup status.'
     }

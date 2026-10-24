@@ -95,7 +95,7 @@ public sealed class FullInvoiceMigrationChainPostgreSql_Tests
             // rather than EnsureCreated() or replay of a single invoice DDL.
             await using (var db = new BuildingManagementDbContext(dbOptions))
             {
-                var migrations = (await db.Database.GetMigrationsAsync()).ToArray();
+                var migrations = db.Database.GetMigrations().ToArray();
                 Assert.NotEmpty(migrations);
                 Assert.Equal(ExpectedLatestMigration, migrations[^1]);
 

@@ -25,6 +25,32 @@ rollback-only DDL test remain the latest independently confirmed passes.
 The updated `PGMIG01` has **not** been re-run. The failed compilation
 did not enter the test body or create a temporary database.
 
+## Second local run — test failure, root error not supplied (24/10/2026)
+
+The user reported `PGMIG01` compiled and was discovered but ended
+**1 failed / 0 passed**. Only the overall test summary and outer
+PowerShell wrapper error were supplied. This is NOT proof that the
+migration chain itself failed: the exception may have occurred during
+privilege checking, migration application, assertions or scratch cleanup.
+The exact root cause and cleanup outcome cannot be determined from the
+summary alone.
+
+Added diagnostic improvements:
+- The launcher now uses the VSTest detailed console reporter to print
+  the underlying xUnit exception instead of only the final summary.
+- PGMIG01 records the current rehearsal stage and wraps the original
+  exception as its inner exception, preserving any PostgreSQL SQLSTATE.
+- The test still executes only on the explicitly opted-in, guarded
+  localhost integration-test connection; the new diagnostic code does
+  NOT change migration targets or database cleanup policy.
+
+After pulling, rerun through the existing credential-protected workflow.
+Share the **first** PGMIG01 exception block (`PGMIG01 failed at stage`,
+`Failed ...`, `PostgresException`, `SqlState` and relevant stack)
+without connection strings, usernames or passwords. Then fix the
+identified cause and rerun the complete audit. The latest confirmed
+PostgreSQL success remains PGINV01 **1/1 PASS**; PGMIG01 is still open.
+
 ## What the new PGMIG01 test verifies
 
 This is the full sequence of migrations for

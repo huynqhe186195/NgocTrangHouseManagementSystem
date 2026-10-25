@@ -173,7 +173,7 @@ public sealed class InvoiceDraftRevisionArchiveCodec_Tests
         var pack = InvoiceDraftRevisionArchiveCodec.Pack(archive);
         Assert.Equal(before, source.ProvisionalTotal);
         Assert.Equal(2, source.UtilityLines.Count);
-        Assert.Equal(archive.ArchivedRevision, 1);
+        Assert.Equal(1, archive.ArchivedRevision);
         Assert.NotEmpty(pack.EvidenceJson);
         Assert.Equal(64, pack.EvidenceSha256.Length);
     }

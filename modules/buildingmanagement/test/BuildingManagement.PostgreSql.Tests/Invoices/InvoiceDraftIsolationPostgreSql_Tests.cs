@@ -89,6 +89,25 @@ public sealed class InvoiceDraftIsolationPostgreSql_Tests
         Assert.Contains("RepeatableRead", error.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task PGINV08_ReadCommitted_Cannot_Preview_Draft_Rebuild()
+    {
+        using var scope = GetRequiredService<IServiceScopeFactory>().CreateScope();
+        var provider = scope.ServiceProvider;
+        using var outer = provider.GetRequiredService<IUnitOfWorkManager>().Begin(
+            new AbpUnitOfWorkOptions
+            {
+                IsTransactional = true,
+                IsolationLevel = IsolationLevel.ReadCommitted
+            }, requiresNew: true);
+
+        // Isolation guard rejects before touching invoice or utility tables.
+        var failure = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => provider.GetRequiredService<IInvoiceDraftStorageAppService>()
+                .PreviewRebuildAsync(Guid.NewGuid(), "Operator-verified correction"));
+        Assert.Contains("RepeatableRead", failure.Message, StringComparison.Ordinal);
+    }
+
     private static async Task InvokeDraftAsync(IServiceProvider provider, bool storage)
     {
         var unknownContractId = Guid.NewGuid();

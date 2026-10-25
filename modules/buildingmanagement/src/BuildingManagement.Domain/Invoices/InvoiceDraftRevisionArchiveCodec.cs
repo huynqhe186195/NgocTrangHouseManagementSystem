@@ -97,7 +97,8 @@ public static class InvoiceDraftRevisionArchiveCodec
             stored.UtilityLines.Length != 2 ||
             stored.UtilityLines.Any(x => x is null ||
                                          x.CoverageIssues is null ||
-                                         x.MeterSources is null))
+                                         x.MeterSources is null ||
+                                         x.MeterSources.Any(y => y is null)))
             throw new InvalidDataException("Unsupported or incomplete revision archive.");
 
         try
@@ -140,6 +141,10 @@ public static class InvoiceDraftRevisionArchiveCodec
         catch (OverflowException error)
         {
             throw new InvalidDataException("Revision archive amount overflow.", error);
+        }
+        catch (NullReferenceException error)
+        {
+            throw new InvalidDataException("Revision archive has missing fields.", error);
         }
     }
 

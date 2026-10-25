@@ -180,7 +180,21 @@ Already available and tested: in-memory old-draft
 read-only `InvoiceDraftRebuildPreflight`,
 read-only `PreviewRebuildAsync`, PostgreSQL isolation guard.
 
-New WIP under test: deterministic archive codec and roundtrip
-integrity checks (see `InvoiceDraftRevisionArchiveCodec_Tests`).
-This RFC does not add DbSets, EF configurations, migration classes
-or business mutation endpoints.
+Archive codec roundtrip and integrity tests have now been
+locally verified **18/18 PASS** together with the 9 evidence tests.
+
+**New staged model, pending local integration tests:** The WIP
+repository now includes an `InvoiceDraftRevisionRecord` Domain entity,
+`InvoiceDraftRevisionRecordConfiguration` mapping and
+`BuildingManagementDbContext.InvoiceDraftRevisions` DbSet, plus
+SQLite persistence scenarios INVDB11–13. This is an **EF model only**:
+no EF migration, no model-snapshot update, no PostgreSQL ledger table,
+no append-only trigger, and no mutating rebuild endpoint yet.
+The current invoice table/uniqueness remains unchanged, and
+`CurrentRevision` remains **proposed but unimplemented** until
+the final concurrency protocol is approved.
+
+Do not deploy this model to a database relying on historical
+revision queries until its approved migration is in place. Run the
+13-case isolated SQLite gate first, then generate the migration
+offline and inspect its SQL before any scratch PostgreSQL test.

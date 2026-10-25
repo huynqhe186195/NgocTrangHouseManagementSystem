@@ -49,6 +49,116 @@ new ARCH 9), **not yet verified as a combined run**. If the
 archive codec's compile/runtime cases fail, correct source first
 and do not proceed to live EF migrations.
 
+## Manual review of uploaded generated migration bundle — 25/10/2026
+
+User uploaded `Phase2G3A7_ReviewBundle.zip` containing the **four**
+local generated files, and the assistant read their actual contents:
+
+- `20261025150750_Phase2G3A7_AddInvoiceDraftRevisionLedger.cs`
+- `20261025150750_Phase2G3A7_AddInvoiceDraftRevisionLedger.Designer.cs`
+- `BuildingManagementDbContextModelSnapshot.cs`
+- `Phase2G3A7_RevisionLedger_Generated_Review.sql`
+
+### Verified structure
+
+- Generated `Up()` contains **one** `CreateTable` for
+  `BuildingManagementInvoiceDraftRevisions`, **one** unique
+  index `UX_BM_InvoiceDraftRevision_Invoice_Number`
+  on (`InvoiceId`, `ArchivedRevision`), restrictive invoice
+  FK and four basic `CHECK` constraints.
+- Offline SQL mirrors these additive objects; it does not alter
+  existing invoice, item, meter, rate or payment tables.
+- Designer and Model Snapshot contain matching model payloads,
+  with only EF-expected migration class/attribute differences.
+  The auto-shortened 63-character FK identifier ending in `~`
+  is a valid PostgreSQL identifier, not a typo.
+- SQL emitted includes an EF migrations history insert.
+  It is **not** idempotent and must **not** be executed on a
+  populated application database during review.
+
+### Required corrections before any rollout
+
+1. `Up()` lacks PostgreSQL UPDATE/DELETE protection for archived
+   evidence, and `TRUNCATE` requires a distinct statement trigger
+   because row triggers do not fire for TRUNCATE.
+2. `Down()` uses unconditional `DropTable`, which would
+   irreversibly destroy historical revisions. Require an empty-ledger
+   rollback guard; test on an isolated PostgreSQL scratch DB.
+3. The lower-case/64-character checksum CHECK is **not** sufficient
+   hexadecimal validation. Add PostgreSQL hex CHECK
+   `^[0-9a-f]{64}# Phase 2G.3A.7 — Stale draft correction, replacement and issuance policy audit
+
+**Date:** 2026-10-25  
+**Branch:** `wip/phase-2g2`  
+**Status:** OPEN / design gate only; no destructive draft commands, DB migrations or financial issuance enabled.
+
+## Next non-destructive persistence design slice — WIP (25/10/2026)
+
+Added `InvoiceDraftRevisionArchiveCodec` as **offline/in-memory**
+format foundation for historical revision evidence:
+
+- Explicit `FormatVersion=1` archive JSON includes
+  `InvoiceId`, original revision number, user GUID, UTC timestamp,
+  correction reason and complete previous utility-only snapshot.
+- Stable utility/source ordering and SHA-256 checksum over the exact
+  UTF-8 JSON bytes. Decoder verifies checksum and re-runs the
+  existing `InvoiceDraftRevisionEvidence.Capture` and domain
+  snapshot constraints, then rejects noncanonical JSON.
+- The checksum protects against accidental corruption when stored
+  and checked separately. **It is not cryptographic authentication
+  against a privileged actor who can rewrite both payload and hash.**
+- No EF entity/DbSet/migration/application endpoint, HTTP route,
+  current invoice mutation, PostgreSQL connection or issuance.
+
+Added **9 new unit tests** in
+`InvoiceDraftRevisionArchiveCodec_Tests` for roundtrip fidelity,
+deterministic ordering, corrupt/missing checksums,
+actor/reason scope, unsupported format, malformed JSON,
+noncanonical rehashed JSON and no mutation of old evidence.
+These new tests have **NOT yet run locally**.
+
+Created a separate review document:
+`etc/phase-audits/Phase2G3A7_RevisionLedger_MigrationRFC.md`.
+It specifies draft-only additive DDL, append-only ledger separation
+from active source uniqueness, CurrentRevision+ConcurrencyStamp,
+contract→invoice row-lock ordering, loser-aborts concurrent rebuild
+logic, transaction rollback guarantees and migration review gates.
+**SQL is illustrative and marked DO NOT RUN.**
+
+Next local unit command:
+
+```powershell
+git pull --ff-only origin wip/phase-2g2
+dotnet test .\modules\buildingmanagement\test\BuildingManagement.Domain.Tests\BuildingManagement.Domain.Tests.csproj --filter "FullyQualifiedName~InvoiceDraftRevisionEvidence_Tests|FullyQualifiedName~InvoiceDraftRevisionArchiveCodec_Tests"
+```
+
+Expected domain revision cases: **18/18** (previous REV 9 +
+new ARCH 9), **not yet verified as a combined run**. If the
+archive codec's compile/runtime cases fail, correct source first
+and do not proceed to live EF migrations.
+
+ as database-only defense in depth, acknowledging
+   that a rewrite of JSON *and* checksum by privileged personnel
+   still bypasses SHA-256's tamper detection.
+4. The approved future rebuild workflow still needs current
+   revision/stamp, transaction lock order, building-scoped
+   authorization, rollback-on-conflict and PostgreSQL concurrency
+   tests. This scaffold does **none** of those.
+5. The fifth compiler warning is still unidentified from the
+   supplied summary; capture full diagnostic lines.
+
+A separate **review-only C# patch** to the generated migration
+was produced in the current conversation, adding a regex check,
+row UPDATE/DELETE protection, statement-level TRUNCATE protection
+and a rollback empty-table guard. This patch is **not committed to
+GitHub**, because the generated files currently exist only in the
+user's Windows working tree. It is **uncompiled and untested on
+PostgreSQL**; it must be reviewed/recompiled before any scratch
+database test.
+
+**Status: migration structural review PASSED with blockers;
+production application and financial issuance remain BLOCKED.**
+
 ## Offline migration scaffold generated locally — 25/10/2026 (unreviewed)
 
 User confirmed working tree initially clean, checked out branch

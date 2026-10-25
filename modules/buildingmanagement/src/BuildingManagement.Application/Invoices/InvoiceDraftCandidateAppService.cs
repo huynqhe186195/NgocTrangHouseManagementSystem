@@ -38,7 +38,7 @@ public class InvoiceDraftCandidateAppService
     // Standalone internal previews also read usage and rates from
     // one PostgreSQL MVCC snapshot. Nested calls reuse their caller's
     // ambient UOW/isolation, so the storage UOW must match this level.
-    [UnitOfWork(IsTransactional = true, IsolationLevel = IsolationLevel.RepeatableRead)]
+    [UnitOfWork(true, IsolationLevel.RepeatableRead)]
     public virtual async Task<InvoiceDraftCandidateDto> GetMonthlyCandidateAsync(
         Guid contractId, int billingYear, int billingMonth)
     {

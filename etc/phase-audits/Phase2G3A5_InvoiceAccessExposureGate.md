@@ -1,5 +1,26 @@
 # Phase 2G.3A.5 — Invoice candidate HTTP exposure gate
 
+## Verified regression — 25/10/2026
+
+The user ran the new `InvoiceRemoteAccessGate_Tests` locally:
+
+```
+Test summary: total: 2, failed: 0, succeeded: 2, skipped: 0, duration: 4.9s
+Build succeeded with 4 warning(s) in 19.5s
+```
+
+**Invoice candidate/storage HTTP exposure regression: 2/2 PASS.**
+Both application-service classes are explicitly marked
+`[RemoteService(IsEnabled = false)]`. The four pre-existing tenant
+Mapperly RMG012 warnings remain. This is a static attribute test, NOT
+an HTTP host route-discovery test and NOT role/room authorization.
+
+**Phase 2G.3A.5 gate A (do not expose draft HTTP): COMPLETE.**
+Gate B (operator/building scope authorization) and Gate C (meter/rate
+concurrency reconciliation) are NOT complete and must not be silently
+treated as passing. The current project does not yet define dedicated
+invoice permissions in `BuildingManagementPermissionDefinitionProvider`.
+
 ## Starting baseline
 
 Phase 2G.3A.4 successfully completed: selected application/EF tests
@@ -25,7 +46,7 @@ inadvertently publish candidate information remotely while invoice
 storage remains internal. An internal read-only method is still a
 sensitive-data access path.
 
-## WIP hardening (not yet locally tested)
+## WIP hardening (verified attribute regression)
 
 - Marked the candidate application service itself
   `[RemoteService(IsEnabled = false)]`, matching invoice storage.
@@ -44,7 +65,7 @@ dotnet test .\modules\buildingmanagement\test\BuildingManagement.Application.Tes
 git status --short
 ```
 
-**Expected: 2/2 PASS (not yet executed).** Follow with the previously
+**Verified: 2/2 PASS (user report, 25/10/2026).** Follow with the previously
 selected 109-case regression suite for unchanged behavior.
 
 ## Still blocked

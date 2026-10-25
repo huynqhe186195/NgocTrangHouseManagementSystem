@@ -15,7 +15,11 @@ namespace BuildingManagement.Invoices;
 /// Phase 2G.3A.1: contract-bound, read-only invoice candidate.
 /// Never writes invoice/payment tables, never issues a bill, never
 /// allocates a room's whole-month usage across multiple tenants.
+/// Candidate details contain contract, room, usage and tariff information.
+/// Keep this service internal until scoped read permissions are established,
+/// consistent with the internal-only invoice draft storage service.
 /// </summary>
+[RemoteService(IsEnabled = false)]
 public class InvoiceDraftCandidateAppService
     : ApplicationService, IInvoiceDraftCandidateAppService
 {

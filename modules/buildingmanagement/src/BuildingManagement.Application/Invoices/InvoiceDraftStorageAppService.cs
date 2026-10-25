@@ -28,19 +28,22 @@ public class InvoiceDraftStorageAppService
     private readonly IRepository<InvoiceItem, Guid> _items;
     private readonly IRepository<InvoiceItemMeterSource, Guid> _sources;
     private readonly IInvoiceDraftCandidateAppService _candidates;
+    private readonly IInvoiceDraftReadIsolationGuard _isolationGuard;
 
     public InvoiceDraftStorageAppService(
         IContractRepository contractLocks,
         IRepository<Invoice, Guid> invoices,
         IRepository<InvoiceItem, Guid> items,
         IRepository<InvoiceItemMeterSource, Guid> sources,
-        IInvoiceDraftCandidateAppService candidates)
+        IInvoiceDraftCandidateAppService candidates,
+        IInvoiceDraftReadIsolationGuard isolationGuard)
     {
         _contractLocks = contractLocks;
         _invoices = invoices;
         _items = items;
         _sources = sources;
         _candidates = candidates;
+        _isolationGuard = isolationGuard;
     }
 
     // PostgreSQL REPEATABLE READ holds one MVCC snapshot across contract,
@@ -58,6 +61,10 @@ public class InvoiceDraftStorageAppService
             throw new BusinessException(BuildingManagementErrorCodes.InvalidBillingYear);
         if (input.BillingMonth is < 1 or > 12)
             throw new BusinessException(BuildingManagementErrorCodes.InvalidBillingMonth);
+
+        // Fail closed if a caller provided an ambient READ COMMITTED UOW.
+        // An attribute on this method cannot override an outer transaction.
+        await _isolationGuard.RequireRepeatableReadAsync();
 
         // Shared PostgreSQL row lock: same ordering as the existing
         // contract/move-out mutators. Only after locking do we read

@@ -90,6 +90,39 @@ public sealed class InvoicePersistenceIntegration_Tests
             waterRateId, electricityMeterId, waterMeterId);
     }
 
+    private async Task<(Fixture Data, Guid ElectricityReading)> SeedReadyOctoberAsync()
+    {
+        var f = await SeedAsync();
+        var electricityReadingId = Guid.NewGuid();
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var contract = await _contracts.GetAsync(f.ContractId);
+            contract.Activate();
+            await _contracts.UpdateAsync(contract, autoSave: true);
+
+            // The physical meters were installed in January, so
+            // September closes the prior-month coverage requirement.
+            await _readings.InsertAsync(new MeterReading(
+                Guid.NewGuid(), f.ElectricityMeterId,
+                2026, 9, 10m, 10m, new DateTime(2026, 9, 30)),
+                autoSave: true);
+            await _readings.InsertAsync(new MeterReading(
+                Guid.NewGuid(), f.WaterMeterId,
+                2026, 9, 100m, 100m, new DateTime(2026, 9, 30)),
+                autoSave: true);
+
+            await _readings.InsertAsync(new MeterReading(
+                electricityReadingId, f.ElectricityMeterId,
+                2026, 10, 10m, 20m, new DateTime(2026, 10, 31)),
+                autoSave: true);
+            await _readings.InsertAsync(new MeterReading(
+                Guid.NewGuid(), f.WaterMeterId,
+                2026, 10, 100m, 105m, new DateTime(2026, 10, 31)),
+                autoSave: true);
+        });
+        return (f, electricityReadingId);
+    }
+
     private static Invoice CreateDraft(Fixture f,
         Guid electricityReadingId, Guid waterReadingId,
         Guid? contractId = null)
@@ -332,6 +365,67 @@ public sealed class InvoicePersistenceIntegration_Tests
             Assert.Equal(3500m, electric.UnitPrice);
             Assert.Equal(35000m, electric.ProvisionalAmount);
         });
+    }
+
+    [Fact]
+    public async Task INVDB07_Internal_Freshness_Service_Accepts_Unchanged_Draft_Then_Flags_Rate_Edit()
+    {
+        var (fixture, _) = await SeedReadyOctoberAsync();
+        var drafts = GetRequiredService<IInvoiceDraftStorageAppService>();
+        var saved = await drafts.CreateAsync(new CreateInvoiceDraftDto
+        {
+            ContractId = fixture.ContractId,
+            BillingYear = 2026,
+            BillingMonth = 10
+        });
+
+        Assert.Equal(110000m, saved.ProvisionalUtilityTotal);
+        Assert.True(await drafts.HasCurrentSourceSnapshotAsync(saved.Id));
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var rate = await _rates.GetAsync(fixture.ElectricityRateId);
+            rate.Update(rate.BuildingId, rate.UtilityType, 7000m,
+                rate.EffectiveFrom, rate.EffectiveTo, rate.Notes);
+            await _rates.UpdateAsync(rate, autoSave: true);
+        });
+
+        Assert.False(await drafts.HasCurrentSourceSnapshotAsync(saved.Id));
+        var stored = await drafts.GetAsync(saved.Id);
+        Assert.Equal(3500m, stored.Items.Single(x =>
+            x.UtilityType == UtilityType.Electricity).UnitPrice);
+        Assert.Equal(110000m, stored.ProvisionalUtilityTotal);
+        Assert.False(stored.IsIssued);
+        Assert.False(stored.HasRecognizedDebt);
+    }
+
+    [Fact]
+    public async Task INVDB08_Internal_Freshness_Service_Flags_Edited_Meter_Reading()
+    {
+        var (fixture, electricityReadingId) = await SeedReadyOctoberAsync();
+        var drafts = GetRequiredService<IInvoiceDraftStorageAppService>();
+        var saved = await drafts.CreateAsync(new CreateInvoiceDraftDto
+        {
+            ContractId = fixture.ContractId,
+            BillingYear = 2026,
+            BillingMonth = 10
+        });
+        Assert.True(await drafts.HasCurrentSourceSnapshotAsync(saved.Id));
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var reading = await _readings.GetAsync(electricityReadingId);
+            reading.Update(30m, new DateTime(2026, 10, 31), "corrected");
+            await _readings.UpdateAsync(reading, autoSave: true);
+        });
+
+        Assert.False(await drafts.HasCurrentSourceSnapshotAsync(saved.Id));
+        var stored = await drafts.GetAsync(saved.Id);
+        var electric = stored.Items.Single(x =>
+            x.UtilityType == UtilityType.Electricity);
+        Assert.Equal(10m, electric.Quantity);
+        Assert.Equal(35000m, electric.ProvisionalAmount);
+        Assert.False(stored.IsIssued);
     }
 
 }

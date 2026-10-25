@@ -175,6 +175,50 @@ replacement or tariff update racing against a real draft capture
 has yet been supplied; that remains OPEN. The previous 109/109
 regression result predates the runtime guard implementation.
 
+## New real-source overlapping-transaction test PGINV04 (WIP)
+
+Added `InvoiceDraftConcurrentSnapshotPostgreSql_Tests` with a deterministic
+real `InvoiceDraftCandidateAppService` read across a PostgreSQL
+concurrent commit. **Not yet executed locally.**
+
+Test design (localhost `ngoctrang_integration_test` ONLY):
+
+1. Seed a *new GUID-isolated test building/floor/room/active contract*,
+   electricity/water meters, month-end readings and valid whole-month
+   utility tariffs. No invoice is persisted or issued.
+2. Open an explicit ABP `RepeatableRead` transaction and fix its
+   PostgreSQL snapshot by reading the test contract.
+3. While that transaction remains open, commit updates to **both**
+   meter readings and tariff prices from an independent Npgsql
+   transaction, restricted by the exact generated test row IDs.
+4. Call the **actual invoice candidate service** under the first UOW:
+   assert it sees the **old, internally consistent** meter and rate
+   values, provisional line totals and overall total, not a mixture.
+5. In a new scope/UOW, call the same service again and assert it
+   sees the **new, internally consistent** data.
+6. Hard-delete only this test's generated IDs in explicit
+   children-before-parents order in a `finally` block.
+
+The writer uses guarded test-only SQL rather than application-level
+utility mutator methods. Thus this is a **deterministic PostgreSQL
+snapshot/ABP service integration check**, not yet a direct test of
+all business mutator code paths, meter replacement, or draft
+persistence under concurrent edits. These still need coverage.
+
+Script `etc/scripts/test-full-invoice-from-local-env.ps1` preserves
+original `Migration` and `Isolation` modes and now adds
+`-Scenario Concurrency` to launch just PGINV04 through the
+existing local `.env` credentials and branch/clean-worktree guard:
+
+```powershell
+git pull --ff-only origin wip/phase-2g2
+powershell -NoProfile -ExecutionPolicy Bypass -File .\etc\scripts\test-full-invoice-from-local-env.ps1 -Scenario Concurrency
+```
+
+**Expected PGINV04: 1/1 PASS (NOT YET VERIFIED).**
+Review the full exception if compilation, assertion or cleanup fails
+before adding further concurrency scenarios.
+
 ## Critical concurrency exposure — fail closed before financial issuance
 
 Repository read on current WIP:

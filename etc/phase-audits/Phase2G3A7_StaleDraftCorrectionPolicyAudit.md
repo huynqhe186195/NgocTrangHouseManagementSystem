@@ -4,6 +4,106 @@
 **Branch:** `wip/phase-2g2`  
 **Status:** OPEN / design gate only; no destructive draft commands, DB migrations or financial issuance enabled.
 
+## Phase 2G.3A.7 read-only rebuild preflight — implementation slice (WIP)
+
+The earlier versioned-draft recommendation has been implemented **ONLY
+as non-mutating preflight and internal preview**, not as an approved
+rebuild, cancel, issuance or receivable transaction:
+
+- Added `InvoiceDraftRebuildPreflight.Assess(saved, current, reason)`
+  in the Application layer, with a result DTO and enum in
+  Application.Contracts. This code rebuilds **in-memory evidence**
+  using the existing `InvoiceDraftSnapshot.Capture` domain
+  invariants and checks the existing saved draft before considering
+  a new candidate. No tables are read or written by the pure helper.
+- A stored invoice must have status Draft, exactly one electricity
+  and one water line, consistent totals and original meter evidence.
+  A malformed/ambiguous old draft is rejected rather than silently
+  overwritten.
+- A fresh candidate must belong to the **same contract, room and
+  billing month**, with all rates, source identity, counter ranges,
+  dates, amount arithmetic and coverage complete. Missing history,
+  price or readings blocks preflight; changing a source ID even with
+  the same amount is recognized as needing a revision.
+- `AlreadyCurrent` is returned for an unchanged draft. A stale
+  candidate requires an explicit operator reason of 8–500
+  characters, trimmed before reporting.
+- `ReadyForRevisionDesign` carries only proposed total and
+  normalized reason. **It is not a durable authorization, a new
+  invoice, or permission to mutate any existing row.**
+- Exposed `PreviewRebuildAsync(id, reason)` solely through the
+  existing **internal-only** `IInvoiceDraftStorageAppService`.
+  The ABP root UOW is `RepeatableRead`; the same actual PostgreSQL
+  isolation guard protects an ambient transaction from bypassing it.
+  Saved evidence is retrieved and the current candidate rebuilt
+  within this single read snapshot. Expected business-history
+  blockers become `CurrentCandidateNotReady`; infrastructure
+  errors still propagate.
+- **No remote API, invoice status transition, billing, payment,
+  schema migration, direct SQL or production database actions**.
+
+### New tests added — NOT YET RUN
+
+- `InvoiceDraftRebuildPreflight_Tests`: **14** xUnit cases,
+  including ready/unchanged, reason validation, wrong scope,
+  incomplete source history, tampered saved draft, invalid status,
+  same-amount/different provenance, duplicates and bad counters.
+- `InvoicePersistenceIntegration_Tests`: **INVDB09/10**,
+  exercising actual SQLite internal preview after tariff correction
+  and fail-closed response to a soft-deleted reading, without
+  changing the previously persisted invoice.
+- `InvoiceDraftIsolationGate_Tests`: one additional attribute
+  case for the new `PreviewRebuildAsync`.
+- `InvoiceDraftIsolationPostgreSql_Tests`: **PGINV08**
+  rejects a preexisting ambient READ COMMITTED UOW before
+  touching any invoice row.
+
+Narrow expected counts (in **separate test assemblies**):
+
+```powershell
+git pull --ff-only origin wip/phase-2g2
+
+dotnet test .\modules\buildingmanagement\test\BuildingManagement.Application.Tests\BuildingManagement.Application.Tests.csproj --filter "FullyQualifiedName~InvoiceDraftRebuildPreflight_Tests|FullyQualifiedName~InvoiceDraftFreshnessEvaluator_Tests|FullyQualifiedName~InvoiceDraftIsolationGate_Tests|FullyQualifiedName~InvoiceRemoteAccessGate_Tests"
+
+dotnet test .\modules\buildingmanagement\test\BuildingManagement.EntityFrameworkCore.Tests\BuildingManagement.EntityFrameworkCore.Tests.csproj --filter "FullyQualifiedName~InvoicePersistenceIntegration_Tests"
+
+powershell -NoProfile -ExecutionPolicy Bypass -File .\etc\scripts\test-full-invoice-from-local-env.ps1 -Scenario Isolation
+```
+
+Expected counts: Application **30/30** (14+10+4+2);
+EF Core **10/10**; PostgreSQL isolation **6/6**.
+These are goals, **not reported PASS**. Verify on the user's
+Windows .NET 10 environment; no .NET SDK is available in the
+assistant's current runtime for local compilation.
+
+### Safe migration architecture (review before any DDL)
+
+Keep the logical invoice ID and the two nonfiltered room/month and
+contract/month uniqueness constraints. Keep the global **active**
+source attribution uniqueness. For a future approved
+`RebuildDraft` operation, add a new append-only revision ledger
+containing the complete *previous* snapshot: immutable rate,
+source ID/type, physical meter ID, dates, old/new counters, line
+and total money, reason, revision number, UTC timestamp, actor ID
+and linkage to the same invoice ID. The archived evidence must be
+decoupled from the current-source uniqueness index but cannot claim
+another charge.
+
+In a single authorization-checked `RepeatableRead` or stricter
+transaction: follow the existing contract→invoice row lock order;
+validate expected revision/concurrency stamp; reconstruct the latest
+candidate; re-run the preflight; append old evidence; atomically
+replace only active draft line/source rows with new evidence; update
+revision number; and commit or roll back everything. Design the
+EF Core delete/insert order and indexes carefully to avoid source
+uniqueness conflicts and false source reuse. Two simultaneous
+rebuilds must not both commit.
+
+**No schema was created and no mutating rebuild was added.**
+Review migration/backfill and test on a disposable scratch DB
+before touching any populated app DB. Never implement a blind
+hard-delete or soft-delete bypass of invoice uniqueness.
+
 ## Latest unfiltered regression report — 2026-10-25
 
 The user provided one unfiltered .NET 10 test-run summary after being

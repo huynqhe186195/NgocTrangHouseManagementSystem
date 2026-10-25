@@ -49,6 +49,54 @@ new ARCH 9), **not yet verified as a combined run**. If the
 archive codec's compile/runtime cases fail, correct source first
 and do not proceed to live EF migrations.
 
+## Local patched migration build + offline SQL generation — 25/10/2026
+
+The user manually replaced only the locally generated
+`20261025150750_Phase2G3A7_AddInvoiceDraftRevisionLedger.cs`
+with a reviewed-but-unverified protection patch, while saving
+`OriginalMigration.cs` in their temporary local backup folder.
+
+A first command line encountered a transient `dotnet` command
+recognition error (`^Bdotnet` pasted); the next identical build
+succeeded:
+
+```
+dotnet build BuildingManagement.EntityFrameworkCore.Tests.csproj
+  --no-restore -t:Rebuild -v minimal
+Build succeeded with 5 warning(s) in 16.0s
+```
+
+**All five compiler warning sources are now identified:**
+
+- Four pre-existing Mapperly `RMG012` warnings on
+  `TenantDto.CreatorUserId/LastModifierUserId`.
+- One `xUnit2000` in
+  `InvoiceDraftRevisionArchiveCodec_Tests.cs:176`
+  (`ARCH09`), where `Assert.Equal(actual, 1)`
+  reverses expected/actual order. This has been corrected
+  **on the remote WIP branch** to `Assert.Equal(1, actual)`
+  in commit `5567ec7`. The user's local uncommitted
+  migration must be preserved before any subsequent pull.
+
+The user next ran `dotnet ef migrations script` under
+`BM_INVOICE_MIGRATION_OFFLINE=1`, starting from
+`20261023182226_Phase2G3A4_AddInvoiceDraftSnapshots`
+through `20261025150750_Phase2G3A7_AddInvoiceDraftRevisionLedger`.
+The CLI reported `Build succeeded` and generated the file
+`etc/phase-audits/Phase2G3A7_RevisionLedger_Patched_Review.sql`
+**on the user's local machine only**. The environment override
+was then cleared.
+
+**Pending proof:** The patched SQL file has **not been uploaded or
+read** in this audit. A successful offline export alone is not
+a PostgreSQL DDL execution test or proof that the row and statement
+triggers, hexadecimal CHECK and non-destructive rollback are
+correct. Do not run `database update`, `DbMigrator`, `psql`
+to apply the preview, or commit/rebase generated files blindly.
+The next gate is inspection of the exact patched SQL and separately
+provisioned scratch database tests under explicit safety controls.
+The real mutating draft rebuild and financial issuing remain BLOCKED.
+
 ## Manual review of uploaded generated migration bundle — 25/10/2026
 
 User uploaded `Phase2G3A7_ReviewBundle.zip` containing the **four**

@@ -173,7 +173,68 @@ cannot replace any of steps 1–10.
 - **Issuance remains disabled**, regardless of any successful
   revision-schema tests.
 
-## 5. Present implementation state
+## 5. Offline migration scaffold review gate (not an application step)
+
+**After INVDB01–13: 13/13 PASS**, a guarded PowerShell
+scaffolding helper is available at:
+
+`etc/scripts/prepare-invoice-revision-ledger-migration-offline.ps1`
+
+It requires the **exact** clean branch
+`wip/phase-2g2`, sets `BM_INVOICE_MIGRATION_OFFLINE=1`
+for its child EF commands, uses the existing
+`BuildingManagementDbContextFactory` localhost
+`Port=1` dummy connection, and calls only:
+
+- `dotnet ef migrations add Phase2G3A7_AddInvoiceDraftRevisionLedger`
+- `dotnet ef migrations script 20261023182226_Phase2G3A4_AddInvoiceDraftSnapshots <new id>`
+
+The helper writes EF scaffold files under the module's
+`Migrations` folder and an **offline text preview** at
+`etc/phase-audits/Phase2G3A7_RevisionLedger_Generated_Review.sql`.
+It checks that the new migration `Up()` creates exactly one
+revision ledger table with unique invoice+revision index and
+invoice parent FK, no other `Up()` modifications and no
+unexpected drop/update/alter statements in the SQL preview.
+
+This is **NOT a reviewed migration** until the generated
+code, updated EF model snapshot, and exact SQL are inspected.
+The scaffold does NOT implement the proposed
+`BuildingManagementInvoices.CurrentRevision` field, a PostgreSQL
+append-only trigger, a safe rollback guard for populated historical
+records, operator permissions or a concurrent rebuild service.
+The generated `Down()` may DROP the ledger; it **must not be
+approved/applied** until the historical data loss guard is added
+and verified.
+
+If any check fails, the helper intentionally leaves local
+scaffold artifacts for investigation. **Do not run it twice,
+delete them blindly, or force schema updates.**
+
+```powershell
+git pull --ff-only origin wip/phase-2g2
+powershell -NoProfile -ExecutionPolicy Bypass -File .\etc\scripts\prepare-invoice-revision-ledger-migration-offline.ps1
+git status --short
+```
+
+If the script completes, share the console result and generated
+`Phase2G3A7_RevisionLedger_Generated_Review.sql` for a manual
+source and SQL review. **DO NOT run `dotnet ef database update`,
+`psql`, or `DbMigrator`**; a pre-migration scratch DB test
+gate comes later.
+
+**Additional build issue:** the latest SQLite test build reported
+**five** warnings, versus four historical RMG012 tenant warnings.
+Their exact identities were not supplied. Retrieve targeted
+diagnostics without executing tests or migrating a database:
+
+```powershell
+dotnet build .\modules\buildingmanagement\test\BuildingManagement.EntityFrameworkCore.Tests\BuildingManagement.EntityFrameworkCore.Tests.csproj --no-restore -v normal 2>&1 | Select-String 'warning '
+```
+
+Do not assume the fifth warning is benign until reviewed.
+
+## 6. Present implementation state
 
 Already available and tested: in-memory old-draft
 `InvoiceDraftRevisionEvidence` (REV01–09 **9/9 PASS**),

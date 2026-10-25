@@ -3,7 +3,7 @@
 # Never prints, commits or stores passwords. No credential reset, new
 # users, psql requirement or production database migration.
 param(
-    [ValidateSet('Migration', 'Isolation')]
+    [ValidateSet('Migration', 'Isolation', 'Concurrency')]
     [string]$Scenario = 'Migration'
 )
 
@@ -76,13 +76,26 @@ try {
             throw 'Safety stop: worktree must be clean.'
         }
         $project = Join-Path $root 'modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/BuildingManagement.PostgreSql.Tests.csproj'
-        Write-Host 'Running PGINV02/03 ambient-UOW isolation checks on the guarded local test DB.'
-        Write-Host 'No live contracts, invoices or production schemas will be modified.'
-        & dotnet test $project `
-            --filter 'FullyQualifiedName~InvoiceDraftIsolationPostgreSql_Tests' `
-            --logger 'console;verbosity=detailed'
-        if ($LASTEXITCODE -ne 0) {
-            throw 'PGINV02/03 isolation checks failed. Review detailed test output above.'
+        if ($Scenario -eq 'Isolation') {
+            Write-Host 'Running PGINV02/03 ambient-UOW isolation checks on the guarded local test DB.'
+            Write-Host 'No live contracts, invoices or production schemas will be modified.'
+            & dotnet test $project `
+                --filter 'FullyQualifiedName~InvoiceDraftIsolationPostgreSql_Tests' `
+                --logger 'console;verbosity=detailed'
+            if ($LASTEXITCODE -ne 0) {
+                throw 'PGINV02/03 isolation checks failed. Review detailed test output above.'
+            }
+        }
+        else {
+            Write-Host 'Running PGINV04 overlapping source-commit/snapshot check on guarded local test DB.'
+            Write-Host 'Only per-test generated fixture rows are created and then deleted.'
+            Write-Host 'No invoice issuance, database migrations, or real business-row updates.'
+            & dotnet test $project `
+                --filter 'FullyQualifiedName~InvoiceDraftConcurrentSnapshotPostgreSql_Tests' `
+                --logger 'console;verbosity=detailed'
+            if ($LASTEXITCODE -ne 0) {
+                throw 'PGINV04 concurrency check failed. Review detailed output and cleanup status.'
+            }
         }
     }
 }

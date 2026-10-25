@@ -129,6 +129,40 @@ public class InvoiceDraftStorageAppService
         return ToDto(invoice, invoice.Items, invoice.Items.SelectMany(x => x.MeterSources));
     }
 
+    /// <summary>
+    /// Internal-only, point-in-time freshness check of stored meter evidence
+    /// and rates. A true result is NOT permission to issue; financial
+    /// finalization must revalidate in its own protected transaction.
+    /// </summary>
+    [UnitOfWork(true, IsolationLevel.RepeatableRead)]
+    public virtual async Task<bool> HasCurrentSourceSnapshotAsync(Guid id)
+    {
+        if (id == Guid.Empty)
+            throw new BusinessException(InvoiceDraftErrorCodes.NotFound);
+
+        // ABP's method attribute cannot upgrade an ambient ReadCommitted
+        // UOW. Refuse it before reading the stored/current snapshots.
+        await _isolationGuard.RequireRepeatableReadAsync();
+
+        var saved = await GetAsync(id);
+        try
+        {
+            var current = await _candidates.GetMonthlyCandidateAsync(
+                saved.ContractId, saved.BillingYear, saved.BillingMonth);
+            return InvoiceDraftFreshnessEvaluator.MatchesCurrentCandidate(
+                saved, current);
+        }
+        catch (BusinessException ex) when (
+            ex.Code == UtilityUsagePreviewErrorCodes.HistoryRequiresReview ||
+            ex.Code == BuildingManagementErrorCodes.ContractNotFound ||
+            ex.Code == BuildingManagementErrorCodes.RoomNotFound)
+        {
+            // Invalid/missing source history cannot authorize a stale draft.
+            // Unexpected errors propagate rather than disguising outages.
+            return false;
+        }
+    }
+
     [UnitOfWork(isTransactional: true)]
     public virtual async Task<InvoiceDraftDto> GetAsync(Guid id)
     {

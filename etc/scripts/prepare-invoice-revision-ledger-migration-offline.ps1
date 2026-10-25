@@ -91,6 +91,13 @@ try {
     if ($up -match '(?s)migrationBuilder\.(?:AlterColumn|AddColumn|DropColumn|DropTable|DropIndex|Rename|DeleteData|UpdateData|InsertData)\(') {
         throw 'Safety stop: migration contains changes beyond the one additive ledger table.'
     }
+    $indexAdds = [regex]::Matches($up, 'migrationBuilder\.CreateIndex\(').Count
+    if ($indexAdds -ne 1) {
+        throw ('Safety stop: expected one revision unique index; got ' + $indexAdds)
+    }
+    if ($up -match 'migrationBuilder\.(?:AddForeignKey|CreateSequence|AlterSequence|Sql)\(') {
+        throw 'Safety stop: other migration operations require manual review.'
+    }
     if (-not $up.Contains('UX_BM_InvoiceDraftRevision_Invoice_Number')) {
         throw 'Safety stop: unique (InvoiceId, ArchivedRevision) missing.'
     }
@@ -120,6 +127,19 @@ try {
     if (-not $sql.Contains('CREATE UNIQUE INDEX "UX_BM_InvoiceDraftRevision_Invoice_Number"')) {
         throw 'Safety stop: SQL preview missing revision number uniqueness.'
     }
+    if (-not $sql.Contains('REFERENCES "BuildingManagementInvoices" ("Id")')) {
+        throw 'Safety stop: SQL preview missing restrictive invoice parent FK.'
+    }
+    foreach ($requiredConstraint in @(
+        'CK_BM_InvoiceDraftRevision_Positive',
+        'CK_BM_InvoiceDraftRevision_Reason',
+        'CK_BM_InvoiceDraftRevision_Evidence',
+        'CK_BM_InvoiceDraftRevision_Hash')) {
+        if (-not $sql.Contains($requiredConstraint)) {
+            throw ('Safety stop: expected archive constraint missing: ' + $requiredConstraint)
+        }
+    }
+
     if ($sql -match '(?i)\b(?:DROP\s+(?:TABLE|INDEX|COLUMN|DATABASE)|TRUNCATE|DELETE\s+FROM|UPDATE\s+"|ALTER\s+TABLE|CREATE\s+DATABASE)\b') {
         throw 'Safety stop: unexpected destructive or existing-schema operation in preview.'
     }

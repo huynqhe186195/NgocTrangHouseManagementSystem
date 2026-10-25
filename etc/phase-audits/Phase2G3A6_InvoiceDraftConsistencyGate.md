@@ -137,7 +137,7 @@ git pull --ff-only origin wip/phase-2g2
 powershell -NoProfile -ExecutionPolicy Bypass -File .\etc\scripts\test-full-invoice-from-local-env.ps1 -Scenario Isolation
 ```
 
-**Expected: 4/4 PASS (not yet locally verified).** All test/database
+**Verified: 4/4 PASS** (user report, 25/10/2026). All test/database
 access is guarded by `RequireSafeConnectionString()` to
 `127.0.0.1:5432/ngoctrang_integration_test`.
 
@@ -148,6 +148,32 @@ is rejected. It does **not yet test a writer changing a meter reading,
 replacement or tariff while a draft transaction is active**, so the
 larger source-version concurrency gate remains open. Final invoice
 issuance and financial recognition are still disabled.
+
+## PostgreSQL ambient transaction gate VERIFIED — 25/10/2026
+
+User ran the guarded local `-Scenario Isolation` suite and reported:
+
+```
+Test Run Successful.
+Total tests: 4
+     Passed: 4
+ Total time: 10.3024 Seconds
+Test summary: total: 4, failed: 0, succeeded: 4, skipped: 0, duration: 10.8s
+Build succeeded with 4 warning(s) in 28.9s
+```
+
+**PGINV02/03: 4/4 PASS** against the existing safe local PostgreSQL
+test database. Confirms that both draft services reject an ambient
+READ COMMITTED UOW and accept an ambient REPEATABLE READ UOW (which
+then rejects an intentionally nonexistent contract). The preceding
+SQLite app/invoice gates also passed 9/9 after the ABP attribute
+constructor correction.
+
+This closes **ambient-isolation enforcement**, not the full
+concurrent-mutator integrity gate. No evidence of a meter reading,
+replacement or tariff update racing against a real draft capture
+has yet been supplied; that remains OPEN. The previous 109/109
+regression result predates the runtime guard implementation.
 
 ## Critical concurrency exposure — fail closed before financial issuance
 

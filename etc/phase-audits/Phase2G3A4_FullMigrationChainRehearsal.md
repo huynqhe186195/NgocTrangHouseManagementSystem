@@ -1,5 +1,35 @@
 # Phase 2G.3A.4 — Full EF migration chain rehearsal (WIP)
 
+## Final verification — 25/10/2026
+
+**Phase 2G.3A.4: PASS for migration generation, SQL review,
+isolated PostgreSQL DDL and clean-database BuildingManagement migration chain.**
+
+The user ran `etc/scripts/test-full-invoice-from-local-env.ps1` using the
+existing local Docker PostgreSQL role; the log reported:
+
+```
+Test summary: total: 1, failed: 0, succeeded: 1, skipped: 0, duration: 11.4s
+Build succeeded with 4 warning(s) in 37.5s
+Full migration chain test passed; temporary database was deleted.
+```
+
+This verifies PGMIG01 execution, EF Core migration history/idempotence
+checks, three invoice tables, five unique indexes, six RESTRICT FKs,
+`btree_gist` and successful removal of the scratch database. The
+earlier `109/109` application/EF tests and PGINV01 `1/1` DDL test
+were also confirmed. Existing Tenant Mapperly RMG012 warnings remain.
+
+**Scope:** only `BuildingManagementDbContext` full migrations on a
+new disposable PostgreSQL database. No upgrade test of populated data
+and no host application's DbContext chain yet. No production database
+was modified. Invoice issuance, debt, collections and HTTP persistence
+remain blocked by independent business/security gates.
+
+The historical attempt reports below are preserved for diagnosis
+only; the final passing result supersedes their `NOT YET VERIFIED`
+statements.
+
 ## Confirmed baseline, 23/10/2026
 
 - **109/109** selected application/EF Core/SQLite tests PASS; build
@@ -187,7 +217,7 @@ The wrapper enables the explicit test opt-in for that one child
 `dotnet test` process only, then restores the prior environment value.
 It does not call `dotnet ef database update` or the production DbMigrator.
 
-**Expected PGMIG01: 1/1 PASS (NOT YET VERIFIED).**
+**Verified PGMIG01: 1/1 PASS** (local test report, 25/10/2026).
 
 ## Remaining business release blockers
 

@@ -215,7 +215,7 @@ git pull --ff-only origin wip/phase-2g2
 powershell -NoProfile -ExecutionPolicy Bypass -File .\etc\scripts\test-full-invoice-from-local-env.ps1 -Scenario Concurrency
 ```
 
-**Expected PGINV04: 1/1 PASS (NOT YET VERIFIED).**
+**Verified PGINV04: 1/1 PASS** (user log, 25/10/2026).
 Review the full exception if compilation, assertion or cleanup fails
 before adding further concurrency scenarios.
 
@@ -254,6 +254,37 @@ inspect-first cleanup if needed. No application/production DB changes.
 git pull --ff-only origin wip/phase-2g2
 powershell -NoProfile -ExecutionPolicy Bypass -File .\etc\scripts\test-full-invoice-from-local-env.ps1 -Scenario Concurrency
 ```
+
+## PGINV04 final local verification — 25/10/2026
+
+After the cleanup mapping fix (building table is `"Buildings"`),
+user ran `-Scenario Concurrency` and reported:
+
+```
+Test Run Successful.
+Total tests: 1
+     Passed: 1
+Total time: 5.0655 Seconds
+Test summary: total: 1, failed: 0, succeeded: 1, skipped: 0, duration: 5.5s
+Build succeeded with 4 warning(s) in 20.6s
+```
+
+**PGINV04: 1/1 PASS.** This verifies the real candidate service returns
+one repeatable-read PostgreSQL snapshot across a separately committed
+meter-reading + tariff SQL transaction; after the old UOW ends, a
+fresh UOW reads the newly committed values. The passing test also
+completed its own generated fixture cleanup without error.
+
+The *first failed PGINV04 run* may still have left a different
+test-only fixture behind. Success of the second run does **not**
+delete or prove absence of the first-run fixture. Inspect separately
+before any targeted cleanup; never broadly delete matching records.
+
+**Scope boundary:** PGINV04 uses direct test-scoped SQL to update
+source rows. It is NOT evidence that every application-service write,
+meter replacement, or stored draft issuance transition is race-safe.
+Phase 2G.3A.6 is not complete, and there have been no schema changes
+or application/production database migration runs in this stage.
 
 ## Critical concurrency exposure — fail closed before financial issuance
 

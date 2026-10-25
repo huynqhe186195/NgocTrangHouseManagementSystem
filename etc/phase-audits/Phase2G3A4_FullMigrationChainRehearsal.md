@@ -76,6 +76,42 @@ preflight before scratch database creation.
 PGMIG01 still awaits its first authenticated execution; the separately
 verified PGINV01 remains **1/1 PASS**.
 
+## Recovery without new PostgreSQL accounts or psql (25/10/2026)
+
+The repository's `docker-compose.yml` already supplies the local
+PostgreSQL container from project-root `.env` variables
+`POSTGRES_USER` and `POSTGRES_PASSWORD`. The user confirmed that the
+existing `postgres` role can log in from pgAdmin and has CREATEDB,
+and `ngoctrang_integration_test` exists; however entering a password
+manually through `Get-Credential` produced SQLSTATE 28P01.
+
+To avoid more password guessing and avoid new test users or changing
+existing PostgreSQL passwords, we added
+`etc/scripts/test-full-invoice-from-local-env.ps1`.
+
+Run from the repository root:
+
+```powershell
+git pull --ff-only origin wip/phase-2g2
+powershell -NoProfile -ExecutionPolicy Bypass -File .\etc\scripts\test-full-invoice-from-local-env.ps1
+```
+
+The helper reads **existing, gitignored, local .env** values without
+printing the secret, temporarily sets
+`BM_PG_TEST_CONNECTION` pointing only to
+`127.0.0.1:5432/ngoctrang_integration_test`, and delegates to the
+existing guarded PGMIG01 launcher. It restores the prior environment
+variable in `finally`. It requires no `psql` CLI and does not reset
+roles, create new roles, or migrate the application database.
+
+If `.env` is missing or unconfigured, the helper stops without
+connecting to PostgreSQL. If the database was initialized with a
+*different* password than the current `.env` value (PostgreSQL Docker
+volumes retain the original DB role password), authentication will
+still fail; at that point verify the original working credentials
+without changing the PostgreSQL role or production configuration.
+This test and helper have **not been locally executed here**.
+
 ## What the new PGMIG01 test verifies
 
 This is the full sequence of migrations for

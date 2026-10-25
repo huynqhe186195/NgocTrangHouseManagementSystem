@@ -108,12 +108,30 @@ public sealed class InvoiceDraftConcurrentSnapshotPostgreSql_Tests
                     electricityRate: 7000m, waterUnits: 8m, waterRate: 30000m);
             }
         }
-        finally
+        catch (Exception originalError)
         {
-            // Delete only exact unique IDs seeded by this test. Never drop,
-            // recreate or migrate an existing test/application database.
-            await CleanupAsync(f);
+            // Preserve the test's ORIGINAL root failure. Cleanup must
+            // never replace it with a misleading missing-table exception.
+            try
+            {
+                await CleanupAsync(f);
+            }
+            catch (Exception cleanupError)
+            {
+                throw new AggregateException(
+                    "PGINV04 test failed and test-only fixture cleanup also failed. " +
+                    "Both original and cleanup exceptions are preserved.",
+                    originalError, cleanupError);
+            }
+
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo
+                .Capture(originalError).Throw();
+            throw; // Unreachable, makes control flow explicit.
         }
+
+        // Successful test must also remove its own fixture; cleanup
+        // failure makes the test fail rather than leak test records.
+        await CleanupAsync(f);
     }
 
     private async Task SeedAsync(Fixture f)
@@ -219,7 +237,10 @@ public sealed class InvoiceDraftConcurrentSnapshotPostgreSql_Tests
         await connection.OpenAsync();
         await using var transaction = await connection.BeginTransactionAsync();
 
-        // Delete children first to honor foreign-key RESTRICT constraints.
+        // Hard-delete only the exact generated GUIDs, children first.
+        // BuildingConfiguration maps Building to "Buildings" (no prefix).
+        // If a statement fails, transaction disposal ROLLS BACK all
+        // deletions; the original error is preserved by the caller.
         var deletions = new (string Table, Guid[] Ids)[]
         {
             ("BuildingManagementMeterReadings", new[] { f.ElectricityReading, f.WaterReading }),
@@ -228,7 +249,7 @@ public sealed class InvoiceDraftConcurrentSnapshotPostgreSql_Tests
             ("BuildingManagementContracts", new[] { f.Contract }),
             ("BuildingManagementRooms", new[] { f.Room }),
             ("BuildingManagementFloors", new[] { f.Floor }),
-            ("BuildingManagementBuildings", new[] { f.Building })
+            ("Buildings", new[] { f.Building })
         };
 
         foreach (var (table, ids) in deletions)

@@ -4,6 +4,33 @@
 **Branch:** `wip/phase-2g2`  
 **Status:** OPEN / design gate only; no destructive draft commands, DB migrations or financial issuance enabled.
 
+## Latest unfiltered regression report — 2026-10-25
+
+The user provided one unfiltered .NET 10 test-run summary after being
+given both the Application and EntityFrameworkCore project test
+commands:
+
+```
+Test summary: total: 323, failed: 0, succeeded: 323, skipped: 0, duration: 31.4s
+Build succeeded in 40.3s
+```
+
+**323/323 PASS — one reported test invocation; no build warnings in
+the supplied summary.** The log excerpt does **not identify the
+executed .csproj or test assembly**. Therefore this is a positive
+unfiltered regression result, but it must **not** be represented as
+323/323 passing in BOTH projects or as all projects running. The
+other project, if not already executed, still requires separate
+confirmation. The test command itself, or each project's separate
+test summary, is necessary to attribute the result precisely.
+
+Previous same-revision narrower gate results remain:
+Application invoice **15/15 PASS**, SQLite EF invoice **8/8 PASS**,
+PostgreSQL isolation **5/5 PASS**; previous PostgreSQL concurrency
+PGINV04–06 **3/3 PASS**.
+
+No source or schema changes accompany this documentation update.
+
 ## Verified test baseline
 
 - `InvoiceDraftFreshnessEvaluator_Tests`: **10/10 PASS**.
@@ -14,9 +41,10 @@
 - PostgreSQL PGINV02, 03 and 07: **5/5 PASS** isolation safety.
 - PostgreSQL PGINV04–06: **3/3 PASS** concurrent direct SQL, application
   mutators and physical replacement candidate behavior.
-- Existing 109-case broader regression **predates latest code** and
-  must be repeated before approving this phase. Four existing
-  tenant Mapperly warnings remain.
+- An unfiltered **323/323** regression report was received for one
+  unspecified test assembly after the latest integration changes.
+  It does not yet prove that both full test projects ran. Four existing
+  tenant Mapperly warnings were reported in earlier builds.
 
 ## Source-code findings
 
@@ -130,7 +158,8 @@ approved or implemented.
   `true` as permission to issue.
 - Do not change schema or touch populated application DB until the
   lifecycle design and rollback migration are agreed.
-- Run the full selected 109-case regression on latest WIP revision.
+- Confirm which assembly produced the new unfiltered 323/323 result;
+  run the other full test assembly if it has not yet been executed.
 
 **Phase 2G.3A.6:** targeted application/EF/PostgreSQL gates green.
 **Phase 2G.3A.7:** correction/lifecycle governance OPEN.

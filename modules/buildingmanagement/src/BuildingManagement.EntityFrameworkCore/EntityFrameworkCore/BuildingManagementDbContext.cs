@@ -41,6 +41,8 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
     public DbSet<Invoice> Invoices { get; set; } = default!;
     public DbSet<InvoiceItem> InvoiceItems { get; set; } = default!;
     public DbSet<InvoiceItemMeterSource> InvoiceItemMeterSources { get; set; } = default!;
+    // Phase 2G.3A.7 — staged history model; migration not generated/applied.
+    public DbSet<InvoiceDraftRevisionRecord> InvoiceDraftRevisions { get; set; } = default!;
 
     public BuildingManagementDbContext(DbContextOptions<BuildingManagementDbContext> options)
         : base(options)
@@ -64,5 +66,7 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.InvoiceItemConfiguration());
         builder.ApplyConfiguration(
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.InvoiceItemMeterSourceConfiguration());
+        builder.ApplyConfiguration(
+            new BuildingManagement.EntityFrameworkCore.EntityConfigurations.InvoiceDraftRevisionRecordConfiguration());
     }
 }

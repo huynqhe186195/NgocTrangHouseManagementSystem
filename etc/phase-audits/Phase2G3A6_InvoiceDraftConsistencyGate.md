@@ -1,5 +1,32 @@
 # Phase 2G.3A.6 — Invoice draft source consistency gate (pre-implementation audit)
 
+## Latest application test gate verified — 25/10/2026
+
+The user ran `BuildingManagement.Application.Tests.csproj` with the
+three intended invoice filters on the current WIP revision and reported:
+
+```
+Test summary: total: 15, failed: 0, succeeded: 15, skipped: 0, duration: 1.4s
+Build succeeded with 4 warning(s) in 8.7s
+```
+
+**15/15 PASS** = `InvoiceDraftFreshnessEvaluator_Tests` (10),
+`InvoiceDraftIsolationGate_Tests` (3) and
+`InvoiceRemoteAccessGate_Tests` (2).
+
+This complements the separately verified same-revision
+`EntityFrameworkCore.Tests` invoice persistence **8/8 PASS** and
+PostgreSQL `Isolation` scenario **5/5 PASS**. Thus all 23
+intended Application + EF Core cases were actually executed, as
+**two separate assemblies** (15 + 8), rather than a single 23-case
+invocation. PostgreSQL concurrency PGINV04–06 last passed **3/3**.
+
+Four Mapperly RMG012 warnings are unchanged. The old **109/109**
+all-regression test result still predates the latest
+`HasCurrentSourceSnapshotAsync` changes. A fresh wider regression
+run is the next gate; do not label this phase or finance issuance
+production-ready yet.
+
 ## Latest verification — 25/10/2026 (after internal freshness integration)
 
 The user ran the freshly added changes at branch commit

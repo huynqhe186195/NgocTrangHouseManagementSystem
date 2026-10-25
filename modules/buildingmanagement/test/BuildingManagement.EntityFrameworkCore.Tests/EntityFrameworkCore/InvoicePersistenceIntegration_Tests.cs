@@ -428,4 +428,76 @@ public sealed class InvoicePersistenceIntegration_Tests
         Assert.False(stored.IsIssued);
     }
 
+    [Fact]
+    public async Task INVDB09_Revision_Preview_Is_ReadOnly_And_Requires_Changed_Tariff()
+    {
+        var (fixture, _) = await SeedReadyOctoberAsync();
+        var service = GetRequiredService<IInvoiceDraftStorageAppService>();
+        var saved = await service.CreateAsync(new CreateInvoiceDraftDto
+        {
+            ContractId = fixture.ContractId,
+            BillingYear = 2026,
+            BillingMonth = 10
+        });
+
+        var unchanged = await service.PreviewRebuildAsync(
+            saved.Id, "Operator verified October rate correction");
+        Assert.Equal(InvoiceDraftRebuildGateStatus.AlreadyCurrent, unchanged.Status);
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var rate = await _rates.GetAsync(fixture.ElectricityRateId);
+            rate.Update(rate.BuildingId, rate.UtilityType, 7000m,
+                rate.EffectiveFrom, rate.EffectiveTo, rate.Notes);
+            await _rates.UpdateAsync(rate, autoSave: true);
+        });
+
+        var rejectedReason = await service.PreviewRebuildAsync(saved.Id, null);
+        Assert.Equal(InvoiceDraftRebuildGateStatus.ReasonRequired,
+            rejectedReason.Status);
+
+        var ready = await service.PreviewRebuildAsync(
+            saved.Id, "  October electricity rate corrected by operator  ");
+        Assert.True(ready.CanPrepareRevision);
+        Assert.Equal(InvoiceDraftRebuildGateStatus.ReadyForRevisionDesign, ready.Status);
+        Assert.Equal(145000m, ready.ProposedUtilityTotal);
+        Assert.Equal("October electricity rate corrected by operator",
+            ready.NormalizedReason);
+
+        // A PREVIEW must not replace any stored row/source evidence.
+        var persisted = await service.GetAsync(saved.Id);
+        Assert.Equal(110000m, persisted.ProvisionalUtilityTotal);
+        Assert.Equal(3500m, persisted.Items.Single(x =>
+            x.UtilityType == UtilityType.Electricity).UnitPrice);
+        Assert.False(persisted.IsIssued);
+        Assert.False(persisted.HasRecognizedDebt);
+    }
+
+    [Fact]
+    public async Task INVDB10_Revision_Preview_Blocks_Deleted_Meter_History()
+    {
+        var (fixture, electricityReading) = await SeedReadyOctoberAsync();
+        var service = GetRequiredService<IInvoiceDraftStorageAppService>();
+        var saved = await service.CreateAsync(new CreateInvoiceDraftDto
+        {
+            ContractId = fixture.ContractId,
+            BillingYear = 2026,
+            BillingMonth = 10
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+            await _readings.DeleteAsync(electricityReading, autoSave: true));
+
+        var readiness = await service.PreviewRebuildAsync(
+            saved.Id, "Operator requests a revised invoice draft");
+        Assert.False(readiness.CanPrepareRevision);
+        Assert.Equal(InvoiceDraftRebuildGateStatus.CurrentCandidateNotReady,
+            readiness.Status);
+
+        var persisted = await service.GetAsync(saved.Id);
+        Assert.Equal(110000m, persisted.ProvisionalUtilityTotal);
+        Assert.Equal(10m, persisted.Items.Single(x =>
+            x.UtilityType == UtilityType.Electricity).Quantity);
+    }
+
 }

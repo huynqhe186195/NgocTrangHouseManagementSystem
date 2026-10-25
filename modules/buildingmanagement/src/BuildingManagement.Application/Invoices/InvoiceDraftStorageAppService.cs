@@ -163,6 +163,38 @@ public class InvoiceDraftStorageAppService
         }
     }
 
+    /// <summary>
+    /// Internal read-only preview. Even ReadyForRevisionDesign is not
+    /// permission to write; eventual revision must recheck everything
+    /// inside its own authorized/locked transaction.
+    /// </summary>
+    [UnitOfWork(true, IsolationLevel.RepeatableRead)]
+    public virtual async Task<InvoiceDraftRebuildGateResult> PreviewRebuildAsync(
+        Guid id, string? reason)
+    {
+        if (id == Guid.Empty)
+            throw new BusinessException(InvoiceDraftErrorCodes.NotFound);
+
+        await _isolationGuard.RequireRepeatableReadAsync();
+
+        var saved = await GetAsync(id);
+        try
+        {
+            var current = await _candidates.GetMonthlyCandidateAsync(
+                saved.ContractId, saved.BillingYear, saved.BillingMonth);
+            return InvoiceDraftRebuildPreflight.Assess(saved, current, reason);
+        }
+        catch (BusinessException ex) when (
+            ex.Code == UtilityUsagePreviewErrorCodes.HistoryRequiresReview ||
+            ex.Code == BuildingManagementErrorCodes.ContractNotFound ||
+            ex.Code == BuildingManagementErrorCodes.RoomNotFound)
+        {
+            // Never allow a manual reason to bypass missing historical
+            // records or a contract/room which cannot be verified.
+            return new(InvoiceDraftRebuildGateStatus.CurrentCandidateNotReady);
+        }
+    }
+
     [UnitOfWork(isTransactional: true)]
     public virtual async Task<InvoiceDraftDto> GetAsync(Guid id)
     {

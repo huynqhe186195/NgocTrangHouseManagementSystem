@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using System.Text.Json;
 using System.Threading.Tasks;
 using BuildingManagement.Buildings;
 using BuildingManagement.Contracts;
@@ -28,6 +29,7 @@ public sealed class InvoicePersistenceIntegration_Tests
     private readonly IRepository<UtilityMeter, Guid> _meters;
     private readonly IRepository<MeterReading, Guid> _readings;
     private readonly IRepository<Invoice, Guid> _invoices;
+    private readonly IRepository<InvoiceDraftRevisionRecord, Guid> _revisions;
 
     public InvoicePersistenceIntegration_Tests()
     {
@@ -39,6 +41,7 @@ public sealed class InvoicePersistenceIntegration_Tests
         _meters = GetRequiredService<IRepository<UtilityMeter, Guid>>();
         _readings = GetRequiredService<IRepository<MeterReading, Guid>>();
         _invoices = GetRequiredService<IRepository<Invoice, Guid>>();
+        _revisions = GetRequiredService<IRepository<InvoiceDraftRevisionRecord, Guid>>();
     }
 
     private sealed record Fixture(
@@ -498,6 +501,106 @@ public sealed class InvoicePersistenceIntegration_Tests
         Assert.Equal(110000m, persisted.ProvisionalUtilityTotal);
         Assert.Equal(10m, persisted.Items.Single(x =>
             x.UtilityType == UtilityType.Electricity).Quantity);
+    }
+
+    private static InvoiceDraftRevisionRecord MakeArchive(
+        Invoice invoice, int revision = 1)
+    {
+        // Reconstruct the PREVIOUS historical evidence from the
+        // immutable draft graph, not from a fresh current candidate.
+        var old = InvoiceDraftSnapshot.Capture(
+            invoice.ContractId, invoice.RoomId,
+            invoice.BillingYear, invoice.BillingMonth,
+            invoice.Items.Select(item => new InvoiceDraftUtilityLineSnapshot(
+                item.UtilityType, item.UtilityRateId, item.RateStatus,
+                item.RecordedQuantity, item.UnitPrice,
+                item.ProvisionalAmount,
+                item.MeterSources.Select(source =>
+                    new InvoiceDraftMeterSegmentSnapshot(
+                        source.SourceId, source.UtilityMeterId,
+                        source.SourceType, source.RecordedDate,
+                        source.PreviousReading, source.CurrentReading)),
+                JsonSerializer.Deserialize<string[]>(item.CoverageIssuesJson)
+                    ?? Array.Empty<string>())));
+        var evidence = InvoiceDraftRevisionEvidence.Capture(
+            invoice.Id, revision, Guid.NewGuid(),
+            new DateTime(2026, 10, 25, 12, 0, 0, DateTimeKind.Utc),
+            "Historical revision preserved for accounting audit", old);
+        return InvoiceDraftRevisionRecord.Prepare(Guid.NewGuid(), evidence);
+    }
+
+    [Fact]
+    public async Task INVDB11_Staged_Revision_Ledger_Persists_And_Rehydrates_Old_Evidence()
+    {
+        var fixture = await SeedAsync();
+        var invoice = CreateDraft(fixture, Guid.NewGuid(), Guid.NewGuid());
+        var history = MakeArchive(invoice);
+        await WithUnitOfWorkAsync(async () =>
+        {
+            await _invoices.InsertAsync(invoice, autoSave: true);
+            await _revisions.InsertAsync(history, autoSave: true);
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var stored = await _revisions.GetAsync(history.Id);
+            var old = stored.VerifyAndRead();
+            Assert.Equal(invoice.Id, old.InvoiceId);
+            Assert.Equal(1, old.ArchivedRevision);
+            Assert.Equal(invoice.ContractId, old.PreviousDraft.ContractId);
+            Assert.Equal(110000m, old.PreviousDraft.ProvisionalTotal);
+            Assert.Equal(2, old.PreviousDraft.UtilityLines.Count);
+            Assert.Equal(64, stored.EvidenceSha256.Length);
+
+            var current = await _invoices.GetAsync(invoice.Id);
+            Assert.Equal(110000m, current.ProvisionalUtilityTotal);
+            Assert.Equal(InvoiceStatus.Draft, current.Status);
+        });
+    }
+
+    [Fact]
+    public async Task INVDB12_Database_Rejects_Duplicate_Archived_Revision_Number()
+    {
+        var fixture = await SeedAsync();
+        var invoice = CreateDraft(fixture, Guid.NewGuid(), Guid.NewGuid());
+        await WithUnitOfWorkAsync(async () =>
+        {
+            await _invoices.InsertAsync(invoice, autoSave: true);
+            await _revisions.InsertAsync(MakeArchive(invoice), autoSave: true);
+        });
+
+        var rejection = await Record.ExceptionAsync(async () =>
+        {
+            await WithUnitOfWorkAsync(async () =>
+                await _revisions.InsertAsync(
+                    MakeArchive(invoice), autoSave: true));
+        });
+        Assert.NotNull(rejection);
+        Assert.Contains("UNIQUE", rejection.ToString(),
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task INVDB13_Staged_Ledger_Accepts_Sequential_Revisions_Only_Once()
+    {
+        var fixture = await SeedAsync();
+        var invoice = CreateDraft(fixture, Guid.NewGuid(), Guid.NewGuid());
+        await WithUnitOfWorkAsync(async () =>
+        {
+            await _invoices.InsertAsync(invoice, autoSave: true);
+            await _revisions.InsertAsync(MakeArchive(invoice, 1), autoSave: true);
+            await _revisions.InsertAsync(MakeArchive(invoice, 2), autoSave: true);
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var revisions = await _revisions.GetListAsync(x =>
+                x.InvoiceId == invoice.Id);
+            Assert.Equal(new[] { 1, 2 },
+                revisions.Select(x => x.ArchivedRevision).Order().ToArray());
+            Assert.All(revisions, x => Assert.Equal(invoice.Id,
+                x.VerifyAndRead().InvoiceId));
+        });
     }
 
 }

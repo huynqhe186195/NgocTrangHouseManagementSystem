@@ -4,6 +4,63 @@
 **Branch:** `wip/phase-2g2`  
 **Status:** OPEN / design gate only; no destructive draft commands, DB migrations or financial issuance enabled.
 
+## Immutable old-draft evidence prototype — NOT YET RUN (25/10/2026)
+
+Added a **non-persisted** Domain model
+`InvoiceDraftRevisionEvidence.Capture`, preparing the shape of
+historical data to retain *before* a future approved draft rebuild.
+This is a pure in-memory value model, **not** an EF entity and
+**not** a new invoice revision feature. It cannot write the
+database, update current draft rows, release source uniqueness or
+recognize a receivable.
+
+Required archive metadata:
+
+- Stable parent `InvoiceId`, positive `ArchivedRevision`,
+  identified `ArchivedByUserId` and UTC `ArchivedAtUtc`.
+- Correction reason trimmed to 8–500 characters.
+- Prior `InvoiceDraftSnapshot` revalidated and copied by value.
+  Complete electricity and water lines, source identifiers, physical
+  meters, reading dates/counters, tariff rates and amounts preserved.
+- Copies are wrapped in read-only collections and do not retain
+  caller-owned line/source list containers.
+- A prior unpriced/incomplete utility-only draft is rejected as
+  archive evidence pending an explicit incomplete-draft policy.
+- **No** posting, issuing, payments, cancel/supersede or invoice
+  status transition.
+
+New unit class
+`BuildingManagement.Domain.Tests/Invoices/InvoiceDraftRevisionEvidence_Tests.cs`
+includes **9** xUnit cases: metadata, deep copy, no mutable
+collections, 2 invalid reasons, overly long reason, missing actor
+or invoice ID, non-UTC timestamp/revision, and incomplete price.
+
+New local gate (not yet executed):
+
+```powershell
+git pull --ff-only origin wip/phase-2g2
+dotnet test .\modules\buildingmanagement\test\BuildingManagement.Domain.Tests\BuildingManagement.Domain.Tests.csproj --filter "FullyQualifiedName~InvoiceDraftRevisionEvidence_Tests"
+```
+
+**Expected 9/9 PASS; UNVERIFIED** until user supplies log.
+
+### Outstanding design decisions before any persistence
+
+1. Source-key ownership: historical revision evidence must be audit
+   proof only, while active invoice source uniqueness remains
+   enforced; do not blindly duplicate source keys into the active
+   source table.
+2. Invoice concurrency: specify the exact row-lock, optimistic
+   revision/stamp check, and multi-writer conflict response.
+3. Revision history table, FK constraints, unique
+   (InvoiceId, ArchivedRevision), immutable evidence storage,
+   UTC actor/reason metadata and rollback-ready migration.
+4. Scope authorization and explicit operator policy for stale,
+   unchanged, incomplete or superseded drafts.
+5. Full PostgreSQL stored-draft/rebuild concurrency integration on
+   an opt-in disposable DB before production migrations.
+6. Do not assume the nine pure domain tests prove any of 1–5.
+
 ## Local verification — 25/10/2026 (current WIP revision `61823a2`)
 
 The user ran `git pull --ff-only origin wip/phase-2g2`

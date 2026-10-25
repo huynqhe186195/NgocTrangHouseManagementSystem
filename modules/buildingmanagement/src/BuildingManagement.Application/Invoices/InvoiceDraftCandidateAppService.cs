@@ -26,13 +26,16 @@ public class InvoiceDraftCandidateAppService
 {
     private readonly IRepository<Contract, Guid> _contracts;
     private readonly IUtilityChargePreviewAppService _charges;
+    private readonly IInvoiceDraftReadIsolationGuard _isolationGuard;
 
     public InvoiceDraftCandidateAppService(
         IRepository<Contract, Guid> contracts,
-        IUtilityChargePreviewAppService charges)
+        IUtilityChargePreviewAppService charges,
+        IInvoiceDraftReadIsolationGuard isolationGuard)
     {
         _contracts = contracts;
         _charges = charges;
+        _isolationGuard = isolationGuard;
     }
 
     // Standalone internal previews also read usage and rates from
@@ -48,6 +51,10 @@ public class InvoiceDraftCandidateAppService
             throw new BusinessException(BuildingManagementErrorCodes.InvalidBillingYear);
         if (billingMonth is < 1 or > 12)
             throw new BusinessException(BuildingManagementErrorCodes.InvalidBillingMonth);
+
+        // Internal callers can supply their own ABP UOW. Reject weaker
+        // PostgreSQL isolation before reading contract/usage/rate state.
+        await _isolationGuard.RequireRepeatableReadAsync();
 
         var contract = await _contracts.FindAsync(contractId);
         if (contract is null)

@@ -48,7 +48,7 @@ public class InvoiceDraftStorageAppService
     // wholly before or wholly after snapshot acquisition, not partly.
     // This DOES NOT freeze later source edits or authorize issuance.
     // The attribute applies only when this call creates the outer UOW.
-    [UnitOfWork(IsTransactional = true, IsolationLevel = IsolationLevel.RepeatableRead)]
+    [UnitOfWork(true, IsolationLevel.RepeatableRead)]
     public virtual async Task<InvoiceDraftDto> CreateAsync(CreateInvoiceDraftDto input)
     {
         ArgumentNullException.ThrowIfNull(input);

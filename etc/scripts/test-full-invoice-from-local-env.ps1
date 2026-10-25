@@ -87,14 +87,14 @@ try {
             }
         }
         else {
-            Write-Host 'Running PGINV04 overlapping source-commit/snapshot check on guarded local test DB.'
+            Write-Host 'Running PGINV04/05/06 source-edit and meter-replacement snapshot checks on guarded local test DB.'
             Write-Host 'Only per-test generated fixture rows are created and then deleted.'
             Write-Host 'No invoice issuance, database migrations, or real business-row updates.'
             & dotnet test $project `
                 --filter 'FullyQualifiedName~InvoiceDraftConcurrentSnapshotPostgreSql_Tests' `
                 --logger 'console;verbosity=detailed'
             if ($LASTEXITCODE -ne 0) {
-                throw 'PGINV04 concurrency check failed. Review detailed output and cleanup status.'
+                throw 'PGINV04/05/06 concurrency check failed. Review detailed output and cleanup status.'
             }
         }
     }

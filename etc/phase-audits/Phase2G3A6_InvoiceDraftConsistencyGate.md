@@ -394,6 +394,38 @@ behavior. It does not yet prove *persisted draft creation*
 against concurrent replacement, historical revisions after
 draft persistence, issuance revalidation, or authorization.
 
+## Verified PGINV04–06 (25/10/2026)
+
+The user ran the `Concurrency` scenario with PGINV04, PGINV05
+and PGINV06. Local result:
+
+```
+Test Run Successful.
+Total tests: 3
+     Passed: 3
+Total time: 6.8021 Seconds
+Test summary: total: 3, failed: 0, succeeded: 3, skipped: 0, duration: 7.2s
+Build succeeded with 4 warning(s) in 18.4s
+```
+
+**PGINV04–06: 3/3 PASS.** These verify repeatable-read snapshot
+behavior across direct SQL meter/rate updates, actual meter-reading
+and tariff application-service updates, and actual physical-meter
+replacement with fail-closed coverage for the new meter.
+
+The four Mapperly warnings are pre-existing; no new warnings were
+reported. This also confirms the new test cleans its own fixture on
+successful execution. A separate leftover fixture from the initial
+failed PGINV04 run is not automatically covered by that cleanup.
+
+**Remaining gate:** a persisted draft can be stale when source
+readings, prices, occupancy or replacement history changes after
+it was written. Before issuance, compare the saved snapshot against
+a freshly reconstructed candidate (including source identity,
+counter ranges, date, rate and amount); reject any missing history
+or disagreement. This is NOT equivalent to, nor authorized by,
+the successful snapshot-concurrency tests. Issuance remains disabled.
+
 ## Critical concurrency exposure — fail closed before financial issuance
 
 Repository read on current WIP:

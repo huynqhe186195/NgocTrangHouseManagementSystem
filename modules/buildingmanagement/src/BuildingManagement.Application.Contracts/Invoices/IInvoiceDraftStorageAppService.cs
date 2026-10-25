@@ -12,4 +12,12 @@ public interface IInvoiceDraftStorageAppService : IApplicationService
 {
     Task<InvoiceDraftDto> CreateAsync(CreateInvoiceDraftDto input);
     Task<InvoiceDraftDto> GetAsync(Guid id);
+
+    /// <summary>
+    /// Internal-only, point-in-time comparison of stored draft evidence
+    /// with freshly reconstructed meter and tariff data.
+    /// A true result is NOT authorization to issue or recognize debt.
+    /// Future issuance must recheck atomically at finalization.
+    /// </summary>
+    Task<bool> HasCurrentSourceSnapshotAsync(Guid id);
 }

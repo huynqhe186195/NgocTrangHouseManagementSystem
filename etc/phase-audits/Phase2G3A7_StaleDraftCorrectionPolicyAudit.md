@@ -4,6 +4,38 @@
 **Branch:** `wip/phase-2g2`  
 **Status:** OPEN / design gate only; no destructive draft commands, DB migrations or financial issuance enabled.
 
+## Local verification — 25/10/2026 (current WIP revision `61823a2`)
+
+The user ran `git pull --ff-only origin wip/phase-2g2`
+(fast-forward `48e0077..61823a2`) followed by the
+three exact tests prescribed in the previous audit:
+
+```
+Application.Tests [four invoice test filters]:
+Test summary: total: 30, failed: 0, succeeded: 30, skipped: 0, duration: 1.7s
+Build succeeded with 4 warning(s) in 15.7s
+
+EntityFrameworkCore.Tests [InvoicePersistenceIntegration_Tests]:
+Test summary: total: 10, failed: 0, succeeded: 10, skipped: 0, duration: 7.7s
+Build succeeded in 16.4s
+
+PostgreSql.Tests [-Scenario Isolation, PGINV02/03/07/08]:
+Test summary: total: 6, failed: 0, succeeded: 6, skipped: 0, duration: 16.2s
+Build succeeded in 25.1s
+```
+
+**Verified: 46/46 PASS across 3 separate invocations** (30 + 10 + 6)
+with no failed or skipped test. The four Mapperly RMG012 warnings
+in the Application build are pre-existing.
+
+This validates only the **read-only** versioned-draft preflight,
+stored-draft preview through SQLite, and PostgreSQL isolation
+rejection before unsafe SQL. No version history table, no mutating
+rebuild workflow, no issuance, and no populated application database
+migration were tested or enabled. The earlier 323/323 unfiltered
+regression log is from an unspecified test assembly and predates
+this latest slice.
+
 ## Phase 2G.3A.7 read-only rebuild preflight — implementation slice (WIP)
 
 The earlier versioned-draft recommendation has been implemented **ONLY
@@ -42,7 +74,7 @@ rebuild, cancel, issuance or receivable transaction:
 - **No remote API, invoice status transition, billing, payment,
   schema migration, direct SQL or production database actions**.
 
-### New tests added — NOT YET RUN
+### Test cases (confirmed 46/46 PASS above)
 
 - `InvoiceDraftRebuildPreflight_Tests`: **14** xUnit cases,
   including ready/unchanged, reason validation, wrong scope,
@@ -72,7 +104,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\etc\scripts\test-full-invo
 
 Expected counts: Application **30/30** (14+10+4+2);
 EF Core **10/10**; PostgreSQL isolation **6/6**.
-These are goals, **not reported PASS**. Verify on the user's
+These three groups were **reported PASS** on 25/10/2026. Verify on the user's
 Windows .NET 10 environment; no .NET SDK is available in the
 assistant's current runtime for local compilation.
 

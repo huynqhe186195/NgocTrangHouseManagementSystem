@@ -1,5 +1,47 @@
 # Phase 2G.3A.6 — Invoice draft source consistency gate (pre-implementation audit)
 
+## Latest verification — 25/10/2026 (after internal freshness integration)
+
+The user ran the freshly added changes at branch commit
+`9d7b9f9`, confirmed by a successful fast-forward pull
+from `f44ab6b`.
+
+| Suite / exact test assembly | Result | Scope |
+| --- | --- | --- |
+| `BuildingManagement.EntityFrameworkCore.Tests` with invoice filters | **8/8 PASS**, build with 4 old Mapperly RMG012 warnings | `InvoicePersistenceIntegration_Tests` INVDB01–08, including the two newly wired freshness cases |
+| `BuildingManagement.PostgreSql.Tests` `-Scenario Isolation` | **5/5 PASS**, build succeeded | PGINV02/03 (4) plus new PGINV07 (1), rejected unsafe ambient isolation before reading stored draft |
+| `BuildingManagement.Application.Tests` with freshness/attribute/HTTP filters | **NOT RUN on this code revision** | INVFRESH01–10 (10), invoice `UnitOfWork` attributes (3), internal HTTP gate (2) |
+
+**Corrected test count:** An earlier audit instruction said the
+`EntityFrameworkCore.Tests.csproj` command should execute
+**23** tests. That was incorrect: test projects are separate test
+assemblies. Even though the EF test project *references/builds*
+`Application.Tests`, the test runner executes only 8 matching
+cases *within the selected EF test assembly*. It does not discover or
+run the other 15 cases. This is not a failure of the 8 tests, but
+the advertised 23/23 total is NOT verified.
+
+The older standalone `InvoiceDraftFreshnessEvaluator_Tests`
+ran **10/10 PASS** before the latest internal integration change,
+but the latest 15-case application test slice should be rerun to
+verify the current revision:
+
+```powershell
+dotnet test .\modules\buildingmanagement\test\BuildingManagement.Application.Tests\BuildingManagement.Application.Tests.csproj --filter "FullyQualifiedName~InvoiceDraftFreshnessEvaluator_Tests|FullyQualifiedName~InvoiceDraftIsolationGate_Tests|FullyQualifiedName~InvoiceRemoteAccessGate_Tests"
+```
+
+Expected **15/15**; not yet locally verified on the latest revision.
+The separately verified EF (8) + PostgreSQL isolation (5) +
+previous PostgreSQL concurrency (3) results must not be conflated
+with an all-project regression. The earlier full **109/109**
+regression predates the newest freshness integration.
+
+Nothing in these tests authorizes financial issuance. The
+`HasCurrentSourceSnapshotAsync` method remains an **internal-only,
+point-in-time check**, not an atomic issuance transition. Scoped
+operator authorization, draft correction policy and populated-database
+rehearsal remain open release blockers.
+
 ## Verified baseline (25/10/2026)
 
 - Phase 2G.3A.4: 109/109 selected app/EF tests, PGINV01 1/1

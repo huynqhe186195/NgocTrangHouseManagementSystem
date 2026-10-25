@@ -69,21 +69,32 @@ try {
     # An empty model diff or any unrelated schema change must be reviewed,
     # not trusted because 'dotnet ef migrations add' itself succeeded.
     $source = [IO.File]::ReadAllText($generated[0].FullName)
+    # A normal EF migration has a destructive Down() method. Audit
+    # ONLY Up() here; otherwise every valid scaffold with DropTable
+    # in its rollback method would be falsely rejected.
+    $upIndex = $source.IndexOf('protected override void Up(',
+        [StringComparison]::Ordinal)
+    $downIndex = $source.IndexOf('protected override void Down(',
+        [StringComparison]::Ordinal)
+    if ($upIndex -lt 0 -or $downIndex -le $upIndex) {
+        throw 'Safety stop: cannot isolate generated migration Up() method.'
+    }
+    $up = $source.Substring($upIndex, $downIndex - $upIndex)
     $newTable = 'BuildingManagementInvoiceDraftRevisions'
-    if ($source -notmatch '(?s)migrationBuilder\.CreateTable\(\s*name:\s*"BuildingManagementInvoiceDraftRevisions"') {
+    if ($up -notmatch '(?s)migrationBuilder\.CreateTable\(\s*name:\s*"BuildingManagementInvoiceDraftRevisions"') {
         throw 'Safety stop: no expected revision ledger table creation found.'
     }
-    $tableAdds = [regex]::Matches($source, 'migrationBuilder\.CreateTable\(').Count
+    $tableAdds = [regex]::Matches($up, 'migrationBuilder\.CreateTable\(').Count
     if ($tableAdds -ne 1) {
         throw ('Safety stop: expected one new table; found ' + $tableAdds)
     }
-    if ($source -match '(?s)migrationBuilder\.(?:AlterColumn|AddColumn|DropColumn|DropTable|DropIndex|Rename|DeleteData|UpdateData|InsertData)\(') {
+    if ($up -match '(?s)migrationBuilder\.(?:AlterColumn|AddColumn|DropColumn|DropTable|DropIndex|Rename|DeleteData|UpdateData|InsertData)\(') {
         throw 'Safety stop: migration contains changes beyond the one additive ledger table.'
     }
-    if (-not $source.Contains('UX_BM_InvoiceDraftRevision_Invoice_Number')) {
+    if (-not $up.Contains('UX_BM_InvoiceDraftRevision_Invoice_Number')) {
         throw 'Safety stop: unique (InvoiceId, ArchivedRevision) missing.'
     }
-    if (-not $source.Contains('BuildingManagementInvoices')) {
+    if (-not $up.Contains('BuildingManagementInvoices')) {
         throw 'Safety stop: parent invoice FK missing.'
     }
 

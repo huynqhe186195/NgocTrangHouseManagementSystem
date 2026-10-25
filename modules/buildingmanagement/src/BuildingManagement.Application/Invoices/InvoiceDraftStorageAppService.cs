@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Data;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -42,7 +43,12 @@ public class InvoiceDraftStorageAppService
         _candidates = candidates;
     }
 
-    [UnitOfWork(isTransactional: true)]
+    // PostgreSQL REPEATABLE READ holds one MVCC snapshot across contract,
+    // meter usage and tariff queries. A concurrent source change is seen
+    // wholly before or wholly after snapshot acquisition, not partly.
+    // This DOES NOT freeze later source edits or authorize issuance.
+    // The attribute applies only when this call creates the outer UOW.
+    [UnitOfWork(IsTransactional = true, IsolationLevel = IsolationLevel.RepeatableRead)]
     public virtual async Task<InvoiceDraftDto> CreateAsync(CreateInvoiceDraftDto input)
     {
         ArgumentNullException.ThrowIfNull(input);

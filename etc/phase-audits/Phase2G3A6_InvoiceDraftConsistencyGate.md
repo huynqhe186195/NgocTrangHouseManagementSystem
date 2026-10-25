@@ -11,6 +11,56 @@
 - Builds show four existing Tenant Mapperly RMG012 warnings.
 - **Not a production-release gate approval.**
 
+## Verified regression and first implementation slice — 25/10/2026
+
+The user reran the existing 109-case selected EF/application regression
+after the invoice HTTP gate changed and reported **109/109 PASS**
+(duration 27.6s, build succeeded with four previously known Mapperly
+warnings). The invoice HTTP attribute tests separately passed **2/2**.
+Those results predate the new transaction-isolation changes described
+below; a new run is required.
+
+**Partial source-snapshot consistency hardening (not yet locally tested):**
+The root `InvoiceDraftStorageAppService.CreateAsync` transaction and
+the independently callable, internal
+`InvoiceDraftCandidateAppService.GetMonthlyCandidateAsync` transaction
+now both declare:
+
+```csharp
+[UnitOfWork(IsTransactional = true, IsolationLevel = IsolationLevel.RepeatableRead)]
+```
+
+On PostgreSQL, this requests one MVCC read snapshot for all SELECTs
+within the same unit of work, preventing a draft's electricity and
+water usage/rate statements from observing *different committed
+versions within that single transaction*. The existing contract row
+lock remains. SQLite's provider treats this isolation level as a
+minimum and promotes it to serializable.
+
+The new `InvoiceDraftIsolationGate_Tests` has two attribute-regression
+cases; **no new tests have been run locally**. Both services remain
+`[RemoteService(IsEnabled = false)]`.
+
+**Limitation / no overclaim:** ABP's `UnitOfWork` attribute does not
+override an already ambient UOW. A caller that starts a PostgreSQL
+READ COMMITTED UOW can still bypass the new desired isolation.
+We therefore cannot claim this phase's source consistency gate is
+complete. A runtime isolation-level check and controlled PostgreSQL
+writer-vs-capture concurrency tests are required before the internal
+draft service is made available for financial use. A later source edit
+can also invalidate a stored draft; issuance still needs atomic
+revalidation/correction policy.
+
+### Next local verification
+
+```powershell
+git pull --ff-only origin wip/phase-2g2
+dotnet test .\modules\buildingmanagement\test\BuildingManagement.EntityFrameworkCore.Tests\BuildingManagement.EntityFrameworkCore.Tests.csproj --filter "FullyQualifiedName~InvoiceDraftIsolationGate_Tests|FullyQualifiedName~InvoiceRemoteAccessGate_Tests|FullyQualifiedName~InvoicePersistenceIntegration_Tests|FullyQualifiedName~InvoiceSchema_Tests"
+```
+
+Report exact pass/fail counts. No database migration or PostgreSQL
+connection is needed for this SQLite/application regression.
+
 ## Critical concurrency exposure — fail closed before financial issuance
 
 Repository read on current WIP:

@@ -49,6 +49,32 @@ new ARCH 9), **not yet verified as a combined run**. If the
 archive codec's compile/runtime cases fail, correct source first
 and do not proceed to live EF migrations.
 
+## Latest offline migration preparation — 25/10/2026 (NOT run)
+
+- Added `etc/scripts/prepare-invoice-revision-ledger-migration-offline.ps1`.
+  It scaffolds a local EF revision-ledger migration and a local
+  PostgreSQL SQL text preview under strict clean-WIP-branch and
+  design-time offline flag checks. The PostgreSQL design-time factory
+  uses an intentionally unreachable `127.0.0.1:1` connection string.
+- It validates that the new migration `Up()` only creates the
+  `BuildingManagementInvoiceDraftRevisions` table, and that the
+  SQL preview includes exactly that new table and unique
+  (InvoiceId, ArchivedRevision) index.
+- **NOT executed** on the user's Windows machine. Generated migration
+  files and SQL cannot yet be claimed or cited as reviewed output.
+  The assistant's runtime has no .NET SDK available for scaffolding.
+- The script only **generates local files**; it does not apply any
+  SQL or alter any database. The generated scaffold will lack the
+  required PostgreSQL UPDATE/DELETE protection and populated-ledger
+  rollback guard; it is **NOT release approved**.
+- `Phase2G3A7_RevisionLedger_MigrationRFC.md` now explicitly
+  documents the offline command, expected files, manual approval
+  criteria and five-warning investigation.
+
+Do not use `dotnet ef database update`, `DbMigrator` or `psql`
+to apply this schema. The next gate is generated source/SQL review
+and inspection of the extra compiler warning.
+
 ## Staged revision ledger SQLite integration gate — 25/10/2026
 
 The user ran the full filtered

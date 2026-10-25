@@ -49,6 +49,35 @@ new ARCH 9), **not yet verified as a combined run**. If the
 archive codec's compile/runtime cases fail, correct source first
 and do not proceed to live EF migrations.
 
+## Staged revision ledger SQLite integration gate — 25/10/2026
+
+The user ran the full filtered
+`InvoicePersistenceIntegration_Tests` class after adding the
+staged EF revision ledger model and reported:
+
+```
+Test summary: total: 13, failed: 0, succeeded: 13, skipped: 0, duration: 10.6s
+Build succeeded with 5 warning(s) in 25.7s
+```
+
+**INVDB01–13: 13/13 PASS** verifies the existing invoice persistence
+tests plus three new SQLite cases covering revision-record insert
+and rehydration, prevention of duplicate archived revision numbers
+and two distinct archived versions for the same invoice.
+
+**Warning investigation remains open:** Earlier builds showed four
+known RMG012 tenant mapping warnings. This build reports **five**
+warnings, but the user supplied only a summary, not diagnostic
+codes/locations. Do not classify the fifth as harmless or new until
+its exact compiler warning has been reviewed.
+
+**Scope limitation:** SQLite's schema creation from the current EF
+model is *not* proof that a real PostgreSQL revision table exists.
+The staged model has no generated EF migration in the repository
+as of this verification; there is no append-only PostgreSQL
+UPDATE/DELETE trigger or authorized revision writer. The model
+must not be used to archive actual invoices on a populated database.
+
 ## Phase 2G.3A.7 — staged EF persistence model (WIP / unverified)
 
 After the **18/18 PASS** archive roundtrip results, the repository
@@ -104,7 +133,7 @@ git pull --ff-only origin wip/phase-2g2
 dotnet test .\modules\buildingmanagement\test\BuildingManagement.EntityFrameworkCore.Tests\BuildingManagement.EntityFrameworkCore.Tests.csproj --filter "FullyQualifiedName~InvoicePersistenceIntegration_Tests"
 ```
 
-Expected `INVDB01–13`: **13/13 PASS**.
+Expected `INVDB01–13`: **13/13 PASS — verified** (25/10/2026).
 Only after this gate and a reviewed schema design should the
 actual EF migration be generated, entirely offline (no DB connection
 and no update). Preserve earlier 18/18 domain result separately.

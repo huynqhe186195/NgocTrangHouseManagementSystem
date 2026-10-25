@@ -49,6 +49,66 @@ new ARCH 9), **not yet verified as a combined run**. If the
 archive codec's compile/runtime cases fail, correct source first
 and do not proceed to live EF migrations.
 
+## Phase 2G.3A.7 — staged EF persistence model (WIP / unverified)
+
+After the **18/18 PASS** archive roundtrip results, the repository
+now includes a **staged** EF model for storing historical draft
+evidence *separately* from active charge source rows:
+
+- `InvoiceDraftRevisionRecord` (Domain) holds invoice ID, previous
+  revision number, operator GUID, UTC archive instant, correction
+  reason, exact canonical JSON and its SHA-256 digest.
+  `Prepare` copies data from the already validated immutable
+  `InvoiceDraftRevisionEvidence`; `VerifyAndRead` validates
+  JSON/digest and cross-checks the decoded metadata against the
+  record's metadata columns. This is NOT a new active invoice.
+- `InvoiceDraftRevisionRecordConfiguration` (EF Core) maps a
+  new separate table `BuildingManagementInvoiceDraftRevisions`
+  with an invoice FK (RESTRICT), unique
+  `(InvoiceId, ArchivedRevision)` and provider-neutral
+  check constraints for revision number, reason, JSON length,
+  and lowercase checksum length.
+- The entity is registered via a `DbSet` and explicit mapping
+  on `BuildingManagementDbContext`; application and HTTP services
+  remain unchanged. No writer endpoint calls the new repository.
+- `InvoicePersistenceIntegration_Tests` now has
+  **INVDB11–13**, checking actual isolated SQLite write/reload,
+  duplicate archived revision rejection, and ordered distinct
+  revision numbers. Expect **13/13** invoice DB tests.
+
+**IMPORTANT model/migration staging boundary:**
+
+- **No migration file or EF model snapshot has been generated** for
+  this new model. Until a reviewed EF migration exists and is applied
+  in a dedicated safe environment, a PostgreSQL database will NOT
+  have the revision table. Do **NOT** access it using the running
+  application or execute DbMigrator against a populated database.
+- We intentionally deferred the proposed
+  `BuildingManagementInvoices.CurrentRevision` column until the
+  migration/update policy and optimistic conflict protocol are
+  finalized. The old invoice table and its indexes were not changed.
+- A domain entity with private setters and a checksum **does not
+  make the database append-only**. The future PostgreSQL migration
+  must add a tested reject-UPDATE/DELETE trigger or an equivalent
+  independently enforced SQL privilege boundary; SQLite tests
+  do not prove database immutability.
+- A SHA-256 digest is a corruption check, NOT a cryptographic
+  signature against a privileged database actor.
+- No actual automated rebuild/cancel/issue/receivable transition
+  exists or was enabled.
+
+### Next local test gate — NOT YET EXECUTED
+
+```powershell
+git pull --ff-only origin wip/phase-2g2
+dotnet test .\modules\buildingmanagement\test\BuildingManagement.EntityFrameworkCore.Tests\BuildingManagement.EntityFrameworkCore.Tests.csproj --filter "FullyQualifiedName~InvoicePersistenceIntegration_Tests"
+```
+
+Expected `INVDB01–13`: **13/13 PASS**.
+Only after this gate and a reviewed schema design should the
+actual EF migration be generated, entirely offline (no DB connection
+and no update). Preserve earlier 18/18 domain result separately.
+
 ## REV01–09 local verification — 25/10/2026
 
 User ran `InvoiceDraftRevisionEvidence_Tests` after pulling

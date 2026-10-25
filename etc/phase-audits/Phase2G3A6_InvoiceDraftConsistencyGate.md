@@ -473,6 +473,74 @@ dotnet test .\modules\buildingmanagement\test\BuildingManagement.Application.Tes
 **Expected: 10/10 PASS; not yet run on the user's machine.**
 Keep the previous verified PostgreSQL concurrency result at 3/3.
 
+## INVFRESH01–10 verified; internal persisted-draft freshness path (25/10/2026)
+
+The user ran `InvoiceDraftFreshnessEvaluator_Tests` locally:
+
+```
+Test summary: total: 10, failed: 0, succeeded: 10, skipped: 0, duration: 1.6s
+Build succeeded with 4 warning(s) in 8.6s
+```
+
+**10/10 PASS.** This verifies the detached pure comparator against
+the unchanged state and altered tariff, reading, source identity/date,
+replacement history, missing reading, room/period and inconsistent
+arithmetic.
+
+### Next read-only integration slice (WIP, NOT YET TESTED)
+
+- Extended the **already internal-only** `IInvoiceDraftStorageAppService`
+  and `InvoiceDraftStorageAppService` with
+  `HasCurrentSourceSnapshotAsync(Guid id)`.
+- It first verifies actual PostgreSQL `RepeatableRead` or
+  `Serializable` isolation (rejects weaker ambient UOWs), retrieves
+  the saved draft via the existing child-evidence loader,
+  rebuilds the live candidate via
+  `IInvoiceDraftCandidateAppService`, and invokes
+  `InvoiceDraftFreshnessEvaluator`.
+- Missing contract/room or untrustworthy meter history results in
+  `false`. Unexpected infrastructure failures are not silently
+  suppressed. A missing *draft* retains the existing NotFound error.
+- No new remote HTTP API: the containing application service is
+  still `[RemoteService(IsEnabled = false)]`. This check only
+  reports freshness *as of the checking transaction*; **true does
+  not authorize issuance**.
+- Added two SQLite integration cases to
+  `InvoicePersistenceIntegration_Tests` (`INVDB07`,
+  `INVDB08`) that create an actual October utility-only draft,
+  verify it matches live data, then modify the electricity tariff
+  or monthly reading and assert that the draft is stale while the
+  stored historical evidence is preserved.
+- Expanded `InvoiceDraftIsolationGate_Tests` to three cases,
+  including the new freshness method.
+- Added PostgreSQL `PGINV07` to the existing safe isolation suite,
+  confirming a caller with an explicit outer READ COMMITTED
+  transaction cannot even query stored draft freshness. This test
+  rejects before touching any invoice table (which may not yet
+  exist on the old local PostgreSQL test DB).
+
+**New local tests have NOT been executed.** Count expectations
+for the narrow SQLite/EF filter: 10 evaluator cases + 8
+invoice persistence cases + 3 isolation-attribute cases + 2
+HTTP gate cases = **23 cases**. The PostgreSQL Isolation mode
+has **5 cases** after PGINV07 (previously 4).
+
+```powershell
+git pull --ff-only origin wip/phase-2g2
+dotnet test .\modules\buildingmanagement\test\BuildingManagement.EntityFrameworkCore.Tests\BuildingManagement.EntityFrameworkCore.Tests.csproj --filter "FullyQualifiedName~InvoiceDraftFreshnessEvaluator_Tests|FullyQualifiedName~InvoicePersistenceIntegration_Tests|FullyQualifiedName~InvoiceDraftIsolationGate_Tests|FullyQualifiedName~InvoiceRemoteAccessGate_Tests"
+powershell -NoProfile -ExecutionPolicy Bypass -File .\etc\scripts\test-full-invoice-from-local-env.ps1 -Scenario Isolation
+```
+
+All persisted draft / application integration tests here use
+SQLite test fixture; the PostgreSQL test only confirms runtime
+isolation rejection, not a full migrated PostgreSQL stored-draft
+integration or a concurrency-safe issuance transition.
+
+The **next** security/business gates are scoped operator
+authorization, supported correction/cancel/rebuild policy for stale
+drafts, and atomic final issuance revalidation. No issue/post/pay,
+receivable, or schema/data migration has been enabled in this change.
+
 ## Critical concurrency exposure — fail closed before financial issuance
 
 Repository read on current WIP:

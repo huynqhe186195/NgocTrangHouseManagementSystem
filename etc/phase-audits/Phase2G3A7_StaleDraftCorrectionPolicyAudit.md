@@ -4,6 +4,51 @@
 **Branch:** `wip/phase-2g2`  
 **Status:** OPEN / design gate only; no destructive draft commands, DB migrations or financial issuance enabled.
 
+## Next non-destructive persistence design slice — WIP (25/10/2026)
+
+Added `InvoiceDraftRevisionArchiveCodec` as **offline/in-memory**
+format foundation for historical revision evidence:
+
+- Explicit `FormatVersion=1` archive JSON includes
+  `InvoiceId`, original revision number, user GUID, UTC timestamp,
+  correction reason and complete previous utility-only snapshot.
+- Stable utility/source ordering and SHA-256 checksum over the exact
+  UTF-8 JSON bytes. Decoder verifies checksum and re-runs the
+  existing `InvoiceDraftRevisionEvidence.Capture` and domain
+  snapshot constraints, then rejects noncanonical JSON.
+- The checksum protects against accidental corruption when stored
+  and checked separately. **It is not cryptographic authentication
+  against a privileged actor who can rewrite both payload and hash.**
+- No EF entity/DbSet/migration/application endpoint, HTTP route,
+  current invoice mutation, PostgreSQL connection or issuance.
+
+Added **9 new unit tests** in
+`InvoiceDraftRevisionArchiveCodec_Tests` for roundtrip fidelity,
+deterministic ordering, corrupt/missing checksums,
+actor/reason scope, unsupported format, malformed JSON,
+noncanonical rehashed JSON and no mutation of old evidence.
+These new tests have **NOT yet run locally**.
+
+Created a separate review document:
+`etc/phase-audits/Phase2G3A7_RevisionLedger_MigrationRFC.md`.
+It specifies draft-only additive DDL, append-only ledger separation
+from active source uniqueness, CurrentRevision+ConcurrencyStamp,
+contract→invoice row-lock ordering, loser-aborts concurrent rebuild
+logic, transaction rollback guarantees and migration review gates.
+**SQL is illustrative and marked DO NOT RUN.**
+
+Next local unit command:
+
+```powershell
+git pull --ff-only origin wip/phase-2g2
+dotnet test .\modules\buildingmanagement\test\BuildingManagement.Domain.Tests\BuildingManagement.Domain.Tests.csproj --filter "FullyQualifiedName~InvoiceDraftRevisionEvidence_Tests|FullyQualifiedName~InvoiceDraftRevisionArchiveCodec_Tests"
+```
+
+Expected domain revision cases: **18/18** (previous REV 9 +
+new ARCH 9), **not yet verified as a combined run**. If the
+archive codec's compile/runtime cases fail, correct source first
+and do not proceed to live EF migrations.
+
 ## REV01–09 local verification — 25/10/2026
 
 User ran `InvoiceDraftRevisionEvidence_Tests` after pulling

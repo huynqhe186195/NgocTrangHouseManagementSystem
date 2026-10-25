@@ -56,7 +56,7 @@ public static class InvoiceDraftRevisionArchiveCodec
                         .ToArray()))
                 .ToArray());
         var json = JsonSerializer.Serialize(payload);
-        return new InvoiceDraftRevisionArchivePackage(json, Hash(json));
+        return new InvoiceDraftRevisionArchivePackage(json, ComputeChecksum(json));
     }
 
     public static InvoiceDraftRevisionEvidence Unpack(
@@ -143,9 +143,16 @@ public static class InvoiceDraftRevisionArchiveCodec
         }
     }
 
-    private static string Hash(string json) =>
-        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(json)))
+    /// <summary>
+    /// Deterministic hexadecimal SHA-256 checksum of the exact UTF-8 bytes.
+    /// This is a data-integrity checksum, not a security signature.
+    /// </summary>
+    public static string ComputeChecksum(string json)
+    {
+        ArgumentNullException.ThrowIfNull(json);
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(json)))
             .ToLowerInvariant();
+    }
 
     private sealed record ArchivePayload(
         int FormatVersion, Guid InvoiceId, int ArchivedRevision,

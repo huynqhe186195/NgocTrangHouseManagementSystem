@@ -49,7 +49,48 @@ new ARCH 9), **not yet verified as a combined run**. If the
 archive codec's compile/runtime cases fail, correct source first
 and do not proceed to live EF migrations.
 
-## Latest offline migration preparation — 25/10/2026 (NOT run)
+## Offline migration scaffold generated locally — 25/10/2026 (unreviewed)
+
+User confirmed working tree initially clean, checked out branch
+`wip/phase-2g2`, fast-forwarded
+`7c27aa5..c2c6927`, and successfully executed
+`prepare-invoice-revision-ledger-migration-offline.ps1`.
+
+The log explicitly reported:
+
+```
+SAFE MODE: only scaffold local EF migration files and generate OFFLINE SQL.
+Build succeeded.
+OFFLINE MIGRATION SCAFFOLD + BASIC SQL REVIEW COMPLETED.
+Migration ID: 20261025150750_Phase2G3A7_AddInvoiceDraftRevisionLedger
+NOT APPROVED TO APPLY
+```
+
+The generated files exist on the **user's local Windows checkout**,
+**not in the connected GitHub branch**. Final
+`git status --short` reported exactly these four changes:
+
+```
+ M modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Migrations/BuildingManagementDbContextModelSnapshot.cs
+?? etc/phase-audits/Phase2G3A7_RevisionLedger_Generated_Review.sql
+?? modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Migrations/20261025150750_Phase2G3A7_AddInvoiceDraftRevisionLedger.Designer.cs
+?? modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Migrations/20261025150750_Phase2G3A7_AddInvoiceDraftRevisionLedger.cs
+```
+
+**Basic offline scaffold checks PASSED, but full SQL/source review
+has NOT happened**: the generated migration, Designer, model snapshot,
+and SQL preview must be read before approving any code/migration
+change. Do not infer that the PostgreSQL trigger or populated-table
+rollback protection exists; the generator does not implement these.
+
+Next review gate: collect those four exact files, check generated
+Up/Down and full EF model snapshot, validate PK/FK/index/check
+constraints and source table independence, and identify the exact
+**fifth** build warning (older baseline was four RMG012 warnings).
+Do not run any EF database update, DbMigrator, psql apply or schema
+mutation; preserve the generated local files as-is until reviewed.
+
+## Offline scaffold helper implementation (subsequently run on 25/10/2026)
 
 - Added `etc/scripts/prepare-invoice-revision-ledger-migration-offline.ps1`.
   It scaffolds a local EF revision-ledger migration and a local

@@ -78,6 +78,77 @@ attribute's `IsTransactional` and `IsolationLevel` values and do not
 need modification. This correction has not yet been compiled or tested
 on the user's machine.
 
+## Verified 9-case regression and ambient-UOW hardening (25/10/2026)
+
+After correcting the ABP constructor syntax, the user reported:
+
+```
+Test summary: total: 9, failed: 0, succeeded: 9, skipped: 0, duration: 7.3s
+Build succeeded with 4 warning(s) in 21.9s
+```
+
+This verifies **9/9** selected SQLite/EF/app tests for invoice
+isolation attribute configuration, internal HTTP gate, and invoice
+persistence/schema. It is not evidence of concurrent PostgreSQL execution.
+
+### New fail-closed runtime control (WIP, awaiting local test)
+
+ABP ignores a method's `[UnitOfWork]` isolation setting when
+an outer UOW already exists. To address that bypass, the Application
+layer now invokes `IInvoiceDraftReadIsolationGuard` *before*
+any contract/meter/tariff reads in both draft creation and candidate
+preview. The implementation lives in the EntityFrameworkCore module:
+
+`EfCoreInvoiceDraftReadIsolationGuard` checks the **actual**
+PostgreSQL EF transaction's `DbTransaction.IsolationLevel`
+and rejects absent/nontransactional/READ COMMITTED ambient UOWs
+unless effective isolation is `RepeatableRead` or `Serializable`.
+For SQLite-only regression tests, the guard is no-op because the
+existing test module explicitly disables transactional EF UOWs.
+The prior root UOW attributes remain.
+
+**Safety:** this makes an unsafe caller fail closed instead of
+silently mixing versions; it does not freeze subsequent corrections,
+authorize issuance, or alter meter/tariff write paths. No migrations
+or production DB operations were added.
+
+### New PostgreSQL test gate (WIP, NOT YET RUN)
+
+`InvoiceDraftIsolationPostgreSql_Tests` contains **four cases**
+(PGINV02 and PGINV03, each covering both candidate preview and
+draft storage), using the existing guarded local database and
+random, absent contract IDs:
+
+- PGINV02: an explicit ambient `ReadCommitted` transaction must
+  be rejected by the runtime guard before contract business logic.
+- PGINV03: an ambient `RepeatableRead` transaction must pass the
+  isolation gate and then reject the nonexistent contract normally.
+
+The cases only read the dedicated local test database; they do not
+insert invoice or contract rows. Existing test module setup may
+ensure test-only schema tables. The `.env` helper now supports an
+`Isolation` scenario while retaining its original default
+`Migration` scenario and existing credential-handling behavior.
+
+From a CLEAN `wip/phase-2g2` worktree:
+
+```powershell
+git pull --ff-only origin wip/phase-2g2
+powershell -NoProfile -ExecutionPolicy Bypass -File .\etc\scripts\test-full-invoice-from-local-env.ps1 -Scenario Isolation
+```
+
+**Expected: 4/4 PASS (not yet locally verified).** All test/database
+access is guarded by `RequireSafeConnectionString()` to
+`127.0.0.1:5432/ngoctrang_integration_test`.
+
+### Remaining (still OPEN)
+
+This PostgreSQL gate checks that an unsafe ambient isolation setting
+is rejected. It does **not yet test a writer changing a meter reading,
+replacement or tariff while a draft transaction is active**, so the
+larger source-version concurrency gate remains open. Final invoice
+issuance and financial recognition are still disabled.
+
 ## Critical concurrency exposure — fail closed before financial issuance
 
 Repository read on current WIP:

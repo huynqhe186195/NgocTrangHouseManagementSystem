@@ -426,6 +426,53 @@ counter ranges, date, rate and amount); reject any missing history
 or disagreement. This is NOT equivalent to, nor authorized by,
 the successful snapshot-concurrency tests. Issuance remains disabled.
 
+## Draft freshness comparison foundation (WIP, not yet tested locally)
+
+Added a pure, fail-closed `InvoiceDraftFreshnessEvaluator` (Application
+layer, no remote API/DB reads) comparing a previously persisted
+`InvoiceDraftDto` with a newly reconstructed,
+server-side `InvoiceDraftCandidateDto`.
+
+It requires:
+
+- Same contract, room and billing period; stored status is Draft.
+- Two distinct utility lines with complete rate and amount evidence,
+  zero blockers and zero coverage issues; matching copied line totals
+  and provisional total.
+- Matching physical source identity by both `SourceType` and
+  `SourceId`, with meter ID, reading date, previous/current values,
+  recorded quantity and amount all equal.
+- No duplicate/missing/extra sources and no inconsistent arithmetic.
+  This rejects repricing, altered readings, changed replacement
+  source history and "same total but different provenance".
+- Any missing or unpriced current reading is treated as stale
+  (never silently zero-priced).
+
+Created 10 xUnit cases in
+`InvoiceDraftFreshnessEvaluator_Tests`, including the positive
+unchanged-state case and nine stale/disagreement cases.
+
+**IMPORTANT: Not yet wired to any live read/issue endpoint.**
+This is an internal comparison building block, not proof that saved
+drafts are automatically invalidated or issuance is safe. A future
+authorized issuance transaction must reload and compare under
+an appropriate repeatable-read/serializable transaction, revalidate
+operator scope, then make the final state change atomically. Any
+later change invalidates an earlier comparison result.
+
+No schema changes or production data writes. Neither draft nor
+preview HTTP access is enabled.
+
+### Validate locally (new 10-case unit gate)
+
+```powershell
+git pull --ff-only origin wip/phase-2g2
+dotnet test .\modules\buildingmanagement\test\BuildingManagement.Application.Tests\BuildingManagement.Application.Tests.csproj --filter "FullyQualifiedName~InvoiceDraftFreshnessEvaluator_Tests"
+```
+
+**Expected: 10/10 PASS; not yet run on the user's machine.**
+Keep the previous verified PostgreSQL concurrency result at 3/3.
+
 ## Critical concurrency exposure — fail closed before financial issuance
 
 Repository read on current WIP:

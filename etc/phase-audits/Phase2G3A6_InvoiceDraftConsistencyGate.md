@@ -286,6 +286,43 @@ meter replacement, or stored draft issuance transition is race-safe.
 Phase 2G.3A.6 is not complete, and there have been no schema changes
 or application/production database migration runs in this stage.
 
+## PGINV05 — actual application-service writer overlap (WIP, not yet locally verified)
+
+Added a second scenario in
+`InvoiceDraftConcurrentSnapshotPostgreSql_Tests`:
+
+- PGINV05 seeds a separate, unique, test-only fixture.
+- Reader enters a real PostgreSQL `RepeatableRead` ABP UOW, anchors
+  the MVCC snapshot with the seeded test contract.
+- An independent execution context and DI scope (no leaked ambient
+  `AsyncLocal` UOW) then calls the **real**
+  `IMeterReadingAppService.UpdateAsync` for electricity and water
+  and `IUtilityRateAppService.UpdateAsync` for both tariffs.
+  Thus the meter write lock/validation and rate application logic
+  are actually traversed rather than bypassed by direct test SQL.
+- The anchored invoice candidate must read the *old* values and
+  copied provisional amounts; a new candidate UOW must read the
+  *updated* values after the writer commits.
+- Cleanup uses the proven test-only ID-filtered children-first
+  deletion, preserving original exceptions separately from cleanup
+  failures. No invoice or production data is created/updated.
+
+The `Concurrency` mode already selects the full
+`InvoiceDraftConcurrentSnapshotPostgreSql_Tests` class. With PGINV04
+and PGINV05, the expected result is now **2/2 PASS**, not just 1/1.
+
+```powershell
+git pull --ff-only origin wip/phase-2g2
+powershell -NoProfile -ExecutionPolicy Bypass -File .\etc\scripts\test-full-invoice-from-local-env.ps1 -Scenario Concurrency
+```
+
+**Not yet executed.** The two source updates/rate updates are
+independent business service calls; their results may each commit
+separately. This proves the reader's single captured snapshot, not
+that several separate writes form one global atomic financial event.
+Meter replacement-vs-draft creation, persisted draft freshness,
+issuance revalidation and cross-building permissions remain OPEN.
+
 ## Critical concurrency exposure — fail closed before financial issuance
 
 Repository read on current WIP:

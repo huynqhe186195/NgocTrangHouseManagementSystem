@@ -27,7 +27,7 @@ the independently callable, internal
 now both declare:
 
 ```csharp
-[UnitOfWork(IsTransactional = true, IsolationLevel = IsolationLevel.RepeatableRead)]
+[UnitOfWork(true, IsolationLevel.RepeatableRead)]
 ```
 
 On PostgreSQL, this requests one MVCC read snapshot for all SELECTs
@@ -60,6 +60,23 @@ dotnet test .\modules\buildingmanagement\test\BuildingManagement.EntityFramework
 
 Report exact pass/fail counts. No database migration or PostgreSQL
 connection is needed for this SQLite/application regression.
+
+## Compile blocker and corrective fix (25/10/2026)
+
+Initial isolated gate implementation used the incorrect attribute syntax
+`[UnitOfWork(IsTransactional = true, IsolationLevel = IsolationLevel.RepeatableRead)]`.
+User's .NET 10 local build failed with **four CS0655 errors** in the
+two invoice application services. ABP `UnitOfWorkAttribute` exposes
+nullable `bool?`/`IsolationLevel?` properties, which cannot be used
+as C# attribute named arguments. This was a source code error, **not
+a PostgreSQL failure**.
+
+Both methods now use the ABP-supported **positional constructor**
+`[UnitOfWork(true, IsolationLevel.RepeatableRead)]`
+(available in the ABP 10.x API). The two test cases inspect the
+attribute's `IsTransactional` and `IsolationLevel` values and do not
+need modification. This correction has not yet been compiled or tested
+on the user's machine.
 
 ## Critical concurrency exposure — fail closed before financial issuance
 

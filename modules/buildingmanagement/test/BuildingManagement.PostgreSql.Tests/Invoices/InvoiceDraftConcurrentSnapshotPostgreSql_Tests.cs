@@ -1,6 +1,7 @@
 using System;
 using System.Data;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using BuildingManagement.Buildings;
 using BuildingManagement.Contracts;
@@ -132,6 +133,118 @@ public sealed class InvoiceDraftConcurrentSnapshotPostgreSql_Tests
         // Successful test must also remove its own fixture; cleanup
         // failure makes the test fail rather than leak test records.
         await CleanupAsync(f);
+    }
+
+    [Fact]
+    public async Task PGINV05_Application_Service_Meter_And_Tariff_Edits_Do_Not_Mix_Candidate_Snapshot()
+    {
+        var f = new Fixture(
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
+            Guid.NewGuid(), Guid.NewGuid());
+
+        try
+        {
+            await SeedAsync(f);
+
+            using (var scope = _scopes.CreateScope())
+            {
+                var provider = scope.ServiceProvider;
+                var manager = provider.GetRequiredService<IUnitOfWorkManager>();
+                using var outer = manager.Begin(
+                    new AbpUnitOfWorkOptions
+                    {
+                        IsTransactional = true,
+                        IsolationLevel = IsolationLevel.RepeatableRead
+                    }, requiresNew: true);
+
+                // Anchor the original reader's real PostgreSQL MVCC
+                // snapshot before the business writers start.
+                var contract = await provider
+                    .GetRequiredService<IRepository<Contract, Guid>>()
+                    .GetAsync(f.Contract);
+                Assert.Equal(f.Room, contract.RoomId);
+
+                // Never flow ABP's AsyncLocal ambient UOW into the writer.
+                // Use an independent scope and the actual application
+                // service proxies, including physical meter locks.
+                Task writer;
+                using (ExecutionContext.SuppressFlow())
+                {
+                    writer = Task.Run(() => CommitThroughApplicationServicesAsync(f));
+                }
+                await writer.WaitAsync(TimeSpan.FromSeconds(35));
+
+                var original = await provider
+                    .GetRequiredService<IInvoiceDraftCandidateAppService>()
+                    .GetMonthlyCandidateAsync(f.Contract, 2026, 10);
+                AssertCandidate(original, electricityUnits: 10m,
+                    electricityRate: 3500m, waterUnits: 5m, waterRate: 15000m);
+            }
+
+            using (var fresh = _scopes.CreateScope())
+            {
+                var updated = await fresh.ServiceProvider
+                    .GetRequiredService<IInvoiceDraftCandidateAppService>()
+                    .GetMonthlyCandidateAsync(f.Contract, 2026, 10);
+                AssertCandidate(updated, electricityUnits: 20m,
+                    electricityRate: 7000m, waterUnits: 8m, waterRate: 30000m);
+            }
+        }
+        catch (Exception originalError)
+        {
+            try
+            {
+                await CleanupAsync(f);
+            }
+            catch (Exception cleanupError)
+            {
+                throw new AggregateException(
+                    "PGINV05 source-service race test and fixture cleanup both failed.",
+                    originalError, cleanupError);
+            }
+
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo
+                .Capture(originalError).Throw();
+            throw;
+        }
+
+        await CleanupAsync(f);
+    }
+
+    private async Task CommitThroughApplicationServicesAsync(Fixture f)
+    {
+        using var scope = _scopes.CreateScope();
+        var readings = scope.ServiceProvider
+            .GetRequiredService<IMeterReadingAppService>();
+        var rates = scope.ServiceProvider
+            .GetRequiredService<IUtilityRateAppService>();
+
+        await readings.UpdateAsync(f.ElectricityReading, new UpdateMeterReadingDto
+        {
+            CurrentReading = 30m,
+            ReadingDate = new DateTime(2026, 10, 31)
+        });
+        await readings.UpdateAsync(f.WaterReading, new UpdateMeterReadingDto
+        {
+            CurrentReading = 108m,
+            ReadingDate = new DateTime(2026, 10, 31)
+        });
+
+        await rates.UpdateAsync(f.ElectricityRate, new UpdateUtilityRateDto
+        {
+            BuildingId = f.Building,
+            UtilityType = UtilityType.Electricity,
+            UnitPrice = 7000m,
+            EffectiveFrom = new DateTime(2026, 10, 1)
+        });
+        await rates.UpdateAsync(f.WaterRate, new UpdateUtilityRateDto
+        {
+            BuildingId = f.Building,
+            UtilityType = UtilityType.Water,
+            UnitPrice = 30000m,
+            EffectiveFrom = new DateTime(2026, 10, 1)
+        });
     }
 
     private async Task SeedAsync(Fixture f)

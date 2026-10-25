@@ -323,6 +323,34 @@ that several separate writes form one global atomic financial event.
 Meter replacement-vs-draft creation, persisted draft freshness,
 issuance revalidation and cross-building permissions remain OPEN.
 
+## PGINV04 + PGINV05 verified — 25/10/2026
+
+The user reran the guarded `-Scenario Concurrency` test suite after
+adding the real application service mutator scenario and reported:
+
+```
+Test summary: total: 2, failed: 0, succeeded: 2, skipped: 0, duration: 6.3s
+Build succeeded with 4 warning(s) in 19.2s
+```
+
+**2/2 PASS** proves that `InvoiceDraftCandidateAppService` reads a
+consistent transaction snapshot in a concurrent PostgreSQL writer
+scenario with both (PGINV04) direct test SQL updates and (PGINV05)
+real `IMeterReadingAppService.UpdateAsync` and
+`IUtilityRateAppService.UpdateAsync` calls in independent scopes.
+Existing four Mapperly warnings persist.
+
+The new fixture created by each successful test is removed by that
+test's own cleanup. However, the **original failed** PGINV04 run
+may have left a separate old GUID-isolated fixture; do not assume
+all older artifacts were removed by later successful runs.
+
+**Not proven:** concurrent meter replacement, persisted draft
+freshness, draft correction/cancellation, invoice issuance, operator
+authorization or populated production migration. Phase 2G.3A.6
+still has open gates. The previous 109/109 regression predates
+these latest code changes.
+
 ## Critical concurrency exposure — fail closed before financial issuance
 
 Repository read on current WIP:

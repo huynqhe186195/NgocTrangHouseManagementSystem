@@ -20,4 +20,11 @@ public interface IInvoiceDraftStorageAppService : IApplicationService
     /// Future issuance must recheck atomically at finalization.
     /// </summary>
     Task<bool> HasCurrentSourceSnapshotAsync(Guid id);
+
+    /// <summary>
+    /// Read-only, internal-only feasibility preview for a possible
+    /// versioned draft rebuild. Never mutates a draft or grants issuance.
+    /// </summary>
+    Task<InvoiceDraftRebuildGateResult> PreviewRebuildAsync(
+        Guid id, string? reason);
 }

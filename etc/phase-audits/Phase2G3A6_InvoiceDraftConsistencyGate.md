@@ -351,6 +351,49 @@ authorization or populated production migration. Phase 2G.3A.6
 still has open gates. The previous 109/109 regression predates
 these latest code changes.
 
+## PGINV06 — actual meter replacement overlapping candidate (WIP)
+
+After PGINV04 + PGINV05 **2/2 PASS**, added a third independent
+scenario (not yet run on the user's machine):
+
+`PGINV06_Concurrent_Meter_Replacement_Keeps_Old_Snapshot_And_Blocks_Unverified_New_Meter`
+
+- Seeds another GUID-isolated test building/room/active contract,
+  full-month electricity and water rates, meters and October 31
+  readings in `ngoctrang_integration_test` only.
+- Anchors a PostgreSQL `RepeatableRead` ABP UOW before the writer.
+- Independently calls the **actual**
+  `IUtilityMeterAppService.ReplaceAsync` to replace the electricity
+  meter on October 31, with final old counter **20→25** and new meter
+  initially **0**, without a new meter's month-end reading.
+- The old transaction MUST still return the original ready invoice
+  candidate (10 electricity units at 3,500; 5 water units at 15,000),
+  with no leaked replacement state.
+- A new transaction MUST see replacement evidence, but **reject
+  provisional pricing** due to
+  `ActiveMeterMissingMonthlyReading` on the new active meter. Missing
+  reading is not zero consumption.
+- Cleanup locates only replacement records referencing the exact
+  randomly generated old electricity meter GUID, deletes these first
+  and then the generated new meter together with the other fixture
+  rows, all in one transaction. It retains the previous
+  combined-exception cleanup diagnostics and does not touch any
+  unrelated business rows.
+
+The guarded `Concurrency` scenario now runs PGINV04, 05 and 06.
+**Expected: 3/3 PASS; NOT YET TESTED LOCALLY**. No migration or
+production database action is involved.
+
+```powershell
+git pull --ff-only origin wip/phase-2g2
+powershell -NoProfile -ExecutionPolicy Bypass -File .\etc\scripts\test-full-invoice-from-local-env.ps1 -Scenario Concurrency
+```
+
+This tests the candidate/utility-history read and fail-closed
+behavior. It does not yet prove *persisted draft creation*
+against concurrent replacement, historical revisions after
+draft persistence, issuance revalidation, or authorization.
+
 ## Critical concurrency exposure — fail closed before financial issuance
 
 Repository read on current WIP:

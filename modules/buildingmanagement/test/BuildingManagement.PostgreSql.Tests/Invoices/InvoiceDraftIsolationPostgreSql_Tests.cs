@@ -67,6 +67,28 @@ public sealed class InvoiceDraftIsolationPostgreSql_Tests
         Assert.Equal(BuildingManagementErrorCodes.ContractNotFound, error.Code);
     }
 
+    [Fact]
+    public async Task PGINV07_Ambient_ReadCommitted_Cannot_Check_Stored_Draft_Freshness()
+    {
+        using var scope = GetRequiredService<IServiceScopeFactory>().CreateScope();
+        var provider = scope.ServiceProvider;
+        var manager = provider.GetRequiredService<IUnitOfWorkManager>();
+        using var outer = manager.Begin(
+            new AbpUnitOfWorkOptions
+            {
+                IsTransactional = true,
+                IsolationLevel = IsolationLevel.ReadCommitted
+            }, requiresNew: true);
+
+        // The guard rejects isolation BEFORE any invoice-table query,
+        // so this is safe even on a historical test DB whose invoice
+        // migration has not been applied.
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => provider.GetRequiredService<IInvoiceDraftStorageAppService>()
+                .HasCurrentSourceSnapshotAsync(Guid.NewGuid()));
+        Assert.Contains("RepeatableRead", error.Message, StringComparison.Ordinal);
+    }
+
     private static async Task InvokeDraftAsync(IServiceProvider provider, bool storage)
     {
         var unknownContractId = Guid.NewGuid();

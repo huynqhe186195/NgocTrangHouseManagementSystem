@@ -4,7 +4,23 @@
 **Branch:** `wip/phase-2g2`  
 **Status:** OPEN / design gate only; no destructive draft commands, DB migrations or financial issuance enabled.
 
-## Immutable old-draft evidence prototype — NOT YET RUN (25/10/2026)
+## REV01–09 local verification — 25/10/2026
+
+User ran `InvoiceDraftRevisionEvidence_Tests` after pulling
+the WIP branch and reported:
+
+```
+Test summary: total: 9, failed: 0, succeeded: 9, skipped: 0, duration: 3.5s
+Build succeeded in 10.2s
+```
+
+**9/9 PASS** confirms the in-memory old-draft evidence model's
+metadata, independent copies, read-only collections and validation
+behavior. The build reported success, with no warnings in the
+supplied summary. This does **not** verify database persistence,
+revision uniqueness, concurrent rebuild, or operator authorization.
+
+## Immutable old-draft evidence prototype — test verified (25/10/2026)
 
 Added a **non-persisted** Domain model
 `InvoiceDraftRevisionEvidence.Capture`, preparing the shape of
@@ -42,7 +58,7 @@ git pull --ff-only origin wip/phase-2g2
 dotnet test .\modules\buildingmanagement\test\BuildingManagement.Domain.Tests\BuildingManagement.Domain.Tests.csproj --filter "FullyQualifiedName~InvoiceDraftRevisionEvidence_Tests"
 ```
 
-**Expected 9/9 PASS; UNVERIFIED** until user supplies log.
+**9/9 PASS verified** (reported user log on 25/10/2026).
 
 ### Outstanding design decisions before any persistence
 

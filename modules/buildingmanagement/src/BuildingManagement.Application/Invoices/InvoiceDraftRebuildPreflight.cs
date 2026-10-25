@@ -6,29 +6,6 @@ using BuildingManagement.Utilities;
 namespace BuildingManagement.Invoices;
 
 /// <summary>
-/// Outcomes of a PURE draft correction preflight. None of these values
-/// changes invoice state, releases unique indexes, or permits issuance.
-/// </summary>
-public enum InvoiceDraftRebuildGateStatus
-{
-    ReadyForRevisionDesign = 0,
-    AlreadyCurrent = 1,
-    ReasonRequired = 2,
-    SavedDraftInvalid = 3,
-    DifferentBillingScope = 4,
-    CurrentCandidateNotReady = 5
-}
-
-public sealed record InvoiceDraftRebuildGateResult(
-    InvoiceDraftRebuildGateStatus Status,
-    decimal? ProposedUtilityTotal = null,
-    string? NormalizedReason = null)
-{
-    public bool CanPrepareRevision =>
-        Status == InvoiceDraftRebuildGateStatus.ReadyForRevisionDesign;
-}
-
-/// <summary>
 /// Phase 2G.3A.7: pure preflight for a possible future *versioned* rebuild.
 /// It never mutates a persisted draft or issues a financial charge.
 ///
@@ -60,13 +37,6 @@ public static class InvoiceDraftRebuildPreflight
         if (InvoiceDraftFreshnessEvaluator.MatchesCurrentCandidate(saved, current))
             return new(InvoiceDraftRebuildGateStatus.AlreadyCurrent);
 
-        var cleanedReason = reason?.Trim();
-        // Require a meaningful operator explanation, not a silent
-        // automated rewrite of previously captured financial evidence.
-        if (string.IsNullOrWhiteSpace(cleanedReason) ||
-            cleanedReason.Length < 8 || cleanedReason.Length > 500)
-            return new(InvoiceDraftRebuildGateStatus.ReasonRequired);
-
         var proposed = TryCapture(
             current.ContractId, current.RoomId,
             current.BillingYear, current.BillingMonth,
@@ -86,6 +56,13 @@ public static class InvoiceDraftRebuildPreflight
             proposed.ProvisionalTotal is null ||
             proposed.ProvisionalTotal != current.ProvisionalTotal)
             return new(InvoiceDraftRebuildGateStatus.CurrentCandidateNotReady);
+
+        // Source unavailability is the primary safety blocker. A reason
+        // cannot make invalid source history eligible for a rebuild.
+        var cleanedReason = reason?.Trim();
+        if (string.IsNullOrWhiteSpace(cleanedReason) ||
+            cleanedReason.Length < 8 || cleanedReason.Length > 500)
+            return new(InvoiceDraftRebuildGateStatus.ReasonRequired);
 
         return new(InvoiceDraftRebuildGateStatus.ReadyForRevisionDesign,
             proposed.ProvisionalTotal, cleanedReason);
@@ -163,7 +140,9 @@ public static class InvoiceDraftRebuildPreflight
                     source.SourceType != sourceType.ToString() ||
                     source.Current < source.Previous ||
                     source.Quantity != source.Current - source.Previous ||
-                    source.RecordedDate == default)
+                    source.RecordedDate.Date < new DateTime(year, month, 1) ||
+                    source.RecordedDate.Date > new DateTime(year, month,
+                        DateTime.DaysInMonth(year, month)))
                     return null;
 
                 sourceSnapshots.Add(new InvoiceDraftMeterSegmentSnapshot(
@@ -182,6 +161,10 @@ public static class InvoiceDraftRebuildPreflight
             {
                 return null;
             }
+            catch (OverflowException)
+            {
+                return null;
+            }
         }
 
         try
@@ -190,6 +173,10 @@ public static class InvoiceDraftRebuildPreflight
                 year, month, snapshots);
         }
         catch (ArgumentException)
+        {
+            return null;
+        }
+        catch (OverflowException)
         {
             return null;
         }

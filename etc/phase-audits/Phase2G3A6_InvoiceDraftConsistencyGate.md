@@ -219,6 +219,42 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\etc\scripts\test-full-invo
 Review the full exception if compilation, assertion or cleanup fails
 before adding further concurrency scenarios.
 
+## PGINV04 first local run: cleanup table-name error (25/10/2026)
+
+User reported `PGINV04 0/1` with PostgreSQL SQLSTATE **42P01**
+(`relation "BuildingManagementBuildings" does not exist`) in
+`InvoiceDraftConcurrentSnapshotPostgreSql_Tests.CleanupAsync`,
+at the final test-fixture cleanup DELETE. The mapping in
+`BuildingConfiguration.cs` explicitly uses
+`builder.ToTable("Buildings")`, unlike most other prefixed module
+tables. This is **a test cleanup defect**, not evidence of a live
+invoice transaction inconsistency.
+
+**Fix committed to WIP:** change only the Building cleanup table to
+`"Buildings"`; restructure failure handling to preserve both the
+original test exception and any cleanup exception
+(`AggregateException`) rather than replacing the original failure.
+The cleanup still filters DELETE statements by test-generated GUIDs
+and runs inside a PostgreSQL transaction; it never deletes unrelated
+business data.
+
+**Important previous-run hygiene:** because the original cleanup
+transaction failed on its last statement, all its earlier DELETE
+operations would have been rolled back. If fixture seeding completed,
+the failed run may have left one isolated `PGINV04-` test-only
+building/room/contract/meter/rate fixture in
+`ngoctrang_integration_test`. The next run uses new GUIDs and only
+removes its own fixture; do **not** assume the old fixture was cleaned
+or run a broad DELETE. Follow up with a separate exact-marker,
+inspect-first cleanup if needed. No application/production DB changes.
+
+**PGINV04 remains NOT VERIFIED** until rerun with the fix:
+
+```powershell
+git pull --ff-only origin wip/phase-2g2
+powershell -NoProfile -ExecutionPolicy Bypass -File .\etc\scripts\test-full-invoice-from-local-env.ps1 -Scenario Concurrency
+```
+
 ## Critical concurrency exposure — fail closed before financial issuance
 
 Repository read on current WIP:

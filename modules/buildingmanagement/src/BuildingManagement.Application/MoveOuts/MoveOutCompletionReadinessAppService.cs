@@ -52,9 +52,14 @@ public sealed class MoveOutCompletionReadinessAppService : ApplicationService
         var contract = await _contracts.FindAsync(request.ContractId);
         var tasks = await _checklist.GetListAsync(
             task => task.MoveOutRequestId == request.Id);
-        var hasDraft = await _invoices.AnyAsync(invoice =>
+        // A utility draft from a previous month is NOT evidence for
+        // the approved departure period, and a draft is never the final bill.
+        var approvedDate = request.ApprovedMoveOutDate;
+        var hasDraft = approvedDate.HasValue && await _invoices.AnyAsync(invoice =>
             invoice.ContractId == request.ContractId &&
             invoice.RoomId == request.RoomId &&
+            invoice.BillingYear == approvedDate.Value.Year &&
+            invoice.BillingMonth == approvedDate.Value.Month &&
             invoice.Status == InvoiceStatus.Draft);
 
         // A pending/rejected/cancelled request cannot produce valid

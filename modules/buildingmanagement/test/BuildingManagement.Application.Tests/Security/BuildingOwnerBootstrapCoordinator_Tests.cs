@@ -38,7 +38,7 @@ public sealed class BuildingOwnerBootstrapCoordinator_Tests
     public async Task BOOT03_Denied_Permission_Does_Not_Call_Writer()
     {
         var fixture = Valid();
-        fixture.Principal.Id = null;
+        fixture.Principal.Privileged = false;
         await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
             fixture.Coordinator.CreateWithCurrentOwnerAsync(Input()));
         Assert.Equal(0, fixture.Writer.Calls);
@@ -109,11 +109,12 @@ public sealed class BuildingOwnerBootstrapCoordinator_Tests
     private sealed class Principal : IBuildingOwnerBootstrapPrincipalReader
     {
         public Guid? Id { get; set; }
+        public bool Privileged { get; set; } = true;
         public int Calls { get; private set; }
         public Task<Guid?> GetAuthorizedIssuerAsync()
         {
             Calls++;
-            return Task.FromResult(Id);
+            return Task.FromResult(Privileged ? Id : null);
         }
     }
 

@@ -105,33 +105,33 @@ public sealed class InvoiceRevisionPopulatedRollbackPostgreSql_Tests
                 // These are synthetic fixture identities on a brand-new
                 // disposable database, never application tenant/room data.
                 await ExecAsync(seed,
-                    $"""
+                    $$"""
                     INSERT INTO "Buildings"
                       ("Id","Name","Address","ExtraProperties","ConcurrencyStamp","CreationTime")
-                    VALUES ('{building:D}','Revision test building','Test only',
-                            '{{}}','{Guid.NewGuid():N}',now());
+                    VALUES ('{{building:D}}','Revision test building','Test only',
+                            '{}','{{Guid.NewGuid():N}}',now());
                     INSERT INTO "BuildingManagementFloors"
                       ("Id","BuildingId","FloorNumber","Name","ExtraProperties",
                        "ConcurrencyStamp","CreationTime")
-                    VALUES ('{floor:D}','{building:D}',1,'Test floor','{{}}',
-                            '{Guid.NewGuid():N}',now());
+                    VALUES ('{{floor:D}}','{{building:D}}',1,'Test floor','{}',
+                            '{{Guid.NewGuid():N}}',now());
                     INSERT INTO "BuildingManagementRooms"
                       ("Id","FloorId","RoomNumber","Name","Capacity","Status",
                        "ExtraProperties","ConcurrencyStamp","CreationTime")
-                    VALUES ('{room:D}','{floor:D}','REV-{Guid.NewGuid():N}',
-                            'Test room',2,0,'{{}}','{Guid.NewGuid():N}',now());
+                    VALUES ('{{room:D}}','{{floor:D}}','REV-{{Guid.NewGuid():N}}',
+                            'Test room',2,0,'{}','{{Guid.NewGuid():N}}',now());
                     INSERT INTO "BuildingManagementContracts"
                       ("Id","RoomId","ContractNumber","StartDate","MonthlyRent",
                        "DepositAmount","Status","ExtraProperties",
                        "ConcurrencyStamp","CreationTime")
-                    VALUES ('{contract:D}','{room:D}','REV-{Guid.NewGuid():N}',
-                            now(),3000000,3000000,0,'{{}}',
-                            '{Guid.NewGuid():N}',now());
+                    VALUES ('{{contract:D}}','{{room:D}}','REV-{{Guid.NewGuid():N}}',
+                            now(),3000000,3000000,0,'{}',
+                            '{{Guid.NewGuid():N}}',now());
                     INSERT INTO "BuildingManagementInvoices"
                       ("Id","ContractId","RoomId","BillingYear","BillingMonth",
                        "Status","ExtraProperties","ConcurrencyStamp","CreationTime")
-                    VALUES ('{invoice:D}','{contract:D}','{room:D}',2026,10,
-                            0,'{{}}','{Guid.NewGuid():N}',now());
+                    VALUES ('{{invoice:D}}','{{contract:D}}','{{room:D}}',2026,10,
+                            0,'{}','{{Guid.NewGuid():N}}',now());
                     """);
             }
 

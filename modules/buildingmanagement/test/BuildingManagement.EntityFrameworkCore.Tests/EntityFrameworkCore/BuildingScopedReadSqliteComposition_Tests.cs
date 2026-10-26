@@ -168,6 +168,44 @@ public sealed class BuildingScopedReadSqliteComposition_Tests
         });
     }
 
+    [Fact]
+    public async Task READSQL07_Runtime_Default_Account_Denies_Before_Sqlite_Query()
+    {
+        var f = await SeedAsync();
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var fixture = Context(f.A);
+            var gate = new BuildingScopedReadDesignGate(
+                fixture.Principal,
+                GetRequiredService<IBuildingOperatorActiveAccountReader>(),
+                fixture.Grants, GetRequiredService<IBuildingScopedCollectionStore>());
+            var result = await gate.AssessPageDesignOnlyAsync(
+                BuildingScopedCollectionKind.Room, 0, 10);
+
+            AssertDenied(result);
+            Assert.Equal(0, fixture.Grants.Calls);
+        });
+    }
+
+    [Fact]
+    public async Task READSQL08_Runtime_Default_Building_Grants_Are_Empty()
+    {
+        var f = await SeedAsync();
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var fixture = Context(f.A);
+            var grants = GetRequiredService<IBuildingOperatorGrantReader>();
+            Assert.IsType<DenyAllBuildingOperatorGrantReader>(grants);
+            var gate = new BuildingScopedReadDesignGate(
+                fixture.Principal, fixture.Account,
+                grants, GetRequiredService<IBuildingScopedCollectionStore>());
+            var result = await gate.AssessPageDesignOnlyAsync(
+                BuildingScopedCollectionKind.Room, 0, 10);
+
+            AssertDenied(result);
+        });
+    }
+
     private FixtureContext Context(Guid building)
     {
         var userId = Guid.NewGuid();

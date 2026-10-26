@@ -49,7 +49,40 @@ new ARCH 9), **not yet verified as a combined run**. If the
 archive codec's compile/runtime cases fail, correct source first
 and do not proceed to live EF migrations.
 
-## PostgreSQL transaction-local SQL rehearsal — IMPLEMENTED / NOT YET RUN (26/10/2026)
+## PGREV01/02 verified locally — 26/10/2026
+
+User ran `etc/scripts/test-invoice-revision-ledger-sql-local.ps1`
+after fetching the two guarded SQL replay tests and reported:
+
+```
+Test Run Successful.
+Total tests: 2
+    Passed: 2
+Total time: 5.5118 Seconds
+BuildingManagement.PostgreSql.Tests test net10.0 succeeded (6.0s)
+Test summary: total: 2, failed: 0, succeeded: 2, skipped: 0, duration: 6.0s
+Build succeeded with 4 warning(s) in 25.9s
+PGREV01/02 PASSED. Test-only PostgreSQL transactions were rolled back.
+```
+
+**2/2 PASS** verifies the checksum-pinned, independently
+reviewed **Up and Down SQL**, replayed in a transaction-local
+random PostgreSQL schema on the guarded local test database.
+These tests cover row UPDATE/DELETE protection, TRUNCATE,
+unique revision, invalid hex digest, restricted FK, nonpositive
+revision, populated rollback rejection/preservation and empty
+rollback success/cleanup. They do NOT verify the entire EF
+migration chain, production role permissions, or concurrent
+transactions. The final test output reports only the
+four known Mapperly warnings.
+
+User's V2 patched migration plus Designer/Model Snapshot and
+generated SQL remain **uncommitted locally**, absent from the
+GitHub branch. Do not reset, stash, overwrite or drop those
+files to "clean" the working tree. No migration is authorized
+to run on an application database.
+
+## PostgreSQL transaction-local SQL rehearsal — IMPLEMENTED / VERIFIED 2/2 PASS (26/10/2026)
 
 Added `InvoiceRevisionLedgerSqlPostgreSql_Tests` under
 `BuildingManagement.PostgreSql.Tests/Invoices`, with two

@@ -95,6 +95,9 @@ if ($meterSignoff -notmatch '\[RemoteService\(IsEnabled\s*=\s*false\)\]' -or
     $meterSignoff -notmatch 'BuildingBusinessCapability\.ManageRoom' -or
     $meterSignoff -notmatch 'HasValidFinalMeterEvidence\(request, evidence\)' -or
     $meterSignoff -notmatch 'MarkFinalMeterReadingsVerified\(_clock\.Now\)' -or
+    $meterSignoff -notmatch 'IAsyncQueryableExecuter queryExecuter' -or
+    $meterSignoff -notmatch '_queryExecuter\.FirstOrDefaultAsync\(' -or
+    $meterSignoff -match '\bawait\s+AsyncExecuter\.' -or
     $meterSignoff -match '\.(End|Complete|Issue|Refund|PostDebt|DeleteAsync)\s*\(') {
     throw 'Safety stop: verified final-meter checklist lost transaction, scope or evidence gate.'
 }

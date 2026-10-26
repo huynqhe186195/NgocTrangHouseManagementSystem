@@ -385,6 +385,12 @@ public sealed class BuildingManagementAutoApiAuthorization_Tests
             action!.ControllerTypeInfo.AsType() ==
                 typeof(BuildingManagement.MoveOuts.MoveOutCompletionReadinessAppService));
 
+        // Meter checklist mutates evidence-backed state, and must stay
+        // outside HTTP until scoped staff/owner authority is activated.
+        Assert.DoesNotContain(exposed, action =>
+            action!.ControllerTypeInfo.AsType() ==
+                typeof(BuildingManagement.MoveOuts.MoveOutFinalMeterSignoffAppService));
+
         // Final bill/rent financial previews are deliberately internal;
         // a persisted utility DRAFT is not a public payable invoice.
         Assert.DoesNotContain(exposed, action =>

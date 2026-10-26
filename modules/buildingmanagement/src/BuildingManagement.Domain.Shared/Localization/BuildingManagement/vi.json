@@ -1,6 +1,17 @@
 {
   "culture": "vi",
   "texts": {
+    "Permission:BuildingManagement": "Quản lý tòa nhà và phòng trọ",
+    "Permission:Buildings.Read": "Xem tòa nhà",
+    "Permission:Buildings.Manage": "Quản lý tòa nhà",
+    "Permission:Buildings.AssignOperators": "Phân công nhân viên cho tòa nhà",
+    "Permission:Buildings.RevokeOperators": "Thu hồi quyền quản lý tòa nhà",
+    "Permission:Floors.Read": "Xem tầng",
+    "Permission:Floors.Manage": "Quản lý tầng",
+    "Permission:Rooms.Read": "Xem phòng",
+    "Permission:Rooms.Manage": "Quản lý phòng",
+    "Permission:Contracts.Read": "Xem hợp đồng",
+    "Permission:Contracts.Manage": "Quản lý hợp đồng",
     "Permission:Invoices.RebuildDraft": "Sửa hóa đơn nháp (cần quyền trên tòa nhà)",
     "Permission:Invoices.ReadRevisionHistory": "Xem lịch sử sửa hóa đơn (cần quyền trên tòa nhà)",
     "MyAccount": "Tài khoản của tôi",

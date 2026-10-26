@@ -536,6 +536,55 @@ namespace BuildingManagement.Migrations
                     b.ToTable("BuildingManagementInvoices", (string)null);
                 });
 
+            modelBuilder.Entity("BuildingManagement.Invoices.InvoiceDraftRevisionRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("ArchivedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("ArchivedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("ArchivedRevision")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("EvidenceJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("EvidenceSha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<Guid>("InvoiceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("InvoiceId", "ArchivedRevision")
+                        .IsUnique()
+                        .HasDatabaseName("UX_BM_InvoiceDraftRevision_Invoice_Number");
+
+                    b.ToTable("BuildingManagementInvoiceDraftRevisions", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_BM_InvoiceDraftRevision_Evidence", "length(\"EvidenceJson\") BETWEEN 1 AND 1000000");
+
+                            t.HasCheckConstraint("CK_BM_InvoiceDraftRevision_Hash", "length(\"EvidenceSha256\") = 64 AND \"EvidenceSha256\" = lower(\"EvidenceSha256\")");
+
+                            t.HasCheckConstraint("CK_BM_InvoiceDraftRevision_Positive", "\"ArchivedRevision\" >= 1");
+
+                            t.HasCheckConstraint("CK_BM_InvoiceDraftRevision_Reason", "length(trim(\"Reason\")) BETWEEN 8 AND 500");
+                        });
+                });
+
             modelBuilder.Entity("BuildingManagement.Invoices.InvoiceItem", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1619,6 +1668,15 @@ namespace BuildingManagement.Migrations
                     b.HasOne("BuildingManagement.Rooms.Room", null)
                         .WithMany()
                         .HasForeignKey("RoomId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("BuildingManagement.Invoices.InvoiceDraftRevisionRecord", b =>
+                {
+                    b.HasOne("BuildingManagement.Invoices.Invoice", null)
+                        .WithMany()
+                        .HasForeignKey("InvoiceId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });

@@ -49,6 +49,40 @@ new ARCH 9), **not yet verified as a combined run**. If the
 archive codec's compile/runtime cases fail, correct source first
 and do not proceed to live EF migrations.
 
+## Reviewed source artifact checkpoint gate — 26/10/2026
+
+Added a **read-only** local pre-commit verification script:
+`etc/scripts/review-invoice-revision-ledger-artifacts.ps1`.
+
+It validates the exact bytes/SHA-256 against user-uploaded
+reviewed evidence for **five distinct artifacts**:
+
+- V2 `20261025150750_Phase2G3A7_AddInvoiceDraftRevisionLedger.cs`
+  (SHA-256 `296e303ae2ff2770ba2df558c206ae5c102722fd765684d00518c9693c3ff977`)
+- Original generated `.Designer.cs` (SHA-256
+  `fcfe926913089b8cfd9a99c2a806ebc307a6e00ef15dd68f4e5e0529e442bd73`)
+- Generated `BuildingManagementDbContextModelSnapshot.cs`
+  (SHA-256 `a21e8c7d9005d877ac9a76f37828e91fd9ff453bf53a06c060e65d4a23984d1d`)
+- Exact reviewed forward `Phase2G3A7_RevisionLedger_Patched_Review.sql`
+  (SHA-256 `b5aabd722050d3db3f7cff2703d8a7b44f0380fd9711f40470da35bf1d9dcb24`)
+- Exact reviewed reverse `Phase2G3A7_RevisionLedger_Down_Review.sql`
+  (SHA-256 `38a06bfbbf76b0cbd973a6fa70b2e779e73f1a45a9f61f12bbd7dda02bc4a416`)
+
+The script verifies the expected WIP branch, fails on a hash
+mismatch or other pre-staged files, prints the exact `git add`
+commands, but **does not stage, commit, reset, regenerate, or
+execute database operations**. Unreviewed older SQL preview and
+any other local changes are explicitly excluded.
+
+**Not run on the user's machine yet**. A PASS would only allow a
+source-control checkpoint for the five reviewed files, NOT
+deployment/authorization of a financial workflow or migration
+to the application PostgreSQL database. Before any application
+migration, enforce separate DB application and migration roles,
+protect owner/trigger privileges, re-evaluate full business
+revision+stamping consistency, and review production rollback
+policy.
+
 ## PGREV03/04 combined PostgreSQL PASS — 26/10/2026
 
 The user executed the updated guarded

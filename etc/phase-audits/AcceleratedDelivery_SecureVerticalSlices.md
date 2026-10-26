@@ -16,6 +16,7 @@ User-local results confirmed:
 - Current local working tree reported one untracked review SQL script: `etc/phase-audits/Phase2G3A7_RevisionLedger_Generated_Review.sql`; preserve it.
 - `READSQL01–08` on the newer Stage 2G.3A.15 has **NOT** been confirmed yet, although the source/test exists.
 - Known nonblocking warnings: four Tenant Mapperly RMG012 and five host warnings (two OpenIddict CS8604, two Swagger CS8602, one host CS0162).
+- **Contract compatibility risk identified:** `TenantDto` currently inherits legacy `Abp.Application.Services.Dto.AuditedEntityDto<Guid>`, while `Tenant` inherits modern `Volo.Abp.Domain.Entities.Auditing.FullAuditedAggregateRoot<Guid>`. The four Mapperly RMG012 warnings involve mismatched `CreatorUserId`/`LastModifierUserId` targets, not just cosmetic formatting. Also the Domain.Shared project references both `Abp` 10.5.0 and `Volo.Abp.*` 10.6.1. Do NOT silence these warnings by changing DTO inheritance without reviewing serialized response compatibility and client consumers. Address this during Slice B with contract tests.
 
 **Evidence limitation:** all current positive resource-scope and grant results are design-only and/or SQLite. The production CRUD endpoints remain accessible to *any authenticated caller who passes only the host authentication convention*, with no proven per-building permission restriction. Never equate passing 15 HTTP anonymous tests with authorization of signed-in users.
 

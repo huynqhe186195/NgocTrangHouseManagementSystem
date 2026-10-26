@@ -59,6 +59,17 @@ try {
         }
     )
 
+    # Fail fast before hundreds of EF tests report the SAME container
+    # initialization error. This old, previously passing SQLite case is
+    # intentionally used as the smoke baseline. A new app-service DI /
+    # ABP proxy regression will surface here with one readable stack.
+    $sqliteProject = '.\\modules\\buildingmanagement\\test\\BuildingManagement.EntityFrameworkCore.Tests\\BuildingManagement.EntityFrameworkCore.Tests.csproj'
+    Write-Host '== SQLITE MODULE STARTUP SMOKE: legacy scope integration =='
+    & dotnet test $sqliteProject --filter 'FullyQualifiedName~BuildingBusinessScopedCollectionQuery_Tests.LISTSCOPE01' --logger 'console;verbosity=normal'
+    if ($LASTEXITCODE -ne 0) {
+        throw 'SQLite ABP startup smoke FAILED. Inspect this one test exception before the full EF suite.'
+    }
+
     foreach ($project in $projects) {
         Write-Host "== DOTNET TEST: $($project.Name) =="
         $testArguments = @(

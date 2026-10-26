@@ -14,6 +14,9 @@ public class BuildingManagementPermissions
     {
         public const string Read = GroupName + ".Buildings.Read";
         public const string Manage = GroupName + ".Buildings.Manage";
+        // Separate privileged operations. ManageBuilding is NOT sufficient.
+        public const string AssignOperators = GroupName + ".Buildings.AssignOperators";
+        public const string RevokeOperators = GroupName + ".Buildings.RevokeOperators";
     }
 
     public static class Floors

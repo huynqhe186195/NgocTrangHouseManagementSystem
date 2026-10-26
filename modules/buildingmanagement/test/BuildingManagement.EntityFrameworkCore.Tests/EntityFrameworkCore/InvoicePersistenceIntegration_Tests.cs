@@ -7,6 +7,10 @@ using BuildingManagement.Contracts;
 using BuildingManagement.Floors;
 using BuildingManagement.Invoices;
 using BuildingManagement.MoveOuts;
+using BuildingManagement.Payments;
+using BuildingManagement.Payments.BuildingManagement.Payments;
+using BuildingManagement.Tenants;
+using Volo.Abp.Data;
 using BuildingManagement.Rooms;
 using BuildingManagement.Utilities;
 using Microsoft.EntityFrameworkCore;
@@ -671,6 +675,62 @@ public sealed class InvoicePersistenceIntegration_Tests
             Assert.Null(review.ProvisionalRentAndUtilities);
             Assert.Contains("FinalUtilityDraftMissing", review.Blockers);
             Assert.False(review.CanIssue);
+        });
+    }
+
+    [Fact]
+    public async Task FINPAYDB01_Final_Draft_With_Real_Payment_Is_Not_Settled_Debt()
+    {
+        var (data, readingId) = await SeedReadyOctoberAsync();
+        var draft = CreateDraft(data, readingId, Guid.NewGuid());
+        var requestId = Guid.NewGuid();
+        var tenantId = Guid.NewGuid();
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var request = new MoveOutRequest(requestId, data.ContractId,
+                data.RoomId, new DateOnly(2026, 10, 31), "Payment evidence");
+            request.Approve(DateTime.UtcNow, null);
+            await GetRequiredService<IRepository<MoveOutRequest, Guid>>()
+                .InsertAsync(request, autoSave: true);
+            await _invoices.InsertAsync(draft, autoSave: true);
+
+            await GetRequiredService<IRepository<Tenant, Guid>>().InsertAsync(
+                new Tenant(tenantId, "Test Payer", "0900000111", null,
+                    null, null, IdentityType.CitizenId,
+                    Guid.NewGuid().ToString("N")), autoSave: true);
+
+            var receipt = new Payment(Guid.NewGuid(),
+                "FINPAYDB-" + Guid.NewGuid().ToString("N"), tenantId,
+                PaymentPurpose.InvoicePayment, PaymentMethod.Cash,
+                PaymentChannel.Manual, 50000m, null, data.ContractId, draft.Id);
+            receipt.Complete(DateTime.UtcNow, "FINPAYDB-" + Guid.NewGuid().ToString("N"));
+            await GetRequiredService<IRepository<Payment, Guid>>()
+                .InsertAsync(receipt, autoSave: true);
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var bill = new FinalMoveOutBillReviewAppService(
+                GetRequiredService<IRepository<MoveOutRequest, Guid>>(),
+                _contracts, _invoices,
+                GetRequiredService<IRepository<InvoiceItem, Guid>>(),
+                GetRequiredService<IRepository<InvoiceItemMeterSource, Guid>>());
+            var service = new FinalMoveOutPaymentEvidenceAppService(
+                bill,
+                GetRequiredService<IRepository<Payment, Guid>>(),
+                GetRequiredService<IDataFilter<ISoftDelete>>());
+
+            var evidence = await service.GetAsync(requestId);
+            Assert.Equal(draft.Id, evidence.DraftInvoiceId);
+            Assert.Equal(50000m, evidence.ObservedCompletedReceiptAmount);
+            Assert.Contains("CompletedPaymentLinkedToUnissuedDraft", evidence.Blockers);
+            Assert.Null(evidence.OutstandingDebt);
+            Assert.False(evidence.IsDebtReconciled);
+            Assert.False(evidence.CanSettleDeposit);
+            Assert.Equal(InvoiceStatus.Draft,
+                (await _invoices.GetAsync(draft.Id)).Status);
+            Assert.Equal(ContractStatus.Active,
+                (await _contracts.GetAsync(data.ContractId)).Status);
         });
     }
 

@@ -65,3 +65,27 @@ The first safe engineering increment is a **test-host route/policy inventory** w
 - Keep `InvoiceDraftStorageAppService` remote-disabled, `CurrentRevision` absent and all invoice issue/post/rebuild writes blocked.
 
 **Release gate:** No production rollout of mutation-capable business endpoints until effective endpoint authorization and server-side building scope checks are implemented and the listed negative tests pass.
+
+## 6. Staged authentication-only host guard — NOT YET BUILD-VERIFIED
+
+The branch now contains an incremental defense-in-depth change:
+
+- `src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/BuildingManagementAuthenticatedControllerConvention.cs` applies `AuthorizeFilter` with `RequireAuthenticatedUser()` to MVC controller models originating from `BuildingManagementApplicationModule`'s assembly.
+- The convention deliberately throws at MVC-model discovery if an application controller/action explicitly includes `IAllowAnonymous`, requiring a separate review of any exception.
+- `NgocTrangHouseManagementSystemHttpApiHostModule.ConfigureServices` registers the convention through `MvcOptions.Conventions`.
+- An isolated model-test project at `test/NgocTrangHouseManagementSystem.HttpApi.Host.Tests` contains **AUTHMODEL01–05**: target-controller filter; unrelated-controller isolation; class/action anonymous bypass refusal; invoice-draft remote disabled attribute.
+
+**These new tests are UNVERIFIED** until run locally, and MVC model tests are not equivalent to inspecting the deployed effective endpoint set or making a real HTTP request. In particular, the implementation assumes ABP's generated controller models preserve their original application-service assembly; validate that assumption through `APIAUTH01` route/authorization-metadata inspection against an isolated host. If any `building-management` route evades the convention, stop and repair before deployment.
+
+Recommended verification from the repository root:
+
+```powershell
+git pull --ff-only origin wip/phase-2g2
+dotnet test .\test\NgocTrangHouseManagementSystem.HttpApi.Host.Tests\NgocTrangHouseManagementSystem.HttpApi.Host.Tests.csproj --filter "FullyQualifiedName~BuildingManagementAuthenticatedControllerConvention_Tests" --logger "console;verbosity=normal"
+dotnet build .\src\NgocTrangHouseManagementSystem.HttpApi.Host\NgocTrangHouseManagementSystem.HttpApi.Host.csproj --no-restore
+powershell -NoProfile -ExecutionPolicy Bypass -File .\etc\scripts\check-invoice-revision-no-write-gate.ps1
+```
+
+Use an isolated test host for the subsequent actual-endpoint inventory; do **not** casually start the regular host with credentials for production data. No migration, DbMigrator, role GRANT/REVOKE, live PostgreSQL mutation or invoice write accompanies this stage.
+
+**Critical:** Authentication is only the outermost boundary. An authenticated user still must not be allowed to read or mutate another building's resources; no operator↔building grant model/DB migration and no per-operation permissions have been implemented. APIAUTH04–09 remain pending. The application cannot be declared secure for multi-building production use based on this convention alone.

@@ -17,6 +17,8 @@ public class BuildingManagementPermissions
         // Separate privileged operations. ManageBuilding is NOT sufficient.
         public const string AssignOperators = GroupName + ".Buildings.AssignOperators";
         public const string RevokeOperators = GroupName + ".Buildings.RevokeOperators";
+        // Never assigned automatically. Dedicated, audited first-owner provisioning only.
+        public const string BootstrapOwner = GroupName + ".Buildings.BootstrapOwner";
     }
 
     public static class Floors

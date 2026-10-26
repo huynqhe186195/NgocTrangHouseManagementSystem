@@ -69,7 +69,8 @@ public sealed class AbpBuildingBusinessPrincipalReader :
     public async Task<BuildingBusinessPrincipal?> ReadAsync(
         BuildingBusinessCapability capability)
     {
-        if (!_user.Id.HasValue || _user.Id.Value == Guid.Empty)
+        if (!_user.IsAuthenticated || !_user.Id.HasValue ||
+            _user.Id.Value == Guid.Empty)
             return null;
 
         var permissionName = capability switch

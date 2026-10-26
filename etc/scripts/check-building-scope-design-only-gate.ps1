@@ -101,13 +101,27 @@ foreach ($check in @(
         throw "Safety stop: $($check.Name) CRUD endpoint coverage is incomplete."
     }
 }
-if ($buildingCrud -notmatch 'EnsureBuildingCreationAsync' -or
-    $floorCrud -notmatch 'EnsureBuildingAsync' -or
+# Building creation now goes through explicit first-owner bootstrap,
+# not the old direct entity insert or design-only Create denial helper.
+$bootstrapCoordinator = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/Security/BuildingOwnerBootstrapCoordinator.cs'
+$atomicWriter = Read-Source 'modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Security/EfBuildingOwnerBootstrapAtomicWriter.cs'
+if ($buildingCrud -notmatch 'CreateWithCurrentOwnerAsync' -or
+    $bootstrapCoordinator -notmatch 'DenyAllBuildingOwnerBootstrapWriter' -or
+    $bootstrapCoordinator -notmatch 'IBuildingOperatorActiveAccountReader' -or
+    $bootstrapCoordinator -notmatch '\[RemoteService\(IsEnabled\s*=\s*false\)\]' -or
+    $bootstrapCoordinator -notmatch 'IBuildingOwnerBootstrapPrincipalReader' -or
+    $atomicWriter -match 'ITransientDependency|ExposeServices\(' -or
+    $atomicWriter -notmatch 'BeginTransactionAsync' -or
+    $atomicWriter -notmatch 'RollbackAsync') {
+    throw 'Safety stop: building owner creation lost privilege, transaction or default-deny safeguards.'
+}
+if ($floorCrud -notmatch 'EnsureBuildingAsync' -or
     $floorCrud -notmatch 'AsyncExecuter.ToListAsync' -or
     $roomCrud -notmatch 'AsyncExecuter.ToListAsync') {
     throw 'Safety stop: first-owner creation / child parent scope / SQL list enforcement missing.'
 }
 Write-Host 'PASS: all 15 Building/Floor/Room CRUD entry points retain fail-closed scope checks.'
+Write-Host 'PASS: building creation routes through default-deny owner bootstrap with unregistered transaction writer.'
 
 Write-Host 'BUILDING SCOPE DESIGN-ONLY GATE PASS.'
 Write-Host 'PASS: experimental grant table is not mapped into the runtime DbContext.'

@@ -85,8 +85,7 @@ public sealed class BuildingCrudAccessPolicy
         BuildingBusinessCapability capability)
     {
         if (resourceId == Guid.Empty || !IsSupported(capability) ||
-            kind is < BuildingBusinessResourceKind.Building or
-                > BuildingBusinessResourceKind.Contract)
+            !Enum.IsDefined(kind))
             throw Denied();
 
         // Validate identity/permission/grants BEFORE resource lookup so

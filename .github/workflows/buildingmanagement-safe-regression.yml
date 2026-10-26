@@ -1,0 +1,38 @@
+name: BuildingManagement safe regression
+
+on:
+  pull_request:
+  push:
+    branches:
+      - wip/phase-2g2
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  isolated-tests:
+    name: Isolated .NET 10 tests + source safety gates
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install .NET SDK 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Security regression batch
+        shell: pwsh
+        run: |
+          .\etc\scripts\verify-2g-security-batch.ps1 -Mode Full
+
+# Intentionally excluded:
+# - DbMigrator / EF migration / PostgreSQL integration tests
+# - production secrets or database connections
+# - deployments, billing or invoice mutation endpoints

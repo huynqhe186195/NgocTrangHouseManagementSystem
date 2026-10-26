@@ -95,3 +95,31 @@ Use an isolated test host for the subsequent actual-endpoint inventory; do **not
 Source review found `BuildingManagement.HttpApi/Samples/ExampleController.cs` with `GET /api/building-management/example`: its `GetAsync` has no explicit `[Authorize]` even though another method in the same class does. This is a concrete route-level metadata omission in source, not evidence of an executed anonymous HTTP request. The initial convention restricted to the application assembly could not cover this explicitly authored controller. The updated convention now also targets `BuildingManagementHttpApiModule`'s assembly, and `AUTHMODEL06` is added.
 
 **Still pending:** actual route/verb/policy inventory and live anonymous 401 verification in an isolated host. Authenticated cross-building read/write remains blocked from release until per-resource grants are implemented.
+
+## 8. Local verification and in-memory HTTP increment — 2026-10-26
+
+User-local evidence received after the initial `AUTHMODEL01–06` commit:
+
+- `BuildingManagementAuthenticatedControllerConvention_Tests`: **6/6 PASS**.
+- Independent host project build: **succeeded**, output showed no warnings.
+- `check-invoice-revision-no-write-gate.ps1`: **PASS**.
+- The preceding `dotnet test` command reported **9 warnings** in its build, but did not include individual warning diagnostics; do not misattribute them to the four older Mapperly warnings without reviewing output.
+
+New staged tests, **PENDING local execution**:
+
+- `BuildingManagementExplicitHttpAuthorization_Tests.APIHTTP01`: starts an **in-memory ASP.NET Core TestServer** with the real `BuildingManagement.HttpApi` assembly, uses the same `BuildingManagementAuthenticatedControllerConvention`, checks discovered controller action descriptors and verifies they contain an authenticated-user authorization filter.
+- `BuildingManagementExplicitHttpAuthorization_Tests.APIHTTP02`: calls the exact `GET /api/building-management/example` route anonymously through the isolated HTTP pipeline and requires HTTP 401. The test authentication handler refuses all identities; it does not create users or access application credentials.
+- Adds `Microsoft.AspNetCore.TestHost` 10.0.9 to the new host test project. The real ABP host is **not** booted; the test supplies only controllers, routing, authentication, authorization and the convention. It cannot touch PostgreSQL.
+
+Run from repository root on `wip/phase-2g2`:
+
+```powershell
+git pull --ff-only origin wip/phase-2g2
+dotnet test .\test\NgocTrangHouseManagementSystem.HttpApi.Host.Tests\NgocTrangHouseManagementSystem.HttpApi.Host.Tests.csproj --filter "FullyQualifiedName~BuildingManagementExplicitHttpAuthorization_Tests" --logger "console;verbosity=normal"
+powershell -NoProfile -ExecutionPolicy Bypass -File .\etc\scripts\check-invoice-revision-no-write-gate.ps1
+git status --short
+```
+
+**Scope caveat:** APIHTTP01–02 validate the explicitly authored HttpApi controller assembly in a disposable test host. They do **not** prove that ABP's conventionally generated controllers from application services receive the same authorization filter in the **real configured production host**, that authorization is complete for all routes, or that an authenticated actor is restricted to their buildings. Full-host route/verb/policy inventory (`APIAUTH01`) and permissions/ownership isolation remain pending.
+
+Never run against production data or enable draft revision/issue/debt mutations as part of this verification.

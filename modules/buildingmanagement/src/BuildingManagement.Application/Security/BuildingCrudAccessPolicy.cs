@@ -85,7 +85,7 @@ public sealed class BuildingCrudAccessPolicy
         BuildingBusinessCapability capability)
     {
         if (resourceId == Guid.Empty || !IsSupported(capability) ||
-            !Enum.IsDefined(kind))
+            !Matches(kind, capability))
             throw Denied();
 
         // Validate identity/permission/grants BEFORE resource lookup so
@@ -107,6 +107,28 @@ public sealed class BuildingCrudAccessPolicy
         // independent security review, PostgreSQL tests and deployment gate.
         throw Denied();
     }
+
+    // Enforce a fixed operation/resource matrix; no arbitrary permission
+    // can be used to access an unrelated resource type. Two special cases:
+    // creating a Floor needs its Building parent and ManageFloor; creating
+    // a Room needs its Floor parent and ManageRoom.
+    private static bool Matches(
+        BuildingBusinessResourceKind kind,
+        BuildingBusinessCapability permission) => (kind, permission) switch
+    {
+        (BuildingBusinessResourceKind.Building,
+            BuildingBusinessCapability.ReadBuilding or
+            BuildingBusinessCapability.ManageBuilding or
+            BuildingBusinessCapability.ManageFloor) => true,
+        (BuildingBusinessResourceKind.Floor,
+            BuildingBusinessCapability.ReadFloor or
+            BuildingBusinessCapability.ManageFloor or
+            BuildingBusinessCapability.ManageRoom) => true,
+        (BuildingBusinessResourceKind.Room,
+            BuildingBusinessCapability.ReadRoom or
+            BuildingBusinessCapability.ManageRoom) => true,
+        _ => false
+    };
 
     private static bool IsSupported(BuildingBusinessCapability capability)
         => capability is

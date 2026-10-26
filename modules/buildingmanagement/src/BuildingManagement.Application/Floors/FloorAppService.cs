@@ -1,5 +1,7 @@
 ﻿using BuildingManagement.Buildings;
 using BuildingManagement.Rooms;
+using BuildingManagement.Security;
+using System.Linq;
 using System;
 using System.Collections.Generic;
 using System.Text;
@@ -19,20 +21,25 @@ namespace BuildingManagement.Floors
         private readonly IRepository<Floor, Guid> _floorRepository;
         private readonly IRepository<Building, Guid> _buildingRepository;
         private readonly IRepository<Room, Guid> _roomRepository;
+        private readonly IBuildingCrudAccessPolicy _access;
 
         public FloorAppService(
             IRepository<Floor, Guid> floorRepository,
             IRepository<Building, Guid> buildingRepository,
-            IRepository<Room, Guid> roomRepository)
+            IRepository<Room, Guid> roomRepository,
+            IBuildingCrudAccessPolicy access)
         {
             _floorRepository = floorRepository;
             _buildingRepository = buildingRepository;
             _roomRepository = roomRepository;
+            _access = access;
         }
 
         public async Task<FloorDto> CreateAsync(
             CreateFloorDto input)
         {
+            await _access.EnsureBuildingAsync(
+                input.BuildingId, BuildingBusinessCapability.ManageFloor);
             // Kiểm tra Building có tồn tại không
             await EnsureBuildingExistsAsync(
     input.BuildingId
@@ -60,8 +67,17 @@ namespace BuildingManagement.Floors
 
         public async Task<List<FloorDto>> GetListAsync()
         {
-            var floors =
-                await _floorRepository.GetListAsync();
+            var authorized = await _access.GetAuthorizedBuildingIdsAsync(
+                BuildingBusinessCapability.ReadFloor);
+            var floorQuery = await _floorRepository.GetQueryableAsync();
+            var buildings = await _buildingRepository.GetQueryableAsync();
+            var scoped = from floor in floorQuery
+                         join building in buildings
+                             on floor.BuildingId equals building.Id
+                         where authorized.Contains(building.Id)
+                             && !building.IsDeleted && !floor.IsDeleted
+                         select floor;
+            var floors = await AsyncExecuter.ToListAsync(scoped);
 
             return ObjectMapper.Map<
                 List<Floor>,
@@ -72,6 +88,9 @@ namespace BuildingManagement.Floors
         public async Task<FloorDto> GetAsync(
             Guid id)
         {
+            await _access.EnsureResourceAsync(
+                BuildingBusinessResourceKind.Floor, id,
+                BuildingBusinessCapability.ReadFloor);
             var floor =
                 await _floorRepository.GetAsync(id);
 
@@ -85,6 +104,9 @@ namespace BuildingManagement.Floors
             Guid id,
             UpdateFloorDto input)
         {
+            await _access.EnsureResourceAsync(
+                BuildingBusinessResourceKind.Floor, id,
+                BuildingBusinessCapability.ManageFloor);
             var floor =
                 await _floorRepository.GetAsync(id);
 
@@ -108,6 +130,9 @@ namespace BuildingManagement.Floors
 
         public async Task DeleteAsync(Guid id)
         {
+            await _access.EnsureResourceAsync(
+                BuildingBusinessResourceKind.Floor, id,
+                BuildingBusinessCapability.ManageFloor);
             var floor =
                 await _floorRepository.FindAsync(id);
 

@@ -132,8 +132,13 @@ public sealed class BuildingOperatorChangeDesignGate : ITransientDependency
             issuer.OperatorId == recipientUserId)
             return BuildingOperatorChangePreflightStatus.Denied;
 
-        // Both actor and recipient must be valid active server identities.
-        if (!await _accounts.IsActiveAsync(issuer.OperatorId) ||
+        // Issuer must be active for every operation. A disabled/locked
+        // recipient must still be REVOKABLE so a stale grant can be cleared.
+        // Assignments require an active recipient. A real revoke writer
+        // must separately resolve the exact existing grant row.
+        if (!await _accounts.IsActiveAsync(issuer.OperatorId))
+            return BuildingOperatorChangePreflightStatus.Denied;
+        if (change == BuildingOperatorChangeKind.Assign &&
             !await _accounts.IsActiveAsync(recipientUserId))
             return BuildingOperatorChangePreflightStatus.Denied;
 

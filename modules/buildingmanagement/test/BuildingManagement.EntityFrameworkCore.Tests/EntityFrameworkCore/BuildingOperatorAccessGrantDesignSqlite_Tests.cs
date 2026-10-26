@@ -180,6 +180,20 @@ public sealed class BuildingOperatorAccessGrantDesignSqlite_Tests
         }
     }
 
+    [Fact]
+    public void MEMBERDB06_Running_Building_DbContext_Does_Not_Map_Draft_Grants()
+    {
+        // Design-only guard: if a DbSet/configuration is attached before a
+        // reviewed migration, this test must fail instead of silently
+        // querying a table that doesn't exist in the real application DB.
+        using var connection = new SqliteConnection("Data Source=:memory:");
+        using var db = new BuildingManagementDbContext(
+            new DbContextOptionsBuilder<BuildingManagementDbContext>()
+                .UseSqlite(connection).Options);
+
+        Assert.Null(db.Model.FindEntityType(typeof(BuildingOperatorAccessGrant)));
+    }
+
     private static async Task SeedBuildingAsync(DesignStore store, Guid buildingId)
     {
         await using var db = store.Open();

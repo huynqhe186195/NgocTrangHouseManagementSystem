@@ -1,4 +1,8 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using BuildingManagement.Security;
+using BuildingManagement.Tests.Security;
 using Volo.Abp;
 using Volo.Abp.Data;
 using Volo.Abp.EntityFrameworkCore;
@@ -25,6 +29,15 @@ public class BuildingManagementEntityFrameworkCoreTestModule : AbpModule
     public override void ConfigureServices(ServiceConfigurationContext context)
     {
         context.Services.AddAlwaysDisableUnitOfWorkTransaction();
+
+        // Legacy room life-cycle business tests explicitly opt in to a
+        // narrowly scoped test-only room fixture. Every other operation
+        // remains DENIED, including all new security regression tests.
+        // This registration belongs to the disposable SQLite test module
+        // ONLY, never the running application or HTTP host.
+        context.Services.Replace(
+            ServiceDescriptor.Transient<IBuildingCrudAccessPolicy,
+                LegacyRoomBusinessFixturePolicy>());
 
         _database = new AbpUnitTestSqliteDatabase();
         _database.CreateTables(

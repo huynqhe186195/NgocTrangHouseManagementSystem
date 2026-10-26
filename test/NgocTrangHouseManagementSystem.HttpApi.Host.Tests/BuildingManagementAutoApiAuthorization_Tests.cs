@@ -359,6 +359,14 @@ public sealed class BuildingManagementAutoApiAuthorization_Tests
             .ToArray();
 
         Assert.NotEmpty(exposed);
+        // The forbidden action must disappear from BOTH MVC discovery and
+        // actual routing. Merely setting AttributeRouteInfo=null was not
+        // sufficient: endpoint routing still included EndAsync.
+        var discovered = GetGeneratedActions(app);
+        Assert.DoesNotContain(discovered, action =>
+            action.ControllerTypeInfo.AsType() ==
+                typeof(BuildingManagement.Contracts.ContractAppService) &&
+            action.MethodInfo.Name == "EndAsync");
         Assert.Contains(exposed, action =>
             action!.ControllerTypeInfo.AsType() ==
                 typeof(BuildingManagement.Contracts.ContractAppService) &&

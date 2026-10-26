@@ -58,7 +58,7 @@ A revoked grant remains as history. Any later regrant creates a **different row*
 ## New tests — STAGED / NOT YET RUN LOCALLY
 
 1. `BuildingOperatorAccessGrant_Tests`: **MEMBER01–11**, expected **11/11** — grant data, UTC boundaries, effective/expiry behavior, revoke history, invalid IDs and regrant as new row. Located in `BuildingManagement.Application.Tests`, exercising a Domain type.
-2. `BuildingOperatorAccessGrantDesignSqlite_Tests`: **MEMBERDB01–05**, expected **5/5** — isolated SQLite EF persistence, unique unrevoked membership, FK to building, optimistic concurrency on concurrent revocation, and independent building scopes.
+2. `BuildingOperatorAccessGrantDesignSqlite_Tests`: **MEMBERDB01–06**, expected **6/6** — isolated SQLite EF persistence, unique unrevoked membership, FK to building, optimistic concurrency on concurrent revocation, independent building scopes, and a guard verifying that the real application DbContext still does NOT map this proposed entity.
 
 The SQLite test constructs a **private nested DbContext** with `Data Source=:memory:` and `Database.EnsureCreatedAsync()` against that disposable connection ONLY; it does not instantiate the running application's DbContext, application credentials or migrator.
 

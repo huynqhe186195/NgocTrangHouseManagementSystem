@@ -49,6 +49,54 @@ new ARCH 9), **not yet verified as a combined run**. If the
 archive codec's compile/runtime cases fail, correct source first
 and do not proceed to live EF migrations.
 
+## V2 rollback SQL uploaded and statically reviewed — 26/10/2026
+
+User supplied actual 838-byte local SQL file
+`Phase2G3A7_RevisionLedger_Down_Review.sql`.
+All 29 SQL lines were read and checked against the prior V2
+migration C# and forward SQL.
+
+**Reverse SQL / Down(): STATIC REVIEW PASS**
+
+1. `START TRANSACTION;` begins one rollback transaction.
+2. `LOCK TABLE "BuildingManagementInvoiceDraftRevisions"
+   IN ACCESS EXCLUSIVE MODE;` occurs **before** `IF EXISTS`.
+3. `DO $revision_rollback$ ... IF EXISTS (SELECT 1 ... LIMIT 1)
+   THEN RAISE EXCEPTION ... END` rejects rollback if archived
+   data remains. The error aborts the transaction in PostgreSQL.
+4. Only after the check, `DROP TRIGGER` removes exactly the row
+   `ProtectRow` and statement `ProtectTruncate` triggers.
+5. Then `DROP FUNCTION
+   "bm_block_invoice_draft_revision_mutation"()`, and
+   `DROP TABLE "BuildingManagementInvoiceDraftRevisions"`.
+6. The final schema bookkeeping action is the removal of exactly
+   this migration's `__EFMigrationsHistory` entry,
+   followed by `COMMIT`.
+
+No DDL/DML on existing active invoices, invoice items, source
+measurements or payments appears in this **reverse** SQL.
+
+PostgreSQL official documentation supports that
+`ACCESS EXCLUSIVE` conflicts with all other lock modes and
+that a table lock is held through transaction end. Therefore,
+assuming the SQL runs as a single PostgreSQL transaction,
+the empty-check-before-drop insert race is addressed.
+
+**NOT a PostgreSQL execution PASS.** Neither `Up` nor `Down`
+has been exercised on a disposable PostgreSQL instance. Remaining
+required gates: real trigger UPDATE/DELETE/TRUNCATE rejection,
+SHA-256 hex CHECK and duplicate revision constraint enforcement,
+FK RESTRICT, empty-table rollback, populated-table rollback error
+with preservation of table/archive and EF history row, concurrency
+insert versus rollback, least-privilege role setup and failure
+rollback. The user's local V2 migration and generated files are
+still uncommitted and must remain protected; do not confuse this
+audit-only GitHub commit with the actual generated migration.
+
+No `database update`, `DbMigrator`, or SQL migration should run
+on application or production data. Proceed with separate disposable
+database test design and explicit target verification only.
+
 ## User-local V2 rollback migration build and SQL export — 26/10/2026
 
 The user manually extracted `Phase2G3A7_Reviewed_Migration_Patch_v2.zip`,

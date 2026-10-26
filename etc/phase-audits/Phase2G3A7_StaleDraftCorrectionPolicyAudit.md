@@ -99,6 +99,39 @@ scope revocation and authorization under the proper transaction
 and locks; do not replace the deny-all implementation before
 those checks are designed.
 
+## GRAPHDB01–06 SQLite-backed revision scope reader tests — WIP 26/10/2026
+
+Added `InvoiceDraftRevisionServerGraphIntegration_Tests.cs` to the
+SQLite-isolated `BuildingManagement.EntityFrameworkCore.Tests` project.
+Six new facts exercise the **real** server EF resource graph reader
+on synthetic building, floor, room, contract and invoice rows:
+
+1. Valid database invoice→building hierarchy resolves accurately.
+2. Unknown/empty invoice IDs do not resolve.
+3. Real database with inconsistent contract-room identities does
+   not pass `InvoiceDraftRevisionAccessPolicy`, even with fake
+   positive building membership.
+4. Runtime default building-grants DI resolves to
+   `DenyAllInvoiceDraftRevisionBuildingGrants` and denies
+   both revision and revision-history even with a fake positive
+   permission signal and valid persisted invoice graph.
+5. Soft-deleted building no longer resolves to an active scope.
+6. Read-only assess does not mutate draft status, provisional money,
+   or archive a revision.
+
+**PENDING local execution**; these are NOT claimed PASS.
+The test project uses `AbpUnitTestSqliteDatabase`, not application
+PostgreSQL, and never grants real roles. Therefore even a future
+6/6 PASS must not be interpreted as end-to-end user membership
+authorization, runtime PostgreSQL permission enforcement,
+production migration approval or ready-to-enable rebuild.
+
+```powershell
+git pull --ff-only origin wip/phase-2g2
+dotnet test .\modules\buildingmanagement\test\BuildingManagement.EntityFrameworkCore.Tests\BuildingManagement.EntityFrameworkCore.Tests.csproj --filter 'FullyQualifiedName~InvoiceDraftRevisionServerGraphIntegration_Tests' --logger 'console;verbosity=normal'
+powershell -NoProfile -ExecutionPolicy Bypass -File .\etc\scripts\check-invoice-revision-no-write-gate.ps1
+```
+
 ## SERVERACCESS01–11 server composition tests PASS — 26/10/2026
 
 User ran the eleven `InvoiceDraftRevisionServerAccessGate_Tests`

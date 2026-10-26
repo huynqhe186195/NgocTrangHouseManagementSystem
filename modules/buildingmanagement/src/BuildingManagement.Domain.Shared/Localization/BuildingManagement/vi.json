@@ -1,6 +1,8 @@
 {
   "culture": "vi",
   "texts": {
+    "Permission:Invoices.RebuildDraft": "Sửa hóa đơn nháp (cần quyền trên tòa nhà)",
+    "Permission:Invoices.ReadRevisionHistory": "Xem lịch sử sửa hóa đơn (cần quyền trên tòa nhà)",
     "MyAccount": "Tài khoản của tôi",
     "SamplePageMessage": "Trang mẫu cho mô-đun BuildingManagement",
     "BuildingManagement:InvalidRoomNumber": "Số phòng '{RoomNumber}' không hợp lệ. Số phòng chỉ được chứa chữ số và phải có ít nhất 3 chữ số.",

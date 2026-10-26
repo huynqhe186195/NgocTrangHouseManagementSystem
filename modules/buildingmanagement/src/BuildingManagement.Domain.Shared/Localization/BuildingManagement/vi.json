@@ -1,6 +1,7 @@
 {
   "culture": "vi",
   "texts": {
+    "Permission:Buildings.BootstrapOwner": "Khởi tạo chủ sở hữu tòa nhà đầu tiên",
     "Permission:BuildingManagement": "Quản lý tòa nhà và phòng trọ",
     "Permission:Buildings.Read": "Xem tòa nhà",
     "Permission:Buildings.Manage": "Quản lý tòa nhà",

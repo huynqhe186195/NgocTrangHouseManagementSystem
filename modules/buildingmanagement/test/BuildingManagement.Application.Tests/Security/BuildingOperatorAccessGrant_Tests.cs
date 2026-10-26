@@ -172,6 +172,18 @@ public sealed class BuildingOperatorAccessGrant_Tests
         Assert.True(newer.IsEffectiveAt(Start.AddDays(4)));
     }
 
+    [Fact]
+    public void MEMBER12_Recorded_Revocation_Denies_Even_Before_Stamped_Time()
+    {
+        var grant = NewGrant();
+        // A future revocation timestamp must never leave the grant active
+        // once the revocation has been recorded in the database.
+        grant.Revoke(Guid.NewGuid(), Start.AddDays(3));
+
+        Assert.False(grant.IsEffectiveAt(Start.AddDays(1)));
+        Assert.False(grant.IsEffectiveAt(Start.AddDays(3)));
+    }
+
     private static BuildingOperatorAccessGrant NewGrant()
         => BuildingOperatorAccessGrant.Issue(
             Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),

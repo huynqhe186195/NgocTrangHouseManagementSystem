@@ -47,9 +47,24 @@ foreach ($text in @($service, $contract)) {
 if ($invoice -match '\bCurrentRevision\b') {
     throw 'Safety stop: CurrentRevision appeared. Review new EF migration and concurrent version gate.'
 }
-if ($permissions -match '"BuildingManagement\.Invoices\.RebuildDraft"' -or
-    $provider -match '\.AddPermission\([^)]*RebuildDraft') {
-    throw 'Safety stop: invoice revision permission contract changed; review assignment/scope.'
+# Permission names may now be DEFINED, but they are not GRANTED
+# or used by a mutating service. This is a source presence gate, not
+# an ABP authorization integration or role assignment check.
+foreach ($permissionName in @(
+    'RebuildDraft',
+    'ReadRevisionHistory'
+)) {
+    if (-not $permissions.Contains($permissionName) -or
+        -not $provider.Contains('BuildingManagementPermissions.Invoices.' + $permissionName)) {
+        throw "Safety stop: reviewed invoice permission definition missing: $permissionName"
+    }
+}
+
+$policy = Read-SafeSource 'modules/buildingmanagement/src/BuildingManagement.Application/Invoices/InvoiceDraftRevisionAccessPolicy.cs'
+if (-not $policy.Contains('PermissionGranted') -or
+    -not $policy.Contains('AuthorizedBuildingIds') -or
+    -not $policy.Contains('EligibleForDesignOnly')) {
+    throw 'Safety stop: server-resolved scope policy was removed or changed.'
 }
 
 foreach ($guard in @(
@@ -66,6 +81,7 @@ foreach ($guard in @(
 
 Write-Host 'SOURCE NO-WRITE GATE PASS: remote draft service remains disabled.'
 Write-Host 'PASS: no mutating draft-rebuild/issue/debt command exposed in draft service/contract.'
-Write-Host 'PASS: version field and dedicated permission require a separate reviewed implementation.'
+Write-Host 'PASS: CurrentRevision still absent; two permission definitions exist but grant no access.'
+Write-Host 'PASS: pure building-scope policy remains design-only; no authorization service is wired.'
 Write-Host 'PASS: required V2 trigger, checksum and rollback-source markers are present.'
 Write-Host 'READ-ONLY CHECK ONLY. This is NOT a database-role or authorization test.'

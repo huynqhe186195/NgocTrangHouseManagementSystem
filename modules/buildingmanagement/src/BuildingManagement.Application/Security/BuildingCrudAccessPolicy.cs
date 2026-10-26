@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using Volo.Abp;
 using Volo.Abp.Authorization;
 using Volo.Abp.DependencyInjection;
 
@@ -29,6 +30,7 @@ public interface IBuildingCrudAccessPolicy
     Task EnsureBuildingCreationAsync();
 }
 
+[RemoteService(IsEnabled = false)]
 [ExposeServices(typeof(IBuildingCrudAccessPolicy))]
 public sealed class BuildingCrudAccessPolicy
     : IBuildingCrudAccessPolicy, ITransientDependency

@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using BuildingManagement.Buildings;
 using BuildingManagement.Contracts;
 using BuildingManagement.Floors;
+using BuildingManagement.MoveOuts;
 using BuildingManagement.Rooms;
 using BuildingManagement.Utilities;
 using Volo.Abp.Domain.Repositories;

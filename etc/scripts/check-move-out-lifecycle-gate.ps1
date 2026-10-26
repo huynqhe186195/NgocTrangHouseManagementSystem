@@ -25,6 +25,8 @@ $readinessDto = Read-Source 'modules/buildingmanagement/src/BuildingManagement.A
 $invoiceStatus = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain.Shared/Invoices/InvoiceStatus.cs'
 $finalReview = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/Invoices/FinalMoveOutBillReviewAppService.cs'
 $finalReviewModel = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/FinalMoveOutBillReview.cs'
+$paymentEvidence = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/Invoices/FinalMoveOutPaymentEvidenceAppService.cs'
+$paymentEvidenceModel = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/FinalMoveOutPaymentEvidence.cs'
 
 if ($contract -notmatch '(?s)\[RemoteService\(IsEnabled\s*=\s*false\)\]\s*public\s+async\s+Task<ContractDto>\s+EndAsync\s*\(') {
     throw 'Safety stop: direct Contract.EndAsync route is no longer disabled.'
@@ -68,6 +70,19 @@ if ($finalReview -notmatch '\[RemoteService\(IsEnabled\s*=\s*false\)\]' -or
     $finalReviewModel -notmatch 'IsReceivablePosted\s*=>\s*false' -or
     $finalReview -match '\.(Issue|PostDebt|Pay|Refund|End|Complete)\s*\(') {
     throw 'Safety stop: final bill review exposed or changed to a monetary writer.'
+}
+
+# Reconciliation reads historical receipts (including soft-deleted
+# records) but never treats a DRAFT as an issued receivable, a paid bill,
+# or a deposit deduction. Retain the HTTP boundary and fail-closed flags.
+if ($paymentEvidence -notmatch '\[RemoteService\(IsEnabled\s*=\s*false\)\]' -or
+    $paymentEvidence -notmatch 'public\s+virtual\s+async\s+Task<FinalMoveOutPaymentEvidence>\s+GetAsync' -or
+    $paymentEvidence -notmatch '_softDeleteFilter\.Disable\(' -or
+    $paymentEvidenceModel -notmatch 'OutstandingDebt\s*=>\s*null' -or
+    $paymentEvidenceModel -notmatch 'IsDebtReconciled\s*=>\s*false' -or
+    $paymentEvidenceModel -notmatch 'CanSettleDeposit\s*=>\s*false' -or
+    $paymentEvidence -match '\.(Issue|PostDebt|Pay|Refund|End|Complete|InsertAsync|UpdateAsync|DeleteAsync)\s*\(') {
+    throw 'Safety stop: payment evidence must remain internal, read-only and nonsettling.'
 }
 
 Write-Host 'MOVE-OUT LIFECYCLE SOURCE GATE PASS.'

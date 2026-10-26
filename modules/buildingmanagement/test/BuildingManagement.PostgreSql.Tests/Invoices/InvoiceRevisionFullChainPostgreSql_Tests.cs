@@ -16,6 +16,7 @@ namespace BuildingManagement.PostgreSqlTests;
 /// existing integration or application database. The generated V2
 /// migration stays in the user's LOCAL working tree until reviewed.
 /// </summary>
+[Collection("Phase2G3A7_RevisionFullChain")]
 public sealed class InvoiceRevisionFullChainPostgreSql_Tests
 {
     private const string OptInVariable = "BM_ALLOW_REVISION_FULL_CHAIN_REHEARSAL";

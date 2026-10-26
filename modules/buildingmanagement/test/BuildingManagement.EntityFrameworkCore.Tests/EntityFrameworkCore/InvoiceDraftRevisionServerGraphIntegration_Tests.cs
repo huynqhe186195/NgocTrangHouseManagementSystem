@@ -157,6 +157,42 @@ public sealed class InvoiceDraftRevisionServerGraphIntegration_Tests
         });
     }
 
+    [Fact]
+    public async Task GRAPHDB07_Real_Graph_With_Another_Buildings_Grant_Is_Denied()
+    {
+        var f = await SeedAsync();
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var gate = new InvoiceDraftRevisionServerAccessGate(
+                new GrantedTestPrincipal(Guid.NewGuid()),
+                GetRequiredService<IInvoiceDraftRevisionResourceGraphReader>(),
+                new TestBuildingGrants(Guid.NewGuid()));
+            Assert.Equal(InvoiceDraftRevisionAccessStatus.Denied,
+                await gate.AssessDesignOnlyAsync(f.InvoiceId,
+                    InvoiceDraftRevisionCapability.RebuildDraft));
+        });
+    }
+
+    [Fact]
+    public async Task GRAPHDB08_Real_Graph_With_Simulated_Grant_Is_DesignOnly()
+    {
+        var f = await SeedAsync();
+        await WithUnitOfWorkAsync(async () =>
+        {
+            // This explicitly fakes an operator/building membership
+            // that production does NOT currently implement.
+            // EligibleForDesignOnly NEVER authorizes a write.
+            var gate = new InvoiceDraftRevisionServerAccessGate(
+                new GrantedTestPrincipal(Guid.NewGuid()),
+                GetRequiredService<IInvoiceDraftRevisionResourceGraphReader>(),
+                new TestBuildingGrants(f.BuildingId));
+            Assert.Equal(
+                InvoiceDraftRevisionAccessStatus.EligibleForDesignOnly,
+                await gate.AssessDesignOnlyAsync(f.InvoiceId,
+                    InvoiceDraftRevisionCapability.RebuildDraft));
+        });
+    }
+
     private async Task<Fixture> SeedAsync(bool breakContractRoomLink = false)
     {
         var building = Guid.NewGuid();

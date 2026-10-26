@@ -49,6 +49,46 @@ new ARCH 9), **not yet verified as a combined run**. If the
 archive codec's compile/runtime cases fail, correct source first
 and do not proceed to live EF migrations.
 
+## PGREV04 runtime fixture VARCHAR(32) failure and fix — 26/10/2026
+
+The user pulled the previous fix, ran the guarded
+`test-invoice-revision-full-chain-local.ps1`, and supplied the
+full 143-line local output:
+
+```
+BuildingManagement.PostgreSql.Tests net10.0 succeeded (compiled)
+PGREV04: FAIL at "Seed synthetic FK parent and invoice records"
+Npgsql.PostgresException: SQLSTATE 22001
+value too long for type character varying(32)
+PGREV03: PASS
+Test summary: total: 2, failed: 1, succeeded: 1, skipped: 0
+Build failed with 1 test error and 4 Mapperly RMG012 warnings
+```
+
+**Root cause is the synthetic RoomNumber fixture**, not the
+migration's revision trigger/rollback behavior:
+`'REV-' + Guid.NewGuid():N` produced 36 characters, but the
+`BuildingManagementRooms.RoomNumber` column is
+`character varying(32)`. PGREV04 never reached its concurrent
+rollback assertion.
+
+Fixed `InvoiceRevisionPopulatedRollbackPostgreSql_Tests.cs` at
+commit `3e3aae14705374eed2b26b7602464a70373e2c5b`:
+
+- Generate `roomNumber` as `"REV-" + Guid.NewGuid().ToString("N")[..8]`
+  (12 characters).
+- Assert `roomNumber.Length <= 32` in test setup.
+- Pass the fixture as `'{{roomNumber}}'` in the `$"""` C# raw
+  interpolated SQL.
+- Leave `ContractNumber` 36-character fixture unchanged because
+  that field allows 64 characters.
+- No migration, existing application database or finance logic
+  was modified. PGREV03 retains its last known passing result.
+
+**Fixed source not yet re-tested** on the user's Windows environment.
+Rerun guarded PGREV03/04 launcher after a fast-forward pull; target
+2/2 PASS. Any new error must be diagnosed at its own failing stage.
+
 ## PGREV04 C# build failure and source fix — 26/10/2026
 
 User pulled `7f608a1..bf90604` and ran

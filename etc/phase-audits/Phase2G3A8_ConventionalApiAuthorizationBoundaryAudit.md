@@ -123,3 +123,34 @@ git status --short
 **Scope caveat:** APIHTTP01–02 validate the explicitly authored HttpApi controller assembly in a disposable test host. They do **not** prove that ABP's conventionally generated controllers from application services receive the same authorization filter in the **real configured production host**, that authorization is complete for all routes, or that an authenticated actor is restricted to their buildings. Full-host route/verb/policy inventory (`APIAUTH01`) and permissions/ownership isolation remain pending.
 
 Never run against production data or enable draft revision/issue/debt mutations as part of this verification.
+
+## 9. APIHTTP verification received; ABP auto-route discovery staged — 2026-10-26
+
+User-local evidence on commit `865ce84`:
+
+- **APIHTTP01–02 = 2/2 PASS**. `APIHTTP01` discovered and checked the explicitly authored `ExampleController` route policy; `APIHTTP02` received HTTP **401** for `GET /api/building-management/example` in the disposable, in-memory TestServer.
+- `git status --short` continues to show **only** the preserved, untracked `Phase2G3A7_RevisionLedger_Generated_Review.sql`.
+- Build reported **12 warnings**: two pre-existing `CS8604` in OpenIddict data seeding, four `RMG012` Tenant Mapperly warnings, two `CS8602` in Swagger response filter, one `CS0162` in host module, and three introduced by the newly written HTTP test (`ASPDEPR004`, `ASPDEPR008`, `xUnit2031`).
+
+The new test-only warnings were corrected by replacing deprecated `WebHostBuilder`/`TestServer(IWebHostBuilder)` with the documented `HostBuilder`/`UseTestServer` in-memory pattern, and by using `Assert.Single(collection, predicate)`. **Not yet rebuilt or verified** after this change; do not state the warnings are gone until the next local build.
+
+### ABP-generated controller coverage: APIAUTO01–02 — NOT YET RUN
+
+Staged an additional `BuildingManagementAutoApiAuthorization_Tests` class in the existing isolated host test project. It boots a **minimal ABP MVC application on in-memory TestServer** using the actual module `BuildingManagementApplicationModule`, `BuildingManagementHttpApiModule`, official ABP conventional-controller configuration (`RootPath = "building-management"`) and the production authentication MVC convention:
+
+- **APIAUTO01**: asserts ABP discovers `BuildingAppService` methods as generated controllers, every generated module action carries authenticated-only policy, no `IAllowAnonymous` metadata, and `InvoiceDraftStorageAppService` remains undiscoverable due to its remote-disabled status.
+- **APIAUTO02**: resolves the generated `BuildingAppService.GetListAsync` action's actual route and sends an unauthenticated GET through the in-memory pipeline, expecting HTTP 401. The anonymous authentication probe never grants a principal, and no business services are executed.
+- No `BuildingManagement.EntityFrameworkCore` dependency, database connection, data seeding, DbMigrator, production configuration, user/role change, or invoice mutation is required to run these tests. They intentionally do not start the real production host.
+
+Run from the repository root, only on `wip/phase-2g2`:
+
+```powershell
+git pull --ff-only origin wip/phase-2g2
+dotnet test .\test\NgocTrangHouseManagementSystem.HttpApi.Host.Tests\NgocTrangHouseManagementSystem.HttpApi.Host.Tests.csproj --filter "FullyQualifiedName~BuildingManagementAutoApiAuthorization_Tests|FullyQualifiedName~BuildingManagementExplicitHttpAuthorization_Tests|FullyQualifiedName~BuildingManagementAuthenticatedControllerConvention_Tests" --logger "console;verbosity=normal"
+powershell -NoProfile -ExecutionPolicy Bypass -File .\etc\scripts\check-invoice-revision-no-write-gate.ps1
+git status --short
+```
+
+**Stop if APIAUTO fails**: capture compiler error/exception; do not start the real HTTP application, run DbMigrator or change connection strings in an attempt to make this test pass. This is an experimental isolated ABP test harness and its compatibility with this solution's ABP 10.6.1 must be confirmed locally.
+
+**Release posture unchanged:** full-host configured API route/verb/policy inventory and HTTP 401/403 coverage remain pending. Authorization by operator/building and explicit permissions, concurrent revoke rechecks, and PostgreSQL least-privilege runtime credentials are NOT implemented or passed. Keep production blocked.

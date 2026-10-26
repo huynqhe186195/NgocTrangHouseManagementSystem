@@ -194,6 +194,26 @@ public sealed class BuildingManagementAutoApiAuthorization_Tests
         Assert.False(await activeAccounts.IsActiveAsync(Guid.NewGuid()));
     }
 
+    [Fact]
+    public async Task APIAUTO07_Scoped_Read_Gate_Is_Not_A_Remote_Controller()
+    {
+        await using var app = await StartIsolatedAbpHostAsync();
+
+        var generated = GetGeneratedActions(app);
+        Assert.DoesNotContain(generated, action =>
+            action.ControllerTypeInfo.AsType() ==
+                typeof(BuildingManagement.Security.BuildingScopedReadDesignGate));
+        Assert.DoesNotContain(generated, action =>
+            action.ControllerTypeInfo.AsType() ==
+                typeof(BuildingManagement.Security.BuildingOperatorChangeDesignGate));
+
+        var grants = app.Services.GetRequiredService<
+            BuildingManagement.Security.IBuildingOperatorGrantReader>();
+        Assert.IsType<
+            BuildingManagement.Security.DenyAllBuildingOperatorGrantReader>(grants);
+        Assert.Empty(await grants.GetActiveBuildingIdsAsync(Guid.NewGuid()));
+    }
+
     private static ControllerActionDescriptor[] GetGeneratedActions(WebApplication app)
         => app.Services
             .GetRequiredService<IActionDescriptorCollectionProvider>()

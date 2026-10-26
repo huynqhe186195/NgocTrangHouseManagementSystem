@@ -122,6 +122,16 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule // syst
             options.CheckLibs = false;
         });
 
+        // Covers only controllers generated from the BuildingManagement
+        // application assembly. It does NOT replace operation permissions or
+        // server-side building/room scope authorization.
+        Configure<MvcOptions>(options =>
+        {
+            options.Conventions.Add(
+                new BuildingManagementAuthenticatedControllerConvention());
+        });
+
+
         if (!configuration.GetValue<bool>("App:DisablePII"))
         {
             Microsoft.IdentityModel.Logging.IdentityModelEventSource.ShowPII = true;

@@ -8,6 +8,7 @@ using BuildingManagement.MoveOuts;
 using BuildingManagement.Rooms;
 using BuildingManagement.Utilities;
 using Volo.Abp.Domain.Repositories;
+using Volo.Abp.Linq;
 using Xunit;
 
 namespace BuildingManagement.EntityFrameworkCore;
@@ -217,7 +218,8 @@ public sealed class MoveOutCompletionReadinessSqlite_Tests :
             GetRequiredService<IContractRepository>(),
             GetRequiredService<BuildingManagement.Security.IBuildingCrudAccessPolicy>(),
             new FakeMeterEvidenceReader(validEvidence, contractId, roomId),
-            GetRequiredService<Volo.Abp.Timing.IClock>());
+            GetRequiredService<Volo.Abp.Timing.IClock>(),
+            GetRequiredService<IAsyncQueryableExecuter>());
 
     private MoveOutCompletionReadinessAppService MakeService(
         bool meterEvidence, Guid contractId, Guid roomId)

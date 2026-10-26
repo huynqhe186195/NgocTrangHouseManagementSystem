@@ -1,4 +1,7 @@
 ﻿using BuildingManagement.Contracts;
+using BuildingManagement.Buildings;
+using BuildingManagement.Security;
+using System.Linq;
 using BuildingManagement.Floors;
 using BuildingManagement.Utilities;
 using System;
@@ -21,22 +24,31 @@ namespace BuildingManagement.Rooms
         private readonly IRepository<Floor, Guid> _floorRepository;
         private readonly IRepository<Contract, Guid>_contractRepository;
         private readonly IRepository<UtilityMeter, Guid> _utilityMeterRepository;
+        private readonly IRepository<Building, Guid> _buildingRepository;
+        private readonly IBuildingCrudAccessPolicy _access;
 
         public RoomAppService(
     IRepository<Room, Guid> roomRepository,
     IRepository<Floor, Guid> floorRepository,
     IRepository<Contract, Guid> contractRepository,
-    IRepository<UtilityMeter, Guid> utilityMeterRepository)
+    IRepository<UtilityMeter, Guid> utilityMeterRepository,
+    IRepository<Building, Guid> buildingRepository,
+    IBuildingCrudAccessPolicy access)
         {
             _roomRepository = roomRepository;
             _floorRepository = floorRepository;
             _contractRepository = contractRepository;
             _utilityMeterRepository = utilityMeterRepository;
+            _buildingRepository = buildingRepository;
+            _access = access;
         }
 
         public async Task<RoomDto> CreateAsync(
             CreateRoomDto input)
         {
+            await _access.EnsureResourceAsync(
+                BuildingBusinessResourceKind.Floor, input.FloorId,
+                BuildingBusinessCapability.ManageRoom);
             var floor = await GetExistingFloorAsync(
                 input.FloorId
             );
@@ -68,6 +80,9 @@ namespace BuildingManagement.Rooms
 
         public async Task<RoomDto> GetAsync(Guid id)
         {
+            await _access.EnsureResourceAsync(
+                BuildingBusinessResourceKind.Room, id,
+                BuildingBusinessCapability.ReadRoom);
             var room =
                 await GetExistingRoomAsync(id);
 
@@ -79,8 +94,20 @@ namespace BuildingManagement.Rooms
 
         public async Task<List<RoomDto>> GetListAsync()
         {
-            var rooms =
-                await _roomRepository.GetListAsync();
+            var authorized = await _access.GetAuthorizedBuildingIdsAsync(
+                BuildingBusinessCapability.ReadRoom);
+            var roomsQuery = await _roomRepository.GetQueryableAsync();
+            var floors = await _floorRepository.GetQueryableAsync();
+            var buildings = await _buildingRepository.GetQueryableAsync();
+            var scoped = from room in roomsQuery
+                         join floor in floors on room.FloorId equals floor.Id
+                         join building in buildings
+                             on floor.BuildingId equals building.Id
+                         where authorized.Contains(building.Id)
+                             && !building.IsDeleted && !floor.IsDeleted
+                             && !room.IsDeleted
+                         select room;
+            var rooms = await AsyncExecuter.ToListAsync(scoped);
 
             return ObjectMapper.Map<
                 List<Room>,
@@ -92,6 +119,9 @@ namespace BuildingManagement.Rooms
             Guid id,
             UpdateRoomDto input)
         {
+            await _access.EnsureResourceAsync(
+                BuildingBusinessResourceKind.Room, id,
+                BuildingBusinessCapability.ManageRoom);
             var room =
                 await GetExistingRoomAsync(id);
 
@@ -126,6 +156,9 @@ namespace BuildingManagement.Rooms
 
         public async Task DeleteAsync(Guid id)
         {
+            await _access.EnsureResourceAsync(
+                BuildingBusinessResourceKind.Room, id,
+                BuildingBusinessCapability.ManageRoom);
             var room =
                 await GetExistingRoomAsync(id);
 

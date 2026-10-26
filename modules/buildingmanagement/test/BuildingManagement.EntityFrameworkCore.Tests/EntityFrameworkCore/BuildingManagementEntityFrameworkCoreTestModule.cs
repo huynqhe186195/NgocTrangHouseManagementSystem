@@ -39,6 +39,14 @@ public class BuildingManagementEntityFrameworkCoreTestModule : AbpModule
             ServiceDescriptor.Transient<IBuildingCrudAccessPolicy,
                 LegacyRoomBusinessFixturePolicy>());
 
+        // Existing contract lifecycle tests cover transition rules, not
+        // authorization. Individual tests opt in explicitly; production
+        // does NOT register this test-only gate.
+        context.Services.Replace(
+            ServiceDescriptor.Transient<
+                BuildingManagement.Contracts.IDirectContractTerminationGate,
+                LegacyContractTerminationFixtureGate>());
+
         _database = new AbpUnitTestSqliteDatabase();
         _database.CreateTables(
             new BuildingManagementDbContext(new DbContextOptionsBuilder<BuildingManagementDbContext>().UseSqlite(_database.ConnectionString).Options));

@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using BuildingManagement;
+using BuildingManagement.Contracts;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc.ApplicationModels;
 using Microsoft.AspNetCore.Mvc.Authorization;
@@ -34,6 +35,22 @@ public sealed class BuildingManagementAuthenticatedControllerConvention
             if (assembly != typeof(BuildingManagementApplicationModule).Assembly &&
                 assembly != typeof(BuildingManagementHttpApiModule).Assembly)
                 continue;
+
+            // ABP may retain a disabled RemoteService method as a
+            // conventional MVC action without an attribute route. Depending
+            // on endpoint routing, that action can still receive a route
+            // endpoint. Remove the P0 direct-contract-end action from MVC
+            // discovery entirely; the internal C# method still exists and
+            // still has its own deny-all termination guard.
+            if (controller.ControllerType.AsType() == typeof(ContractAppService))
+            {
+                var directEndActions = controller.Actions
+                    .Where(action =>
+                        action.ActionMethod.Name == nameof(ContractAppService.EndAsync))
+                    .ToArray();
+                foreach (var directEnd in directEndActions)
+                    controller.Actions.Remove(directEnd);
+            }
 
             // Explicit anonymous overrides can bypass an authorization filter.
             // A future anonymous business action requires a separate security

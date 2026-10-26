@@ -57,6 +57,25 @@ foreach ($name in @('IQueryable<Building>', 'IQueryable<Floor>',
     }
 }
 
+# A candidate scoped read service must remain internal and must not be
+# prematurely used as a positive authorization token by old CRUD endpoints.
+$scopedRead = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/Security/BuildingScopedReadDesignGate.cs'
+if ($scopedRead -notmatch '\[RemoteService\(IsEnabled\s*=\s*false\)\]' -or
+    $scopedRead -notmatch 'EligibleForDesignOnly') {
+    throw 'Safety stop: internal scoped list gate is no longer remote-disabled/design-only.'
+}
+foreach ($crudPath in @(
+    'modules/buildingmanagement/src/BuildingManagement.Application/Buildings/BuildingAppService.cs',
+    'modules/buildingmanagement/src/BuildingManagement.Application/Floors/FloorAppService.cs',
+    'modules/buildingmanagement/src/BuildingManagement.Application/Rooms/RoomAppService.cs',
+    'modules/buildingmanagement/src/BuildingManagement.Application/Contracts/ContractAppService.cs'
+)) {
+    $crud = Read-Source $crudPath
+    if ($crud -match 'BuildingScopedReadDesignGate|BuildingScopedReadDesignStatus|IBuildingScopedCollectionStore') {
+        throw "Safety stop: design-only scoped reader was wired into unreviewed CRUD: $crudPath"
+    }
+}
+
 Write-Host 'BUILDING SCOPE DESIGN-ONLY GATE PASS.'
 Write-Host 'PASS: experimental grant table is not mapped into the runtime DbContext.'
 Write-Host 'PASS: ABP Identity adapter is not auto-registered by class markers.'

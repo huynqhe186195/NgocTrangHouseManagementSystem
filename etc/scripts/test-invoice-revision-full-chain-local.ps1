@@ -87,17 +87,17 @@ try {
         'CREATE_AND_DROP_RANDOM_LOCAL_REVISION_TEST_DATABASE',
         'Process')
 
-    Write-Host 'PGREV03: full EF migration chain Up -> empty Down -> Up.'
+    Write-Host 'PGREV03/04: full EF chain, empty rollback, and populated concurrent rollback.'
     Write-Host 'ONLY guarded localhost test credentials are used.'
-    Write-Host 'PGREV03 creates one random temporary PostgreSQL database,'
+    Write-Host 'Each test creates its own random temporary PostgreSQL database,'
     Write-Host 'runs the chain, then DROPS only the just-created database.'
     Write-Host 'No SQL is applied to ngoctrang_integration_test or app databases.'
     Write-Host 'Local migration, Designer, Snapshot and SQL files are preserved.'
     Write-Host 'Do not run this against shared PostgreSQL server instances.'
 
-    & dotnet test $project --filter 'FullyQualifiedName~InvoiceRevisionFullChainPostgreSql_Tests' --logger 'console;verbosity=detailed'
+    & dotnet test $project --filter 'FullyQualifiedName~InvoiceRevisionFullChainPostgreSql_Tests|FullyQualifiedName~InvoiceRevisionPopulatedRollbackPostgreSql_Tests' --logger 'console;verbosity=detailed'
     if ($LASTEXITCODE -ne 0) {
-        throw 'PGREV03 failed. Read failure stage and cleanup status; do not migrate app databases.'
+        throw 'PGREV03/04 failed. Review stage, lock wait, and cleanup; do not migrate app databases.'
     }
 }
 finally {
@@ -107,4 +107,4 @@ finally {
     Remove-Variable vars,user,password -ErrorAction SilentlyContinue
 }
 
-Write-Host 'PGREV03 PASSED; random scratch database created and deleted.';
+Write-Host 'PGREV03/04 PASSED; random scratch databases created and deleted.';

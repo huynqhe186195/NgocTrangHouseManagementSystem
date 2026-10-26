@@ -34,7 +34,10 @@ foreach ($source in @($db, $model)) {
     }
 }
 
-if ($identity -match 'ITransientDependency|ExposeServices\s*\(|Dependency\s*\(') {
+# Match actual declaration/attributes, not comments documenting the absence
+# of such registration. Effective DI remains a separate runtime test.
+if ($identity -match ':\s*IBuildingOperatorActiveAccountReader\s*,\s*ITransientDependency' -or
+    $identity -match '\[(ExposeServices|Dependency)\s*\(') {
     throw 'Safety stop: experimental identity adapter appears auto-registered.'
 }
 if ($gate -notmatch 'class DenyAllBuildingOperatorGrantReader' -or

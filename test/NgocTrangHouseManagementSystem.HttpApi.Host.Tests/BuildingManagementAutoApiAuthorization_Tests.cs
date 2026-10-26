@@ -385,6 +385,15 @@ public sealed class BuildingManagementAutoApiAuthorization_Tests
             action!.ControllerTypeInfo.AsType() ==
                 typeof(BuildingManagement.MoveOuts.MoveOutCompletionReadinessAppService));
 
+        // Final bill/rent financial previews are deliberately internal;
+        // a persisted utility DRAFT is not a public payable invoice.
+        Assert.DoesNotContain(exposed, action =>
+            action!.ControllerTypeInfo.AsType() ==
+                typeof(BuildingManagement.Invoices.FinalMoveOutBillReviewAppService));
+        Assert.DoesNotContain(exposed, action =>
+            action!.ControllerTypeInfo.AsType() ==
+                typeof(BuildingManagement.Invoices.FinalMonthRentPreviewAppService));
+
         var gate = app.Services.GetRequiredService<
             BuildingManagement.Contracts.IDirectContractTerminationGate>();
         Assert.IsType<

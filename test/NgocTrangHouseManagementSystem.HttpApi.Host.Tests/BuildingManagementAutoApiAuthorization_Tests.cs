@@ -172,7 +172,7 @@ public sealed class BuildingManagementAutoApiAuthorization_Tests
                 x.ControllerTypeInfo.Name == service &&
                 x.MethodInfo.Name == "GetAsync");
             var route = Assert.IsType<string>(action.AttributeRouteInfo?.Template);
-            var path = Regex.Replace(route, @"\\{[^}]+\\}",
+            var path = Regex.Replace(route, @"\{[^}]+\}",
                 Guid.NewGuid().ToString("D"));
 
             using var response = await client.GetAsync("/" + path.TrimStart('/'));

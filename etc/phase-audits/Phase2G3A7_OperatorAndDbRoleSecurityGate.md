@@ -133,7 +133,37 @@ Before exposing a mutating revision command:
 These are pending gates, **not PASS**. No runtime role or auth policy
 can be inferred just because the scratch PostgreSQL migration tests pass.
 
-## 5. Safest next engineering increment
+## 5. Isolated repository integration gate — NEW / NOT YET RUN
+
+`InvoiceDraftRevisionServerGraphIntegration_Tests` (GRAPHDB01–06)
+has been added to `BuildingManagement.EntityFrameworkCore.Tests`.
+It uses the existing isolated ABP SQLite test DB, and runs the
+**actual EF-backed** `IInvoiceDraftRevisionResourceGraphReader`
+with synthetic invoice→contract→room→floor→building fixtures.
+
+These tests check: valid server-resolved graph; absent invoice;
+broken contract/room link; mandatory default deny-all building
+grants despite simulated permission; soft-deleted building
+cannot provide a valid active resource graph; and an access
+assessment does not change draft status, provisional total
+or create any archived revision.
+
+The test's simulated permission/grant interfaces are **fakes**,
+not a production ABP permission store. A passing result would
+validate only the actual **SQLite repository graph reader** and
+the deny-all wiring, NOT authentication, real RBAC or a PostgreSQL
+least-privilege runtime account.
+
+```powershell
+git pull --ff-only origin wip/phase-2g2
+dotnet test .\modules\buildingmanagement\test\BuildingManagement.EntityFrameworkCore.Tests\BuildingManagement.EntityFrameworkCore.Tests.csproj --filter "FullyQualifiedName~InvoiceDraftRevisionServerGraphIntegration_Tests" --logger "console;verbosity=normal"
+powershell -NoProfile -ExecutionPolicy Bypass -File .\etc\scripts\check-invoice-revision-no-write-gate.ps1
+```
+
+**Expected 6/6 PASS, unverified.** No changes to actual database
+roles, production data, source-migration chain or mutating API.
+
+## 6. Safest next engineering increment
 
 The pure scope evaluator and two ABP permission names are now
 implemented; the server-only read gate is **deny-by-default**

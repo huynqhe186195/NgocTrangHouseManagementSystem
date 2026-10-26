@@ -2,6 +2,8 @@ name: BuildingManagement safe regression
 
 on:
   pull_request:
+    branches:
+      - wip/phase-2g2
   push:
     branches:
       - wip/phase-2g2
@@ -21,6 +23,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # GitHub checkout uses a detached HEAD for PR merge commits. The
+      # source-only safety scripts require an explicitly named LOCAL branch.
+      # This changes only the ephemeral CI checkout, never the remote repo.
+      - name: Establish local safety branch
+        shell: pwsh
+        run: git switch -C wip/phase-2g2
 
       - name: Install .NET SDK 10
         uses: actions/setup-dotnet@v4

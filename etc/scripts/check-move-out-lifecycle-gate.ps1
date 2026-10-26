@@ -19,6 +19,7 @@ function Read-Source([string]$relativePath) {
 
 $contract = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/Contracts/ContractAppService.cs'
 $directGate = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/Contracts/DirectContractTerminationGate.cs'
+$httpConvention = Read-Source 'src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/BuildingManagementAuthenticatedControllerConvention.cs'
 $readiness = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/MoveOuts/MoveOutCompletionReadinessAppService.cs'
 $readinessDto = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application.Contracts/MoveOuts/MoveOutCompletionReadinessDto.cs'
 $invoiceStatus = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain.Shared/Invoices/InvoiceStatus.cs'
@@ -30,6 +31,14 @@ if ($contract -notmatch '(?s)EndAsync\(Guid id\)\s*\{\s*await _directEndGate.Ens
     $directGate -notmatch 'class DenyAllDirectContractTerminationGate' -or
     $directGate -notmatch 'AbpAuthorizationException') {
     throw 'Safety stop: direct Contract.EndAsync no longer denies before mutation.'
+}
+# ABP can still discover a [RemoteService(false)] operation as a
+# conventionally routed MVC action. Removal from the HTTP ApplicationModel
+# must accompany the fail-closed internal Contract.EndAsync method.
+if ($httpConvention -notmatch 'typeof\(ContractAppService\)' -or
+    $httpConvention -notmatch 'nameof\(ContractAppService.EndAsync\)' -or
+    $httpConvention -notmatch 'controller\.Actions\.Remove\(directEnd\)') {
+    throw 'Safety stop: forbidden direct Contract.EndAsync MVC action removal missing.'
 }
 if ($readiness -notmatch '\[RemoteService\(IsEnabled\s*=\s*false\)\]' -or
     $readiness -notmatch 'FinalInvoiceIssuanceNotImplemented' -or

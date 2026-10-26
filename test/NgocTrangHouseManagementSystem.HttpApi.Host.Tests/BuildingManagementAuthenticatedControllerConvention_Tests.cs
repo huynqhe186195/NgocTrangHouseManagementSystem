@@ -77,6 +77,21 @@ public sealed class BuildingManagementAuthenticatedControllerConvention_Tests
         Assert.False(attribute.IsEnabled);
     }
 
+    [Fact]
+    public void AUTHMODEL06_Explicit_HttpApi_Controller_Gets_Authentication()
+    {
+        // ExampleController has an explicit unauthenticated GET in source.
+        // The MVC convention must cover its entire controller model.
+        var controller = ModelFor(typeof(BuildingManagement.Samples.ExampleController));
+        new BuildingManagementAuthenticatedControllerConvention()
+            .Apply(AppWith(controller));
+
+        var auth = Assert.Single(controller.Filters.OfType<AuthorizeFilter>());
+        Assert.NotNull(auth.Policy);
+        Assert.Contains(auth.Policy.Requirements,
+            requirement => requirement is DenyAnonymousAuthorizationRequirement);
+    }
+
     private static ControllerModel ModelFor(Type serviceType)
         => new(serviceType.GetTypeInfo(), Array.Empty<object>());
 

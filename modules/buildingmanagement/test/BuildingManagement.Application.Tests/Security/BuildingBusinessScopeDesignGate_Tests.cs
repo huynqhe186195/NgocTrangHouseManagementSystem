@@ -243,12 +243,13 @@ public sealed class BuildingBusinessScopeDesignGate_Tests
             BuildingBusinessCapability capability)
         {
             Calls++;
-            var result = ManageDenied &&
-                         capability is BuildingBusinessCapability.ManageBuilding or
-                             BuildingBusinessCapability.ManageFloor or
-                             BuildingBusinessCapability.ManageRoom or
-                             BuildingBusinessCapability.ManageContract
-                ? Principal is null ? null : Principal with { PermissionGranted = false }
+            var isManage = capability is
+                BuildingBusinessCapability.ManageBuilding or
+                BuildingBusinessCapability.ManageFloor or
+                BuildingBusinessCapability.ManageRoom or
+                BuildingBusinessCapability.ManageContract;
+            var result = ManageDenied && isManage && Principal is not null
+                ? Principal with { PermissionGranted = false }
                 : Principal;
             return Task.FromResult(result);
         }

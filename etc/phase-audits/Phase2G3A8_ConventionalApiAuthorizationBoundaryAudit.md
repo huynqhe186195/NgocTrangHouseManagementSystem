@@ -70,10 +70,10 @@ The first safe engineering increment is a **test-host route/policy inventory** w
 
 The branch now contains an incremental defense-in-depth change:
 
-- `src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/BuildingManagementAuthenticatedControllerConvention.cs` applies `AuthorizeFilter` with `RequireAuthenticatedUser()` to MVC controller models originating from `BuildingManagementApplicationModule`'s assembly.
+- `src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/BuildingManagementAuthenticatedControllerConvention.cs` applies `AuthorizeFilter` with `RequireAuthenticatedUser()` to MVC controller models originating from either `BuildingManagementApplicationModule` (generated app-service controllers) or `BuildingManagementHttpApiModule` (explicit controllers).
 - The convention deliberately throws at MVC-model discovery if an application controller/action explicitly includes `IAllowAnonymous`, requiring a separate review of any exception.
 - `NgocTrangHouseManagementSystemHttpApiHostModule.ConfigureServices` registers the convention through `MvcOptions.Conventions`.
-- An isolated model-test project at `test/NgocTrangHouseManagementSystem.HttpApi.Host.Tests` contains **AUTHMODEL01–05**: target-controller filter; unrelated-controller isolation; class/action anonymous bypass refusal; invoice-draft remote disabled attribute.
+- An isolated model-test project at `test/NgocTrangHouseManagementSystem.HttpApi.Host.Tests` contains **AUTHMODEL01–06**: target-controller filter; unrelated-controller isolation; class/action anonymous bypass refusal; invoice-draft remote disabled attribute; and explicit HttpApi controller protection.
 
 **These new tests are UNVERIFIED** until run locally, and MVC model tests are not equivalent to inspecting the deployed effective endpoint set or making a real HTTP request. In particular, the implementation assumes ABP's generated controller models preserve their original application-service assembly; validate that assumption through `APIAUTH01` route/authorization-metadata inspection against an isolated host. If any `building-management` route evades the convention, stop and repair before deployment.
 
@@ -89,3 +89,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\etc\scripts\check-invoice-
 Use an isolated test host for the subsequent actual-endpoint inventory; do **not** casually start the regular host with credentials for production data. No migration, DbMigrator, role GRANT/REVOKE, live PostgreSQL mutation or invoice write accompanies this stage.
 
 **Critical:** Authentication is only the outermost boundary. An authenticated user still must not be allowed to read or mutate another building's resources; no operator↔building grant model/DB migration and no per-operation permissions have been implemented. APIAUTH04–09 remain pending. The application cannot be declared secure for multi-building production use based on this convention alone.
+
+## 7. Explicit-controller gap identified and included in staged guard
+
+Source review found `BuildingManagement.HttpApi/Samples/ExampleController.cs` with `GET /api/building-management/example`: its `GetAsync` has no explicit `[Authorize]` even though another method in the same class does. This is a concrete route-level metadata omission in source, not evidence of an executed anonymous HTTP request. The initial convention restricted to the application assembly could not cover this explicitly authored controller. The updated convention now also targets `BuildingManagementHttpApiModule`'s assembly, and `AUTHMODEL06` is added.
+
+**Still pending:** actual route/verb/policy inventory and live anonymous 401 verification in an isolated host. Authenticated cross-building read/write remains blocked from release until per-resource grants are implemented.

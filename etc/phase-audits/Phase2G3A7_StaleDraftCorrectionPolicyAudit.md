@@ -49,6 +49,90 @@ new ARCH 9), **not yet verified as a combined run**. If the
 archive codec's compile/runtime cases fail, correct source first
 and do not proceed to live EF migrations.
 
+## PGREV04 C# build failure and source fix — 26/10/2026
+
+User pulled `7f608a1..bf90604` and ran
+`test-invoice-revision-full-chain-local.ps1`.
+The test project did NOT compile:
+
+```
+InvoiceRevisionPopulatedRollbackPostgreSql_Tests.cs:
+(112,30) CS9006
+(112,32), (116,74), (122,48), (128,56), (134,34) CS1733
+Build failed with 6 error(s) and 4 warning(s)
+```
+
+**Not a PostgreSQL failure; PGREV03/PGREV04 did not start in
+this invocation, and no scratch database was created by these tests.**
+The compile error came from the synthetic FK fixture's SQL,
+which used an interpolated raw string starting with one
+`# Phase 2G.3A.7 — Stale draft correction, replacement and issuance policy audit
+
+**Date:** 2026-10-25  
+**Branch:** `wip/phase-2g2`  
+**Status:** OPEN / design gate only; no destructive draft commands, DB migrations or financial issuance enabled.
+
+## Next non-destructive persistence design slice — WIP (25/10/2026)
+
+Added `InvoiceDraftRevisionArchiveCodec` as **offline/in-memory**
+format foundation for historical revision evidence:
+
+- Explicit `FormatVersion=1` archive JSON includes
+  `InvoiceId`, original revision number, user GUID, UTC timestamp,
+  correction reason and complete previous utility-only snapshot.
+- Stable utility/source ordering and SHA-256 checksum over the exact
+  UTF-8 JSON bytes. Decoder verifies checksum and re-runs the
+  existing `InvoiceDraftRevisionEvidence.Capture` and domain
+  snapshot constraints, then rejects noncanonical JSON.
+- The checksum protects against accidental corruption when stored
+  and checked separately. **It is not cryptographic authentication
+  against a privileged actor who can rewrite both payload and hash.**
+- No EF entity/DbSet/migration/application endpoint, HTTP route,
+  current invoice mutation, PostgreSQL connection or issuance.
+
+Added **9 new unit tests** in
+`InvoiceDraftRevisionArchiveCodec_Tests` for roundtrip fidelity,
+deterministic ordering, corrupt/missing checksums,
+actor/reason scope, unsupported format, malformed JSON,
+noncanonical rehashed JSON and no mutation of old evidence.
+These new tests have **NOT yet run locally**.
+
+Created a separate review document:
+`etc/phase-audits/Phase2G3A7_RevisionLedger_MigrationRFC.md`.
+It specifies draft-only additive DDL, append-only ledger separation
+from active source uniqueness, CurrentRevision+ConcurrencyStamp,
+contract→invoice row-lock ordering, loser-aborts concurrent rebuild
+logic, transaction rollback guarantees and migration review gates.
+**SQL is illustrative and marked DO NOT RUN.**
+
+Next local unit command:
+
+```powershell
+git pull --ff-only origin wip/phase-2g2
+dotnet test .\modules\buildingmanagement\test\BuildingManagement.Domain.Tests\BuildingManagement.Domain.Tests.csproj --filter "FullyQualifiedName~InvoiceDraftRevisionEvidence_Tests|FullyQualifiedName~InvoiceDraftRevisionArchiveCodec_Tests"
+```
+
+Expected domain revision cases: **18/18** (previous REV 9 +
+new ARCH 9), **not yet verified as a combined run**. If the
+archive codec's compile/runtime cases fail, correct source first
+and do not proceed to live EF migrations.
+
+ but contained JSON `'{{}}'` and interpolation tokens
+incompatible with that raw-string brace syntax.
+
+Fixed the test fixture on the WIP GitHub branch in commit
+`0e58f275c3cf3604f2fdb77d4f686008d572e850`:
+
+- Changed `$"""` to `$"""` so real C# interpolations
+  use `{{expression}}` and JSON text uses literal `'{}'`.
+- Preserved the same random fixture IDs and the reviewed
+  V2 migration. No database schema or migration edits.
+
+**Fix is source-reviewed, NOT YET built on user's machine.**
+Rerun the same dedicated guarded PowerShell script after
+`git pull --ff-only origin wip/phase-2g2`. Goal PGREV03/04
+**2/2 PASS**, do not claim success until a fresh local log.
+
 ## PGREV04 full EF populated-ledger concurrency gate — WIP (26/10/2026)
 
 Added the separately opt-in real PostgreSQL test

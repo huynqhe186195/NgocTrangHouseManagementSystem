@@ -1,6 +1,8 @@
 {
   "culture": "en",
   "texts": {
+    "Permission:Invoices.RebuildDraft": "Rebuild draft invoices (requires authorized building access)",
+    "Permission:Invoices.ReadRevisionHistory": "Read invoice revision history (requires authorized building access)",
     "MyAccount": "My account",
     "SamplePageMessage": "A sample page for the BuildingManagement module",
     "BuildingManagement:InvalidRoomNumber": "Room number '{RoomNumber}' is invalid. The room number must contain only digits and have at least 3 digits.",

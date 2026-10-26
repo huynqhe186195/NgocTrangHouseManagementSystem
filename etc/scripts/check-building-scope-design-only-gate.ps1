@@ -110,7 +110,8 @@ if ($buildingCrud -notmatch 'CreateWithCurrentOwnerAsync' -or
     $bootstrapCoordinator -notmatch 'IBuildingOperatorActiveAccountReader' -or
     $bootstrapCoordinator -notmatch '\[RemoteService\(IsEnabled\s*=\s*false\)\]' -or
     $bootstrapCoordinator -notmatch 'IBuildingOwnerBootstrapPrincipalReader' -or
-    $atomicWriter -match 'ITransientDependency|ExposeServices\(' -or
+    $atomicWriter -match ':\s*IBuildingOwnerBootstrapWriter\s*,\s*ITransientDependency' -or
+    $atomicWriter -match '\[(ExposeServices|Dependency)\s*\(' -or
     $atomicWriter -notmatch 'BeginTransactionAsync' -or
     $atomicWriter -notmatch 'RollbackAsync') {
     throw 'Safety stop: building owner creation lost privilege, transaction or default-deny safeguards.'

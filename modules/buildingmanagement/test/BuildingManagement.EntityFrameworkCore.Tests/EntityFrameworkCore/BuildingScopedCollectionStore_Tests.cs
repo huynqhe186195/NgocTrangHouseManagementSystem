@@ -88,13 +88,25 @@ public sealed class BuildingScopedCollectionStore_Tests
         await WithUnitOfWorkAsync(async () =>
         {
             var store = GetRequiredService<IBuildingScopedCollectionStore>();
-            var result = await store.ReadPageAsync(
+            var first = await store.ReadPageAsync(
+                BuildingScopedCollectionKind.Room, new[] { f.A }, 0, 1);
+            var second = await store.ReadPageAsync(
                 BuildingScopedCollectionKind.Room, new[] { f.A }, 1, 1);
 
-            Assert.Equal(2, result.TotalCount);
-            Assert.Equal(new[] { f.RoomA1, f.RoomA2 }
-                .OrderBy(id => id).Skip(1).ToArray(), result.ResourceIds);
-            Assert.DoesNotContain(f.RoomB, result.ResourceIds);
+            Assert.Equal(2, first.TotalCount);
+            Assert.Equal(2, second.TotalCount);
+            Assert.Single(first.ResourceIds);
+            Assert.Single(second.ResourceIds);
+            Assert.NotEqual(first.ResourceIds[0], second.ResourceIds[0]);
+            // SQLite and .NET may order GUID byte representations
+            // differently; verify stable non-overlapping SQL pages,
+            // not an in-memory ordering that could make this test flaky.
+            Assert.Equal(
+                new[] { f.RoomA1, f.RoomA2 }.OrderBy(id => id).ToArray(),
+                first.ResourceIds.Concat(second.ResourceIds)
+                    .OrderBy(id => id).ToArray());
+            Assert.DoesNotContain(f.RoomB, first.ResourceIds);
+            Assert.DoesNotContain(f.RoomB, second.ResourceIds);
         });
     }
 

@@ -165,6 +165,50 @@ public sealed class MoveOutCompletionReadinessSqlite_Tests :
         });
     }
 
+    [Fact]
+    public async Task METERSIGNDB04_Wrong_Room_Evidence_Must_Not_Complete_Meter_Task()
+    {
+        var seed = await SeedAsync(approve: true);
+        await WithUnitOfWorkAsync(async () =>
+        {
+            using var allowed = BuildingManagement.Tests.Security
+                .LegacyRoomBusinessFixturePolicy.AllowRoomBusinessAssertions();
+            var svc = MakeSignoffService(true, seed.ContractId, Guid.NewGuid());
+            var ex = await Assert.ThrowsAsync<Volo.Abp.BusinessException>(
+                () => svc.VerifyAsync(seed.RequestId));
+            Assert.Equal(MoveOutErrorCodes.FinalMeterEvidenceInvalid, ex.Code);
+        });
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var tasks = await GetRequiredService<
+                IRepository<MoveOutChecklistTask, Guid>>()
+                .GetListAsync(x => x.MoveOutRequestId == seed.RequestId);
+            Assert.All(tasks, x => Assert.False(x.IsCompleted));
+        });
+    }
+
+    [Fact]
+    public async Task METERSIGNDB05_Unapproved_Request_Has_No_Completed_Tasks()
+    {
+        var seed = await SeedAsync(approve: false);
+        await WithUnitOfWorkAsync(async () =>
+        {
+            using var allowed = BuildingManagement.Tests.Security
+                .LegacyRoomBusinessFixturePolicy.AllowRoomBusinessAssertions();
+            var svc = MakeSignoffService(true, seed.ContractId, seed.RoomId);
+            var ex = await Assert.ThrowsAsync<Volo.Abp.BusinessException>(
+                () => svc.VerifyAsync(seed.RequestId));
+            Assert.Equal(MoveOutErrorCodes.FinalMeterSignoffNotAllowed, ex.Code);
+        });
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var tasks = await GetRequiredService<
+                IRepository<MoveOutChecklistTask, Guid>>()
+                .GetListAsync(x => x.MoveOutRequestId == seed.RequestId);
+            Assert.Empty(tasks);
+        });
+    }
+
     private MoveOutFinalMeterSignoffAppService MakeSignoffService(
         bool validEvidence, Guid contractId, Guid roomId)
         => new(

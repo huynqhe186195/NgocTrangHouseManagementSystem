@@ -21,6 +21,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Volo.Abp;
 using Volo.Abp.AspNetCore.Mvc;
+using Volo.Abp.AspNetCore.Mvc.Libs;
 using Volo.Abp.Autofac;
 using Volo.Abp.Modularity;
 using Xunit;
@@ -79,7 +80,7 @@ public sealed class BuildingManagementAutoApiAuthorization_Tests
             x.ControllerTypeInfo.AsType() == typeof(BuildingAppService) &&
             x.MethodInfo.Name == nameof(BuildingAppService.GetListAsync));
 
-        var route = action.AttributeRouteInfo?.Template;
+        var route = Assert.IsType<string>(action.AttributeRouteInfo?.Template);
         Assert.False(string.IsNullOrWhiteSpace(route));
         Assert.Contains("building-management", route,
             StringComparison.OrdinalIgnoreCase);

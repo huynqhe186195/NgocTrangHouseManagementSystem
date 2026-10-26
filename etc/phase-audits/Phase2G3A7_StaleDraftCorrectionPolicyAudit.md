@@ -99,6 +99,46 @@ scope revocation and authorization under the proper transaction
 and locks; do not replace the deny-all implementation before
 those checks are designed.
 
+## GRAPHDB SQLite real-graph suite expanded to 8 cases — WIP 26/10/2026
+
+The six staged SQLite-backed resource graph tests were extended to
+eight tests with `GRAPHDB07` (real persisted graph with a grant
+for another building is **Denied**) and `GRAPHDB08` (real persisted
+graph with deliberately **simulated** positive membership returns
+`EligibleForDesignOnly`, never write authority).
+
+Before proposing local execution, source review found that the test
+fixture created random `UtilityRateId` and `UtilityMeterId` values
+without inserting their required parent rows. The real
+`InvoiceItemConfiguration` and
+`InvoiceItemMeterSourceConfiguration` have RESTRICT foreign keys
+to `UtilityRate` and `UtilityMeter`; missing parents would
+fail fixture insertion before scope assertions. Fixture setup now
+seeds two real utility rates and meters with matching IDs and uses
+those IDs for the synthetic invoice draft. This changes test-only
+SQLite data, **not** runtime domain code or any EF migration.
+
+The eight tests use `AbpUnitTestSqliteDatabase`, never production
+PostgreSQL, real ABP user permissions or application DB changes.
+**GRAPHDB01–08: expected 8/8, NOT RUN/VERIFIED.**
+Earlier `ACCESS01–10 10/10 PASS` and
+`SERVERACCESS01–11 11/11 PASS` remain verified.
+Do not infer real operator membership authorization from SQLite
+tests with a mocked permission principal and building-grant provider.
+
+Safe local commands:
+
+```powershell
+git pull --ff-only origin wip/phase-2g2
+dotnet test .\modules\buildingmanagement\test\BuildingManagement.EntityFrameworkCore.Tests\BuildingManagement.EntityFrameworkCore.Tests.csproj --filter 'FullyQualifiedName~InvoiceDraftRevisionServerGraphIntegration_Tests' --logger 'console;verbosity=normal'
+powershell -NoProfile -ExecutionPolicy Bypass -File .\etc\scripts\check-invoice-revision-no-write-gate.ps1
+```
+
+If a test fails, inspect full inner exception/stack before
+modifying scope policy or schema. Production default building
+grants remain **DENY ALL**; no revision mutation endpoint,
+`CurrentRevision`, live role assignment or billing posting is enabled.
+
 ## GRAPHDB01–06 SQLite-backed revision scope reader tests — WIP 26/10/2026
 
 Added `InvoiceDraftRevisionServerGraphIntegration_Tests.cs` to the

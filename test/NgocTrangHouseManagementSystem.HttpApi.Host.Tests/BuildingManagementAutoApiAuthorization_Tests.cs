@@ -1,6 +1,9 @@
 using System;
 using System.Linq;
 using System.Net;
+using System.Reflection;
+using System.Security.Claims;
+using Volo.Abp.Domain.Repositories;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Routing;
 using System.Text.RegularExpressions;
@@ -254,6 +257,92 @@ public sealed class BuildingManagementAutoApiAuthorization_Tests
         Assert.False(attribute.IsEnabled);
     }
 
+    [Fact]
+    public async Task APIAUTO09_Authenticated_Unassigned_User_Cannot_List_Any_Building_Floor_Room()
+    {
+        await using var app = await StartIsolatedAbpHostAsync();
+        using var client = AuthenticatedClient(app);
+
+        foreach (var service in new[]
+            { "BuildingAppService", "FloorAppService", "RoomAppService" })
+        {
+            var action = Assert.Single(GetGeneratedActions(app), x =>
+                x.ControllerTypeInfo.Name == service &&
+                x.MethodInfo.Name == "GetListAsync");
+            var route = Assert.IsType<string>(action.AttributeRouteInfo?.Template);
+            using var response = await client.GetAsync("/" + route.TrimStart('/'));
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        }
+    }
+
+    [Fact]
+    public async Task APIAUTO10_Authenticated_Unassigned_User_Cannot_Read_Guessed_Resource_Ids()
+    {
+        await using var app = await StartIsolatedAbpHostAsync();
+        using var client = AuthenticatedClient(app);
+
+        foreach (var service in new[]
+            { "BuildingAppService", "FloorAppService", "RoomAppService" })
+        {
+            var action = Assert.Single(GetGeneratedActions(app), x =>
+                x.ControllerTypeInfo.Name == service &&
+                x.MethodInfo.Name == "GetAsync");
+            var route = Assert.IsType<string>(action.AttributeRouteInfo?.Template);
+            var withId = Regex.Replace(route, @"\{[^}]+\}",
+                Guid.NewGuid().ToString("D"));
+            using var response = await client.GetAsync("/" + withId.TrimStart('/'));
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        }
+    }
+
+    [Fact]
+    public async Task APIAUTO11_Authenticated_Unassigned_User_Cannot_Create_Child_Resources()
+    {
+        await using var app = await StartIsolatedAbpHostAsync();
+        using var client = AuthenticatedClient(app);
+
+        foreach (var (service, payload) in new[]
+        {
+            ("FloorAppService", "{\"buildingId\":\"" + Guid.NewGuid() +
+                "\",\"floorNumber\":1,\"name\":\"Blocked floor\"}"),
+            ("RoomAppService", "{\"floorId\":\"" + Guid.NewGuid() +
+                "\",\"roomNumber\":\"101\",\"name\":\"Blocked room\",\"capacity\":2,\"status\":0}")
+        })
+        {
+            var action = Assert.Single(GetGeneratedActions(app), x =>
+                x.ControllerTypeInfo.Name == service &&
+                x.MethodInfo.Name == "CreateAsync");
+            var route = Assert.IsType<string>(action.AttributeRouteInfo?.Template);
+            using var body = new StringContent(payload, Encoding.UTF8, "application/json");
+            using var response = await client.PostAsync("/" + route.TrimStart('/'), body);
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        }
+    }
+
+    [Fact]
+    public async Task APIAUTO12_Authenticated_User_Cannot_Create_Orphan_Building()
+    {
+        await using var app = await StartIsolatedAbpHostAsync();
+        using var client = AuthenticatedClient(app);
+        var action = Assert.Single(GetGeneratedActions(app), x =>
+            x.ControllerTypeInfo.AsType() == typeof(BuildingAppService) &&
+            x.MethodInfo.Name == "CreateAsync");
+        var route = Assert.IsType<string>(action.AttributeRouteInfo?.Template);
+        using var body = new StringContent(
+            "{\"name\":\"Blocked building\",\"address\":\"No owner bootstrap\"}",
+            Encoding.UTF8, "application/json");
+        using var response = await client.PostAsync("/" + route.TrimStart('/'), body);
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    private static HttpClient AuthenticatedClient(WebApplication app)
+    {
+        var client = app.GetTestClient();
+        client.DefaultRequestHeaders.Add(
+            "X-Isolated-Security-User", Guid.NewGuid().ToString("D"));
+        return client;
+    }
+
     private static ControllerActionDescriptor[] GetGeneratedActions(WebApplication app)
         => app.Services
             .GetRequiredService<IActionDescriptorCollectionProvider>()
@@ -303,6 +392,31 @@ public sealed class BuildingManagementAutoApiAuthorization_Tests
                     "ApiAutoProbe", _ => { });
             context.Services.AddAuthorization();
 
+            // Test-only repository proxies ensure that an authorized HTTP
+            // request can instantiate actual AppServices, but any accidental
+            // database access before permission checks fails the test.
+            // This is NOT a production service registration.
+            context.Services.AddSingleton<IRepository<BuildingManagement.Buildings.Building, Guid>>(
+                DispatchProxy.Create<
+                    IRepository<BuildingManagement.Buildings.Building, Guid>,
+                    NoDatabaseRepositoryProxy>());
+            context.Services.AddSingleton<IRepository<BuildingManagement.Floors.Floor, Guid>>(
+                DispatchProxy.Create<
+                    IRepository<BuildingManagement.Floors.Floor, Guid>,
+                    NoDatabaseRepositoryProxy>());
+            context.Services.AddSingleton<IRepository<BuildingManagement.Rooms.Room, Guid>>(
+                DispatchProxy.Create<
+                    IRepository<BuildingManagement.Rooms.Room, Guid>,
+                    NoDatabaseRepositoryProxy>());
+            context.Services.AddSingleton<IRepository<BuildingManagement.Contracts.Contract, Guid>>(
+                DispatchProxy.Create<
+                    IRepository<BuildingManagement.Contracts.Contract, Guid>,
+                    NoDatabaseRepositoryProxy>());
+            context.Services.AddSingleton<IRepository<BuildingManagement.Utilities.UtilityMeter, Guid>>(
+                DispatchProxy.Create<
+                    IRepository<BuildingManagement.Utilities.UtilityMeter, Guid>,
+                    NoDatabaseRepositoryProxy>());
+
             Configure<AbpMvcLibsOptions>(options => options.CheckLibs = false);
             Configure<MvcOptions>(options =>
                 options.Conventions.Add(
@@ -330,6 +444,28 @@ public sealed class BuildingManagementAutoApiAuthorization_Tests
             : base(options, logger, encoder) { }
 
         protected override Task<AuthenticateResult> HandleAuthenticateAsync()
-            => Task.FromResult(AuthenticateResult.NoResult());
+        {
+            if (!Request.Headers.TryGetValue("X-Isolated-Security-User", out var raw) ||
+                !Guid.TryParse(raw.ToString(), out var id) || id == Guid.Empty)
+                return Task.FromResult(AuthenticateResult.NoResult());
+
+            var identity = new ClaimsIdentity(
+                new[]
+                {
+                    new Claim(ClaimTypes.NameIdentifier, id.ToString("D")),
+                    new Claim(ClaimTypes.Name, "isolated-security-test")
+                },
+                Scheme.Name);
+            var ticket = new AuthenticationTicket(
+                new ClaimsPrincipal(identity), Scheme.Name);
+            return Task.FromResult(AuthenticateResult.Success(ticket));
+        }
     }
+    public class NoDatabaseRepositoryProxy : DispatchProxy
+    {
+        protected override object? Invoke(MethodInfo? method, object?[]? args)
+            => throw new InvalidOperationException(
+                "SECURITY TEST FAILURE: repository accessed before current building grant authorization.");
+    }
+
 }

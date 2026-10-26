@@ -40,13 +40,14 @@ public class FinalMoveOutPaymentEvidenceAppService : ApplicationService
         // The ID/contract come exclusively from server-verified review.
         // Including a non-matching contract linked to this draft flags
         // suspicious cross-contract attribution rather than silently hiding it.
+        var contractId = preview.ContractId;
+        var invoiceId = preview.UtilityDraftId;
         List<Payment> records;
         using (_softDeleteFilter.Disable())
         {
             records = await _payments.GetListAsync(payment =>
-                payment.ContractId == preview.ContractId ||
-                (preview.UtilityDraftId.HasValue &&
-                 payment.InvoiceId == preview.UtilityDraftId.Value));
+                payment.ContractId == contractId ||
+                (invoiceId.HasValue && payment.InvoiceId == invoiceId));
         }
 
         return FinalMoveOutPaymentEvidenceEvaluator.Assess(preview, records);

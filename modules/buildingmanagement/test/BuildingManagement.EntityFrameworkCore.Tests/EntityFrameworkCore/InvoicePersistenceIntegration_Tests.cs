@@ -734,4 +734,36 @@ public sealed class InvoicePersistenceIntegration_Tests
         });
     }
 
+    [Fact]
+    public async Task FINPAYDB02_Pending_MoveOut_Has_No_Draft_Or_Assigned_Debt()
+    {
+        var data = await SeedAsync();
+        var requestId = Guid.NewGuid();
+        await WithUnitOfWorkAsync(async () =>
+            await GetRequiredService<IRepository<MoveOutRequest, Guid>>()
+                .InsertAsync(new MoveOutRequest(requestId, data.ContractId,
+                    data.RoomId, new DateOnly(2026, 11, 30), null),
+                    autoSave: true));
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var bill = new FinalMoveOutBillReviewAppService(
+                GetRequiredService<IRepository<MoveOutRequest, Guid>>(),
+                _contracts, _invoices,
+                GetRequiredService<IRepository<InvoiceItem, Guid>>(),
+                GetRequiredService<IRepository<InvoiceItemMeterSource, Guid>>());
+            var service = new FinalMoveOutPaymentEvidenceAppService(
+                bill, GetRequiredService<IRepository<Payment, Guid>>(),
+                GetRequiredService<IDataFilter<ISoftDelete>>());
+
+            var result = await service.GetAsync(requestId);
+            Assert.Null(result.DraftInvoiceId);
+            Assert.Null(result.OutstandingDebt);
+            Assert.Null(result.ObservedCompletedReceiptAmount);
+            Assert.False(result.IsDebtReconciled);
+            Assert.Contains("NoVerifiedFinalBillDraft", result.Blockers);
+            Assert.Contains("ActualOutstandingDebtUnknown", result.Blockers);
+        });
+    }
+
 }

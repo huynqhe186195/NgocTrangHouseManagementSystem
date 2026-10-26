@@ -17,6 +17,9 @@ public class BuildingManagementPermissionDefinitionProvider : PermissionDefiniti
         // operator-building assignment store or CRUD enforcement yet.
         myGroup.AddPermission(BuildingManagementPermissions.Buildings.Read, L("Permission:Buildings.Read"));
         myGroup.AddPermission(BuildingManagementPermissions.Buildings.Manage, L("Permission:Buildings.Manage"));
+        // Never automatically grant via a generic building manager role.
+        myGroup.AddPermission(BuildingManagementPermissions.Buildings.AssignOperators, L("Permission:Buildings.AssignOperators"));
+        myGroup.AddPermission(BuildingManagementPermissions.Buildings.RevokeOperators, L("Permission:Buildings.RevokeOperators"));
         myGroup.AddPermission(BuildingManagementPermissions.Floors.Read, L("Permission:Floors.Read"));
         myGroup.AddPermission(BuildingManagementPermissions.Floors.Manage, L("Permission:Floors.Manage"));
         myGroup.AddPermission(BuildingManagementPermissions.Rooms.Read, L("Permission:Rooms.Read"));

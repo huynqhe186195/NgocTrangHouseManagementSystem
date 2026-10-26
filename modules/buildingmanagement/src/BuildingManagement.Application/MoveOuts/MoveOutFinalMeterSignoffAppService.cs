@@ -7,6 +7,7 @@ using BuildingManagement.Utilities;
 using Volo.Abp;
 using Volo.Abp.Application.Services;
 using Volo.Abp.Domain.Repositories;
+using Volo.Abp.Linq;
 using Volo.Abp.Timing;
 using Volo.Abp.Uow;
 
@@ -26,6 +27,7 @@ public class MoveOutFinalMeterSignoffAppService : ApplicationService
     private readonly IBuildingCrudAccessPolicy _scope;
     private readonly IMoveOutFinalMeterReadinessAppService _meterEvidence;
     private readonly IClock _clock;
+    private readonly IAsyncQueryableExecuter _queryExecuter;
 
     public MoveOutFinalMeterSignoffAppService(
         IRepository<MoveOutRequest, Guid> requests,
@@ -33,7 +35,8 @@ public class MoveOutFinalMeterSignoffAppService : ApplicationService
         IContractRepository contractLocks,
         IBuildingCrudAccessPolicy scope,
         IMoveOutFinalMeterReadinessAppService meterEvidence,
-        IClock clock)
+        IClock clock,
+        IAsyncQueryableExecuter queryExecuter)
     {
         _requests = requests;
         _checklist = checklist;
@@ -41,6 +44,7 @@ public class MoveOutFinalMeterSignoffAppService : ApplicationService
         _scope = scope;
         _meterEvidence = meterEvidence;
         _clock = clock;
+        _queryExecuter = queryExecuter ?? throw new ArgumentNullException(nameof(queryExecuter));
     }
 
     [UnitOfWork(isTransactional: true)]
@@ -52,7 +56,7 @@ public class MoveOutFinalMeterSignoffAppService : ApplicationService
         // Lock order is Contract -> MoveOut request -> checklist.
         // Resolve the scalar key before tracking the request.
         var query = await _requests.GetQueryableAsync();
-        var contractId = await AsyncExecuter.FirstOrDefaultAsync(
+        var contractId = await _queryExecuter.FirstOrDefaultAsync(
             query.Where(x => x.Id == requestId).Select(x => x.ContractId));
         if (contractId == Guid.Empty)
             throw new BusinessException(MoveOutErrorCodes.NotFound);

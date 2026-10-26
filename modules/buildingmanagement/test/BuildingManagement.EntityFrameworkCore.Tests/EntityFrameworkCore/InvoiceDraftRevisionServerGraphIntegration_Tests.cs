@@ -24,6 +24,8 @@ public sealed class InvoiceDraftRevisionServerGraphIntegration_Tests
     private readonly IRepository<Floor, Guid> _floors;
     private readonly IRepository<Room, Guid> _rooms;
     private readonly IRepository<Contract, Guid> _contracts;
+    private readonly IRepository<UtilityRate, Guid> _rates;
+    private readonly IRepository<UtilityMeter, Guid> _meters;
     private readonly IRepository<Invoice, Guid> _invoices;
     private readonly IRepository<InvoiceDraftRevisionRecord, Guid> _archives;
 
@@ -33,6 +35,8 @@ public sealed class InvoiceDraftRevisionServerGraphIntegration_Tests
         _floors = GetRequiredService<IRepository<Floor, Guid>>();
         _rooms = GetRequiredService<IRepository<Room, Guid>>();
         _contracts = GetRequiredService<IRepository<Contract, Guid>>();
+        _rates = GetRequiredService<IRepository<UtilityRate, Guid>>();
+        _meters = GetRequiredService<IRepository<UtilityMeter, Guid>>();
         _invoices = GetRequiredService<IRepository<Invoice, Guid>>();
         _archives = GetRequiredService<IRepository<InvoiceDraftRevisionRecord, Guid>>();
     }
@@ -161,6 +165,10 @@ public sealed class InvoiceDraftRevisionServerGraphIntegration_Tests
         var contractRoom = breakContractRoomLink ? Guid.NewGuid() : room;
         var contract = Guid.NewGuid();
         var invoice = Guid.NewGuid();
+        var electricityRate = Guid.NewGuid();
+        var waterRate = Guid.NewGuid();
+        var electricityMeter = Guid.NewGuid();
+        var waterMeter = Guid.NewGuid();
 
         await WithUnitOfWorkAsync(async () =>
         {
@@ -182,25 +190,48 @@ public sealed class InvoiceDraftRevisionServerGraphIntegration_Tests
                     new DateTime(2027, 12, 31), 3_000_000m),
                 autoSave: true);
 
+            // Active snapshot items have restrictive foreign keys to
+            // UtilityRate and UtilityMeter. Seed both in this isolated
+            // SQLite fixture before constructing the draft graph.
+            await _rates.InsertAsync(new UtilityRate(
+                electricityRate, building, UtilityType.Electricity, 3500m,
+                new DateTime(2026, 10, 1), null), autoSave: true);
+            await _rates.InsertAsync(new UtilityRate(
+                waterRate, building, UtilityType.Water, 15000m,
+                new DateTime(2026, 10, 1), null), autoSave: true);
+            await _meters.InsertAsync(new UtilityMeter(
+                electricityMeter, room, UtilityType.Electricity,
+                "SEC-E-" + Guid.NewGuid().ToString("N"),
+                0m, new DateTime(2026, 10, 1)), autoSave: true);
+            await _meters.InsertAsync(new UtilityMeter(
+                waterMeter, room, UtilityType.Water,
+                "SEC-W-" + Guid.NewGuid().ToString("N"),
+                0m, new DateTime(2026, 10, 1)), autoSave: true);
+
             InvoiceDraftUtilityLineSnapshot Line(
-                UtilityType type, decimal unitPrice)
+                UtilityType type, Guid rateId, Guid meterId,
+                decimal unitPrice)
             {
                 var segment = new InvoiceDraftMeterSegmentSnapshot(
-                    Guid.NewGuid(), Guid.NewGuid(),
+                    Guid.NewGuid(), meterId,
                     MeterUsageSourceType.MonthlyReading,
                     new DateTime(2026, 10, 31), 0m,
                     type == UtilityType.Electricity ? 10m : 5m);
                 var quantity = segment.CurrentReading - segment.PreviousReading;
                 return new InvoiceDraftUtilityLineSnapshot(
-                    type, Guid.NewGuid(), "SingleRateWholeMonth",
+                    type, rateId, "SingleRateWholeMonth",
                     quantity, unitPrice, quantity * unitPrice,
                     new[] { segment }, Array.Empty<string>());
             }
 
             var snapshot = InvoiceDraftSnapshot.Capture(
                 contract, room, 2026, 10,
-                new[] { Line(UtilityType.Electricity, 3500m),
-                        Line(UtilityType.Water, 15000m) });
+                new[]
+                {
+                    Line(UtilityType.Electricity, electricityRate,
+                        electricityMeter, 3500m),
+                    Line(UtilityType.Water, waterRate, waterMeter, 15000m)
+                });
             var draft = Invoice.CreateDraft(invoice, snapshot, Guid.NewGuid);
             await _invoices.InsertAsync(draft, autoSave: true);
         });

@@ -18,7 +18,7 @@ namespace BuildingManagement.MoveOuts;
 /// Remains HTTP-disabled until building/operator authorization covers it.
 /// </summary>
 [RemoteService(IsEnabled = false)]
-public sealed class MoveOutCompletionReadinessAppService : ApplicationService
+public class MoveOutCompletionReadinessAppService : ApplicationService
 {
     private readonly IRepository<MoveOutRequest, Guid> _requests;
     private readonly IRepository<MoveOutChecklistTask, Guid> _checklist;
@@ -40,7 +40,7 @@ public sealed class MoveOutCompletionReadinessAppService : ApplicationService
         _meters = meters;
     }
 
-    public async Task<MoveOutCompletionReadinessDto> GetAsync(Guid requestId)
+    public virtual async Task<MoveOutCompletionReadinessDto> GetAsync(Guid requestId)
     {
         if (requestId == Guid.Empty)
             throw new BusinessException(MoveOutErrorCodes.NotFound);

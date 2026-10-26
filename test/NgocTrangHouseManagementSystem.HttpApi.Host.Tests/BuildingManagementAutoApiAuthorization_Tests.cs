@@ -1,6 +1,11 @@
 using System;
 using System.Linq;
 using System.Net;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Routing;
+using System.Text.RegularExpressions;
+using System.Text;
+using System.Net.Http;
 using System.Text.Encodings.Web;
 using System.Threading.Tasks;
 using BuildingManagement;
@@ -89,6 +94,90 @@ public sealed class BuildingManagementAutoApiAuthorization_Tests
         using var client = app.GetTestClient();
         using var response = await client.GetAsync("/" + route.TrimStart('/'));
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task APIAUTO03_Actual_Route_Endpoints_Require_Authentication()
+    {
+        await using var app = await StartIsolatedAbpHostAsync();
+
+        // EndpointDataSource describes the mapped HTTP surface, rather than
+        // assuming that an MVC action descriptor was actually routed.
+        var endpoints = app.Services.GetRequiredService<EndpointDataSource>()
+            .Endpoints.OfType<RouteEndpoint>()
+            .Select(endpoint => new
+            {
+                Endpoint = endpoint,
+                Action = endpoint.Metadata.GetMetadata<ControllerActionDescriptor>()
+            })
+            .Where(x => x.Action is not null &&
+                        (x.Action.ControllerTypeInfo.Assembly ==
+                             typeof(BuildingManagementApplicationModule).Assembly ||
+                         x.Action.ControllerTypeInfo.Assembly ==
+                             typeof(BuildingManagementHttpApiModule).Assembly))
+            .ToArray();
+
+        Assert.NotEmpty(endpoints);
+        Assert.Contains(endpoints, x =>
+            x.Action!.ControllerTypeInfo.AsType() == typeof(BuildingAppService) &&
+            x.Action.MethodInfo.Name == nameof(BuildingAppService.GetListAsync));
+        Assert.Contains(endpoints, x =>
+            x.Action!.ControllerTypeInfo.AsType() ==
+                typeof(BuildingManagement.Samples.ExampleController));
+
+        foreach (var item in endpoints)
+        {
+            Assert.DoesNotContain(item.Endpoint.Metadata,
+                metadata => metadata is IAllowAnonymous);
+            Assert.Contains(item.Action!.FilterDescriptors, descriptor =>
+                descriptor.Filter is AuthorizeFilter filter &&
+                filter.Policy is not null &&
+                filter.Policy.Requirements.Any(requirement =>
+                    requirement is DenyAnonymousAuthorizationRequirement));
+        }
+    }
+
+    [Fact]
+    public async Task APIAUTO04_Anonymous_Generated_Create_Cannot_Reach_Business_Service()
+    {
+        await using var app = await StartIsolatedAbpHostAsync();
+
+        var create = Assert.Single(GetGeneratedActions(app), x =>
+            x.ControllerTypeInfo.AsType() == typeof(BuildingAppService) &&
+            x.MethodInfo.Name == nameof(BuildingAppService.CreateAsync));
+
+        var route = Assert.IsType<string>(create.AttributeRouteInfo?.Template);
+        using var client = app.GetTestClient();
+        using var payload = new StringContent("{}", Encoding.UTF8, "application/json");
+        using var response = await client.PostAsync(
+            "/" + route.TrimStart('/'), payload);
+
+        // Even invalid input must not be deserialized/processed by a business
+        // action before the anonymous caller is challenged.
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task APIAUTO05_Anonymous_Known_Id_Reads_Are_Challenged_Across_Services()
+    {
+        await using var app = await StartIsolatedAbpHostAsync();
+
+        var resources = new[] { "RoomAppService", "ContractAppService",
+                                "PaymentAppService" };
+        using var client = app.GetTestClient();
+
+        foreach (var service in resources)
+        {
+            var action = Assert.Single(GetGeneratedActions(app), x =>
+                x.ControllerTypeInfo.Name == service &&
+                x.MethodInfo.Name == "GetAsync");
+            var route = Assert.IsType<string>(action.AttributeRouteInfo?.Template);
+            var path = Regex.Replace(route, @"\\{[^}]+\\}",
+                Guid.NewGuid().ToString("D"));
+
+            using var response = await client.GetAsync("/" + path.TrimStart('/'));
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        }
     }
 
     private static ControllerActionDescriptor[] GetGeneratedActions(WebApplication app)

@@ -49,7 +49,41 @@ new ARCH 9), **not yet verified as a combined run**. If the
 archive codec's compile/runtime cases fail, correct source first
 and do not proceed to live EF migrations.
 
-## Full EF migration chain safety rehearsal — PGREV03 WIP (26/10/2026)
+## PGREV03 full-chain local PostgreSQL PASS — 26/10/2026
+
+The user invoked the dedicated opt-in disposable-DB full EF chain
+rehearsal `test-invoice-revision-full-chain-local.ps1` and reported:
+
+```
+Test Run Successful.
+Total tests: 1
+     Passed: 1
+Total time: 7.2343 Seconds
+BuildingManagement.PostgreSql.Tests test net10.0 succeeded (7.7s)
+Test summary: total: 1, failed: 0, succeeded: 1, skipped: 0, duration: 7.7s
+Build succeeded with 4 warning(s) in 26.6s
+PGREV03 PASSED; random scratch database created and deleted.
+```
+
+**PGREV03: 1/1 PASS.** Alongside PGREV01/02 **2/2 PASS**,
+this gives **3/3 tested PostgreSQL revision-ledger scenarios**,
+but across two separate invocations, NOT one combined test run.
+
+The opt-in test runs the complete real EF migration chain against a
+random disposable localhost PostgreSQL database, rechecks upgrade
+idempotency, downgrades an **empty** ledger and re-upgrades it, with
+the scratch database removed at the end. It does NOT demonstrate
+that migrating a populated existing business database is safe, nor
+test an EF downgrade against archived rows or concurrent writers.
+The four build warnings are consistent in count with the previously
+identified Mapperly RMG012 baseline; the abbreviated PGREV03 log
+alone does not list warning codes.
+
+The generated V2 EF migration and its Designer/ModelSnapshot/SQL
+remain only in the user's uncommitted local worktree; no PostgreSQL
+application migration, issuance or posting was authorized.
+
+## Full EF migration chain safety rehearsal — PGREV03 verified (26/10/2026)
 
 Following the locally confirmed **PGREV01/02 2/2 PASS** in a
 transaction-local schema, added a new, separately opt-in test:
@@ -96,7 +130,7 @@ git pull --ff-only origin wip/phase-2g2
 powershell -NoProfile -ExecutionPolicy Bypass -File .\etc\scripts\test-invoice-revision-full-chain-local.ps1
 ```
 
-**Expected one test: 1/1 PASS (unverified).**
+**1/1 PASS** verified from user's 26/10/2026 local output.
 If it fails, read stage/cleanup output and fix before
 any PostgreSQL application DB migration. A successful
 PGREV03 still does NOT prove privileged-role immutability,

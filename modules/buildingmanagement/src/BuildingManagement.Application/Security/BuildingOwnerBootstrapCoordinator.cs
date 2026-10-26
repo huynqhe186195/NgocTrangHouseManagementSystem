@@ -47,20 +47,6 @@ public sealed class AbpBuildingOwnerBootstrapPrincipalReader :
     }
 }
 
-/// <summary>
-/// Storage writer must insert BOTH Building and the FIRST access grant
-/// atomically under a single serializable/locking protocol. No partial
-/// building with zero owner is acceptable. A client cannot choose the owner.
-/// </summary>
-public interface IBuildingOwnerBootstrapWriter
-{
-    Task<Building> CreateWithOwnerAtomicallyAsync(
-        Guid trustedOwnerUserId,
-        string name,
-        string address,
-        string? description);
-}
-
 [ExposeServices(typeof(IBuildingOwnerBootstrapWriter))]
 public sealed class DenyAllBuildingOwnerBootstrapWriter :
     IBuildingOwnerBootstrapWriter, ITransientDependency

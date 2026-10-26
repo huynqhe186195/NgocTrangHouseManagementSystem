@@ -347,20 +347,34 @@ public sealed class BuildingManagementAutoApiAuthorization_Tests
     public async Task APIAUTO13_Direct_Contract_End_And_MoveOut_Close_Preflight_Are_Not_Remote()
     {
         await using var app = await StartIsolatedAbpHostAsync();
-        var actions = GetGeneratedActions(app);
+        // ABP MVC may retain a ControllerActionDescriptor for a disabled
+        // method with AttributeRouteInfo == null. That is NOT an exposed HTTP
+        // endpoint. Inspect EndpointDataSource (the actual routable surface)
+        // instead of requiring its discovery descriptor to disappear.
+        var exposed = app.Services.GetRequiredService<EndpointDataSource>()
+            .Endpoints.OfType<RouteEndpoint>()
+            .Select(endpoint =>
+                endpoint.Metadata.GetMetadata<ControllerActionDescriptor>())
+            .Where(action => action is not null)
+            .ToArray();
 
-        // Domain contract status can no longer be changed by a standalone
-        // public EndAsync command that skips final money/inspection steps.
-        Assert.DoesNotContain(actions, x =>
-            x.ControllerTypeInfo.AsType() ==
+        Assert.NotEmpty(exposed);
+        Assert.Contains(exposed, action =>
+            action!.ControllerTypeInfo.AsType() ==
                 typeof(BuildingManagement.Contracts.ContractAppService) &&
-            x.MethodInfo.Name == "EndAsync");
+            action.MethodInfo.Name == "GetAsync");
 
-        // Readiness reveals missing prerequisites internally, but is not
-        // authenticated/scoped for public use until tenant/operator
-        // authorization is completed.
-        Assert.DoesNotContain(actions, x =>
-            x.ControllerTypeInfo.AsType() ==
+        // No routable direct EndAsync command may bypass the final invoice,
+        // debt settlement, deposit and move-out handover validations.
+        Assert.DoesNotContain(exposed, action =>
+            action!.ControllerTypeInfo.AsType() ==
+                typeof(BuildingManagement.Contracts.ContractAppService) &&
+            action.MethodInfo.Name == "EndAsync");
+
+        // The readiness preflight remains internal-only until real scoped
+        // authorization is available for Tenant / Owner / Staff.
+        Assert.DoesNotContain(exposed, action =>
+            action!.ControllerTypeInfo.AsType() ==
                 typeof(BuildingManagement.MoveOuts.MoveOutCompletionReadinessAppService));
 
         var gate = app.Services.GetRequiredService<

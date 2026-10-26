@@ -69,3 +69,15 @@ If build/test fails, capture the precise error instead of modifying production D
 6. Keep invoice draft revision, invoice issuance, debt posting and the already-proven NO-WRITE constraints intact. Verify PostgreSQL non-owner runtime role separately.
 
 **Bottom line:** The newest implementation produces only design-time decision signals. No real operational action may treat `EligibleForDesignOnly` as permission to mutate business data.
+
+## 6. Additional ABP DI guard (UNVERIFIED)
+
+The isolated `BuildingManagementAutoApiAuthorization_Tests` suite now includes `APIAUTO06_Identity_Adapter_Does_Not_Replace_Default_Deny`. In the real ABP module registration environment used by that in-memory test host, it asserts that `IBuildingOperatorActiveAccountReader` still resolves to `DenyAllBuildingOperatorActiveAccountReader` and returns false. This explicitly guards against accidentally activating the unregistered Identity adapter just by compiling it.
+
+The host-test count is now **expected 14/14**, up from user-confirmed 13/13. Test **APIAUTO06 has not run locally**.
+
+```powershell
+dotnet test .\test\NgocTrangHouseManagementSystem.HttpApi.Host.Tests\NgocTrangHouseManagementSystem.HttpApi.Host.Tests.csproj --logger "console;verbosity=normal"
+```
+
+Do NOT infer a functioning production Identity integration merely from adapter compilation and a default-deny DI check.

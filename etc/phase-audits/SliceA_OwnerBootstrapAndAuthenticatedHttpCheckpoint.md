@@ -21,7 +21,7 @@ Extended `BuildingManagementAutoApiAuthorization_Tests.cs` with `APIAUTO09–12`
 - Creating Floors and Rooms with arbitrary parent IDs and valid payloads.
 - Creating a Building without first-owner bootstrap authority.
 
-Expected new host suite total: **19/19** (previously 15; +4). These are negative authenticated tests against a host without actual EF or production Identity. They do NOT demonstrate cross-building allowance for two *real* distinct staff members.
+Expected new host suite total: **20/20** (previously 16 after APIAUTO08; +4). These are negative authenticated tests against a host without actual EF or production Identity. They do NOT demonstrate cross-building allowance for two *real* distinct staff members.
 
 ### 2. Dedicated first-owner bootstrap permission and production entry point
 
@@ -65,7 +65,7 @@ git pull --ff-only origin wip/phase-2g2
 powershell -NoProfile -ExecutionPolicy Bypass -File .\etc\scripts\verify-2g-security-batch.ps1 -Mode Full
 ```
 
-**Expected**: all existing Application/SQLite/Host tests and both source gates pass. Current host expected **19/19** and new bootstrap tests are **7 Application + 4 SQLite**. If compilation or a negative HTTP check fails, provide the exact output; the batch must stop and be fixed before any broader rollout.
+**Expected**: all existing Application/SQLite/Host tests and both source gates pass. Current host expected **20/20** and new bootstrap tests are **7 Application + 4 SQLite**. If compilation or a negative HTTP check fails, provide the exact output; the batch must stop and be fixed before any broader rollout.
 
 The assistant's code tool environment has NO `dotnet` SDK. Do not describe any of the new tests as PASS before the user's local run or verified CI evidence.
 

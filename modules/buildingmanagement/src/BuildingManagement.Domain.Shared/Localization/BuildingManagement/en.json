@@ -1,6 +1,17 @@
 {
   "culture": "en",
   "texts": {
+    "Permission:BuildingManagement": "Building management",
+    "Permission:Buildings.Read": "View buildings",
+    "Permission:Buildings.Manage": "Manage buildings",
+    "Permission:Buildings.AssignOperators": "Assign building operators",
+    "Permission:Buildings.RevokeOperators": "Revoke building operators",
+    "Permission:Floors.Read": "View floors",
+    "Permission:Floors.Manage": "Manage floors",
+    "Permission:Rooms.Read": "View rooms",
+    "Permission:Rooms.Manage": "Manage rooms",
+    "Permission:Contracts.Read": "View contracts",
+    "Permission:Contracts.Manage": "Manage contracts",
     "Permission:Invoices.RebuildDraft": "Rebuild draft invoices (requires authorized building access)",
     "Permission:Invoices.ReadRevisionHistory": "Read invoice revision history (requires authorized building access)",
     "MyAccount": "My account",

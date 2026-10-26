@@ -25,7 +25,8 @@ try {
 
     $scripts = @(
         '.\etc\scripts\check-building-scope-design-only-gate.ps1',
-        '.\etc\scripts\check-invoice-revision-no-write-gate.ps1'
+        '.\etc\scripts\check-invoice-revision-no-write-gate.ps1',
+        '.\etc\scripts\check-move-out-lifecycle-gate.ps1'
     )
     foreach ($script in $scripts) {
         Write-Host "== SOURCE GATE: $script =="
@@ -36,6 +37,11 @@ try {
     }
 
     $projects = @(
+        @{
+            Name = 'Domain'
+            Path = '.\modules\buildingmanagement\test\BuildingManagement.Domain.Tests\BuildingManagement.Domain.Tests.csproj'
+            QuickFilter = $null
+        },
         @{
             Name = 'Application'
             Path = '.\modules\buildingmanagement\test\BuildingManagement.Application.Tests\BuildingManagement.Application.Tests.csproj'

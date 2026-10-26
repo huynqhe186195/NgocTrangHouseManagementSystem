@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Text;
 using System.Threading.Tasks;
 using BuildingManagement.Floors;
+using BuildingManagement.Security;
+using System.Linq;
 using Volo.Abp;
 using Volo.Abp.Application.Services;
 using Volo.Abp.Domain.Repositories;
@@ -15,17 +17,21 @@ namespace BuildingManagement.Buildings
     {
         private readonly IRepository<Building, Guid> _buildingRepository;
         private readonly IRepository<Floor, Guid> _floorRepository;
+        private readonly IBuildingCrudAccessPolicy _access;
 
         public BuildingAppService(
             IRepository<Building, Guid> buildingRepository,
-            IRepository<Floor, Guid> floorRepository)
+            IRepository<Floor, Guid> floorRepository,
+            IBuildingCrudAccessPolicy access)
         {
             _buildingRepository = buildingRepository;
             _floorRepository = floorRepository;
+            _access = access;
         }
 
         public async Task<BuildingDto> CreateAsync(CreateBuildingDto input)
         {
+            await _access.EnsureBuildingCreationAsync();
             var building = new Building(
                 GuidGenerator.Create(),
                 input.Name,
@@ -46,6 +52,7 @@ namespace BuildingManagement.Buildings
 
         public async Task DeleteAsync(Guid id)
         {
+            await _access.EnsureBuildingAsync(id, BuildingBusinessCapability.ManageBuilding);
             var building =
                 await _buildingRepository.FindAsync(id);
 
@@ -66,6 +73,7 @@ namespace BuildingManagement.Buildings
 
         public async Task<BuildingDto> GetAsync(Guid id)
         {
+            await _access.EnsureBuildingAsync(id, BuildingBusinessCapability.ReadBuilding);
             var building =
                 await _buildingRepository.GetAsync(id);
 
@@ -77,8 +85,11 @@ namespace BuildingManagement.Buildings
 
         public async Task<List<BuildingDto>> GetListAsync()
         {
+            var authorized = await _access.GetAuthorizedBuildingIdsAsync(
+                BuildingBusinessCapability.ReadBuilding);
             var buildings =
-                await _buildingRepository.GetListAsync();
+                await _buildingRepository.GetListAsync(b =>
+                    authorized.Contains(b.Id));
 
             return ObjectMapper.Map<
                 List<Building>,
@@ -90,6 +101,7 @@ namespace BuildingManagement.Buildings
     Guid id,
     UpdateBuildingDto input)
         {
+            await _access.EnsureBuildingAsync(id, BuildingBusinessCapability.ManageBuilding);
             var building =
                 await _buildingRepository.GetAsync(id);
 

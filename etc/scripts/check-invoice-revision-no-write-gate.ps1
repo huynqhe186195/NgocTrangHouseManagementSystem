@@ -67,6 +67,13 @@ if (-not $policy.Contains('PermissionGranted') -or
     throw 'Safety stop: server-resolved scope policy was removed or changed.'
 }
 
+$server = Read-SafeSource 'modules/buildingmanagement/src/BuildingManagement.Application/Invoices/InvoiceDraftRevisionServerAccessGate.cs'
+if (-not $server.Contains('class DenyAllInvoiceDraftRevisionBuildingGrants') -or
+    -not $server.Contains('Array.Empty<Guid>()') -or
+    -not $server.Contains('AssessDesignOnlyAsync')) {
+    throw 'Safety stop: new server access composition missing the deny-all boundary.'
+}
+
 foreach ($guard in @(
     'CK_BM_InvoiceDraftRevision_HexSha256',
     'TR_BM_InvoiceDraftRevision_ProtectRow',
@@ -82,6 +89,6 @@ foreach ($guard in @(
 Write-Host 'SOURCE NO-WRITE GATE PASS: remote draft service remains disabled.'
 Write-Host 'PASS: no mutating draft-rebuild/issue/debt command exposed in draft service/contract.'
 Write-Host 'PASS: CurrentRevision still absent; two permission definitions exist but grant no access.'
-Write-Host 'PASS: pure building-scope policy remains design-only; no authorization service is wired.'
+Write-Host 'PASS: server-side access gate and default zero-building grants remain design-only.'
 Write-Host 'PASS: required V2 trigger, checksum and rollback-source markers are present.'
 Write-Host 'READ-ONLY CHECK ONLY. This is NOT a database-role or authorization test.'

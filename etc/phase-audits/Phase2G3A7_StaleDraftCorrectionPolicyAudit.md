@@ -99,6 +99,39 @@ scope revocation and authorization under the proper transaction
 and locks; do not replace the deny-all implementation before
 those checks are designed.
 
+## SERVERACCESS01–11 server composition tests PASS — 26/10/2026
+
+User ran the eleven `InvoiceDraftRevisionServerAccessGate_Tests`
+on .NET 10 and provided:
+
+```
+Test Run Successful.
+Total tests: 11
+     Passed: 11
+ Total time: 1.0733 Seconds
+BuildingManagement.Application.Tests test net10.0 succeeded (1.4s)
+Test summary: total: 11, failed: 0, succeeded: 11, skipped: 0,
+              duration: 1.4s
+Build succeeded with 4 warning(s) in 13.7s
+```
+
+**SERVERACCESS01–11 = 11/11 PASS** with mocked principal, mocked
+resource graph and mocked building grants. Combined with the
+previously independently confirmed **ACCESS01–10 = 10/10 PASS**
+and **PGREV01–04 = 4/4 PASS**, these represent 25 successful
+checks across distinct invocations (NOT a single regression run).
+
+Importantly, SERVERACCESS01 verifies that the default
+`DenyAllInvoiceDraftRevisionBuildingGrants` **denies** even
+if the caller has a positive simulated ABP permission and
+internally resolved resource facts. A positive simulated-grant
+result is `EligibleForDesignOnly`, never a write authorization.
+The actual SQLite-backed repository graph reader, current-user
+integration with the deployed ABP permission store, real
+operator↔building membership, and PostgreSQL runtime-role
+privileges remain unverified. No real grant provider, remote
+revision command or migration has been enabled.
+
 ## ACCESS01–10 pure revision scope authorization tests PASS — 26/10/2026
 
 User ran `BuildingManagement.Application.Tests` with

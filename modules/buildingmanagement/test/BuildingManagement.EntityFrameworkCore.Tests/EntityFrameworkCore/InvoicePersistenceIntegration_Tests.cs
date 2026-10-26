@@ -6,6 +6,7 @@ using BuildingManagement.Buildings;
 using BuildingManagement.Contracts;
 using BuildingManagement.Floors;
 using BuildingManagement.Invoices;
+using BuildingManagement.MoveOuts;
 using BuildingManagement.Rooms;
 using BuildingManagement.Utilities;
 using Microsoft.EntityFrameworkCore;
@@ -600,6 +601,76 @@ public sealed class InvoicePersistenceIntegration_Tests
                 revisions.Select(x => x.ArchivedRevision).Order().ToArray());
             Assert.All(revisions, x => Assert.Equal(invoice.Id,
                 x.VerifyAndRead().InvoiceId));
+        });
+    }
+
+    [Fact]
+    public async Task FINALBILLDB01_Approved_Quote_Loads_Persisted_Meter_Evidence()
+    {
+        var (data, readingId) = await SeedReadyOctoberAsync();
+        var draft = CreateDraft(data, readingId, Guid.NewGuid());
+        var requestId = Guid.NewGuid();
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var request = new MoveOutRequest(requestId, data.ContractId,
+                data.RoomId, new DateOnly(2026, 10, 31), "Final month");
+            request.Approve(DateTime.UtcNow, null);
+            await GetRequiredService<IRepository<MoveOutRequest, Guid>>()
+                .InsertAsync(request, autoSave: true);
+            await _invoices.InsertAsync(draft, autoSave: true);
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var service = new FinalMoveOutBillReviewAppService(
+                GetRequiredService<IRepository<MoveOutRequest, Guid>>(),
+                _contracts, _invoices,
+                GetRequiredService<IRepository<InvoiceItem, Guid>>(),
+                GetRequiredService<IRepository<InvoiceItemMeterSource, Guid>>());
+
+            var review = await service.GetAsync(requestId);
+            Assert.Equal(3_000_000m, review.FullMonthRent);
+            Assert.Equal(35_000m, review.ElectricityAmount);
+            Assert.Equal(75_000m, review.WaterAmount);
+            Assert.Equal(3_110_000m, review.ProvisionalRentAndUtilities);
+            Assert.Equal(draft.Id, review.UtilityDraftId);
+            Assert.False(review.CanIssue);
+            Assert.False(review.IsReceivablePosted);
+            Assert.Equal(InvoiceStatus.Draft,
+                (await _invoices.GetAsync(draft.Id)).Status);
+            Assert.Equal(ContractStatus.Active,
+                (await _contracts.GetAsync(data.ContractId)).Status);
+        });
+    }
+
+    [Fact]
+    public async Task FINALBILLDB02_Prior_Month_Draft_Is_Not_Final_Bill()
+    {
+        var (data, readingId) = await SeedReadyOctoberAsync();
+        var priorMonth = CreateDraft(data, readingId, Guid.NewGuid());
+        var requestId = Guid.NewGuid();
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var request = new MoveOutRequest(requestId, data.ContractId,
+                data.RoomId, new DateOnly(2026, 11, 30), "Final month");
+            request.Approve(DateTime.UtcNow, null);
+            await GetRequiredService<IRepository<MoveOutRequest, Guid>>()
+                .InsertAsync(request, autoSave: true);
+            await _invoices.InsertAsync(priorMonth, autoSave: true);
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var service = new FinalMoveOutBillReviewAppService(
+                GetRequiredService<IRepository<MoveOutRequest, Guid>>(),
+                _contracts, _invoices,
+                GetRequiredService<IRepository<InvoiceItem, Guid>>(),
+                GetRequiredService<IRepository<InvoiceItemMeterSource, Guid>>());
+            var review = await service.GetAsync(requestId);
+            Assert.Equal(3_000_000m, review.FullMonthRent);
+            Assert.Null(review.ProvisionalRentAndUtilities);
+            Assert.Contains("FinalUtilityDraftMissing", review.Blockers);
+            Assert.False(review.CanIssue);
         });
     }
 

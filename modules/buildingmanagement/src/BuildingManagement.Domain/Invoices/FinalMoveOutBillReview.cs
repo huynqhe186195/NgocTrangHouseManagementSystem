@@ -96,8 +96,14 @@ public static class FinalMoveOutBillReviewEvaluator
                 result.UtilityDraftId = invoice.Id;
                 result.ElectricityAmount = electricity;
                 result.WaterAmount = water;
+                // Reassert the validated rent prerequisite for nullable
+                // flow analysis; do not silently substitute zero for an
+                // unreviewable full-month rent amount.
+                var fullRent = result.FullMonthRent
+                    ?? throw new InvalidOperationException(
+                        "Full-month rent is required for a final bill quote.");
                 result.ProvisionalRentAndUtilities =
-                    result.FullMonthRent.Value + electricity + water;
+                    fullRent + electricity + water;
             }
         }
 

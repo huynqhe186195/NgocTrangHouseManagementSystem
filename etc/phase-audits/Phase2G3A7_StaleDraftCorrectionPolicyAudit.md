@@ -49,6 +49,47 @@ new ARCH 9), **not yet verified as a combined run**. If the
 archive codec's compile/runtime cases fail, correct source first
 and do not proceed to live EF migrations.
 
+## User-local V2 rollback migration build and SQL export — 26/10/2026
+
+The user manually extracted `Phase2G3A7_Reviewed_Migration_Patch_v2.zip`,
+backed up the previous migration to `Migration_before_V2.cs` in
+a temporary directory, and copied the V2 migration C# file into
+the uncommitted local EF migrations directory. They reported:
+
+```
+dotnet build BuildingManagement.EntityFrameworkCore.csproj --no-restore
+Build succeeded in 11.8s
+```
+
+Then, with `BM_INVOICE_MIGRATION_OFFLINE=1`, they generated a
+**reverse** EF SQL script:
+
+```
+dotnet ef migrations script
+    20261025150750_Phase2G3A7_AddInvoiceDraftRevisionLedger
+    20261023182226_Phase2G3A4_AddInvoiceDraftSnapshots
+    --context BuildingManagementDbContext
+    --output etc/phase-audits/Phase2G3A7_RevisionLedger_Down_Review.sql
+Build started...
+Build succeeded.
+```
+
+The offline environment flag was removed in a `finally` clause.
+No database connections or writes are reported in this log.
+The V2 C# **compiles successfully**; however, the generated
+`Phase2G3A7_RevisionLedger_Down_Review.sql` is still present
+**only on the user's local checkout and has NOT been reviewed**.
+
+**Next safety gate:** inspect the exact reverse SQL before any
+scratch PostgreSQL use. It must acquire an `ACCESS EXCLUSIVE`
+table lock *before* the empty-ledger test, raise if any archive
+row exists, and avoid touching existing invoice/utility/payment
+tables. Confirm that both phases run transactionally, and review
+any cleanup operations on the ledger's triggers/function.
+Do not infer behavior from build success or script generation.
+The application DB migration, destructive rebuild, invoice issue
+and debt posting remain DISABLED.
+
 ## Static review of uploaded patched forward SQL — 26/10/2026
 
 The user supplied the actual local

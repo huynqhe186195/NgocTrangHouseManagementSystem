@@ -49,6 +49,62 @@ new ARCH 9), **not yet verified as a combined run**. If the
 archive codec's compile/runtime cases fail, correct source first
 and do not proceed to live EF migrations.
 
+## NO-WRITE source regression PASS and ungranted permission design increment — 26/10/2026
+
+The user reported the guarded
+`etc/scripts/check-invoice-revision-no-write-gate.ps1` completed
+with all expected **PASS** messages, verifying the remote invoice
+draft storage service still disabled, no mutable
+`RebuildDraftAsync/IssueAsync/PostDebtAsync` service contract,
+the pending `CurrentRevision` version design, and the retained
+PostgreSQL V2 migration safety markers. It is a **source-only**
+test, not an actual database permission or authorization PASS.
+
+Following that PASS, this WIP branch now contains a separate
+**design-only security increment**:
+
+- `BuildingManagementPermissions.Invoices.RebuildDraft` and
+  `BuildingManagementPermissions.Invoices.ReadRevisionHistory`
+  are declared as **two distinct ABP permission names** and
+  registered in the definition provider; English and Vietnamese
+  display labels are added. **Defining these permissions does not
+  grant them to any user or role.** No permission grant/seeding
+  or remote service was added.
+- `InvoiceDraftRevisionAccessPolicy` in Application is a pure,
+  fail-closed evaluator of **server-resolved** identities and
+  relationships. It requires a nonempty authenticated actor,
+  explicit permission signal, an existing `Draft` status,
+  exact invoice / contract / room / floor / building ID chain,
+  and positive building membership. Its positive enum is named
+  `EligibleForDesignOnly` to make clear it **does not** authorize
+  a database write; future calls must recheck membership within
+  a protected transaction, not trust caller-supplied facts.
+- `InvoiceDraftRevisionAccessPolicy_Tests` defines **10**
+  pure negative/positive access tests (ACCESS01–10), including
+  anonymous actor, permission missing, cross-building,
+  forged invoice ID, broken relationship chain, non-draft
+  status, empty data and revoked membership.
+- `check-invoice-revision-no-write-gate.ps1` now validates
+  the two **ungranted** permission definitions and the
+  pure policy while continuing to reject a mutating service or
+  an unreviewed `CurrentRevision` transition.
+
+**NEW TESTS NOT YET RUN on the user's machine.** After a safe
+fast-forward pull, run source-only check followed by unit tests:
+
+```powershell
+git pull --ff-only origin wip/phase-2g2
+powershell -NoProfile -ExecutionPolicy Bypass -File .\etc\scripts\check-invoice-revision-no-write-gate.ps1
+dotnet test .\modules\buildingmanagement\test\BuildingManagement.Application.Tests\BuildingManagement.Application.Tests.csproj --filter 'FullyQualifiedName~InvoiceDraftRevisionAccessPolicy_Tests' --logger 'console;verbosity=normal'
+```
+
+Expected ACCESS01–10 = **10/10** (unverified), plus a source-only
+gate PASS. No EF migration, runtime authorization scope provider,
+live operator-role mapping, `CurrentRevision`, mutating rebuild
+API or debt posting is implemented. **SEC01–04 and REV05–07
+are pending** and must not be relabeled PASS because this pure
+policy evaluates hand-supplied test fixtures.
+
 ## Source-control checkpoint + permission and role security review — 26/10/2026
 
 User confirmed that all five exact SHA-256 reviewed local migration

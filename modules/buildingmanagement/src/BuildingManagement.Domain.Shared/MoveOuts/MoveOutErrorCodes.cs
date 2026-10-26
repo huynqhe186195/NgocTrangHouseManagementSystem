@@ -12,4 +12,10 @@ public static class MoveOutErrorCodes
     public const string CannotCancel = "BuildingManagement:MoveOut:CannotCancel";
     public const string RejectionReasonRequired = "BuildingManagement:MoveOut:RejectionReasonRequired";
     public const string TextTooLong = "BuildingManagement:MoveOut:TextTooLong";
+    public const string FinalMeterSignoffNotAllowed =
+        "BuildingManagement:MoveOut:FinalMeterSignoffNotAllowed";
+    public const string FinalMeterChecklistMissing =
+        "BuildingManagement:MoveOut:FinalMeterChecklistMissing";
+    public const string FinalMeterEvidenceInvalid =
+        "BuildingManagement:MoveOut:FinalMeterEvidenceInvalid";
 }

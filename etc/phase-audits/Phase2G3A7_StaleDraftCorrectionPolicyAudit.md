@@ -49,6 +49,67 @@ new ARCH 9), **not yet verified as a combined run**. If the
 archive codec's compile/runtime cases fail, correct source first
 and do not proceed to live EF migrations.
 
+## PGREV04 full EF populated-ledger concurrency gate — WIP (26/10/2026)
+
+Added the separately opt-in real PostgreSQL test
+`InvoiceRevisionPopulatedRollbackPostgreSql_Tests.cs`
+(`PGREV04_Concurrent_Insert_Blocks_Down_And_Preserves_History`).
+The previously tested PGREV03 and new PGREV04 share an xUnit
+collection, so their disposable-database rehearsals run sequentially.
+Updated the existing safe launcher:
+
+`etc/scripts/test-invoice-revision-full-chain-local.ps1`
+
+It now executes both `InvoiceRevisionFullChainPostgreSql_Tests`
+and `InvoiceRevisionPopulatedRollbackPostgreSql_Tests`
+in a single invocation.
+
+**PGREV04 design:**
+
+1. Require explicit local scratch-DB opt-in, exact previously
+   reviewed Up/Down SQL SHA-256, expected newest V2 EF migration,
+   and the existing strict connection guard:
+   `localhost:5432 / ngoctrang_integration_test`.
+   Require a PostgreSQL test role with CREATEDB/SUPERUSER.
+2. Create **one fresh random**
+   `ngoctrang_revision_race_<uuid>` scratch database;
+   apply the **entire actual EF migration chain**, with no EF
+   changes to the pre-existing integration or application DB.
+3. Insert only a synthetic building/floor/room/contract and
+   invoice header in that scratch database, using new random IDs;
+   create one valid archived previous draft evidence blob.
+   (Synthetic parents are for FK testing, not normal billing.)
+4. Connection A begins a transaction and inserts the archive
+   without committing. Connection B invokes a real EF
+   `MigrateAsync(Phase2G3A4)` downgrade. Query
+   `pg_stat_activity` to verify B actually waits for a lock
+   before A commits.
+5. Commit A. Verify B's downgrade fails with the explicit
+   populated-ledger guard, and confirm the historical record,
+   two enabled protection triggers, migration history row and
+   active invoice source table remain intact.
+6. In `finally`, close all scratch connections and drop **only**
+   the database created by this test. Verify absence.
+
+**NOT YET RUN on the user's machine.** This new C# test may
+surface a missing DB default/constraint or provider-specific
+migration lock behavior; correct any genuine failure before
+approving any live migration. PGREV03's **1/1** result from the
+previous invocation remains verified separately.
+
+Run only using the existing script, which preserves the user's
+uncommitted generated V2 migration/Designer/ModelSnapshot/SQL:
+
+```powershell
+git pull --ff-only origin wip/phase-2g2
+powershell -NoProfile -ExecutionPolicy Bypass -File .\etc\scripts\test-invoice-revision-full-chain-local.ps1
+```
+
+Expected combined `PGREV03+PGREV04`: **2/2** (NOT VERIFIED).
+This still does not establish authorization for rebuild, rate
+or source edits, an end-to-end recognized-debt ledger, database
+privilege separation for actual operators, or production readiness.
+
 ## PGREV03 full-chain local PostgreSQL PASS — 26/10/2026
 
 The user invoked the dedicated opt-in disposable-DB full EF chain

@@ -49,6 +49,67 @@ new ARCH 9), **not yet verified as a combined run**. If the
 archive codec's compile/runtime cases fail, correct source first
 and do not proceed to live EF migrations.
 
+## PostgreSQL transaction-local SQL rehearsal — IMPLEMENTED / NOT YET RUN (26/10/2026)
+
+Added `InvoiceRevisionLedgerSqlPostgreSql_Tests` under
+`BuildingManagement.PostgreSql.Tests/Invoices`, with two
+**opt-in** real PostgreSQL scenarios and a PowerShell launcher
+`etc/scripts/test-invoice-revision-ledger-sql-local.ps1`.
+
+- **PGREV01:** Use the exact reviewed forward SQL, then store
+  one synthetic historical archive and assert database rejection
+  for UPDATE, DELETE, TRUNCATE, duplicate (InvoiceId, Revision),
+  non-hex SHA-256 CHECK, invalid invoice FK and revision 0.
+  Replay the exact reviewed Down SQL against a **populated**
+  revision ledger and assert PostgreSQL raises, leaving table,
+  archived record, triggers and EF history entry intact.
+- **PGREV02:** Replay exact forward and reverse SQL with an
+  **empty** ledger, assert ledger table, guard function and its
+  EF history row are removed while the synthetic parent invoice
+  test table remains available.
+- Reviewed SQL files are supplied from the user's local checkout
+  via `BM_PHASE2G3A7_UP_SQL` and
+  `BM_PHASE2G3A7_DOWN_SQL`, but require exact filenames
+  **and SHA-256 of previously reviewed uploads** before a DB
+  connection is opened. The SQL wrapper START/COMMIT is stripped
+  so the real SQL body runs inside the test's **single**
+  outer rollback-only Npgsql transaction.
+- The only database permitted by the existing
+  `BuildingManagementPostgreSqlTestModule.RequireSafeConnectionString`
+  guard is **localhost:5432/ngoctrang_integration_test**.
+  The tests do **NOT** inherit ABP's auto-`EnsureCreated`
+  module. Each creates a fresh random schema with only
+  synthetic parent invoice/migration-history stubs, sets
+  `search_path` to that schema **without public**, and
+  unconditionally rolls back after execution. PostgreSQL
+  savepoints restore the transaction following each deliberate
+  error. A final check requires zero leftover schema.
+- The launcher reuses the existing local `.env` credentials
+  without printing values; unlike the older full migration-chain
+  launcher, it does **not** demand a clean worktree, because the
+  generated migration/Designer/Snapshot/SQL files are pending
+  review and must remain untouched.
+- No `dotnet ef database update`, `DbMigrator`,
+  `CREATE DATABASE`, `DROP DATABASE`, or production DB
+  migration is invoked.
+
+**Unverified: zero local PostgreSQL runs yet.** The source was
+reviewed statically but cannot be compiled or run in the assistant
+environment. The user must pull the latest WIP branch (taking care
+not to discard local migration files) and run:
+
+```powershell
+git pull --ff-only origin wip/phase-2g2
+powershell -NoProfile -ExecutionPolicy Bypass -File .\etc\scripts\test-invoice-revision-ledger-sql-local.ps1
+```
+
+Expected: **2/2 PASS**, but no success claim until the test
+output is supplied and reviewed. This test does **not** prove full
+EF migration-chain compatibility, production-role privilege
+separation, cross-process concurrency (insert-versus-rollback),
+or the future rebuild transaction's exact revision/stamp behavior.
+Those remain hard blockers before approval to apply the migration.
+
 ## V2 rollback SQL uploaded and statically reviewed — 26/10/2026
 
 User supplied actual 838-byte local SQL file

@@ -55,13 +55,13 @@ try {
 
     foreach ($project in $projects) {
         Write-Host "== DOTNET TEST: $($project.Name) =="
-        $args = @(
+        $testArguments = @(
             'test', $project.Path, '--logger', 'console;verbosity=minimal'
         )
         if ($Mode -eq 'Quick' -and $project.QuickFilter) {
-            $args += @('--filter', $project.QuickFilter)
+            $testArguments += @('--filter', $project.QuickFilter)
         }
-        & dotnet @args
+        & dotnet @testArguments
         if ($LASTEXITCODE -ne 0) {
             throw "$($project.Name) FAILED. Stop before integration/deployment."
         }

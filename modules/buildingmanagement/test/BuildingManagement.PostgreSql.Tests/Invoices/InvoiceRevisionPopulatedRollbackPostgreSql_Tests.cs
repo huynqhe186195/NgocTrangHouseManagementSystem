@@ -18,6 +18,7 @@ namespace BuildingManagement.PostgreSqlTests;
 /// archive insert. All work happens in one freshly created, randomly
 /// named, disposable localhost PostgreSQL database.
 /// </summary>
+[Collection("Phase2G3A7_RevisionFullChain")]
 public sealed class InvoiceRevisionPopulatedRollbackPostgreSql_Tests
 {
     private const string Prior =

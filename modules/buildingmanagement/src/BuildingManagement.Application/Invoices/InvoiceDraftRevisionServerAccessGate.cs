@@ -31,6 +31,7 @@ public interface IInvoiceDraftRevisionPrincipalReader
     Task<InvoiceDraftRevisionPrincipal?> ReadAsync(InvoiceDraftRevisionCapability capability);
 }
 
+[ExposeServices(typeof(IInvoiceDraftRevisionPrincipalReader))]
 public sealed class AbpInvoiceDraftRevisionPrincipalReader :
     IInvoiceDraftRevisionPrincipalReader, ITransientDependency
 {
@@ -91,6 +92,7 @@ public interface IInvoiceDraftRevisionResourceGraphReader
     Task<InvoiceDraftRevisionResourceGraph?> ReadAsync(Guid invoiceId);
 }
 
+[ExposeServices(typeof(IInvoiceDraftRevisionResourceGraphReader))]
 public sealed class EfInvoiceDraftRevisionResourceGraphReader :
     IInvoiceDraftRevisionResourceGraphReader, ITransientDependency
 {
@@ -162,6 +164,7 @@ public interface IInvoiceDraftRevisionBuildingGrants
 /// authorization integration exists: every user has ZERO building grants.
 /// This is a deliberate hard blocker for real revision operations.
 /// </summary>
+[ExposeServices(typeof(IInvoiceDraftRevisionBuildingGrants))]
 public sealed class DenyAllInvoiceDraftRevisionBuildingGrants :
     IInvoiceDraftRevisionBuildingGrants, ITransientDependency
 {

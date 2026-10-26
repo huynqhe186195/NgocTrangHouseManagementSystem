@@ -83,7 +83,9 @@ public sealed class BuildingOperatorAccessGrant : AggregateRoot<Guid>
     {
         RequireUtc(nowUtc, nameof(nowUtc));
         return nowUtc >= GrantedAtUtc &&
-               (!RevokedAtUtc.HasValue || nowUtc < RevokedAtUtc.Value) &&
+               // Once revocation has been recorded, eligibility stops
+               // immediately; a future timestamp must not defer denial.
+               !RevokedAtUtc.HasValue &&
                (!ExpiresAtUtc.HasValue || nowUtc < ExpiresAtUtc.Value);
     }
 

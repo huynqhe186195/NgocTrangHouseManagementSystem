@@ -49,6 +49,52 @@ new ARCH 9), **not yet verified as a combined run**. If the
 archive codec's compile/runtime cases fail, correct source first
 and do not proceed to live EF migrations.
 
+## PGREV03/04 combined PostgreSQL PASS — 26/10/2026
+
+The user executed the updated guarded
+`etc/scripts/test-invoice-revision-full-chain-local.ps1` after
+the PGREV04 fixture correction and reported:
+
+```
+Test Run Successful.
+Total tests: 2
+     Passed: 2
+ Total time: 8.4784 Seconds
+BuildingManagement.PostgreSql.Tests test net10.0 succeeded (9.1s)
+Test summary: total: 2, failed: 0, succeeded: 2, skipped: 0,
+              duration: 9.1s
+Build succeeded with 4 warning(s) in 27.6s
+PGREV03/04 PASSED; random scratch databases created and deleted.
+```
+
+**PGREV03/04 = 2/2 PASS** on the same latest invocation; earlier
+**PGREV01/02 = 2/2 PASS** on a separate transaction-local-schema
+invocation. Therefore **4/4 PostgreSQL revision-ledger test
+scenarios have been verified**, NOT in one single combined run.
+
+PGREV03 validates all actual EF migrations up/down/up with empty
+ledger on a fresh local scratch database; PGREV04 validates a
+populated ledger and concurrent uncommitted archive insertion
+blocking an actual EF Down() and preserving archived evidence,
+protection triggers and migration history after the insert
+commits. The two disposable scratch DBs were successfully
+removed according to the reported launcher output.
+
+The 4 build warnings are the known Mapperly RMG012 source
+mapping issues; zero build errors were reported. The previously
+failed `CS9006/CS1733` source syntax and `SQLSTATE 22001`
+synthetic room-number fixture errors are resolved.
+
+**NEXT GATE:** The reviewed EF V2 migration C#,
+generated Designer and EF ModelSnapshot, and optional reviewed
+forward/rollback SQL exports remain **local-only and
+uncommitted**. Prepare an exact-path and content-guarded staging
+and commit of these source assets before proceeding to
+application business-logic or role-separation work. Do not
+reset, regenerate, or blindly stage unrelated files. No real
+application database migration, invoice issuance, debt posting,
+or mutating rebuild is authorized by these 4 test results.
+
 ## PGREV04 runtime fixture VARCHAR(32) failure and fix — 26/10/2026
 
 The user pulled the previous fix, ran the guarded

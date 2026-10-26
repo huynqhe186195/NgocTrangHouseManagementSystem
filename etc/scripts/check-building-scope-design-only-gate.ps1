@@ -76,6 +76,39 @@ foreach ($crudPath in @(
     }
 }
 
+# Slice A now enforces a separate REAL CRUD policy, not the
+# EligibleForDesignOnly preview. Ensure every Building/Floor/Room service
+# still calls its guard before business operations. This is only a source
+# coverage check; integration/HTTP/DB tests remain mandatory.
+$crudPolicy = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/Security/BuildingCrudAccessPolicy.cs'
+if ($crudPolicy -notmatch '\[RemoteService\(IsEnabled\s*=\s*false\)\]' -or
+    $crudPolicy -notmatch 'IBuildingOperatorActiveAccountReader' -or
+    $crudPolicy -notmatch 'IBuildingOperatorGrantReader' -or
+    $crudPolicy -notmatch 'AbpAuthorizationException') {
+    throw 'Safety stop: enforced CRUD policy lost remote-disable or security dependencies.'
+}
+$buildingCrud = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/Buildings/BuildingAppService.cs'
+$floorCrud = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/Floors/FloorAppService.cs'
+$roomCrud = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/Rooms/RoomAppService.cs'
+foreach ($check in @(
+    @{Name='Building'; Text=$buildingCrud; Auth='EnsureBuildingAsync'; Minimum=3},
+    @{Name='Floor'; Text=$floorCrud; Auth='EnsureResourceAsync'; Minimum=3},
+    @{Name='Room'; Text=$roomCrud; Auth='EnsureResourceAsync'; Minimum=4}
+)) {
+    if ($check.Text -notmatch 'IBuildingCrudAccessPolicy' -or
+        ([regex]::Matches($check.Text, $check.Auth)).Count -lt $check.Minimum -or
+        $check.Text -notmatch 'GetAuthorizedBuildingIdsAsync') {
+        throw "Safety stop: $($check.Name) CRUD endpoint coverage is incomplete."
+    }
+}
+if ($buildingCrud -notmatch 'EnsureBuildingCreationAsync' -or
+    $floorCrud -notmatch 'EnsureBuildingAsync' -or
+    $floorCrud -notmatch 'AsyncExecuter.ToListAsync' -or
+    $roomCrud -notmatch 'AsyncExecuter.ToListAsync') {
+    throw 'Safety stop: first-owner creation / child parent scope / SQL list enforcement missing.'
+}
+Write-Host 'PASS: all 15 Building/Floor/Room CRUD entry points retain fail-closed scope checks.'
+
 Write-Host 'BUILDING SCOPE DESIGN-ONLY GATE PASS.'
 Write-Host 'PASS: experimental grant table is not mapped into the runtime DbContext.'
 Write-Host 'PASS: ABP Identity adapter is not auto-registered by class markers.'

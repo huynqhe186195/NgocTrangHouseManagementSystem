@@ -49,6 +49,41 @@ new ARCH 9), **not yet verified as a combined run**. If the
 archive codec's compile/runtime cases fail, correct source first
 and do not proceed to live EF migrations.
 
+## ACCESS01–10 pure revision scope authorization tests PASS — 26/10/2026
+
+User ran `BuildingManagement.Application.Tests` with
+`--filter FullyQualifiedName~InvoiceDraftRevisionAccessPolicy_Tests`
+and reported:
+
+```
+Test Run Successful.
+Total tests: 10
+     Passed: 10
+Total time: 4.3978 Seconds
+BuildingManagement.Application.Tests test net10.0 succeeded (4.9s)
+Test summary: total: 10, failed: 0, succeeded: 10, skipped: 0,
+              duration: 4.8s
+Build succeeded with 4 warning(s) in 20.4s
+```
+
+**ACCESS01–10: 10/10 PASS.** These are **pure policy fixture
+tests** for operator identity, permission flag, invoice/contract/room/
+floor/building relationship consistency, draft status and authorized
+building membership. They do **not** prove that a production
+authenticated principal, database relationship resolution,
+role grants or tenant/building memberships can be trusted.
+The 4 warnings are the known RMG012 Mapperly warning count;
+the provided abbreviated output does not show the detailed
+warning lines. No-write gate was previously reported passing,
+but its updated source guard has not been separately rerun
+in this latest user log.
+
+Next safe increment is server-only, **deny-by-default**, using
+`ICurrentUser` and ABP `IPermissionChecker`, resolving invoice
+ownership from server-side persistence, while refusing access
+until a reviewed building membership mechanism exists. No
+mutation route, migration or real billing updates authorized.
+
 ## NO-WRITE source regression PASS and ungranted permission design increment — 26/10/2026
 
 The user reported the guarded

@@ -140,8 +140,29 @@ public abstract class ContractAppService_Tests<TStartupModule>
     }
 
     [Fact]
+    public async Task Should_Refuse_Direct_End_Of_Active_Contract_Without_MoveOut_Settlement()
+    {
+        var contract = await CreateActiveContractWithEndDateAsync(null);
+        var initialRoomStatus = await GetRoomStatusAsync(contract.RoomId);
+
+        await Assert.ThrowsAsync<Volo.Abp.Authorization.AbpAuthorizationException>(
+            () => _contractAppService.EndAsync(contract.Id));
+
+        var unchanged = await _contractAppService.GetAsync(contract.Id);
+        unchanged.Status.ShouldBe(ContractStatus.Active);
+        unchanged.ActualEndedAt.ShouldBeNull();
+        (await GetRoomStatusAsync(contract.RoomId)).ShouldBe(initialRoomStatus);
+    }
+
+    [Fact]
     public async Task Should_End_As_EarlyTermination_When_Ending_Before_EndDate()
     {
+        // Historical room/contract transition assertion only; actual
+        // Contract.EndAsync is denied in runtime until CompleteMoveOut.
+        using var endAssertionScope =
+            BuildingManagement.Tests.Security.LegacyContractTerminationFixtureGate
+                .AllowHistoricalEndAssertions();
+
         var originalEndDate =
             _clock.Now.Date.AddDays(30);
 
@@ -173,6 +194,12 @@ public abstract class ContractAppService_Tests<TStartupModule>
     [Fact]
     public async Task Should_End_As_Normal_When_Ending_On_EndDate()
     {
+        // Historical room/contract transition assertion only; actual
+        // Contract.EndAsync is denied in runtime until CompleteMoveOut.
+        using var endAssertionScope =
+            BuildingManagement.Tests.Security.LegacyContractTerminationFixtureGate
+                .AllowHistoricalEndAssertions();
+
         var endDate =
             _clock.Now.Date;
 
@@ -204,6 +231,12 @@ public abstract class ContractAppService_Tests<TStartupModule>
     [Fact]
     public async Task Should_End_As_Normal_When_Contract_Has_No_EndDate()
     {
+        // Historical room/contract transition assertion only; actual
+        // Contract.EndAsync is denied in runtime until CompleteMoveOut.
+        using var endAssertionScope =
+            BuildingManagement.Tests.Security.LegacyContractTerminationFixtureGate
+                .AllowHistoricalEndAssertions();
+
         var contract =
             await CreateActiveContractWithEndDateAsync(
                 null
@@ -230,6 +263,12 @@ public abstract class ContractAppService_Tests<TStartupModule>
     [Fact]
     public async Task Should_Throw_When_Ending_Non_Active_Contract()
     {
+        // Historical room/contract transition assertion only; actual
+        // Contract.EndAsync is denied in runtime until CompleteMoveOut.
+        using var endAssertionScope =
+            BuildingManagement.Tests.Security.LegacyContractTerminationFixtureGate
+                .AllowHistoricalEndAssertions();
+
         var contract =
             await CreateDraftContractAsync();
 
@@ -1390,6 +1429,12 @@ public abstract class ContractAppService_Tests<TStartupModule>
     [Fact]
     public async Task Should_End_Active_Contract()
     {
+        // Historical room/contract transition assertion only; actual
+        // Contract.EndAsync is denied in runtime until CompleteMoveOut.
+        using var endAssertionScope =
+            BuildingManagement.Tests.Security.LegacyContractTerminationFixtureGate
+                .AllowHistoricalEndAssertions();
+
         var roomId = await CreateRoomAsync();
 
         var contract =
@@ -1423,6 +1468,12 @@ public abstract class ContractAppService_Tests<TStartupModule>
     [Fact]
     public async Task Should_Throw_When_Ending_Draft_Contract()
     {
+        // Historical room/contract transition assertion only; actual
+        // Contract.EndAsync is denied in runtime until CompleteMoveOut.
+        using var endAssertionScope =
+            BuildingManagement.Tests.Security.LegacyContractTerminationFixtureGate
+                .AllowHistoricalEndAssertions();
+
         var contract =
             await CreateDraftContractAsync();
 
@@ -1670,6 +1721,12 @@ public abstract class ContractAppService_Tests<TStartupModule>
     [Fact]
     public async Task Should_Set_Room_Inactive_When_It_Has_Contract_History()
     {
+        // Historical room/contract transition assertion only; actual
+        // Contract.EndAsync is denied in runtime until CompleteMoveOut.
+        using var endAssertionScope =
+            BuildingManagement.Tests.Security.LegacyContractTerminationFixtureGate
+                .AllowHistoricalEndAssertions();
+
         // Only this legacy business test can exercise Room CRUD without
         // a deployed operator membership; production still fails closed.
         using var roomFixtureAccess =
@@ -1788,6 +1845,12 @@ public abstract class ContractAppService_Tests<TStartupModule>
     [Fact]
     public async Task Should_Not_Delete_Tenant_With_Contract_History()
     {
+        // Historical room/contract transition assertion only; actual
+        // Contract.EndAsync is denied in runtime until CompleteMoveOut.
+        using var endAssertionScope =
+            BuildingManagement.Tests.Security.LegacyContractTerminationFixtureGate
+                .AllowHistoricalEndAssertions();
+
         var roomId =
             await CreateRoomAsync();
 
@@ -3051,6 +3114,12 @@ public abstract class ContractAppService_Tests<TStartupModule>
     public async Task
         Should_Set_Room_Reserved_When_Active_Contract_Ends_With_Reserved_Reservation()
     {
+        // Historical room/contract transition assertion only; actual
+        // Contract.EndAsync is denied in runtime until CompleteMoveOut.
+        using var endAssertionScope =
+            BuildingManagement.Tests.Security.LegacyContractTerminationFixtureGate
+                .AllowHistoricalEndAssertions();
+
         var roomId =
             await CreateRoomAsync();
 
@@ -3107,6 +3176,12 @@ public abstract class ContractAppService_Tests<TStartupModule>
     public async Task
         Should_Set_Room_Available_When_Active_Contract_Ends_With_Only_Pending_Reservation()
     {
+        // Historical room/contract transition assertion only; actual
+        // Contract.EndAsync is denied in runtime until CompleteMoveOut.
+        using var endAssertionScope =
+            BuildingManagement.Tests.Security.LegacyContractTerminationFixtureGate
+                .AllowHistoricalEndAssertions();
+
         var roomId =
             await CreateRoomAsync();
 
@@ -3154,6 +3229,12 @@ public abstract class ContractAppService_Tests<TStartupModule>
     public async Task
         Should_Set_Room_Reserved_When_Active_Contract_Ends_With_Signed_Renewal()
     {
+        // Historical room/contract transition assertion only; actual
+        // Contract.EndAsync is denied in runtime until CompleteMoveOut.
+        using var endAssertionScope =
+            BuildingManagement.Tests.Security.LegacyContractTerminationFixtureGate
+                .AllowHistoricalEndAssertions();
+
         var roomId =
             await CreateRoomAsync();
 

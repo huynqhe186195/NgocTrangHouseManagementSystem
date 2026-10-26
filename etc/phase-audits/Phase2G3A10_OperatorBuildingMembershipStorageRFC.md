@@ -86,3 +86,15 @@ If these tests fail, collect the exact compiler/test diagnostic. Do not point a 
 - Preserve audit evidence and test DB role separation (non-owner runtime role vs migration owner) on an expressly isolated database.
 
 **Release hold:** Existing business AppServices are NOT yet proven safe for cross-building authenticated access. Invoice rebuild, invoice issue and debt posting remain blocked and remote-disabled. No migration against business data is approved by this RFC.
+
+## 2026-10-26 local follow-up
+
+The operator-building RFC tests were executed on the user's local .NET 10 environment:
+
+- `BuildingOperatorAccessGrant_Tests`: **11/11 PASS** at that point.
+- `BuildingOperatorAccessGrantDesignSqlite_Tests`: **6/6 PASS**.
+- Source NO-WRITE check: **PASS**. Only the untracked generated ledger review SQL remained in `git status --short`.
+- Phase 2G.3A.11 subsequently adds a new immediate-revocation regression `MEMBER12`, making the **current** domain test target **12/12**; this new test has **NOT** been run locally yet.
+- Further active-grant query selection and nine new isolated SQLite tests are documented in `Phase2G3A11_GrantCandidateReadGate.md`. These are read-only prerequisites and not a runtime authorization approval.
+
+All storage changes remain unmapped in the running application, and no production migration, permission grant, or invoice write was applied.

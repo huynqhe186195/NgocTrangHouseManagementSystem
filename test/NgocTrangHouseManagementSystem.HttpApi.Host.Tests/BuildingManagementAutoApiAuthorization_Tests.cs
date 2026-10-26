@@ -214,6 +214,46 @@ public sealed class BuildingManagementAutoApiAuthorization_Tests
         Assert.Empty(await grants.GetActiveBuildingIdsAsync(Guid.NewGuid()));
     }
 
+    [Fact]
+    public async Task APIAUTO08_All_Fifteen_Building_Floor_Room_Actions_Stay_Protected()
+    {
+        await using var app = await StartIsolatedAbpHostAsync();
+        var actions = GetGeneratedActions(app);
+
+        foreach (var controller in new[]
+        {
+            typeof(BuildingManagement.Buildings.BuildingAppService),
+            typeof(BuildingManagement.Floors.FloorAppService),
+            typeof(BuildingManagement.Rooms.RoomAppService)
+        })
+        {
+            foreach (var method in new[]
+                { "CreateAsync", "GetAsync", "GetListAsync", "UpdateAsync", "DeleteAsync" })
+            {
+                var action = Assert.Single(actions, item =>
+                    item.ControllerTypeInfo.AsType() == controller &&
+                    item.MethodInfo.Name == method);
+                Assert.Contains(action.FilterDescriptors, descriptor =>
+                    descriptor.Filter is AuthorizeFilter filter &&
+                    filter.Policy is not null &&
+                    filter.Policy.Requirements.Any(requirement =>
+                        requirement is DenyAnonymousAuthorizationRequirement));
+            }
+        }
+
+        // Authorization must be consumed by AppServices, never become
+        // an automatically generated permission-checking HTTP route.
+        Assert.DoesNotContain(actions, action =>
+            action.ControllerTypeInfo.AsType() ==
+                typeof(BuildingManagement.Security.BuildingCrudAccessPolicy));
+        var attribute = (Volo.Abp.RemoteServiceAttribute?)
+            Attribute.GetCustomAttribute(
+                typeof(BuildingManagement.Security.BuildingCrudAccessPolicy),
+                typeof(Volo.Abp.RemoteServiceAttribute));
+        Assert.NotNull(attribute);
+        Assert.False(attribute.IsEnabled);
+    }
+
     private static ControllerActionDescriptor[] GetGeneratedActions(WebApplication app)
         => app.Services
             .GetRequiredService<IActionDescriptorCollectionProvider>()

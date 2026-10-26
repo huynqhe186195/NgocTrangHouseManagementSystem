@@ -808,6 +808,11 @@ public abstract class UtilityMeterAppService_Tests<TStartupModule>
     [Fact]
     public async Task Should_Not_Delete_Room_With_Active_UtilityMeter()
     {
+        // Only this legacy business test can exercise Room CRUD without
+        // a deployed operator membership; production still fails closed.
+        using var roomFixtureAccess =
+            BuildingManagement.Tests.Security.LegacyRoomBusinessFixturePolicy
+                .AllowRoomBusinessAssertions();
         var roomId =
             await CreateRoomAsync();
 
@@ -840,6 +845,11 @@ public abstract class UtilityMeterAppService_Tests<TStartupModule>
     [Fact]
     public async Task Should_Set_Room_Inactive_When_It_Has_UtilityMeter_History()
     {
+        // Only this legacy business test can exercise Room CRUD without
+        // a deployed operator membership; production still fails closed.
+        using var roomFixtureAccess =
+            BuildingManagement.Tests.Security.LegacyRoomBusinessFixturePolicy
+                .AllowRoomBusinessAssertions();
         var roomId =
             await CreateRoomAsync();
 

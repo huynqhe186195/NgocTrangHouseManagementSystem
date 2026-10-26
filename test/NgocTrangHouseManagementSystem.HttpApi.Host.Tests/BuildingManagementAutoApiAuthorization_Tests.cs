@@ -180,6 +180,20 @@ public sealed class BuildingManagementAutoApiAuthorization_Tests
         }
     }
 
+    [Fact]
+    public async Task APIAUTO06_Identity_Adapter_Does_Not_Replace_Default_Deny()
+    {
+        await using var app = await StartIsolatedAbpHostAsync();
+
+        // The candidate ABP Identity account adapter must not become a
+        // production-activated grant source merely because it is compiled.
+        var activeAccounts = app.Services
+            .GetRequiredService<BuildingManagement.Security.IBuildingOperatorActiveAccountReader>();
+        Assert.IsType<BuildingManagement.Security.DenyAllBuildingOperatorActiveAccountReader>(
+            activeAccounts);
+        Assert.False(await activeAccounts.IsActiveAsync(Guid.NewGuid()));
+    }
+
     private static ControllerActionDescriptor[] GetGeneratedActions(WebApplication app)
         => app.Services
             .GetRequiredService<IActionDescriptorCollectionProvider>()

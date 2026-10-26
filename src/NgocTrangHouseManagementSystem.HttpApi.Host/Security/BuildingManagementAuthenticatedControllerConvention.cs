@@ -27,8 +27,12 @@ public sealed class BuildingManagementAuthenticatedControllerConvention
 
         foreach (var controller in application.Controllers)
         {
-            if (controller.ControllerType.Assembly !=
-                typeof(BuildingManagementApplicationModule).Assembly)
+            // Include both conventionally generated application-service
+            // controllers AND explicitly authored BuildingManagement.HttpApi
+            // controllers (for example, the sample GET route).
+            var assembly = controller.ControllerType.Assembly;
+            if (assembly != typeof(BuildingManagementApplicationModule).Assembly &&
+                assembly != typeof(BuildingManagementHttpApiModule).Assembly)
                 continue;
 
             // Explicit anonymous overrides can bypass an authorization filter.

@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Volo.Abp.Application.Services;
+using Volo.Abp;
 
 namespace BuildingManagement.Contracts
 {
@@ -49,6 +50,9 @@ namespace BuildingManagement.Contracts
 
         Task<ContractDto> ActivateAsync(Guid id);
 
+        // Direct End skips 2G.3 invoice, 2G.4 deposit and 2G.5 handover.
+        // It must never be generated as a remote API.
+        [RemoteService(IsEnabled = false)]
         Task<ContractDto> EndAsync(Guid id);
 
         Task<ContractDto> CancelAsync(Guid id);

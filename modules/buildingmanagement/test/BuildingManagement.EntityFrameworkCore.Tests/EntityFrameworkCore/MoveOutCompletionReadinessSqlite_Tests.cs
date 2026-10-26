@@ -24,7 +24,7 @@ public sealed class MoveOutCompletionReadinessSqlite_Tests :
         var seeded = await SeedAsync(approve: false);
         await WithUnitOfWorkAsync(async () =>
         {
-            var service = MakeService(meterEvidence: false);
+            var service = MakeService(meterEvidence: false, seeded.ContractId, seeded.RoomId);
             var report = await service.GetAsync(seeded.RequestId);
             Assert.Contains("MoveOutNotApproved", report.Blockers);
             Assert.Contains("FinalInvoiceIssuanceNotImplemented", report.Blockers);
@@ -46,7 +46,7 @@ public sealed class MoveOutCompletionReadinessSqlite_Tests :
         var seeded = await SeedAsync(approve: true);
         await WithUnitOfWorkAsync(async () =>
         {
-            var service = MakeService(meterEvidence: true);
+            var service = MakeService(meterEvidence: true, seeded.ContractId, seeded.RoomId);
             var report = await service.GetAsync(seeded.RequestId);
             Assert.DoesNotContain("MoveOutNotApproved", report.Blockers);
             Assert.True(report.HasFinalMeterEvidence);
@@ -74,20 +74,21 @@ public sealed class MoveOutCompletionReadinessSqlite_Tests :
     {
         await WithUnitOfWorkAsync(async () =>
         {
-            var service = MakeService(meterEvidence: false);
+            var service = MakeService(meterEvidence: false, Guid.NewGuid(), Guid.NewGuid());
             var ex = await Assert.ThrowsAsync<Volo.Abp.BusinessException>(
                 () => service.GetAsync(Guid.NewGuid()));
             Assert.Equal(MoveOutErrorCodes.NotFound, ex.Code);
         });
     }
 
-    private MoveOutCompletionReadinessAppService MakeService(bool meterEvidence)
+    private MoveOutCompletionReadinessAppService MakeService(
+        bool meterEvidence, Guid contractId, Guid roomId)
         => new(
             GetRequiredService<IRepository<MoveOutRequest, Guid>>(),
             GetRequiredService<IRepository<MoveOutChecklistTask, Guid>>(),
             GetRequiredService<IRepository<Contract, Guid>>(),
             GetRequiredService<IRepository<BuildingManagement.Invoices.Invoice, Guid>>(),
-            new FakeMeterEvidenceReader(meterEvidence));
+            new FakeMeterEvidenceReader(meterEvidence, contractId, roomId));
 
     private async Task<Seed> SeedAsync(bool approve)
     {
@@ -144,11 +145,20 @@ public sealed class MoveOutCompletionReadinessSqlite_Tests :
         IMoveOutFinalMeterReadinessAppService
     {
         private readonly bool _ready;
-        public FakeMeterEvidenceReader(bool ready) => _ready = ready;
+        private readonly Guid _contractId;
+        private readonly Guid _roomId;
+        public FakeMeterEvidenceReader(bool ready, Guid contractId, Guid roomId)
+        {
+            _ready = ready;
+            _contractId = contractId;
+            _roomId = roomId;
+        }
         public Task<MoveOutFinalMeterReadinessDto> GetAsync(Guid requestId)
             => Task.FromResult(new MoveOutFinalMeterReadinessDto
             {
                 MoveOutRequestId = requestId,
+                ContractId = _contractId,
+                RoomId = _roomId,
                 // The read service must not be fooled by a mismatched
                 // fake contract/room, even when two meter lines say "ready".
                 RequestStatus = MoveOutRequestStatus.Approved,

@@ -16,6 +16,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Hosting;
 using Xunit;
 
 namespace NgocTrangHouseManagementSystem.Security.Tests;
@@ -30,11 +31,11 @@ namespace NgocTrangHouseManagementSystem.Security.Tests;
 public sealed class BuildingManagementExplicitHttpAuthorization_Tests
 {
     [Fact]
-    public void APIHTTP01_Explicit_Routes_Are_Discovered_With_Auth_Filter()
+    public async Task APIHTTP01_Explicit_Routes_Are_Discovered_With_Auth_Filter()
     {
-        using var server = CreateIsolatedServer();
+        using var host = await CreateIsolatedHostAsync();
 
-        var actions = server.Services
+        var actions = host.Services
             .GetRequiredService<IActionDescriptorCollectionProvider>()
             .ActionDescriptors.Items
             .OfType<ControllerActionDescriptor>()
@@ -44,9 +45,9 @@ public sealed class BuildingManagementExplicitHttpAuthorization_Tests
 
         Assert.NotEmpty(actions);
 
-        var sample = Assert.Single(actions.Where(x =>
+        var sample = Assert.Single(actions, x =>
             x.ControllerTypeInfo.AsType() == typeof(ExampleController) &&
-            x.MethodInfo.Name == nameof(ExampleController.GetAsync)));
+            x.MethodInfo.Name == nameof(ExampleController.GetAsync));
         Assert.Contains("building-management/example",
             sample.AttributeRouteInfo?.Template ?? string.Empty);
 
@@ -67,8 +68,8 @@ public sealed class BuildingManagementExplicitHttpAuthorization_Tests
     [Fact]
     public async Task APIHTTP02_Anonymous_Explicit_Get_Is_Challenged_With_401()
     {
-        using var server = CreateIsolatedServer();
-        using var client = server.CreateClient();
+        using var host = await CreateIsolatedHostAsync();
+        using var client = host.GetTestClient();
 
         using var response = await client.GetAsync(
             "/api/building-management/example");
@@ -76,9 +77,11 @@ public sealed class BuildingManagementExplicitHttpAuthorization_Tests
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
-    private static TestServer CreateIsolatedServer()
+    private static async Task<IHost> CreateIsolatedHostAsync()
     {
-        var builder = new WebHostBuilder()
+        var builder = new HostBuilder()
+            .ConfigureWebHost(webHost => webHost
+            .UseTestServer()
             .ConfigureServices(services =>
             {
                 services.AddRouting();
@@ -100,9 +103,9 @@ public sealed class BuildingManagementExplicitHttpAuthorization_Tests
                 app.UseAuthentication();
                 app.UseAuthorization();
                 app.UseEndpoints(routes => routes.MapControllers());
-            });
+            }));
 
-        return new TestServer(builder);
+        return await builder.StartAsync();
     }
 
     private sealed class RejectAnonymousAuthenticationHandler

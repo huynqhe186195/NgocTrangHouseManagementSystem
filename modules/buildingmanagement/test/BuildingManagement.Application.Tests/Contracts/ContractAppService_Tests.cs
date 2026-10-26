@@ -1632,6 +1632,11 @@ public abstract class ContractAppService_Tests<TStartupModule>
     [Fact]
     public async Task Should_Not_Delete_Room_With_Active_Contract()
     {
+        // Only this legacy business test can exercise Room CRUD without
+        // a deployed operator membership; production still fails closed.
+        using var roomFixtureAccess =
+            BuildingManagement.Tests.Security.LegacyRoomBusinessFixturePolicy
+                .AllowRoomBusinessAssertions();
         var roomId = await CreateRoomAsync();
 
         var contract =
@@ -1665,6 +1670,11 @@ public abstract class ContractAppService_Tests<TStartupModule>
     [Fact]
     public async Task Should_Set_Room_Inactive_When_It_Has_Contract_History()
     {
+        // Only this legacy business test can exercise Room CRUD without
+        // a deployed operator membership; production still fails closed.
+        using var roomFixtureAccess =
+            BuildingManagement.Tests.Security.LegacyRoomBusinessFixturePolicy
+                .AllowRoomBusinessAssertions();
         var roomId = await CreateRoomAsync();
 
         var contract =
@@ -1701,6 +1711,11 @@ public abstract class ContractAppService_Tests<TStartupModule>
     [Fact]
     public async Task Should_Soft_Delete_Room_Without_Contract_History()
     {
+        // Only this legacy business test can exercise Room CRUD without
+        // a deployed operator membership; production still fails closed.
+        using var roomFixtureAccess =
+            BuildingManagement.Tests.Security.LegacyRoomBusinessFixturePolicy
+                .AllowRoomBusinessAssertions();
         var roomId =
             await CreateRoomAsync();
 

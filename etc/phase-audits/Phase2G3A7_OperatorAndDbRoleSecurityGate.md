@@ -14,9 +14,11 @@
 3. `InvoiceDraftRebuildPreflight` is a **read-only** check. Its
    `ReadyForRevisionDesign` result is **not** a permission grant
    and cannot authorize a later transaction.
-4. `BuildingManagementPermissions` currently defines only its
-   group name; the permission definition provider creates an
-   empty group. **No invoice revision permission is implemented.**
+4. `BuildingManagementPermissions.Invoices` now defines two
+   separate ABP permissions: `RebuildDraft` and
+   `ReadRevisionHistory`. The definition provider registers both
+   and en/vi localization has labels. **No role/user receives either
+   permission just because it is defined.**
 5. `Invoice` stores a draft header and active utility snapshot, but
    it currently has **no `CurrentRevision` column/property/transition**.
 6. The reviewed V2 migration adds only the separate
@@ -27,6 +29,18 @@
    verified ledger DDL/trigger/empty and populated rollback,
    including an insert-versus-downgrade race on a throwaway database.
    They **did not** simulate the non-owner runtime PostgreSQL role.
+
+8. The new, **internal-only** `InvoiceDraftRevisionServerAccessGate`
+   composes the ABP authenticated user/permission checker with
+   server-side EF invoice→contract→room→floor→building lookup.
+   Its building-grant resolver has a deliberately empty default
+   (`DenyAllInvoiceDraftRevisionBuildingGrants`), because there is
+   no reviewed building/user access membership persistence.
+   It has no remote route or mutating invoice path, and returns
+   `EligibleForDesignOnly`, never an authorization token.
+9. `SERVERACCESS01–11` are new **fake-provider composition**
+   tests; no application DB membership read, granted production
+   operator or actual PostgreSQL runtime role has been verified.
 
 **Therefore: migrating application data, enabling revision writes or
 issuing invoices is NOT authorized by the current test results.**
@@ -121,11 +135,18 @@ can be inferred just because the scratch PostgreSQL migration tests pass.
 
 ## 5. Safest next engineering increment
 
-**Build the permission and scoped authorization design/tests first**,
-separately from adding a public API or an EF write path. Keep
-`[RemoteService(IsEnabled = false)]` and no mutating invoice
-revision method until its authorization and transaction protocols
-have dedicated negative and concurrency tests.
+The pure scope evaluator and two ABP permission names are now
+implemented; the server-only read gate is **deny-by-default**
+and its mock composition tests are pending local verification.
+The next significant prerequisite is an operator↔building
+membership source with a reviewed storage/access model, plus
+tests using ABP's actual `ICurrentUser`, permission grants and
+EF relationship queries. Do not replace the deny-all provider
+with a blanket admin/role bypass.
+
+Keep `[RemoteService(IsEnabled = false)]` and no mutating
+invoice revision method until these checks and the transaction
+protocol have dedicated negative and concurrency tests.
 
 Do not run `dotnet ef database update`, DbMigrator, handwritten
 GRANT/REVOKE on app data, or turn on issue/debt/posting functionality

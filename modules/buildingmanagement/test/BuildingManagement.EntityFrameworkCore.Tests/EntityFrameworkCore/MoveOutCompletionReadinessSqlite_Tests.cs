@@ -82,6 +82,99 @@ public sealed class MoveOutCompletionReadinessSqlite_Tests :
         });
     }
 
+    [Fact]
+    public async Task METERSIGNDB01_Scoped_Approved_Evidence_Marks_Only_Meter_Task()
+    {
+        var seed = await SeedAsync(approve: true);
+        await WithUnitOfWorkAsync(async () =>
+        {
+            using var allowed = BuildingManagement.Tests.Security
+                .LegacyRoomBusinessFixturePolicy.AllowRoomBusinessAssertions();
+            var svc = MakeSignoffService(true, seed.ContractId, seed.RoomId);
+            var signed = await svc.VerifyAsync(seed.RequestId);
+            Assert.True(signed.IsCompleted);
+            Assert.NotNull(signed.CompletedAt);
+
+            // Retrying under the same lock returns the same completed task.
+            var retry = await svc.VerifyAsync(seed.RequestId);
+            Assert.Equal(signed.Id, retry.Id);
+            Assert.Equal(signed.CompletedAt, retry.CompletedAt);
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var tasks = await GetRequiredService<
+                IRepository<MoveOutChecklistTask, Guid>>()
+                .GetListAsync(x => x.MoveOutRequestId == seed.RequestId);
+            Assert.Single(tasks.Where(x => x.IsCompleted));
+            Assert.Equal(MoveOutChecklistTaskType.FinalMeterReading,
+                tasks.Single(x => x.IsCompleted).Type);
+            Assert.Equal(5, tasks.Count);
+
+            var request = await GetRequiredService<
+                IRepository<MoveOutRequest, Guid>>().GetAsync(seed.RequestId);
+            var contract = await GetRequiredService<
+                IRepository<Contract, Guid>>().GetAsync(seed.ContractId);
+            var room = await GetRequiredService<
+                IRepository<Room, Guid>>().GetAsync(seed.RoomId);
+            Assert.Equal(MoveOutRequestStatus.Approved, request.Status);
+            Assert.Equal(ContractStatus.Active, contract.Status);
+            Assert.Equal(RoomStatus.Occupied, room.Status);
+        });
+    }
+
+    [Fact]
+    public async Task METERSIGNDB02_Missing_Meter_Evidence_Leaves_All_Tasks_Open()
+    {
+        var seed = await SeedAsync(approve: true);
+        await WithUnitOfWorkAsync(async () =>
+        {
+            using var allowed = BuildingManagement.Tests.Security
+                .LegacyRoomBusinessFixturePolicy.AllowRoomBusinessAssertions();
+            var svc = MakeSignoffService(false, seed.ContractId, seed.RoomId);
+            var error = await Assert.ThrowsAsync<Volo.Abp.BusinessException>(
+                () => svc.VerifyAsync(seed.RequestId));
+            Assert.Equal(MoveOutErrorCodes.FinalMeterEvidenceInvalid, error.Code);
+        });
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var tasks = await GetRequiredService<
+                IRepository<MoveOutChecklistTask, Guid>>()
+                .GetListAsync(x => x.MoveOutRequestId == seed.RequestId);
+            Assert.Equal(5, tasks.Count);
+            Assert.All(tasks, task => Assert.False(task.IsCompleted));
+        });
+    }
+
+    [Fact]
+    public async Task METERSIGNDB03_Default_Deny_Does_Not_Mutate_Checklist()
+    {
+        var seed = await SeedAsync(approve: true);
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var svc = MakeSignoffService(true, seed.ContractId, seed.RoomId);
+            await Assert.ThrowsAsync<Volo.Abp.Authorization.AbpAuthorizationException>(
+                () => svc.VerifyAsync(seed.RequestId));
+        });
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var tasks = await GetRequiredService<
+                IRepository<MoveOutChecklistTask, Guid>>()
+                .GetListAsync(x => x.MoveOutRequestId == seed.RequestId);
+            Assert.All(tasks, task => Assert.False(task.IsCompleted));
+        });
+    }
+
+    private MoveOutFinalMeterSignoffAppService MakeSignoffService(
+        bool validEvidence, Guid contractId, Guid roomId)
+        => new(
+            GetRequiredService<IRepository<MoveOutRequest, Guid>>(),
+            GetRequiredService<IRepository<MoveOutChecklistTask, Guid>>(),
+            GetRequiredService<IContractRepository>(),
+            GetRequiredService<BuildingManagement.Security.IBuildingCrudAccessPolicy>(),
+            new FakeMeterEvidenceReader(validEvidence, contractId, roomId),
+            GetRequiredService<Volo.Abp.Timing.IClock>());
+
     private MoveOutCompletionReadinessAppService MakeService(
         bool meterEvidence, Guid contractId, Guid roomId)
         => new(
@@ -160,14 +253,21 @@ public sealed class MoveOutCompletionReadinessSqlite_Tests :
                 MoveOutRequestId = requestId,
                 ContractId = _contractId,
                 RoomId = _roomId,
+                ApprovedMoveOutDate = new DateOnly(2026, 12, 31),
                 // The read service must not be fooled by a mismatched
                 // fake contract/room, even when two meter lines say "ready".
                 RequestStatus = MoveOutRequestStatus.Approved,
                 Utilities = _ready ? new()
                 {
                     new() { UtilityType = UtilityType.Electricity,
+                        UtilityMeterId = Guid.NewGuid(),
+                        MeterReadingId = Guid.NewGuid(),
+                        FinalReading = 123m,
                         Status = "ReadingEvidencePresent" },
                     new() { UtilityType = UtilityType.Water,
+                        UtilityMeterId = Guid.NewGuid(),
+                        MeterReadingId = Guid.NewGuid(),
+                        FinalReading = 456m,
                         Status = "ReadingEvidencePresent" }
                 } : new()
             });

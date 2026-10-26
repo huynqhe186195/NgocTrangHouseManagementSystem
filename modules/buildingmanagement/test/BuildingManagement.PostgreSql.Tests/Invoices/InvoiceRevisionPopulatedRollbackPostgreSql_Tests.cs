@@ -98,6 +98,10 @@ public sealed class InvoiceRevisionPopulatedRollbackPostgreSql_Tests
             var room = Guid.NewGuid();
             var contract = Guid.NewGuid();
             var invoice = Guid.NewGuid();
+            // RoomNumber is varchar(32); REV- plus an N-format UUID
+            // would be 36 characters and fail SQLSTATE 22001.
+            var roomNumber = "REV-" + Guid.NewGuid().ToString("N")[..8];
+            Assert.InRange(roomNumber.Length, 1, 32);
             await using (var seed = new NpgsqlConnection(tempOptions.ConnectionString))
             {
                 await seed.OpenAsync();
@@ -118,7 +122,7 @@ public sealed class InvoiceRevisionPopulatedRollbackPostgreSql_Tests
                     INSERT INTO "BuildingManagementRooms"
                       ("Id","FloorId","RoomNumber","Name","Capacity","Status",
                        "ExtraProperties","ConcurrencyStamp","CreationTime")
-                    VALUES ('{{room:D}}','{{floor:D}}','REV-{{Guid.NewGuid():N}}',
+                    VALUES ('{{room:D}}','{{floor:D}}','{{roomNumber}}',
                             'Test room',2,0,'{}','{{Guid.NewGuid():N}}',now());
                     INSERT INTO "BuildingManagementContracts"
                       ("Id","RoomId","ContractNumber","StartDate","MonthlyRent",

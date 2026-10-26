@@ -49,6 +49,67 @@ new ARCH 9), **not yet verified as a combined run**. If the
 archive codec's compile/runtime cases fail, correct source first
 and do not proceed to live EF migrations.
 
+## Source-control checkpoint + permission and role security review — 26/10/2026
+
+User confirmed that all five exact SHA-256 reviewed local migration
+artifacts were staged, diff checked and committed on
+`wip/phase-2g2` as commit `9bf4f3e`, then successfully pushed
+to `origin/wip/phase-2g2`. A blank line at EOF in each reviewed
+SQL text was intentionally accepted by a one-shot Git whitespace
+override without rewriting those checksum-pinned files.
+
+The only reported remaining untracked local file was the old,
+**unreviewed** `Phase2G3A7_RevisionLedger_Generated_Review.sql`
+from initial scaffolding. Leave it untouched; it is not part of
+the five-file reviewed V2 migration checkpoint.
+
+A focused source audit of the WIP branch then found:
+
+- `InvoiceDraftStorageAppService` explicitly has
+  `[RemoteService(IsEnabled = false)]` and a read-only
+  `PreviewRebuildAsync`, but no mutating `RebuildDraftAsync`.
+- `IInvoiceDraftStorageAppService` has no rebuild mutation contract.
+- `BuildingManagementPermissions` and its definition provider do
+  **not** define an invoice draft revision permission.
+- The `Invoice` aggregate has **no `CurrentRevision` property**;
+  the reviewed V2 migration intentionally added only the archive
+  ledger, not a version update on active invoice rows.
+- These are hard blockers for enabling a write command.
+  PGREV01–04 4/4 PASS cannot grant application authorization or
+  least-privilege PostgreSQL role separation.
+
+Created a new scoped design document:
+
+`etc/phase-audits/Phase2G3A7_OperatorAndDbRoleSecurityGate.md`
+
+It defines non-owner runtime role `SELECT,INSERT`-only ledger access,
+separate DDL ownership/credentials, operator permission and room/building
+scope, required revalidation and lock order, evidence versioning and
+concurrency tests, and no actual database GRANT/REVOKE/role changes.
+
+Added source-only regression guard:
+
+`etc/scripts/check-invoice-revision-no-write-gate.ps1`
+
+It checks the disabled remote draft service, lack of mutation API,
+pending CurrentRevision and permission design, and the presence of V2
+checksum/trigger/rollback markers. It **does not** execute SQL or
+inspect actual runtime database privileges; a PASS is deliberately
+limited to the **NO-WRITE source boundary**.
+
+Safe local source-only gate:
+
+```powershell
+git pull --ff-only origin wip/phase-2g2
+powershell -NoProfile -ExecutionPolicy Bypass -File .\etc\scripts\check-invoice-revision-no-write-gate.ps1
+```
+
+**NOT YET RUN LOCALLY.** Next engineering increment should add
+permission and authorized room/building scope guards with negative
+tests, then the additive `CurrentRevision` migration and fully atomic
+rebuild operation with concurrency tests. Production migration,
+public rebuild, issuing, and debt posting remain explicitly BLOCKED.
+
 ## Reviewed source artifact checkpoint gate — 26/10/2026
 
 Added a **read-only** local pre-commit verification script:

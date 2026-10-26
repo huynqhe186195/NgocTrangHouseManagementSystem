@@ -84,12 +84,10 @@ public sealed class InvoiceRevisionLedgerSqlPostgreSql_Tests
             Assert.Equal(1L, await CountAsync(connection, tx,
                 "SELECT count(*) FROM \"__EFMigrationsHistory\" " +
                 $"WHERE \"MigrationId\" = '{MigrationId}'"));
-            Assert.Equal(1L, await CountAsync(connection, tx,
+            Assert.Equal(2L, await CountAsync(connection, tx,
                 "SELECT count(*) FROM pg_trigger " +
                 "WHERE tgrelid = '\"BuildingManagementInvoiceDraftRevisions\"'::regclass " +
                 "AND NOT tgisinternal AND tgenabled = 'O'"));
-            // Note: the count above is intentionally checked as a minimum
-            // only via a separate assertion on trigger names below.
         });
     }
 

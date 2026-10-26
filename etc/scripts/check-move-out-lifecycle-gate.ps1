@@ -21,6 +21,7 @@ $contract = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Appli
 $directGate = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/Contracts/DirectContractTerminationGate.cs'
 $httpConvention = Read-Source 'src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/BuildingManagementAuthenticatedControllerConvention.cs'
 $readiness = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/MoveOuts/MoveOutCompletionReadinessAppService.cs'
+$meterSignoff = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/MoveOuts/MoveOutFinalMeterSignoffAppService.cs'
 $readinessDto = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application.Contracts/MoveOuts/MoveOutCompletionReadinessDto.cs'
 $invoiceStatus = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain.Shared/Invoices/InvoiceStatus.cs'
 $finalReview = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/Invoices/FinalMoveOutBillReviewAppService.cs'
@@ -83,6 +84,19 @@ if ($paymentEvidence -notmatch '\[RemoteService\(IsEnabled\s*=\s*false\)\]' -or
     $paymentEvidenceModel -notmatch 'CanSettleDeposit\s*=>\s*false' -or
     $paymentEvidence -match '\.(Issue|PostDebt|Pay|Refund|End|Complete|InsertAsync|UpdateAsync|DeleteAsync)\s*\(') {
     throw 'Safety stop: payment evidence must remain internal, read-only and nonsettling.'
+}
+
+# Durable meter signoff is NOT a general-purpose checklist override.
+# It must remain internal, transactional, contract-locked, room scoped and
+# backed by both physical reading identifiers on the approved exit date.
+if ($meterSignoff -notmatch '\[RemoteService\(IsEnabled\s*=\s*false\)\]' -or
+    $meterSignoff -notmatch '\[UnitOfWork\(isTransactional:\s*true\)\]' -or
+    $meterSignoff -notmatch 'FindForUpdateAsync\(contractId\)' -or
+    $meterSignoff -notmatch 'BuildingBusinessCapability\.ManageRoom' -or
+    $meterSignoff -notmatch 'HasValidFinalMeterEvidence\(request, evidence\)' -or
+    $meterSignoff -notmatch 'MarkFinalMeterReadingsVerified\(_clock\.Now\)' -or
+    $meterSignoff -match '\.(End|Complete|Issue|Refund|PostDebt|DeleteAsync)\s*\(') {
+    throw 'Safety stop: verified final-meter checklist lost transaction, scope or evidence gate.'
 }
 
 Write-Host 'MOVE-OUT LIFECYCLE SOURCE GATE PASS.'

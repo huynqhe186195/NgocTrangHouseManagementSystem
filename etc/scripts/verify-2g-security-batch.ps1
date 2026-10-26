@@ -45,12 +45,12 @@ try {
         @{
             Name = 'Application'
             Path = '.\modules\buildingmanagement\test\BuildingManagement.Application.Tests\BuildingManagement.Application.Tests.csproj'
-            QuickFilter = 'FullyQualifiedName~BuildingBusinessScopeDesignGate_Tests|FullyQualifiedName~BuildingOperatorChangeDesignGate_Tests|FullyQualifiedName~BuildingScopedReadDesignGate_Tests|FullyQualifiedName~BuildingOperatorAccessGrant_Tests|FullyQualifiedName~InvoiceDraftRevisionServerAccessGate_Tests'
+            QuickFilter = 'FullyQualifiedName~BuildingBusinessScopeDesignGate_Tests|FullyQualifiedName~BuildingOperatorChangeDesignGate_Tests|FullyQualifiedName~BuildingScopedReadDesignGate_Tests|FullyQualifiedName~BuildingOperatorAccessGrant_Tests|FullyQualifiedName~InvoiceDraftRevisionServerAccessGate_Tests|FullyQualifiedName~MoveOutCompletionReadinessEvaluator_Tests|FullyQualifiedName~Should_Refuse_Direct_End_Of_Active_Contract_Without_MoveOut_Settlement'
         },
         @{
             Name = 'SQLite EF'
             Path = '.\modules\buildingmanagement\test\BuildingManagement.EntityFrameworkCore.Tests\BuildingManagement.EntityFrameworkCore.Tests.csproj'
-            QuickFilter = 'FullyQualifiedName~BuildingBusinessScopeEfIntegration_Tests|FullyQualifiedName~BuildingOperatorAccessGrantDesignSqlite_Tests|FullyQualifiedName~BuildingOperatorGrantCandidateQuery_Tests|FullyQualifiedName~BuildingBusinessScopedCollectionQuery_Tests|FullyQualifiedName~BuildingScopedCollectionStore_Tests|FullyQualifiedName~BuildingScopedReadSqliteComposition_Tests|FullyQualifiedName~InvoiceDraftRevisionServerGraphIntegration_Tests'
+            QuickFilter = 'FullyQualifiedName~BuildingBusinessScopeEfIntegration_Tests|FullyQualifiedName~BuildingOperatorAccessGrantDesignSqlite_Tests|FullyQualifiedName~BuildingOperatorGrantCandidateQuery_Tests|FullyQualifiedName~BuildingBusinessScopedCollectionQuery_Tests|FullyQualifiedName~BuildingScopedCollectionStore_Tests|FullyQualifiedName~BuildingScopedReadSqliteComposition_Tests|FullyQualifiedName~InvoiceDraftRevisionServerGraphIntegration_Tests|FullyQualifiedName~MoveOutCompletionReadinessSqlite_Tests'
         },
         @{
             Name = 'HTTP Host (isolated)'

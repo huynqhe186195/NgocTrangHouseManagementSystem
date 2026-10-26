@@ -38,6 +38,12 @@ if ($readiness -notmatch '\[RemoteService\(IsEnabled\s*=\s*false\)\]' -or
     $readiness -match '\.Complete\s*\(|\.End\s*\(') {
     throw 'Safety stop: read-only completion preflight mutated state or lost financial blockers.'
 }
+# ABP proxy-based UOW/auditing/validation cannot reliably be applied
+# to a sealed ApplicationService. Keep its service and method interceptable.
+if ($readiness -match '\bsealed\s+class\s+MoveOutCompletionReadinessAppService\b' -or
+    $readiness -notmatch 'public\s+virtual\s+async\s+Task<MoveOutCompletionReadinessDto>\s+GetAsync') {
+    throw 'Safety stop: MoveOut readiness service must remain ABP-interceptable.'
+}
 if ($readinessDto -notmatch 'CanCompleteMoveOut\s*=>\s*false' -or
     $invoiceStatus -notmatch 'Draft\s*=\s*0') {
     throw 'Safety stop: completion approval or invoice issuance model changed; re-review financial workflows.'

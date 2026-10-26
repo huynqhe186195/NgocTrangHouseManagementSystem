@@ -343,6 +343,34 @@ public sealed class BuildingManagementAutoApiAuthorization_Tests
         return client;
     }
 
+    [Fact]
+    public async Task APIAUTO13_Direct_Contract_End_And_MoveOut_Close_Preflight_Are_Not_Remote()
+    {
+        await using var app = await StartIsolatedAbpHostAsync();
+        var actions = GetGeneratedActions(app);
+
+        // Domain contract status can no longer be changed by a standalone
+        // public EndAsync command that skips final money/inspection steps.
+        Assert.DoesNotContain(actions, x =>
+            x.ControllerTypeInfo.AsType() ==
+                typeof(BuildingManagement.Contracts.ContractAppService) &&
+            x.MethodInfo.Name == "EndAsync");
+
+        // Readiness reveals missing prerequisites internally, but is not
+        // authenticated/scoped for public use until tenant/operator
+        // authorization is completed.
+        Assert.DoesNotContain(actions, x =>
+            x.ControllerTypeInfo.AsType() ==
+                typeof(BuildingManagement.MoveOuts.MoveOutCompletionReadinessAppService));
+
+        var gate = app.Services.GetRequiredService<
+            BuildingManagement.Contracts.IDirectContractTerminationGate>();
+        Assert.IsType<
+            BuildingManagement.Contracts.DenyAllDirectContractTerminationGate>(gate);
+        await Assert.ThrowsAsync<Volo.Abp.Authorization.AbpAuthorizationException>(
+            () => gate.EnsureDirectTerminationAllowedAsync());
+    }
+
     private static ControllerActionDescriptor[] GetGeneratedActions(WebApplication app)
         => app.Services
             .GetRequiredService<IActionDescriptorCollectionProvider>()

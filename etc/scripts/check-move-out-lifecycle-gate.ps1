@@ -23,6 +23,8 @@ $httpConvention = Read-Source 'src/NgocTrangHouseManagementSystem.HttpApi.Host/S
 $readiness = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/MoveOuts/MoveOutCompletionReadinessAppService.cs'
 $readinessDto = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application.Contracts/MoveOuts/MoveOutCompletionReadinessDto.cs'
 $invoiceStatus = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain.Shared/Invoices/InvoiceStatus.cs'
+$finalReview = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/Invoices/FinalMoveOutBillReviewAppService.cs'
+$finalReviewModel = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/FinalMoveOutBillReview.cs'
 
 if ($contract -notmatch '(?s)\[RemoteService\(IsEnabled\s*=\s*false\)\]\s*public\s+async\s+Task<ContractDto>\s+EndAsync\s*\(') {
     throw 'Safety stop: direct Contract.EndAsync route is no longer disabled.'
@@ -56,6 +58,16 @@ if ($readiness -match '\bsealed\s+class\s+MoveOutCompletionReadinessAppService\b
 if ($readinessDto -notmatch 'CanCompleteMoveOut\s*=>\s*false' -or
     $invoiceStatus -notmatch 'Draft\s*=\s*0') {
     throw 'Safety stop: completion approval or invoice issuance model changed; re-review financial workflows.'
+}
+
+# Final-month rent/utility reconciliation is an INTERNAL preview only.
+# Never promote a draft snapshot to an issued invoice or debt posting.
+if ($finalReview -notmatch '\[RemoteService\(IsEnabled\s*=\s*false\)\]' -or
+    $finalReview -notmatch 'public\s+virtual\s+async\s+Task<FinalMoveOutBillReview>\s+GetAsync' -or
+    $finalReviewModel -notmatch 'CanIssue\s*=>\s*false' -or
+    $finalReviewModel -notmatch 'IsReceivablePosted\s*=>\s*false' -or
+    $finalReview -match '\.(Issue|PostDebt|Pay|Refund|End|Complete)\s*\(') {
+    throw 'Safety stop: final bill review exposed or changed to a monetary writer.'
 }
 
 Write-Host 'MOVE-OUT LIFECYCLE SOURCE GATE PASS.'

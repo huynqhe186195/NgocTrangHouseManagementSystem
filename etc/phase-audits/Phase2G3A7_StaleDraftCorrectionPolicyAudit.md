@@ -49,6 +49,56 @@ new ARCH 9), **not yet verified as a combined run**. If the
 archive codec's compile/runtime cases fail, correct source first
 and do not proceed to live EF migrations.
 
+## Deny-by-default server authorization composition — WIP 26/10/2026
+
+Following the user's locally verified **ACCESS01–10 10/10 PASS**,
+added a first **server-only**, read-only composition layer:
+
+- `InvoiceDraftRevisionServerAccessGate` takes a permission-specific
+  server principal, server-resolved invoice→contract→room→floor→building
+  graph, and explicit server-side building grants. It reuses the
+  audited pure fail-closed `InvoiceDraftRevisionAccessPolicy`, and
+  returns only `EligibleForDesignOnly` or `Denied`.
+- `AbpInvoiceDraftRevisionPrincipalReader` consults `ICurrentUser`
+  and `IPermissionChecker`; a client cannot supply an actor ID or
+  permission name. RebuildDraft and ReadRevisionHistory are checked
+  as separate permissions.
+- `EfInvoiceDraftRevisionResourceGraphReader` reads actual relations
+  through `IRepository<Invoice/Contract/Room/Floor/Building>`.
+  Missing entities or mismatching links reject the scope.
+- `DenyAllInvoiceDraftRevisionBuildingGrants` is the ONLY presently
+  implemented building-grant provider. It always returns **zero
+  grants** because no reviewed operator↔building membership model
+  is available. Therefore even a positive ABP permission alone
+  can **never** allow a real operator to pass this gate today.
+- Added 11 isolated `SERVERACCESS01–11` tests using faked
+  trusted server readers; cases cover deny-all production default,
+  positive design-only synthetic graph, missing principal/permission,
+  missing/forged invoice, cross-building grant, broken resource link,
+  non-draft status, invalid operation and separate history permission.
+- Extended `check-invoice-revision-no-write-gate.ps1` to confirm
+  the production default deny-all provider is still present.
+
+**NEW SERVERACCESS01–11 TESTS NOT YET EXECUTED LOCALLY.**
+These mock-reader tests are useful but are **not** live ABP/EF
+integration tests, and do not show production authorization works.
+Source-only no-write check needs a fresh run after this increment.
+
+```powershell
+git pull --ff-only origin wip/phase-2g2
+powershell -NoProfile -ExecutionPolicy Bypass -File .\etc\scripts\check-invoice-revision-no-write-gate.ps1
+dotnet test .\modules\buildingmanagement\test\BuildingManagement.Application.Tests\BuildingManagement.Application.Tests.csproj --filter 'FullyQualifiedName~InvoiceDraftRevisionServerAccessGate_Tests' --logger 'console;verbosity=normal'
+```
+
+**Target** SERVERACCESS 11/11 PASS (unverified). No new database
+tables, SQL migration, runtime role grants, invoice mutation,
+remote revision route, issuance or debt posting were added.
+Next unresolved risk is an independently reviewed building-user
+membership model and genuine ABP+EF integration tests proving
+scope revocation and authorization under the proper transaction
+and locks; do not replace the deny-all implementation before
+those checks are designed.
+
 ## ACCESS01–10 pure revision scope authorization tests PASS — 26/10/2026
 
 User ran `BuildingManagement.Application.Tests` with

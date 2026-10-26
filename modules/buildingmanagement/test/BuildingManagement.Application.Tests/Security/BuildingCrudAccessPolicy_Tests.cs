@@ -200,6 +200,38 @@ public sealed class BuildingCrudAccessPolicy_Tests
         Assert.Equal(0, f.Resources.Calls);
     }
 
+    [Theory]
+    [InlineData(BuildingBusinessResourceKind.Building,
+        BuildingBusinessCapability.ManageFloor)]
+    [InlineData(BuildingBusinessResourceKind.Floor,
+        BuildingBusinessCapability.ManageRoom)]
+    public async Task CRUDSEC15_Child_Creation_Requires_Parent_Scope_And_Its_Own_Permission(
+        BuildingBusinessResourceKind kind,
+        BuildingBusinessCapability capability)
+    {
+        var f = Valid();
+        // A valid parent-to-building graph plus the child capability
+        // is necessary; an unrelated building cannot be used.
+        await f.Policy.EnsureResourceAsync(kind, f.ResourceA, capability);
+        await Assert.ThrowsAsync<AbpAuthorizationException>(
+            () => f.Policy.EnsureResourceAsync(kind, f.ResourceB, capability));
+    }
+
+    [Fact]
+    public async Task CRUDSEC16_Operation_Cannot_Be_Reused_For_Unrelated_Resource_Kind()
+    {
+        var f = Valid();
+        await Assert.ThrowsAsync<AbpAuthorizationException>(
+            () => f.Policy.EnsureResourceAsync(
+                BuildingBusinessResourceKind.Contract, f.ResourceA,
+                BuildingBusinessCapability.ManageRoom));
+        await Assert.ThrowsAsync<AbpAuthorizationException>(
+            () => f.Policy.EnsureResourceAsync(
+                BuildingBusinessResourceKind.Room, f.ResourceA,
+                BuildingBusinessCapability.ManageBuilding));
+        Assert.Equal(0, f.Principal.Calls);
+    }
+
     private static Fixture Valid()
     {
         var operatorId = Guid.NewGuid();

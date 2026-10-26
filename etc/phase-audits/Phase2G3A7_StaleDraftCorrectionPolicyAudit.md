@@ -49,6 +49,60 @@ new ARCH 9), **not yet verified as a combined run**. If the
 archive codec's compile/runtime cases fail, correct source first
 and do not proceed to live EF migrations.
 
+## Full EF migration chain safety rehearsal — PGREV03 WIP (26/10/2026)
+
+Following the locally confirmed **PGREV01/02 2/2 PASS** in a
+transaction-local schema, added a new, separately opt-in test:
+
+- `BuildingManagement.PostgreSql.Tests/Invoices/InvoiceRevisionFullChainPostgreSql_Tests.cs`
+  with **PGREV03** `Full_Migration_Chain_Up_EmptyDown_Up_In_Disposable_Database`.
+- `etc/scripts/test-invoice-revision-full-chain-local.ps1`
+  sets scoped environment variables using the existing `.env`
+  local PostgreSQL credentials, without echoing secrets.
+
+**Scope and test stages:** The test requires the unchanged two
+reviewed SQL exports by exact byte SHA-256; compiles and discovers
+the actual locally generated `20261025150750_Phase2G3A7` EF
+migration (expected newest); and only then connects through the
+previously established `RequireSafeConnectionString`
+localhost/port 5432/`ngoctrang_integration_test` guard. It
+requires the PostgreSQL test role to have CREATEDB privileges
+before any database creation.
+
+It creates **one fresh random** `ngoctrang_revision_rehearsal_<uuid>`
+database on local PostgreSQL, applies the complete EF migration
+chain from empty, repeats migration to confirm idempotency,
+checks ledger table, active source table, FK RESTRICT, unique
+revision index, 5 CHECK constraints, 2 enabled trigger guards
+and the PostgreSQL function. It then downgrades **only the
+empty** revision-ledger migration to previous Phase2G3A4,
+proves existing invoice table and migration history remain,
+then upgrades to the latest again and rechecks the ledger.
+Finally, it drops only this just-created scratch DB via
+`finally` and verifies its absence.
+
+**No existing app/integration DB is migrated or dropped**,
+and no financial posting is enabled. The script does **not**
+require a clean worktree; do not reset local V2 migration,
+Designer, model snapshot or reviewed SQL to run it.
+
+**NOT EXECUTED YET.** Assistant-side C# compile and actual
+PostgreSQL execution are unavailable. The test may reveal
+migration-chain compatibility failures and must not be reported
+PASS before user logs confirm it.
+
+```powershell
+git pull --ff-only origin wip/phase-2g2
+powershell -NoProfile -ExecutionPolicy Bypass -File .\etc\scripts\test-invoice-revision-full-chain-local.ps1
+```
+
+**Expected one test: 1/1 PASS (unverified).**
+If it fails, read stage/cleanup output and fix before
+any PostgreSQL application DB migration. A successful
+PGREV03 still does NOT prove privileged-role immutability,
+populated rollback under EF `MigrateAsync`, cross-transaction
+concurrency, or authorized real invoice revision behavior.
+
 ## PGREV01/02 verified locally — 26/10/2026
 
 User ran `etc/scripts/test-invoice-revision-ledger-sql-local.ps1`

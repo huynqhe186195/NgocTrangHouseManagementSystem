@@ -18,36 +18,28 @@ namespace BuildingManagement.Buildings
         private readonly IRepository<Building, Guid> _buildingRepository;
         private readonly IRepository<Floor, Guid> _floorRepository;
         private readonly IBuildingCrudAccessPolicy _access;
+        private readonly BuildingOwnerBootstrapCoordinator _bootstrap;
 
         public BuildingAppService(
             IRepository<Building, Guid> buildingRepository,
             IRepository<Floor, Guid> floorRepository,
-            IBuildingCrudAccessPolicy access)
+            IBuildingCrudAccessPolicy access,
+            BuildingOwnerBootstrapCoordinator bootstrap)
         {
             _buildingRepository = buildingRepository;
             _floorRepository = floorRepository;
             _access = access;
+            _bootstrap = bootstrap;
         }
 
         public async Task<BuildingDto> CreateAsync(CreateBuildingDto input)
         {
-            await _access.EnsureBuildingCreationAsync();
-            var building = new Building(
-                GuidGenerator.Create(),
-                input.Name,
-                input.Address,
-                input.Description
-            );
-
-
-            await _buildingRepository.InsertAsync(
-                building
-            );
-
-
-            return ObjectMapper.Map<Building, BuildingDto>(
-                building
-            );
+            // Owner and Building MUST be created atomically, not by a
+            // second independent InsertAsync that can leave an orphan.
+            // The bootstrap writer is default-DENY until reviewed DB
+            // membership persistence is available.
+            var building = await _bootstrap.CreateWithCurrentOwnerAsync(input);
+            return ObjectMapper.Map<Building, BuildingDto>(building);
         }
 
         public async Task DeleteAsync(Guid id)

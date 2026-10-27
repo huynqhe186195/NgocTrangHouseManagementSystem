@@ -28,6 +28,8 @@ $finalReview = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Ap
 $finalReviewModel = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/FinalMoveOutBillReview.cs'
 $paymentEvidence = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/Invoices/FinalMoveOutPaymentEvidenceAppService.cs'
 $paymentEvidenceModel = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/FinalMoveOutPaymentEvidence.cs'
+$paymentState = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Payments/Payment.cs'
+$issuedDebtCalculation = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/IssuedInvoicePaymentReconciler.cs'
 
 if ($contract -notmatch '(?s)\[RemoteService\(IsEnabled\s*=\s*false\)\]\s*public\s+async\s+Task<ContractDto>\s+EndAsync\s*\(') {
     throw 'Safety stop: direct Contract.EndAsync route is no longer disabled.'
@@ -100,6 +102,18 @@ if ($meterSignoff -notmatch '\[RemoteService\(IsEnabled\s*=\s*false\)\]' -or
     $meterSignoff -match '\bawait\s+AsyncExecuter\.' -or
     $meterSignoff -match '\.(End|Complete|Issue|Refund|PostDebt|DeleteAsync)\s*\(') {
     throw 'Safety stop: verified final-meter checklist lost transaction, scope or evidence gate.'
+}
+
+# Finite payment terminal states and issued-only debt computation must
+# remain insulated from unissued Invoice Draft and automatic deposit release.
+if ($paymentState -notmatch 'EnsurePendingTransition\("complete"\)' -or
+    $paymentState -notmatch 'EnsurePendingTransition\("fail"\)' -or
+    $paymentState -notmatch 'EnsurePendingTransition\("cancel"\)' -or
+    $issuedDebtCalculation -notmatch 'PaymentPurpose\.InvoicePayment' -or
+    $issuedDebtCalculation -notmatch 'PaymentStatus\.Completed' -or
+    $issuedDebtCalculation -notmatch 'DuplicatePaymentIdentifier|same PaymentId cannot be applied twice' -or
+    $issuedDebtCalculation -notmatch 'CanSettleDeposit\s*=>\s*false') {
+    throw 'Safety stop: payment terminal states or issued-invoice reconciliation guards missing.'
 }
 
 Write-Host 'MOVE-OUT LIFECYCLE SOURCE GATE PASS.'

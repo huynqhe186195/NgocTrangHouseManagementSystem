@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Linq;
 using BuildingManagement.Contracts;
 using BuildingManagement.Invoices;
@@ -437,6 +438,85 @@ public sealed class FinalMoveOutBillReview_Tests
             PersistedEvidenceSha256: package.EvidenceSha256,
             ExistingIssuedInvoiceForPeriod: false);
         return (preflight, facts);
+    }
+
+    [Fact]
+    public void ISSUEARCH01_Stage_Verified_Evidence_Without_Posting_Debt()
+    {
+        var (evidence, preflight) = StagingFixture();
+        var preparedBy = Guid.NewGuid();
+        var staged = FinalInvoiceIssueEvidenceRecord.Prepare(
+            Guid.NewGuid(), preparedBy,
+            new DateTime(2026, 12, 1, 2, 0, 0, DateTimeKind.Utc),
+            evidence, preflight);
+
+        staged.VerifyStoredEvidence();
+        Assert.Equal(evidence.DraftInvoiceId, staged.DraftInvoiceId);
+        Assert.Equal(evidence.EvidenceSha256, staged.EvidenceSha256);
+        Assert.Equal(evidence.KnownRentAndUtilities, staged.KnownBaseChargeTotal);
+        Assert.Equal(preparedBy, staged.PreparedByUserId);
+        Assert.Equal(2026, staged.BillingYear);
+        Assert.Equal(11, staged.BillingMonth);
+        Assert.False(staged.IsInvoiceIssued);
+        Assert.False(staged.IsReceivablePosted);
+    }
+
+    [Fact]
+    public void ISSUEARCH02_Foreign_Preflight_Cannot_Archive_Other_Draft()
+    {
+        var (evidence, _) = StagingFixture();
+        var (_, foreignPreflight) = StagingFixture();
+        Assert.Throws<InvalidOperationException>(() =>
+            FinalInvoiceIssueEvidenceRecord.Prepare(
+                Guid.NewGuid(), Guid.NewGuid(), DateTime.UtcNow,
+                evidence, foreignPreflight));
+    }
+
+    [Fact]
+    public void ISSUEARCH03_Missing_Actor_Or_UTC_Time_Is_Rejected()
+    {
+        var (evidence, preflight) = StagingFixture();
+        Assert.Throws<ArgumentException>(() =>
+            FinalInvoiceIssueEvidenceRecord.Prepare(
+                Guid.NewGuid(), Guid.Empty, DateTime.UtcNow,
+                evidence, preflight));
+        Assert.Throws<ArgumentException>(() =>
+            FinalInvoiceIssueEvidenceRecord.Prepare(
+                Guid.NewGuid(), Guid.NewGuid(), DateTime.SpecifyKind(
+                    new DateTime(2026, 11, 30), DateTimeKind.Unspecified),
+                evidence, preflight));
+    }
+
+    [Fact]
+    public void ISSUEARCH04_Changed_Stored_Amount_Or_Json_Is_Detected()
+    {
+        var (evidence, preflight) = StagingFixture();
+        var stored = FinalInvoiceIssueEvidenceRecord.Prepare(
+            Guid.NewGuid(), Guid.NewGuid(), DateTime.UtcNow, evidence, preflight);
+        typeof(FinalInvoiceIssueEvidenceRecord)
+            .GetProperty(nameof(FinalInvoiceIssueEvidenceRecord.KnownBaseChargeTotal))!
+            .SetValue(stored, 1m);
+        Assert.Throws<InvalidDataException>(stored.VerifyStoredEvidence);
+
+        var other = FinalInvoiceIssueEvidenceRecord.Prepare(
+            Guid.NewGuid(), Guid.NewGuid(), DateTime.UtcNow, evidence, preflight);
+        typeof(FinalInvoiceIssueEvidenceRecord)
+            .GetProperty(nameof(FinalInvoiceIssueEvidenceRecord.EvidenceJson))!
+            .SetValue(other, other.EvidenceJson + " ");
+        Assert.Throws<InvalidDataException>(other.VerifyStoredEvidence);
+    }
+
+    private static (FinalInvoiceEvidencePackage, FinalInvoiceIssuePreflight)
+        StagingFixture()
+    {
+        var (request, contract, draft) = Fixture();
+        var review = Review(request, contract, draft);
+        var evidence = Package(request, contract, draft, DateTime.UtcNow);
+        var receipts = FinalMoveOutPaymentEvidenceEvaluator.Assess(
+            review, Array.Empty<Payment>());
+        var preflight = FinalInvoiceIssuePreflightEvaluator.Assess(
+            review, evidence, receipts);
+        return (evidence, preflight);
     }
 
     private static FinalMoveOutBillReview Review(

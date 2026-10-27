@@ -1,5 +1,9 @@
 using System;
 using System.Linq;
+using System.IO;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json.Nodes;
 using System.Text.Json;
 using System.Threading.Tasks;
 using BuildingManagement.Buildings;
@@ -903,6 +907,76 @@ public sealed class InvoicePersistenceIntegration_Tests
             StringComparison.OrdinalIgnoreCase);
         await WithUnitOfWorkAsync(async () =>
         {
+            Assert.Equal(InvoiceStatus.Draft,
+                (await _invoices.GetAsync(draft.Id)).Status);
+        });
+    }
+
+    [Fact]
+    public async Task ISSUEARCHDB03_Rehashed_Corrupt_Readings_Are_Denied_After_Database_Reload()
+    {
+        var (fixture, electricityReadingId) = await SeedReadyOctoberAsync();
+        var draft = CreateDraft(fixture, electricityReadingId, Guid.NewGuid());
+        var requestId = Guid.NewGuid();
+        var archiveId = Guid.NewGuid();
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var request = new MoveOutRequest(requestId, fixture.ContractId,
+                fixture.RoomId, new DateOnly(2026, 10, 31),
+                "Verify persisted meter evidence");
+            request.Approve(DateTime.UtcNow, null);
+            await GetRequiredService<IRepository<MoveOutRequest, Guid>>()
+                .InsertAsync(request, autoSave: true);
+            await _invoices.InsertAsync(draft, autoSave: true);
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var bundle = await MakeIssuePreflightService()
+                .GetEvidenceBundleAsync(requestId);
+            var source = Assert.IsType<FinalInvoiceEvidencePackage>(
+                bundle.Evidence);
+            var record = FinalInvoiceIssueEvidenceRecord.Prepare(
+                archiveId, Guid.NewGuid(), DateTime.UtcNow,
+                source, bundle.Preflight);
+            await GetRequiredService<
+                IRepository<FinalInvoiceIssueEvidenceRecord, Guid>>()
+                .InsertAsync(record, autoSave: true);
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var repository = GetRequiredService<
+                IRepository<FinalInvoiceIssueEvidenceRecord, Guid>>();
+            var stored = await repository.GetAsync(archiveId);
+            stored.VerifyStoredEvidence();
+
+            // Simulate a privileged/legacy UPDATE with a recomputed hash.
+            // The staged SQLite table is NOT append-only; verification
+            // must fail closed when it is subsequently read.
+            var root = JsonNode.Parse(stored.EvidenceJson)!;
+            root["Utilities"]![0]!["Sources"]![0]!["CurrentReading"] = 999999m;
+            var modifiedJson = root.ToJsonString();
+            var modifiedHash = Convert.ToHexString(SHA256.HashData(
+                Encoding.UTF8.GetBytes(modifiedJson))).ToLowerInvariant();
+            typeof(FinalInvoiceIssueEvidenceRecord)
+                .GetProperty(nameof(FinalInvoiceIssueEvidenceRecord.EvidenceJson))!
+                .SetValue(stored, modifiedJson);
+            typeof(FinalInvoiceIssueEvidenceRecord)
+                .GetProperty(nameof(FinalInvoiceIssueEvidenceRecord.EvidenceSha256))!
+                .SetValue(stored, modifiedHash);
+            await repository.UpdateAsync(stored, autoSave: true);
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var repository = GetRequiredService<
+                IRepository<FinalInvoiceIssueEvidenceRecord, Guid>>();
+            var corrupted = await repository.GetAsync(archiveId);
+            Assert.Throws<InvalidDataException>(corrupted.VerifyStoredEvidence);
+            Assert.False(corrupted.IsInvoiceIssued);
+            Assert.False(corrupted.IsReceivablePosted);
             Assert.Equal(InvoiceStatus.Draft,
                 (await _invoices.GetAsync(draft.Id)).Status);
         });

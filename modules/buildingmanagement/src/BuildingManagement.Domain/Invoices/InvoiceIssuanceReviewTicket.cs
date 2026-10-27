@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using Volo.Abp.Domain.Entities;
 
 namespace BuildingManagement.Invoices;
@@ -116,6 +117,19 @@ public sealed class InvoiceIssuanceReviewTicket : Entity<Guid>
                 scopeFacts.PersistedEvidenceSha256, EvidenceSha256))
             throw new InvalidOperationException(
                 "Reviewer scope or staged invoice evidence does not match.");
+
+        // A design-only signoff may acknowledge the known, unavoidable
+        // future-policy blockers. It must NOT label abnormal/missing
+        // monetary evidence as reviewed successfully. Rejection remains
+        // allowed so the reviewer can document why the evidence is bad.
+        if (acceptForDesign && preflight.Blockers.Any(blocker =>
+                blocker is not "AuxiliaryFeePolicyUndecided" and
+                    not "InvoiceDueDatePolicyUndecided" and
+                    not "IssuerBuildingAuthorizationUnavailable" and
+                    not "ImmutableIssuedInvoiceLedgerNotImplemented" and
+                    not "AuditedPaymentAllocationNotImplemented"))
+            throw new InvalidOperationException(
+                "Invoice evidence anomalies must be resolved before design signoff.");
 
         ReviewedByUserId = reviewerUserId;
         ReviewedAtUtc = reviewedAtUtc;

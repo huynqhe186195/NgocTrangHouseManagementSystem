@@ -270,6 +270,32 @@ public sealed class FinalMoveOutBillReview_Tests
     }
 
     [Fact]
+    public void ISSUEGATE06_Pending_Invoice_Receipt_With_PaidAt_Is_Corrupt()
+    {
+        var (request, contract, draft) = Fixture();
+        var review = Review(request, contract, draft);
+        var package = Package(request, contract, draft, DateTime.UtcNow);
+        var receipt = new Payment(
+            Guid.NewGuid(), "ISSUEGATE-PENDING-" + Guid.NewGuid().ToString("N"),
+            Guid.NewGuid(), PaymentPurpose.InvoicePayment,
+            PaymentMethod.BankTransfer, PaymentChannel.Manual, 100000m,
+            contractId: contract.Id, invoiceId: draft.Id);
+        typeof(Payment).GetProperty(nameof(Payment.PaidAt))!
+            .SetValue(receipt, DateTime.UtcNow);
+        var evidence = FinalMoveOutPaymentEvidenceEvaluator.Assess(
+            review, new[] { receipt });
+
+        Assert.Contains("InvoicePaymentAttributionInvalid", evidence.Blockers);
+        Assert.Null(evidence.ObservedPendingReceiptAmount);
+        Assert.Null(evidence.ObservedCompletedReceiptAmount);
+        var preflight = FinalInvoiceIssuePreflightEvaluator.Assess(
+            review, package, evidence);
+        Assert.Contains("Payment:InvoicePaymentAttributionInvalid",
+            preflight.Blockers);
+        Assert.False(preflight.CanIssue);
+    }
+
+    [Fact]
     public void ISSUEGATE05_Pending_MoveOut_Never_Presents_Issuable_Line_Items()
     {
         var (request, contract, draft) = Fixture(approve: false);
@@ -1212,6 +1238,7 @@ public sealed class FinalMoveOutBillReview_Tests
 
         Assert.True(result.StagedEvidenceMatchesCurrentDraft);
         Assert.True(result.IndependentDesignReviewRecorded);
+        Assert.True(result.IndependentReviewApplicableToCurrentDraft);
         Assert.Equal(archive.Id, result.StagedEvidenceId);
         Assert.Equal(ticket.Id, result.ReviewTicketId);
         Assert.Equal(preflight.KnownBaseChargeTotal, result.VerifiedBaseAmount);
@@ -1301,6 +1328,98 @@ public sealed class FinalMoveOutBillReview_Tests
             result.Blockers);
         Assert.False(result.CanPostReceivable);
         Assert.False(result.CanSettleDeposit);
+    }
+
+    [Fact]
+    public void ISSUEREADY06_Historical_Review_Is_Superseded_By_Draft_Change()
+    {
+        var (archive, ticket, preflight, drift, allocations) =
+            ReviewedReleaseFixture();
+
+        var current = FinalInvoiceReleaseReadinessEvaluator.Assess(
+            preflight, new[] { archive }, new[] { ticket }, drift, allocations);
+        Assert.True(current.IndependentDesignReviewRecorded);
+        Assert.True(current.IndependentReviewApplicableToCurrentDraft);
+
+        // A stored prior review must not remain "applicable" after drift.
+        var staleDrift = new FinalInvoiceIssueEvidenceDriftReview
+        {
+            EvidenceRecordId = archive.Id,
+            DraftInvoiceId = archive.DraftInvoiceId,
+            ContractId = archive.ContractId
+        };
+        var stale = FinalInvoiceReleaseReadinessEvaluator.Assess(
+            preflight, new[] { archive }, new[] { ticket }, staleDrift, allocations);
+
+        Assert.True(stale.IndependentDesignReviewRecorded);
+        Assert.False(stale.IndependentReviewApplicableToCurrentDraft);
+        Assert.Contains("IndependentInvoiceReviewSupersededByDraftChange",
+            stale.Blockers);
+        Assert.Contains("StagedInvoiceEvidenceNoLongerCurrent", stale.Blockers);
+        Assert.False(stale.CanIssue);
+    }
+
+    [Fact]
+    public void ISSUEREADY07_Later_Payment_Anomaly_Supersedes_Review()
+    {
+        var (archive, ticket, preflight, drift, allocations) =
+            ReviewedReleaseFixture();
+        preflight.Blockers.Add("Payment:CompletedPaymentLinkedToUnissuedDraft");
+
+        var stale = FinalInvoiceReleaseReadinessEvaluator.Assess(
+            preflight, new[] { archive }, new[] { ticket }, drift, allocations);
+
+        Assert.True(stale.StagedEvidenceMatchesCurrentDraft);
+        Assert.True(stale.IndependentDesignReviewRecorded);
+        Assert.False(stale.IndependentReviewApplicableToCurrentDraft);
+        Assert.Contains("IndependentInvoiceReviewSupersededByNewAnomalies",
+            stale.Blockers);
+        Assert.False(stale.CanPostReceivable);
+        Assert.False(stale.CanSettleDeposit);
+    }
+
+    private static (
+        FinalInvoiceIssueEvidenceRecord Archive,
+        InvoiceIssuanceReviewTicket Ticket,
+        FinalInvoiceIssuePreflight Preflight,
+        FinalInvoiceIssueEvidenceDriftReview Drift,
+        InvoicePaymentAllocationJournalAudit Allocations) ReviewedReleaseFixture()
+    {
+        var (request, contract, draft) = Fixture();
+        var capture = Package(request, contract, draft,
+            new DateTime(2026, 11, 30, 18, 0, 0, DateTimeKind.Utc));
+        var bill = Review(request, contract, draft);
+        var paymentEvidence = FinalMoveOutPaymentEvidenceEvaluator.Assess(
+            bill, Array.Empty<Payment>());
+        var preflight = FinalInvoiceIssuePreflightEvaluator.Assess(
+            bill, capture, paymentEvidence);
+        var archive = FinalInvoiceIssueEvidenceRecord.Prepare(
+            Guid.NewGuid(), Guid.NewGuid(),
+            new DateTime(2026, 12, 1, 1, 0, 0, DateTimeKind.Utc),
+            capture, preflight);
+        var building = Guid.NewGuid();
+        var floor = Guid.NewGuid();
+        var reviewer = Guid.NewGuid();
+        var ticket = InvoiceIssuanceReviewTicket.Stage(
+            Guid.NewGuid(), archive, building, Guid.NewGuid(),
+            new DateTime(2026, 12, 1, 2, 0, 0, DateTimeKind.Utc));
+        var facts = new InvoiceIssuanceScopeFacts(
+            reviewer, true, request.Id, request.Id,
+            draft.Id, draft.Id, contract.Id, contract.RoomId,
+            contract.Id, contract.RoomId, contract.RoomId,
+            floor, floor, building, building, new[] { building },
+            InvoiceStatus.Draft, capture.EvidenceSha256, false);
+        ticket.RecordReviewForDesign(
+            reviewer, ticket.SubmittedAtUtc.AddMinutes(1), true,
+            "Historical evidence was reviewed for design.", preflight, facts);
+        var items = draft.Items.ToArray();
+        var drift = FinalInvoiceIssueEvidenceDriftEvaluator.Assess(
+            archive, request, contract, new[] { draft }, items,
+            items.SelectMany(x => x.MeterSources).ToArray());
+        var allocations = InvoicePaymentAllocationJournalAuditor.Assess(
+            Array.Empty<InvoicePaymentAllocationJournalEntry>(),
+            Array.Empty<Payment>(), contract.Id);
+        return (archive, ticket, preflight, drift, allocations);
     }
 
     private static (FinalInvoiceEvidencePackage, FinalInvoiceIssuePreflight)

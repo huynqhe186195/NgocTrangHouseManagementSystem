@@ -117,6 +117,7 @@
     "BuildingManagement:InvalidDepositSettlementAmount": "Số tiền xử lý tiền cọc phải lớn hơn 0.",
     "BuildingManagement:InvalidDepositSettlementReference": "Thông tin tham chiếu xử lý tiền cọc không hợp lệ.",
     "BuildingManagement:DepositSettlementCannotBeCompleted": "Không thể hoàn tất xử lý tiền cọc ở trạng thái hiện tại.",
+    "BuildingManagement:ContractDepositForfeitReasonRequired": "Phải ghi rõ lý do thiệt hại hoặc căn cứ khấu trừ trước khi xử lý mất cọc hợp đồng.",
     "BuildingManagement:ContractDepositNotPayable": "Hợp đồng hiện không thể nhận thêm tiền cọc.",
     "BuildingManagement:ContractDepositExceedsRemaining": "Số tiền cọc vượt quá số tiền còn phải đóng của hợp đồng.",
     "BuildingManagement:ContractDepositAlreadyFullyPaid": "Tiền cọc hợp đồng đã được đóng đủ.",

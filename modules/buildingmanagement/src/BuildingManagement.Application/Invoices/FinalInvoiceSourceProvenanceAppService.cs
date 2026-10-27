@@ -17,6 +17,7 @@ namespace BuildingManagement.Invoices;
 /// <summary>
 /// Internal-only provenance audit. Resolves the original meter/rate rows
 /// from archived source IDs and the room's persisted building relationship.
+/// Replacement closings and both old/new meter identities are included.
 /// Historical soft deletions are loaded for anomaly detection. It neither
 /// mutates original readings nor uses current tariffs to reprice a draft.
 /// </summary>
@@ -29,6 +30,7 @@ public class FinalInvoiceSourceProvenanceAppService : ApplicationService
     private readonly IRepository<MeterReading, Guid> _readings;
     private readonly IRepository<UtilityMeter, Guid> _meters;
     private readonly IRepository<UtilityRate, Guid> _rates;
+    private readonly IRepository<MeterReplacement, Guid> _replacements;
     private readonly IDataFilter<ISoftDelete> _softDeleteFilter;
 
     public FinalInvoiceSourceProvenanceAppService(
@@ -38,6 +40,7 @@ public class FinalInvoiceSourceProvenanceAppService : ApplicationService
         IRepository<MeterReading, Guid> readings,
         IRepository<UtilityMeter, Guid> meters,
         IRepository<UtilityRate, Guid> rates,
+        IRepository<MeterReplacement, Guid> replacements,
         IDataFilter<ISoftDelete> softDeleteFilter)
     {
         _archives = archives;
@@ -46,6 +49,7 @@ public class FinalInvoiceSourceProvenanceAppService : ApplicationService
         _readings = readings;
         _meters = meters;
         _rates = rates;
+        _replacements = replacements;
         _softDeleteFilter = softDeleteFilter;
     }
 
@@ -85,8 +89,18 @@ public class FinalInvoiceSourceProvenanceAppService : ApplicationService
         var readingIds = utilities.SelectMany(x => x.Sources)
             .Where(x => x.SourceType == MeterUsageSourceType.MonthlyReading)
             .Select(x => x.SourceId).Distinct().ToArray();
+        var replacementIds = utilities.SelectMany(x => x.Sources)
+            .Where(x => x.SourceType == MeterUsageSourceType.ReplacementClosing)
+            .Select(x => x.SourceId).Distinct().ToArray();
+        var replacements = replacementIds.Length == 0
+            ? new List<MeterReplacement>()
+            : await _replacements.GetListAsync(x => replacementIds.Contains(x.Id));
+        // The snapshot stores the OLD meter. The handover's NewMeterId
+        // must also be resolved from DB, never trusted from a caller.
         var meterIds = utilities.SelectMany(x => x.Sources)
-            .Select(x => x.UtilityMeterId).Distinct().ToArray();
+            .Select(x => x.UtilityMeterId)
+            .Concat(replacements.Select(x => x.NewMeterId))
+            .Distinct().ToArray();
         var rateIds = utilities.Select(x => x.UtilityRateId)
             .Distinct().ToArray();
 
@@ -107,6 +121,6 @@ public class FinalInvoiceSourceProvenanceAppService : ApplicationService
         }
 
         return FinalInvoiceSourceProvenanceEvaluator.Assess(
-            archive, buildingId, readings, meters, rates);
+            archive, buildingId, readings, meters, rates, replacements);
     }
 }

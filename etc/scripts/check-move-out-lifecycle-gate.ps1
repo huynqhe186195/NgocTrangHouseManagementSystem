@@ -30,6 +30,8 @@ $paymentEvidence = Read-Source 'modules/buildingmanagement/src/BuildingManagemen
 $paymentEvidenceModel = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/FinalMoveOutPaymentEvidence.cs'
 $paymentState = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Payments/Payment.cs'
 $issuedDebtCalculation = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/IssuedInvoicePaymentReconciler.cs'
+$issuePreflight = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/FinalInvoiceIssuePreflight.cs'
+$issuePreflightService = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/Invoices/FinalInvoiceIssuePreflightAppService.cs'
 $depositLedgerReview = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/DepositSettlements/ContractDepositLedgerReview.cs'
 $depositLedgerService = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/DepositSettlements/ContractDepositLedgerReviewAppService.cs'
 $depositSettlement = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/DepositSettlements/DepositSettlement.cs'
@@ -179,6 +181,22 @@ if ($depositSettlement -notmatch 'EnsureContractForfeitReason\(type, sourceContr
     $depositErrorCodes -notmatch 'ContractDepositForfeitReasonRequired' -or
     $depositLedgerReview -notmatch 'ContractDepositForfeitReasonMissing') {
     throw 'Safety stop: contract deposit forfeiture lost documented-reason guard.'
+}
+
+# Issuance preparation must remain an internal read-only diagnostic.
+# Neither a verified base amount nor completed draft-linked payments may
+# turn a utility DRAFT into a payable invoice or a contract deposit credit.
+if ($issuePreflight -notmatch 'CanIssue\s*=>\s*false' -or
+    $issuePreflight -notmatch 'IsReceivablePosted\s*=>\s*false' -or
+    $issuePreflight -notmatch 'IsDebtCalculated\s*=>\s*false' -or
+    $issuePreflight -notmatch 'AuxiliaryFeePolicyUndecided' -or
+    $issuePreflight -notmatch 'IssuerBuildingAuthorizationUnavailable' -or
+    $issuePreflight -notmatch 'ImmutableIssuedInvoiceLedgerNotImplemented' -or
+    $issuePreflight -notmatch 'AuditedPaymentAllocationNotImplemented' -or
+    $issuePreflightService -notmatch '\[RemoteService\(IsEnabled\s*=\s*false\)\]' -or
+    $issuePreflightService -notmatch '\[UnitOfWork\(isTransactional:\s*true\)\]' -or
+    $issuePreflightService -match '\.(Issue|PostDebt|Pay|Refund|End|Complete|InsertAsync|UpdateAsync|DeleteAsync)\s*\(') {
+    throw 'Safety stop: invoice issuance preparation lost fail-closed financial or HTTP boundary.'
 }
 
 Write-Host 'MOVE-OUT LIFECYCLE SOURCE GATE PASS.'

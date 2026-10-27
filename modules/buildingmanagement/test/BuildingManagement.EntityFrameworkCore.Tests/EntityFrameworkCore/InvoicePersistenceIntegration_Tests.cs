@@ -986,6 +986,63 @@ public sealed class InvoicePersistenceIntegration_Tests
     }
 
     [Fact]
+    public async Task DEPLEDGERDB03_Direct_Completed_Deposit_With_No_Journal_Cannot_Be_Hidden()
+    {
+        var fixture = await SeedAsync();
+        var tenantId = Guid.NewGuid();
+        var requestId = Guid.NewGuid();
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var contract = await _contracts.GetAsync(fixture.ContractId);
+            contract.Activate();
+            await _contracts.UpdateAsync(contract, autoSave: true);
+
+            var request = new MoveOutRequest(requestId, fixture.ContractId,
+                fixture.RoomId, new DateOnly(2026, 11, 30),
+                "Missing deposit allocation audit");
+            request.Approve(DateTime.UtcNow, null);
+            await GetRequiredService<IRepository<MoveOutRequest, Guid>>()
+                .InsertAsync(request, autoSave: true);
+
+            await GetRequiredService<IRepository<Tenant, Guid>>().InsertAsync(
+                new Tenant(tenantId, "Missing Allocation Payer", "0900000151",
+                    null, null, null, IdentityType.CitizenId,
+                    Guid.NewGuid().ToString("N")), autoSave: true);
+
+            var receipt = new Payment(Guid.NewGuid(),
+                "DEP-ORPHAN-" + Guid.NewGuid().ToString("N"),
+                tenantId, PaymentPurpose.ContractDeposit,
+                PaymentMethod.Cash, PaymentChannel.Manual, 500000m,
+                contractId: fixture.ContractId);
+            receipt.Complete(DateTime.UtcNow);
+            await GetRequiredService<IRepository<Payment, Guid>>()
+                .InsertAsync(receipt, autoSave: true);
+            // Deliberately no DepositSettlement row: this cash must not
+            // silently disappear from the contract reconciliation.
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var reader = new ContractDepositLedgerReviewAppService(
+                GetRequiredService<IRepository<MoveOutRequest, Guid>>(),
+                _contracts,
+                GetRequiredService<IRepository<DepositSettlement, Guid>>(),
+                GetRequiredService<IRepository<Payment, Guid>>(),
+                GetRequiredService<IDataFilter<ISoftDelete>>());
+            var audit = await reader.GetAsync(requestId);
+            Assert.Equal(500000m,
+                audit.ObservedCompletedContractDepositReceiptsTotal);
+            Assert.Null(audit.VerifiedIncomingAllocationTotal);
+            Assert.Contains("CompletedContractDepositNotFullyAllocated", audit.Blockers);
+            Assert.False(audit.CanRefund);
+            Assert.Null(audit.RefundableBalance);
+            Assert.Equal(ContractStatus.Active,
+                (await _contracts.GetAsync(fixture.ContractId)).Status);
+        });
+    }
+
+    [Fact]
     public async Task DEPLEDGERDB02_Refund_And_Allocation_Cannot_Use_Same_Receipt_Twice()
     {
         var fixture = await SeedAsync();

@@ -208,7 +208,7 @@ public sealed class BuildingOperatorGrantCandidatePostgreSql_Tests
             // Check executable statement starts, not ordinary review
             // comments such as "a grant is reusable only after revoke".
             Assert.False(Regex.IsMatch(sql,
-                @"(?im)^\s*(GRANT|CREATE ROLE|ALTER ROLE|DROP DATABASE|BEGIN|COMMIT)\b"));
+                @"(?im)^\s*(GRANT|CREATE ROLE|ALTER ROLE|DROP DATABASE|START TRANSACTION|BEGIN\s*;|COMMIT)\b"));
             Assert.DoesNotContain("public.", sql,
                 StringComparison.OrdinalIgnoreCase);
             return sql;

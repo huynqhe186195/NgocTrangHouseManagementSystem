@@ -20,6 +20,7 @@ using NgocTrangHouseManagementSystem.Security;
 using Volo.Abp.Authorization;
 using Volo.Abp.Authorization.Permissions;
 using Volo.Abp.Identity;
+using IdentityUser = Volo.Abp.Identity.IdentityUser;
 using Volo.Abp.Users;
 using Xunit;
 

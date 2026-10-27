@@ -899,6 +899,125 @@ public sealed class InvoicePersistenceIntegration_Tests
             GetRequiredService<IRepository<InvoiceItemMeterSource, Guid>>());
 
     [Fact]
+    public async Task ALLOCREVIEWDB01_Completed_Invoice_Payment_Without_Journal_Is_Found()
+    {
+        var data = await SeedAllocationReviewAsync(withJournal: false);
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var result = await MakeAllocationReviewService().GetAsync(data.ContractId);
+            Assert.Contains("CompletedInvoicePaymentUnjournaled", result.Blockers);
+            Assert.Null(result.VerifiedStagedAmount);
+            Assert.False(result.CanReduceDebt);
+            Assert.False(result.CanPost);
+            Assert.Equal(InvoiceStatus.Draft,
+                (await _invoices.GetAsync(data.DraftId)).Status);
+        });
+    }
+
+    [Fact]
+    public async Task ALLOCREVIEWDB02_SoftDeleted_Receipt_Is_Still_Audited()
+    {
+        var data = await SeedAllocationReviewAsync(withJournal: true);
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var before = await MakeAllocationReviewService().GetAsync(data.ContractId);
+            Assert.Equal(250000m, before.VerifiedStagedAmount);
+            Assert.DoesNotContain("AllocationSourceReceiptMismatch", before.Blockers);
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            await GetRequiredService<IRepository<Payment, Guid>>()
+                .DeleteAsync(data.PaymentId, autoSave: true);
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var after = await MakeAllocationReviewService().GetAsync(data.ContractId);
+            Assert.Contains("AllocationSourceReceiptMismatch", after.Blockers);
+            Assert.Null(after.VerifiedStagedAmount);
+            Assert.False(after.CanReduceDebt);
+            Assert.Equal(InvoiceStatus.Draft,
+                (await _invoices.GetAsync(data.DraftId)).Status);
+        });
+    }
+
+    [Fact]
+    public async Task ALLOCREVIEWDB03_CrossContract_Journal_Claim_Is_Not_Hidden()
+    {
+        var data = await SeedAllocationReviewAsync(withJournal: true);
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var journalRepository = GetRequiredService<
+                IRepository<InvoicePaymentAllocationJournalEntry, Guid>>();
+            var journal = await journalRepository.GetAsync(data.JournalId!.Value);
+            typeof(InvoicePaymentAllocationJournalEntry)
+                .GetProperty(nameof(InvoicePaymentAllocationJournalEntry.ContractId))!
+                .SetValue(journal, Guid.NewGuid());
+            await journalRepository.UpdateAsync(journal, autoSave: true);
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var audit = await MakeAllocationReviewService().GetAsync(data.ContractId);
+            Assert.Contains("CrossContractAllocationInLedger", audit.Blockers);
+            Assert.Contains("AllocationSourceReceiptMismatch", audit.Blockers);
+            Assert.Null(audit.VerifiedStagedAmount);
+            Assert.False(audit.CanSettleDeposit);
+        });
+    }
+
+    private InvoicePaymentAllocationLedgerReviewAppService MakeAllocationReviewService()
+        => new(
+            GetRequiredService<IRepository<InvoicePaymentAllocationJournalEntry, Guid>>(),
+            GetRequiredService<IRepository<Payment, Guid>>(),
+            GetRequiredService<IDataFilter<ISoftDelete>>());
+
+    private async Task<(Guid ContractId, Guid DraftId, Guid PaymentId, Guid? JournalId)>
+        SeedAllocationReviewAsync(bool withJournal)
+    {
+        var fixture = await SeedAsync();
+        var draft = CreateDraft(fixture, Guid.NewGuid(), Guid.NewGuid());
+        var tenantId = Guid.NewGuid();
+        var paymentId = Guid.NewGuid();
+        Guid? journalId = withJournal ? Guid.NewGuid() : null;
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            await _invoices.InsertAsync(draft, autoSave: true);
+            await GetRequiredService<IRepository<Tenant, Guid>>().InsertAsync(
+                new Tenant(tenantId, "Invoice Allocation Reviewer",
+                    "0900000165", null, null, null,
+                    IdentityType.CitizenId, Guid.NewGuid().ToString("N")),
+                autoSave: true);
+
+            var payment = new Payment(paymentId,
+                "ALLOC-REVIEW-" + Guid.NewGuid().ToString("N"), tenantId,
+                PaymentPurpose.InvoicePayment, PaymentMethod.BankTransfer,
+                PaymentChannel.Manual, 250000m,
+                contractId: fixture.ContractId, invoiceId: draft.Id);
+            payment.Complete(DateTime.UtcNow);
+            await GetRequiredService<IRepository<Payment, Guid>>()
+                .InsertAsync(payment, autoSave: true);
+
+            if (journalId.HasValue)
+            {
+                var journal = InvoicePaymentAllocationJournalEntry
+                    .StageForValidation(journalId.Value, payment, draft.Id,
+                        Guid.NewGuid(), DateTime.UtcNow);
+                await GetRequiredService<
+                    IRepository<InvoicePaymentAllocationJournalEntry, Guid>>()
+                    .InsertAsync(journal, autoSave: true);
+            }
+        });
+
+        return (fixture.ContractId, draft.Id, paymentId, journalId);
+    }
+
+    [Fact]
     public async Task ALLOCJOURNALDB01_Staged_Receipt_Attribution_Persists_But_Does_Not_Reduce_Debt()
     {
         var fixture = await SeedAsync();

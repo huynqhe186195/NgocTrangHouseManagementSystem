@@ -131,6 +131,17 @@ if ($finalEvidence -notmatch 'SHA256\.HashData' -or
     throw 'Safety stop: immutable final invoice evidence exposed or converted to a monetary writer.'
 }
 
+# The same completed security deposit must never be applied, refunded
+# and forfeited through sequential Payment state changes. These guards are
+# not a substitute for an authorized, locked settlement journal.
+if ($paymentState -notmatch 'EnsureUnappliedCompletedDeposit\("apply"\)' -or
+    $paymentState -notmatch 'EnsureUnappliedCompletedDeposit\("refund"\)' -or
+    $paymentState -notmatch 'EnsureUnappliedCompletedDeposit\("forfeit"\)' -or
+    $paymentState -notmatch 'Purpose != PaymentPurpose\.ReservationDeposit' -or
+    $paymentState -notmatch 'DepositDisposition != Payments\.DepositDisposition\.Unapplied') {
+    throw 'Safety stop: deposit disposition can be replayed or double-counted.'
+}
+
 Write-Host 'MOVE-OUT LIFECYCLE SOURCE GATE PASS.'
 Write-Host 'PASS: direct contract end is remote-disabled and denies before mutation.'
 Write-Host 'PASS: completion readiness remains internal, read-only and financially blocked.'

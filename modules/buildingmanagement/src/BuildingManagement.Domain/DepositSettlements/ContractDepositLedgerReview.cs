@@ -139,6 +139,13 @@ public static class ContractDepositLedgerReviewEvaluator
             }
         }
 
+        // Legacy or externally modified forfeiture rows can bypass the
+        // current DepositSettlement constructor. Audit must still surface
+        // an undocumented deduction even if it was already marked Complete.
+        if (outgoing.Any(x => x.Type == DepositSettlementType.Forfeit &&
+                              string.IsNullOrWhiteSpace(x.Notes)))
+            result.Blockers.Add("ContractDepositForfeitReasonMissing");
+
         if (outgoing.Length != 0)
             result.Blockers.Add("RecordedOutgoingDepositNeedsReconciliation");
 

@@ -317,6 +317,8 @@ if ($issuanceReviewTicket -notmatch 'CanIssue\s*=>\s*false' -or
     $issuanceReviewTicket -notmatch 'reviewerUserId == SubmittedByUserId' -or
     $issuanceReviewTicket -notmatch 'InvoiceIssuanceScopePolicy\.Assess\(' -or
     $issuanceReviewTicket -notmatch 'scope\.IsScopeConsistent' -or
+    $issuanceReviewTicket -notmatch 'acceptForDesign && preflight\.Blockers\.Any' -or
+    $issuanceReviewTicket -notmatch 'Invoice evidence anomalies must be resolved' -or
     $issuanceReviewTicket -notmatch 'PersistedEvidenceSha256' -or
     $issuanceReviewTicket -notmatch 'Status != InvoiceIssuanceReviewStatus\.Submitted' -or
     $issuanceReviewSchema -notmatch 'UX_BM_IssueReview_Evidence' -or

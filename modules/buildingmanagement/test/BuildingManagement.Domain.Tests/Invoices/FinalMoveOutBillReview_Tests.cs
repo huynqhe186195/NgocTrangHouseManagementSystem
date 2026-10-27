@@ -863,6 +863,30 @@ public sealed class FinalMoveOutBillReview_Tests
             () => ticket.VerifyStagedEvidence(archive));
     }
 
+    [Fact]
+    public void ISSUEREVIEW09_Abnormal_Invoice_Payment_Blocks_Positive_Signoff()
+    {
+        var (archive, ticket, preflight, facts, reviewer) = ReviewTicketFixture();
+        preflight.Blockers.Add("Payment:CompletedPaymentLinkedToUnissuedDraft");
+
+        Assert.Throws<InvalidOperationException>(() =>
+            ticket.RecordReviewForDesign(
+                reviewer, ticket.SubmittedAtUtc.AddMinutes(1), true,
+                "Unissued draft payment must be investigated.", preflight, facts));
+        Assert.Equal(InvoiceIssuanceReviewStatus.Submitted, ticket.Status);
+        Assert.Null(ticket.ReviewedByUserId);
+        Assert.False(ticket.CanIssue);
+
+        // A rejection may document the anomaly without approving issuance.
+        ticket.RecordReviewForDesign(
+            reviewer, ticket.SubmittedAtUtc.AddMinutes(1), false,
+            "Payment attributed to an unissued draft; manual reconciliation needed.",
+            preflight, facts);
+        ticket.VerifyStagedEvidence(archive);
+        Assert.Equal(InvoiceIssuanceReviewStatus.Rejected, ticket.Status);
+        Assert.False(ticket.CanPostReceivable);
+    }
+
     private static (FinalInvoiceIssueEvidenceRecord Archive,
         InvoiceIssuanceReviewTicket Ticket, FinalInvoiceIssuePreflight Preflight,
         InvoiceIssuanceScopeFacts Facts, Guid ReviewerId) ReviewTicketFixture()

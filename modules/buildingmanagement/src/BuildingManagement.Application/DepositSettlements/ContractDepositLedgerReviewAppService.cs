@@ -69,12 +69,18 @@ public class ContractDepositLedgerReviewAppService : ApplicationService
                 .GroupBy(x => x.Id).Select(x => x.First()).ToList();
         }
 
+        // A completed ContractDeposit may exist WITHOUT an allocation
+        // journal row (legacy imports, interrupted updates or corruption).
+        // Load those payments as well, including soft-deleted history.
+        // Otherwise the review would incorrectly overlook cash actually
+        // received simply because there is no matching settlement.
         List<Payment> receipts;
         using (_softDeleteFilter.Disable())
         {
-            receipts = paymentIds.Length == 0
-                ? new List<Payment>()
-                : await _payments.GetListAsync(x => paymentIds.Contains(x.Id));
+            receipts = await _payments.GetListAsync(x =>
+                (x.ContractId == contractId &&
+                 x.Purpose == PaymentPurpose.ContractDeposit) ||
+                paymentIds.Contains(x.Id));
         }
 
         return ContractDepositLedgerReviewEvaluator.Assess(

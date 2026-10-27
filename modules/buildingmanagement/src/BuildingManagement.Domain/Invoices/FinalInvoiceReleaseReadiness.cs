@@ -20,6 +20,10 @@ public sealed class FinalInvoiceReleaseReadiness
     public Guid? ReviewTicketId { get; internal set; }
     public bool StagedEvidenceMatchesCurrentDraft { get; internal set; }
     public bool IndependentDesignReviewRecorded { get; internal set; }
+    // Historical signoff alone is insufficient. This flag requires the
+    // source Draft still match the archived evidence AND no new preflight
+    // anomaly since the design review. It never grants issuance.
+    public bool IndependentReviewApplicableToCurrentDraft { get; internal set; }
     public List<string> Blockers { get; } = new();
 
     public bool CanIssue => false;
@@ -111,6 +115,23 @@ public static class FinalInvoiceReleaseReadinessEvaluator
                     {
                         result.ReviewTicketId = ticket.Id;
                         result.IndependentDesignReviewRecorded = true;
+                        // The ticket can remain historically true after
+                        // a meter edit, reassignment or new draft-linked
+                        // payment. Distinguish a historical review from
+                        // evidence that is still applicable NOW.
+                        if (!result.StagedEvidenceMatchesCurrentDraft)
+                            result.Blockers.Add(
+                                "IndependentInvoiceReviewSupersededByDraftChange");
+                        else if (preflight.Blockers.Any(x =>
+                            x is not "AuxiliaryFeePolicyUndecided" and
+                                not "InvoiceDueDatePolicyUndecided" and
+                                not "IssuerBuildingAuthorizationUnavailable" and
+                                not "ImmutableIssuedInvoiceLedgerNotImplemented" and
+                                not "AuditedPaymentAllocationNotImplemented"))
+                            result.Blockers.Add(
+                                "IndependentInvoiceReviewSupersededByNewAnomalies");
+                        else
+                            result.IndependentReviewApplicableToCurrentDraft = true;
                     }
                 }
                 catch (InvalidDataException)

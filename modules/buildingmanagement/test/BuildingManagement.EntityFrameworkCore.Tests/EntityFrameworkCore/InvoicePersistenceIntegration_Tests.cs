@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using BuildingManagement.Buildings;
 using BuildingManagement.Contracts;
+using BuildingManagement.DepositSettlements;
 using BuildingManagement.Floors;
 using BuildingManagement.Invoices;
 using BuildingManagement.MoveOuts;
@@ -900,6 +901,87 @@ public sealed class InvoicePersistenceIntegration_Tests
                 .GetAsync(paymentId);
             Assert.Equal(PaymentStatus.Completed, persisted.Status);
             Assert.Equal(DepositDisposition.Unapplied, persisted.DepositDisposition);
+        });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DEPLEDGERDB01_Reconciles_Completed_Allocation_And_Rejects_Duplicate(
+        bool duplicate)
+    {
+        var fixture = await SeedAsync();
+        var tenantId = Guid.NewGuid();
+        var requestId = Guid.NewGuid();
+        var paymentId = Guid.NewGuid();
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var contract = await _contracts.GetAsync(fixture.ContractId);
+            contract.Activate();
+            await _contracts.UpdateAsync(contract, autoSave: true);
+
+            var request = new MoveOutRequest(requestId, fixture.ContractId,
+                fixture.RoomId, new DateOnly(2026, 11, 30), "Deposit audit");
+            request.Approve(DateTime.UtcNow, null);
+            await GetRequiredService<IRepository<MoveOutRequest, Guid>>()
+                .InsertAsync(request, autoSave: true);
+
+            await GetRequiredService<IRepository<Tenant, Guid>>().InsertAsync(
+                new Tenant(tenantId, "Ledger Payer", "0900000124",
+                    null, null, null, IdentityType.CitizenId,
+                    Guid.NewGuid().ToString("N")), autoSave: true);
+            var payment = new Payment(paymentId,
+                "LEDGER-DB-" + Guid.NewGuid().ToString("N"), tenantId,
+                PaymentPurpose.ContractDeposit, PaymentMethod.Cash,
+                PaymentChannel.Manual, 500000m,
+                contractId: fixture.ContractId);
+            payment.Complete(DateTime.UtcNow);
+            await GetRequiredService<IRepository<Payment, Guid>>()
+                .InsertAsync(payment, autoSave: true);
+
+            var journal = GetRequiredService<IRepository<DepositSettlement, Guid>>();
+            var first = new DepositSettlement(Guid.NewGuid(),
+                DepositSettlementType.AllocateToContractDeposit,
+                duplicate ? 300000m : 500000m,
+                paymentId: paymentId, targetContractId: fixture.ContractId);
+            first.Complete(DateTime.UtcNow);
+            await journal.InsertAsync(first, autoSave: true);
+            if (duplicate)
+            {
+                var second = new DepositSettlement(Guid.NewGuid(),
+                    DepositSettlementType.AllocateToContractDeposit, 300000m,
+                    paymentId: paymentId, targetContractId: fixture.ContractId);
+                second.Complete(DateTime.UtcNow);
+                await journal.InsertAsync(second, autoSave: true);
+            }
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var service = new ContractDepositLedgerReviewAppService(
+                GetRequiredService<IRepository<MoveOutRequest, Guid>>(),
+                _contracts,
+                GetRequiredService<IRepository<DepositSettlement, Guid>>(),
+                GetRequiredService<IRepository<Payment, Guid>>(),
+                GetRequiredService<IDataFilter<ISoftDelete>>());
+            var result = await service.GetAsync(requestId);
+            Assert.Null(result.RefundableBalance);
+            Assert.False(result.CanRefund);
+            Assert.False(result.CanOffsetDebt);
+            Assert.Contains("DepositDeductionPolicyNotApproved", result.Blockers);
+            if (duplicate)
+            {
+                Assert.Null(result.VerifiedIncomingAllocationTotal);
+                Assert.Contains("DepositPaymentOverAllocatedOrCrossContract",
+                    result.Blockers);
+            }
+            else
+            {
+                Assert.Equal(500000m, result.VerifiedIncomingAllocationTotal);
+                Assert.Equal(1, result.CompletedIncomingCount);
+            }
+            var contract = await _contracts.GetAsync(fixture.ContractId);
+            Assert.Equal(ContractStatus.Active, contract.Status);
         });
     }
 

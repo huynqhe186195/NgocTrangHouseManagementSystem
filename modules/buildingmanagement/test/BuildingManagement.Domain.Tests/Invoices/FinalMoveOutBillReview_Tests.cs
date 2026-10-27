@@ -86,6 +86,88 @@ public sealed class FinalMoveOutBillReview_Tests
         Assert.Contains("FinalUtilityDraftScopeMismatch", result.Blockers);
     }
 
+    [Fact]
+    public void FINALPACKAGE01_Full_Rent_And_Immutable_Meter_Snapshot_Have_Checksum()
+    {
+        var (request, contract, draft) = Fixture();
+        var captureTime = new DateTime(2026, 12, 1, 1, 0, 0, DateTimeKind.Utc);
+        var package = Package(request, contract, draft, captureTime);
+
+        Assert.Equal(3_500_000m, package.FullMonthRent);
+        Assert.Equal(3_550_000m, package.KnownRentAndUtilities);
+        Assert.Equal(draft.Id, package.DraftInvoiceId);
+        Assert.Equal(new DateOnly(2026, 11, 30), package.FinalBillingDate);
+        Assert.Equal(2, package.Utilities.Count);
+        Assert.Equal(64, package.EvidenceSha256.Length);
+        Assert.True(package.VerifyChecksum());
+        Assert.False(package.CanIssue);
+        Assert.False(package.IsReceivablePosted);
+        Assert.Equal(30_000m, package.Utilities.Single(x =>
+            x.UtilityType == UtilityType.Electricity).Amount);
+        Assert.Equal(20_000m, package.Utilities.Single(x =>
+            x.UtilityType == UtilityType.Water).Amount);
+    }
+
+    [Fact]
+    public void FINALPACKAGE02_Capture_Is_Deterministic_For_Same_Source_Graph()
+    {
+        var (request, contract, draft) = Fixture();
+        var capturedAt = new DateTime(2026, 11, 30, 23, 0, 0, DateTimeKind.Utc);
+        var first = Package(request, contract, draft, capturedAt);
+        var second = Package(request, contract, draft, capturedAt);
+
+        Assert.Equal(first.EvidenceJson, second.EvidenceJson);
+        Assert.Equal(first.EvidenceSha256, second.EvidenceSha256);
+        Assert.Equal(first.Utilities[0].Sources[0].SourceId,
+            second.Utilities[0].Sources[0].SourceId);
+        Assert.Throws<NotSupportedException>(() =>
+            ((System.Collections.Generic.IList<FinalInvoiceUtilityEvidence>)
+                first.Utilities).Clear());
+    }
+
+    [Fact]
+    public void FINALPACKAGE03_No_Snapshot_From_Pending_Request()
+    {
+        var (request, contract, draft) = Fixture(approve: false);
+        Assert.Throws<InvalidOperationException>(() =>
+            Package(request, contract, draft, DateTime.UtcNow));
+    }
+
+    [Fact]
+    public void FINALPACKAGE04_Rejects_Stale_And_Cross_Contract_Draft()
+    {
+        var (request, contract, _) = Fixture();
+        Assert.Throws<InvalidOperationException>(() =>
+            Package(request, contract,
+                BuildDraft(contract.Id, request.RoomId, month: 10),
+                DateTime.UtcNow));
+        Assert.Throws<InvalidOperationException>(() =>
+            Package(request, contract,
+                BuildDraft(Guid.NewGuid(), request.RoomId),
+                DateTime.UtcNow));
+    }
+
+    [Fact]
+    public void FINALPACKAGE05_Requires_Utc_Capture_And_All_Meter_Evidence()
+    {
+        var (request, contract, draft) = Fixture();
+        Assert.Throws<ArgumentException>(() =>
+            Package(request, contract, draft,
+                new DateTime(2026, 11, 30, 15, 0, 0, DateTimeKind.Local)));
+        Assert.Throws<InvalidOperationException>(() =>
+            FinalInvoiceEvidencePackage.Capture(
+                request, contract, draft, draft.Items.ToArray(),
+                Array.Empty<InvoiceItemMeterSource>(), DateTime.UtcNow));
+    }
+
+    private static FinalInvoiceEvidencePackage Package(
+        MoveOutRequest request, Contract contract, Invoice draft,
+        DateTime capturedAtUtc)
+        => FinalInvoiceEvidencePackage.Capture(
+            request, contract, draft, draft.Items.ToArray(),
+            draft.Items.SelectMany(x => x.MeterSources).ToArray(),
+            capturedAtUtc);
+
     private static FinalMoveOutBillReview Review(
         MoveOutRequest request, Contract contract, Invoice draft)
         => FinalMoveOutBillReviewEvaluator.Assess(

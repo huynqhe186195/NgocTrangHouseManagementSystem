@@ -45,6 +45,8 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
     public DbSet<InvoiceDraftRevisionRecord> InvoiceDraftRevisions { get; set; } = default!;
     // STAGED evidence only: NOT issued, NOT a receivable, migration absent.
     public DbSet<FinalInvoiceIssueEvidenceRecord> FinalInvoiceIssueEvidence { get; set; } = default!;
+    // STAGED only: not a posted receivable or payment. Production migration absent.
+    public DbSet<InvoicePaymentAllocationJournalEntry> InvoicePaymentAllocationJournal { get; set; } = default!;
 
     public BuildingManagementDbContext(DbContextOptions<BuildingManagementDbContext> options)
         : base(options)
@@ -72,5 +74,7 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.InvoiceDraftRevisionRecordConfiguration());
         builder.ApplyConfiguration(
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.FinalInvoiceIssueEvidenceRecordConfiguration());
+        builder.ApplyConfiguration(
+            new BuildingManagement.EntityFrameworkCore.EntityConfigurations.InvoicePaymentAllocationJournalEntryConfiguration());
     }
 }

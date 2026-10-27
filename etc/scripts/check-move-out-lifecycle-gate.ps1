@@ -34,6 +34,9 @@ $issuePreflight = Read-Source 'modules/buildingmanagement/src/BuildingManagement
 $issuePreflightService = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/Invoices/FinalInvoiceIssuePreflightAppService.cs'
 $invoiceIssuanceScope = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/InvoiceIssuanceScopePolicy.cs'
 $issueEvidenceRecord = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/FinalInvoiceIssueEvidenceRecord.cs'
+$paymentAllocationJournal = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/InvoicePaymentAllocationJournalEntry.cs'
+$paymentAllocationAudit = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/InvoicePaymentAllocationJournalAudit.cs'
+$paymentAllocationSchema = Read-Source 'modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/EntityConfigurations/InvoicePaymentAllocationJournalEntryConfiguration.cs'
 $issueDriftReview = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/FinalInvoiceIssueEvidenceDriftReview.cs'
 $issueDriftService = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/Invoices/FinalInvoiceIssueEvidenceDriftAppService.cs'
 $issueEvidenceSchema = Read-Source 'modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/EntityConfigurations/FinalInvoiceIssueEvidenceRecordConfiguration.cs'
@@ -259,6 +262,30 @@ if ($issueDriftReview -notmatch 'archived\.VerifyStoredEvidence\(' -or
     $issueDriftService -notmatch '_sources\.GetListAsync\(' -or
     $issueDriftService -match '\.(Issue|PostDebt|Pay|Refund|End|Complete|InsertAsync|UpdateAsync|DeleteAsync)\s*\(') {
     throw 'Safety stop: staged evidence drift review lost its source-graph or nonposting guard.'
+}
+
+# The new invoice payment allocation journal is STAGED ONLY.
+# No writer, production migration or Issued status exists. A completed
+# receipt linked to a Draft cannot be treated as debt payment. The initial
+# model refuses duplicate PaymentId and split allocations, and never
+# reports money as posted or available to offset a security deposit.
+if ($paymentAllocationJournal -notmatch 'IsRecognizedAllocation\s*=>\s*false' -or
+    $paymentAllocationJournal -notmatch 'CanReduceOutstandingDebt\s*=>\s*false' -or
+    $paymentAllocationJournal -notmatch 'CanOffsetDeposit\s*=>\s*false' -or
+    $paymentAllocationJournal -notmatch 'StageForValidation\(' -or
+    $paymentAllocationJournal -notmatch 'PaymentStatus\.Completed' -or
+    $paymentAllocationJournal -notmatch 'PaymentPurpose\.InvoicePayment' -or
+    $paymentAllocationAudit -notmatch 'PaymentAlreadyUsedInAnotherAllocation' -or
+    $paymentAllocationAudit -notmatch 'AllocationSourceReceiptMismatch' -or
+    $paymentAllocationAudit -notmatch 'IssuedInvoiceLedgerAndAllocationAuthorizationMissing' -or
+    $paymentAllocationAudit -notmatch 'CanPost\s*=>\s*false' -or
+    $paymentAllocationAudit -notmatch 'CanReduceDebt\s*=>\s*false' -or
+    $paymentAllocationSchema -notmatch 'UX_BM_InvoiceAllocation_Payment' -or
+    $paymentAllocationSchema -notmatch 'HasOne<Payment>' -or
+    $paymentAllocationSchema -notmatch 'DeleteBehavior\.Restrict' -or
+    $issueEvidenceDbContext -notmatch 'InvoicePaymentAllocationJournalEntryConfiguration' -or
+    $paymentAllocationJournal -match '(?m)^\s*public\s+(?:async\s+)?(?:void|Task|Task<\w+>)\s+(?:Issue|Post|Pay|Refund|Delete)\s*\(') {
+    throw 'Safety stop: staged allocation journal escaped source-receipt uniqueness or money-posting boundary.'
 }
 
 Write-Host 'MOVE-OUT LIFECYCLE SOURCE GATE PASS.'

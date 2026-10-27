@@ -399,13 +399,22 @@ if ($invoiceSourceProvenance -notmatch 'archive\.VerifyStoredEvidence\(' -or
     $invoiceSourceProvenance -notmatch 'OriginalMeterReadingDiffersFromSnapshot' -or
     $invoiceSourceProvenance -notmatch 'OriginalMeterResourceScopeMismatch' -or
     $invoiceSourceProvenance -notmatch 'OriginalUtilityRateDiffersFromSnapshot' -or
-    $invoiceSourceProvenance -notmatch 'ReplacementClosingSourceRequiresIndependentAudit' -or
+    $invoiceSourceProvenance -notmatch 'OriginalMeterReplacementMissing' -or
+    $invoiceSourceProvenance -notmatch 'OriginalMeterReplacementClosingDiffersFromSnapshot' -or
+    $invoiceSourceProvenance -notmatch 'ReplacementNewMeterMissing' -or
+    $invoiceSourceProvenance -notmatch 'ReplacementNewMeterOpeningMismatch' -or
+    $invoiceSourceProvenance -notmatch 'MeterUsageSourceType\.ReplacementClosing' -or
+    $invoiceSourceProvenance -notmatch 'replacement\.OldMeterId != segment\.UtilityMeterId' -or
+    $invoiceSourceProvenance -notmatch 'newMeter\.InitialReading != replacement\.NewInitialReading' -or
     $invoiceSourceProvenance -notmatch 'MatchesPersistedSources' -or
     $invoiceSourceProvenance -notmatch 'CanIssue\s*=>\s*false' -or
     $invoiceSourceProvenance -notmatch 'CanPostReceivable\s*=>\s*false' -or
     $invoiceSourceProvenanceService -notmatch '\[RemoteService\(IsEnabled\s*=\s*false\)\]' -or
     $invoiceSourceProvenanceService -notmatch '\[UnitOfWork\(isTransactional:\s*true\)\]' -or
     $invoiceSourceProvenanceService -notmatch '_softDeleteFilter\.Disable\(' -or
+    $invoiceSourceProvenanceService -notmatch '_replacements\.GetListAsync\(' -or
+    $invoiceSourceProvenanceService -notmatch 'replacements\.Select\(x => x\.NewMeterId\)' -or
+    $invoiceSourceProvenanceService -notmatch 'rates, replacements' -or
     $invoiceSourceProvenanceService -notmatch '_readings\.GetListAsync\(' -or
     $invoiceSourceProvenanceService -notmatch '_rates\.GetListAsync\(' -or
     $invoiceSourceProvenanceService -notmatch 'floor\?\.BuildingId' -or

@@ -133,6 +133,7 @@ public static class FinalInvoiceSourceProvenanceEvaluator
                         replacement.NewMeterId == replacement.OldMeterId ||
                         replacement.RoomId != archive.RoomId ||
                         replacement.UtilityType != utility.UtilityType ||
+                        string.IsNullOrWhiteSpace(replacement.Reason) ||
                         replacement.ReplacementDate.Date != segment.RecordedDate.Date ||
                         segment.RecordedDate.TimeOfDay != TimeSpan.Zero ||
                         replacement.OldPreviousReading != segment.PreviousReading ||

@@ -799,6 +799,76 @@ public sealed class InvoicePersistenceIntegration_Tests
         });
     }
 
+    [Fact]
+    public async Task ISSUEGATEDB01_Preflight_Reads_Actual_Draft_And_Leaves_It_Unissued()
+    {
+        var (fixture, electricityReadingId) = await SeedReadyOctoberAsync();
+        var draft = CreateDraft(fixture, electricityReadingId, Guid.NewGuid());
+        var requestId = Guid.NewGuid();
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var request = new MoveOutRequest(requestId, fixture.ContractId,
+                fixture.RoomId, new DateOnly(2026, 10, 31), "Issuance preflight");
+            request.Approve(DateTime.UtcNow, null);
+            await GetRequiredService<IRepository<MoveOutRequest, Guid>>()
+                .InsertAsync(request, autoSave: true);
+            await _invoices.InsertAsync(draft, autoSave: true);
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var preflight = await MakeIssuePreflightService().GetAsync(requestId);
+            Assert.Equal(draft.Id, preflight.UtilityDraftId);
+            Assert.Equal(3_110_000m, preflight.KnownBaseChargeTotal);
+            Assert.Equal(3, preflight.BaseCharges.Count);
+            Assert.Equal(64, preflight.EvidenceSha256!.Length);
+            Assert.Contains("AuxiliaryFeePolicyUndecided", preflight.Blockers);
+            Assert.Contains("AuditedPaymentAllocationNotImplemented", preflight.Blockers);
+            Assert.False(preflight.CanIssue);
+            Assert.False(preflight.IsDebtCalculated);
+            Assert.Equal(InvoiceStatus.Draft,
+                (await _invoices.GetAsync(draft.Id)).Status);
+        });
+    }
+
+    [Fact]
+    public async Task ISSUEGATEDB02_Pending_MoveOut_Has_No_Issuance_Charge_Lines()
+    {
+        var data = await SeedAsync();
+        var requestId = Guid.NewGuid();
+        await WithUnitOfWorkAsync(async () =>
+            await GetRequiredService<IRepository<MoveOutRequest, Guid>>()
+                .InsertAsync(new MoveOutRequest(
+                    requestId, data.ContractId, data.RoomId,
+                    new DateOnly(2026, 11, 30), null), autoSave: true));
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var preflight = await MakeIssuePreflightService().GetAsync(requestId);
+            Assert.Null(preflight.UtilityDraftId);
+            Assert.Null(preflight.KnownBaseChargeTotal);
+            Assert.Empty(preflight.BaseCharges);
+            Assert.Contains("Bill:MoveOutNotApproved", preflight.Blockers);
+            Assert.Contains("VerifiedFinalInvoiceEvidenceMissing", preflight.Blockers);
+            Assert.False(preflight.CanIssue);
+        });
+    }
+
+    private FinalInvoiceIssuePreflightAppService MakeIssuePreflightService()
+    {
+        var bill = new FinalMoveOutBillReviewAppService(
+            GetRequiredService<IRepository<MoveOutRequest, Guid>>(),
+            _contracts, _invoices,
+            GetRequiredService<IRepository<InvoiceItem, Guid>>(),
+            GetRequiredService<IRepository<InvoiceItemMeterSource, Guid>>());
+        var payments = new FinalMoveOutPaymentEvidenceAppService(
+            bill, GetRequiredService<IRepository<Payment, Guid>>(),
+            GetRequiredService<IDataFilter<ISoftDelete>>());
+        return new FinalInvoiceIssuePreflightAppService(
+            bill, MakeFinalEvidenceService(), payments);
+    }
+
     private FinalInvoiceEvidencePackageAppService MakeFinalEvidenceService()
         => new(
             GetRequiredService<IRepository<MoveOutRequest, Guid>>(),

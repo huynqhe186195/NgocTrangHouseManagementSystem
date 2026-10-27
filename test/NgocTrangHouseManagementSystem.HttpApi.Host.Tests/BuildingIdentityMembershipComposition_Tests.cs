@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using BuildingManagement.Buildings;
 using BuildingManagement.EntityFrameworkCore.EntityConfigurations;
+using BuildingManagement.EntityConfigurations;
 using BuildingManagement.EntityFrameworkCore.Security;
 using BuildingManagement.Floors;
 using BuildingManagement.Permissions;
@@ -312,7 +313,7 @@ public sealed class BuildingIdentityMembershipComposition_Tests
                 Array.Empty<IUserValidator<IdentityUser>>(),
                 Array.Empty<IPasswordValidator<IdentityUser>>(),
                 new UpperInvariantLookupNormalizer(),
-                new IdentityErrorDescriber(), null,
+                new IdentityErrorDescriber(), null!,
                 NullLogger<UserManager<IdentityUser>>.Instance);
 
             AccountProbe = new AbpIdentityBuildingOperatorAccountProbe(

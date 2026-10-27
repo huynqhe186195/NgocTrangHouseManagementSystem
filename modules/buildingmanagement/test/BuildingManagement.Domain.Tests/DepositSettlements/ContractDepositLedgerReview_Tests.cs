@@ -296,6 +296,85 @@ public sealed class ContractDepositLedgerReview_Tests
         Assert.False(audit.CanOffsetDebt);
     }
 
+    [Fact]
+    public void DEPLEDGER17_Completed_Direct_Deposit_Without_Journal_Is_Visible_But_Blocked()
+    {
+        var (request, contract) = Fixture();
+        var received = Receipt(PaymentPurpose.ContractDeposit, contract.Id);
+
+        var audit = Assess(request, contract,
+            Array.Empty<DepositSettlement>(), new[] { received });
+
+        Assert.Equal(received.Amount,
+            audit.ObservedCompletedContractDepositReceiptsTotal);
+        Assert.Null(audit.VerifiedIncomingAllocationTotal);
+        Assert.Contains("CompletedContractDepositNotFullyAllocated", audit.Blockers);
+        Assert.Contains("NoCompletedDepositAllocation", audit.Blockers);
+        Assert.Null(audit.RefundableBalance);
+        Assert.False(audit.CanRefund);
+    }
+
+    [Fact]
+    public void DEPLEDGER18_Partial_Direct_Deposit_Allocation_Must_Be_Reconciled()
+    {
+        var (request, contract) = Fixture();
+        var received = Receipt(PaymentPurpose.ContractDeposit, contract.Id);
+        var allocated = Allocation(contract.Id, received.Id, 200000m);
+
+        var audit = Assess(request, contract,
+            new[] { allocated }, new[] { received });
+
+        Assert.Equal(500000m,
+            audit.ObservedCompletedContractDepositReceiptsTotal);
+        Assert.Null(audit.VerifiedIncomingAllocationTotal);
+        Assert.Contains("CompletedContractDepositNotFullyAllocated", audit.Blockers);
+    }
+
+    [Fact]
+    public void DEPLEDGER19_Identical_Transaction_References_Cannot_Be_Counted_Twice()
+    {
+        var (request, contract) = Fixture();
+        var first = Receipt(PaymentPurpose.ContractDeposit, contract.Id,
+            reference: "DUPLICATE-REFERENCE");
+        var second = Receipt(PaymentPurpose.ContractDeposit, contract.Id,
+            reference: " duplicate-reference ");
+        var firstAllocation = Allocation(contract.Id, first.Id, first.Amount);
+        var secondAllocation = Allocation(contract.Id, second.Id, second.Amount);
+
+        var audit = Assess(request, contract,
+            new[] { firstAllocation, secondAllocation }, new[] { first, second });
+
+        Assert.Equal(1000000m,
+            audit.ObservedCompletedContractDepositReceiptsTotal);
+        Assert.Contains("DuplicateDepositTransactionReference", audit.Blockers);
+        Assert.Null(audit.VerifiedIncomingAllocationTotal);
+        Assert.False(audit.CanRefund);
+    }
+
+    [Fact]
+    public void DEPLEDGER20_Correctly_Allocated_Direct_Receipts_Keep_Review_Amounts()
+    {
+        var (request, contract) = Fixture();
+        var first = Receipt(PaymentPurpose.ContractDeposit, contract.Id,
+            reference: "UNIQUE-1");
+        var second = Receipt(PaymentPurpose.ContractDeposit, contract.Id,
+            reference: "UNIQUE-2");
+        var firstAllocation = Allocation(contract.Id, first.Id, first.Amount);
+        var secondAllocation = Allocation(contract.Id, second.Id, second.Amount);
+
+        var audit = Assess(request, contract,
+            new[] { firstAllocation, secondAllocation }, new[] { first, second });
+
+        Assert.Equal(1000000m,
+            audit.ObservedCompletedContractDepositReceiptsTotal);
+        Assert.Equal(1000000m, audit.VerifiedIncomingAllocationTotal);
+        Assert.DoesNotContain("CompletedContractDepositNotFullyAllocated",
+            audit.Blockers);
+        Assert.DoesNotContain("DuplicateDepositTransactionReference",
+            audit.Blockers);
+        Assert.False(audit.CanRefund);
+    }
+
     private static ContractDepositLedgerReview Assess(
         MoveOutRequest request, Contract contract,
         DepositSettlement[] settlements, Payment[] payments)
@@ -317,7 +396,7 @@ public sealed class ContractDepositLedgerReview_Tests
     private static Payment Receipt(
         PaymentPurpose purpose, Guid contractId,
         Guid? reservationId = null, bool completed = true,
-        decimal amount = 500000m)
+        decimal amount = 500000m, string? reference = null)
     {
         var payment = new Payment(Guid.NewGuid(),
             "DEPREVIEW-" + Guid.NewGuid().ToString("N"),
@@ -326,7 +405,7 @@ public sealed class ContractDepositLedgerReview_Tests
             roomReservationId: reservationId,
             contractId: purpose == PaymentPurpose.ContractDeposit
                 ? contractId : null);
-        if (completed) payment.Complete(DateTime.UtcNow);
+        if (completed) payment.Complete(DateTime.UtcNow, reference);
         return payment;
     }
 

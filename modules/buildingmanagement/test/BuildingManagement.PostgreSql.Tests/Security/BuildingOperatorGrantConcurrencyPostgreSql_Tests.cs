@@ -1,0 +1,332 @@
+using System;
+using System.IO;
+using System.Text.RegularExpressions;
+using System.Threading.Tasks;
+using Npgsql;
+using Xunit;
+
+namespace BuildingManagement.PostgreSqlTests;
+
+/// <summary>
+/// EXPLICIT OPT-IN PostgreSQL concurrency probes. Independent transactions
+/// cannot see uncommitted DDL: these tests temporarily COMMIT a uniquely
+/// named schema in the dedicated localhost integration-test database and
+/// DROP exactly that schema in finally. A process crash may leave a scratch
+/// schema for manual cleanup. NEVER run on production or through CI Full.
+/// </summary>
+public sealed class BuildingOperatorGrantConcurrencyPostgreSql_Tests
+{
+    private const string Table = "BuildingManagementOperatorBuildingGrants";
+    private const string OptIn = "BM_PG_MEMBERSHIP_CONCURRENCY_OPT_IN";
+    private const string Accepted = "I_ACCEPT_EPHEMERAL_SCHEMA";
+
+    [Fact]
+    public async Task PGMEMBER04_Concurrent_Active_Grant_Inserts_Exactly_One_Wins()
+    {
+        await InCommittedScratchAsync(async (cs, schema, building) =>
+        {
+            var actor = Guid.NewGuid();
+            await using var winner = await OpenAsync(cs);
+            await using var contender = await OpenAsync(cs);
+            await using var winnerTx = await winner.BeginTransactionAsync();
+            await using var contenderTx = await contender.BeginTransactionAsync();
+            await EnterSchemaAsync(winner, winnerTx, schema);
+            await EnterSchemaAsync(contender, contenderTx, schema);
+
+            await ExecuteAsync(winner, winnerTx,
+                GrantInsert(Guid.NewGuid(), actor, building));
+
+            // Second SQL command is executed on a separate backend. Its
+            // unique-index insert waits until the winner commits.
+            var started = new TaskCompletionSource<bool>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            var competing = Task.Run(async () =>
+            {
+                started.TrySetResult(true);
+                return await FailureStateAsync(contender, contenderTx,
+                    GrantInsert(Guid.NewGuid(), actor, building));
+            });
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await Task.Delay(250);
+            Assert.False(competing.IsCompleted,
+                "Second insert must be blocked by the uncommitted unique key.");
+
+            await winnerTx.CommitAsync();
+            Assert.Equal(PostgresErrorCodes.UniqueViolation,
+                await competing.WaitAsync(TimeSpan.FromSeconds(15)));
+            await contenderTx.RollbackAsync();
+
+            await using var verify = await OpenAsync(cs);
+            await using var verifyTx = await verify.BeginTransactionAsync();
+            await EnterSchemaAsync(verify, verifyTx, schema);
+            Assert.Equal(1L, await CountAsync(verify, verifyTx,
+                $"SELECT count(*) FROM \"{Table}\" WHERE \"RevokedAtUtc\" IS NULL"));
+            await verifyTx.RollbackAsync();
+        });
+    }
+
+    [Fact]
+    public async Task PGMEMBER05_Concurrent_Revokes_Require_Expected_Revision_Cas()
+    {
+        await InCommittedScratchAsync(async (cs, schema, building) =>
+        {
+            var actor = Guid.NewGuid();
+            var grantId = Guid.NewGuid();
+            await using (var seed = await OpenAsync(cs))
+            {
+                await using var seedTx = await seed.BeginTransactionAsync();
+                await EnterSchemaAsync(seed, seedTx, schema);
+                await ExecuteAsync(seed, seedTx,
+                    GrantInsert(grantId, actor, building));
+                await seedTx.CommitAsync();
+            }
+
+            await using var winner = await OpenAsync(cs);
+            await using var stale = await OpenAsync(cs);
+            await using var winnerTx = await winner.BeginTransactionAsync();
+            await using var staleTx = await stale.BeginTransactionAsync();
+            await EnterSchemaAsync(winner, winnerTx, schema);
+            await EnterSchemaAsync(stale, staleTx, schema);
+
+            Assert.Equal(1L, await CountAsync(winner, winnerTx,
+                $"SELECT \"RevisionNumber\" FROM \"{Table}\" WHERE \"Id\" = '{grantId:D}'"));
+            Assert.Equal(1L, await CountAsync(stale, staleTx,
+                $"SELECT \"RevisionNumber\" FROM \"{Table}\" WHERE \"Id\" = '{grantId:D}'"));
+
+            var first = RevokeIfRevision(grantId, 1);
+            Assert.Equal(1, await ExecuteAsync(winner, winnerTx, first));
+
+            var started = new TaskCompletionSource<bool>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            var second = Task.Run(async () =>
+            {
+                started.TrySetResult(true);
+                return await ExecuteAsync(stale, staleTx, RevokeIfRevision(grantId, 1));
+            });
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await Task.Delay(250);
+            Assert.False(second.IsCompleted,
+                "Stale revocation must wait for the competing row update.");
+
+            await winnerTx.CommitAsync();
+            Assert.Equal(0, await second.WaitAsync(TimeSpan.FromSeconds(15)));
+            await staleTx.CommitAsync();
+
+            await using var verify = await OpenAsync(cs);
+            await using var verifyTx = await verify.BeginTransactionAsync();
+            await EnterSchemaAsync(verify, verifyTx, schema);
+            Assert.Equal(2L, await CountAsync(verify, verifyTx,
+                $"SELECT \"RevisionNumber\" FROM \"{Table}\" WHERE \"Id\" = '{grantId:D}'"));
+            Assert.Equal(1L, await CountAsync(verify, verifyTx,
+                $"SELECT count(*) FROM \"{Table}\" WHERE \"Id\" = '{grantId:D}' AND \"RevokedAtUtc\" IS NOT NULL"));
+            await verifyTx.RollbackAsync();
+        });
+    }
+
+    [Fact]
+    public async Task PGMEMBER06_Rollback_Waits_For_Concurrent_Grant_Then_Refuses_Drop()
+    {
+        await InCommittedScratchAsync(async (cs, schema, building) =>
+        {
+            await using var writer = await OpenAsync(cs);
+            await using var rollback = await OpenAsync(cs);
+            await using var writerTx = await writer.BeginTransactionAsync();
+            await using var rollbackTx = await rollback.BeginTransactionAsync();
+            await EnterSchemaAsync(writer, writerTx, schema);
+            await EnterSchemaAsync(rollback, rollbackTx, schema);
+
+            await ExecuteAsync(writer, writerTx,
+                GrantInsert(Guid.NewGuid(), Guid.NewGuid(), building));
+
+            var down = ReadCandidateSql(
+                "SliceA_OperatorBuildingGrant_Down_Candidate.sql");
+            var started = new TaskCompletionSource<bool>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            var rollbackAttempt = Task.Run(async () =>
+            {
+                started.TrySetResult(true);
+                return await FailureStateAsync(rollback, rollbackTx, down);
+            });
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await Task.Delay(250);
+            Assert.False(rollbackAttempt.IsCompleted,
+                "ACCESS EXCLUSIVE rollback must wait for in-flight writes.");
+
+            await writerTx.CommitAsync();
+            Assert.Equal("P0001",
+                await rollbackAttempt.WaitAsync(TimeSpan.FromSeconds(15)));
+            await rollbackTx.RollbackAsync();
+
+            await using var verify = await OpenAsync(cs);
+            await using var verifyTx = await verify.BeginTransactionAsync();
+            await EnterSchemaAsync(verify, verifyTx, schema);
+            Assert.Equal(1L, await CountAsync(verify, verifyTx,
+                $"SELECT count(*) FROM \"{Table}\""));
+            await verifyTx.RollbackAsync();
+        });
+    }
+
+    private static string GrantInsert(Guid id, Guid user, Guid building)
+        => $"""
+           INSERT INTO "{Table}"
+               ("Id", "OperatorUserId", "BuildingId", "GrantedByUserId",
+                "GrantedAtUtc", "ExpiresAtUtc", "RevokedAtUtc",
+                "RevokedByUserId", "RevisionNumber",
+                "ExtraProperties", "ConcurrencyStamp")
+           VALUES ('{id:D}', '{user:D}', '{building:D}', '{Guid.NewGuid():D}',
+                   '2026-10-27T00:00:00Z', NULL, NULL,
+                   NULL, 1, '{{"source":"scratch"}}', '{Guid.NewGuid():N}');
+           """;
+
+    private static string RevokeIfRevision(Guid id, int expected)
+        => $"""
+           UPDATE "{Table}"
+              SET "RevokedAtUtc" = '2026-10-28T00:00:00Z',
+                  "RevokedByUserId" = '{Guid.NewGuid():D}',
+                  "RevisionNumber" = "RevisionNumber" + 1
+            WHERE "Id" = '{id:D}' AND "RevisionNumber" = {expected}
+              AND "RevokedAtUtc" IS NULL;
+           """;
+
+    private static async Task InCommittedScratchAsync(
+        Func<NpgsqlConnectionStringBuilder, string, Guid, Task> exercise)
+    {
+        if (!string.Equals(Environment.GetEnvironmentVariable(OptIn),
+                Accepted, StringComparison.Ordinal))
+            throw new InvalidOperationException(
+                "Safety stop: explicit opt-in is required for a committed " +
+                "ephemeral PostgreSQL schema. Use the guarded local script.");
+
+        // Verify the exact resource before any database connection.
+        var up = ReadCandidateSql(
+            "SliceA_OperatorBuildingGrant_Up_Candidate.sql");
+        _ = ReadCandidateSql(
+            "SliceA_OperatorBuildingGrant_Down_Candidate.sql");
+
+        var builder = new NpgsqlConnectionStringBuilder(
+            BuildingManagementPostgreSqlTestModule.RequireSafeConnectionString())
+        {
+            Pooling = false,
+            CommandTimeout = 20
+        };
+        var schema = "bm_grant_race_" + Guid.NewGuid().ToString("N");
+        var building = Guid.NewGuid();
+        var committed = false;
+
+        await using var setup = await OpenAsync(builder);
+        Assert.Equal(BuildingManagementPostgreSqlTestModule.DatabaseName,
+            setup.Database);
+        try
+        {
+            await using (var tx = await setup.BeginTransactionAsync())
+            {
+                await ExecuteAsync(setup, tx, $"CREATE SCHEMA \"{schema}\"");
+                await EnterSchemaAsync(setup, tx, schema);
+                await ExecuteAsync(setup, tx,
+                    """CREATE TABLE "Buildings" ("Id" uuid NOT NULL PRIMARY KEY);""");
+                await ExecuteAsync(setup, tx, up);
+                await ExecuteAsync(setup, tx,
+                    $"INSERT INTO \"Buildings\" (\"Id\") VALUES ('{building:D}')");
+                await tx.CommitAsync();
+                committed = true;
+            }
+
+            await exercise(builder, schema, building);
+        }
+        finally
+        {
+            if (committed)
+            {
+                if (!Regex.IsMatch(schema, @"\Abm_grant_race_[0-9a-f]{32}\z",
+                        RegexOptions.CultureInvariant))
+                    throw new InvalidOperationException(
+                        "Safety stop: scratch-schema identity invalid.");
+
+                // The ONLY committed destructive statement in this test:
+                // remove precisely the randomized schema created above.
+                // Never use public or a caller-provided schema name.
+                await using var cleaner = await OpenAsync(builder);
+                Assert.Equal(BuildingManagementPostgreSqlTestModule.DatabaseName,
+                    cleaner.Database);
+                await ExecuteAsync(cleaner, null,
+                    $"DROP SCHEMA \"{schema}\" CASCADE");
+                Assert.Equal(0L, await CountAsync(cleaner, null,
+                    "SELECT count(*) FROM pg_namespace " +
+                    $"WHERE nspname = '{schema}'"));
+            }
+        }
+    }
+
+    private static async Task<NpgsqlConnection> OpenAsync(
+        NpgsqlConnectionStringBuilder builder)
+    {
+        var connection = new NpgsqlConnection(builder.ConnectionString);
+        await connection.OpenAsync();
+        if (!string.Equals(connection.Database,
+                BuildingManagementPostgreSqlTestModule.DatabaseName,
+                StringComparison.Ordinal))
+        {
+            await connection.DisposeAsync();
+            throw new InvalidOperationException("Unexpected database after connect.");
+        }
+        return connection;
+    }
+
+    private static async Task EnterSchemaAsync(
+        NpgsqlConnection connection, NpgsqlTransaction tx, string schema)
+    {
+        await ExecuteAsync(connection, tx,
+            $"SET LOCAL search_path TO \"{schema}\"");
+        await ExecuteAsync(connection, tx, "SET LOCAL lock_timeout = '3s'");
+        await ExecuteAsync(connection, tx, "SET LOCAL statement_timeout = '15s'");
+        var current = await ScalarStringAsync(connection, tx, "SELECT current_schema()");
+        Assert.Equal(schema, current);
+    }
+
+    private static string ReadCandidateSql(string filename)
+    {
+        using var stream = typeof(BuildingOperatorGrantConcurrencyPostgreSql_Tests)
+            .Assembly.GetManifestResourceStream(filename)
+            ?? throw new InvalidOperationException(
+                "Missing version-controlled grant SQL resource: " + filename);
+        using var reader = new StreamReader(stream);
+        var sql = reader.ReadToEnd().TrimStart('\uFEFF');
+        Assert.Contains(Table, sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("public.", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.False(Regex.IsMatch(sql,
+            @"(?im)^\s*(?:GRANT\b|CREATE\s+ROLE\b|ALTER\s+ROLE\b|DROP\s+DATABASE\b|START\s+TRANSACTION\b|COMMIT\b|BEGIN\s*(?:TRANSACTION\b|;))"));
+        return sql;
+    }
+
+    private static async Task<string?> FailureStateAsync(
+        NpgsqlConnection connection, NpgsqlTransaction tx, string sql)
+    {
+        try
+        {
+            await ExecuteAsync(connection, tx, sql);
+            return null;
+        }
+        catch (PostgresException error)
+        {
+            return error.SqlState;
+        }
+    }
+
+    private static Task<int> ExecuteAsync(
+        NpgsqlConnection connection, NpgsqlTransaction? tx, string sql)
+        => new NpgsqlCommand(sql, connection, tx).ExecuteNonQueryAsync();
+
+    private static async Task<long> CountAsync(
+        NpgsqlConnection connection, NpgsqlTransaction? tx, string sql)
+    {
+        await using var cmd = new NpgsqlCommand(sql, connection, tx);
+        return Convert.ToInt64(await cmd.ExecuteScalarAsync());
+    }
+
+    private static async Task<string?> ScalarStringAsync(
+        NpgsqlConnection connection, NpgsqlTransaction tx, string sql)
+    {
+        await using var cmd = new NpgsqlCommand(sql, connection, tx);
+        return (string?)await cmd.ExecuteScalarAsync();
+    }
+}

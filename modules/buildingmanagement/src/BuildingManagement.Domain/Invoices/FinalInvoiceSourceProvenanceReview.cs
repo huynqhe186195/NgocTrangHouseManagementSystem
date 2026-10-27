@@ -11,8 +11,8 @@ namespace BuildingManagement.Invoices;
 /// Read-only verification of the ORIGINAL MeterReading, UtilityMeter and
 /// UtilityRate behind archived final-invoice draft evidence. This does not
 /// replace the archived monetary snapshot or reprice historical invoices.
-/// Replacement-closing events remain a separate proof workflow and are
-/// conservatively marked unverified until a typed source adapter exists.
+/// Replacement-closing events are checked against the actual archived
+/// handover and the old/new physical meters, never treated as readings.
 /// </summary>
 public sealed class FinalInvoiceSourceProvenanceReview
 {
@@ -30,12 +30,14 @@ public static class FinalInvoiceSourceProvenanceEvaluator
         Guid resolvedBuildingId,
         IReadOnlyCollection<MeterReading> readings,
         IReadOnlyCollection<UtilityMeter> meters,
-        IReadOnlyCollection<UtilityRate> rates)
+        IReadOnlyCollection<UtilityRate> rates,
+        IReadOnlyCollection<MeterReplacement>? replacements = null)
     {
         ArgumentNullException.ThrowIfNull(archive);
         ArgumentNullException.ThrowIfNull(readings);
         ArgumentNullException.ThrowIfNull(meters);
         ArgumentNullException.ThrowIfNull(rates);
+        replacements ??= Array.Empty<MeterReplacement>();
 
         var result = new FinalInvoiceSourceProvenanceReview
         {
@@ -64,9 +66,11 @@ public static class FinalInvoiceSourceProvenanceEvaluator
         if (readings.Any(x => x is null || x.Id == Guid.Empty) ||
             meters.Any(x => x is null || x.Id == Guid.Empty) ||
             rates.Any(x => x is null || x.Id == Guid.Empty) ||
+            replacements.Any(x => x is null || x.Id == Guid.Empty) ||
             readings.Select(x => x.Id).Distinct().Count() != readings.Count ||
             meters.Select(x => x.Id).Distinct().Count() != meters.Count ||
-            rates.Select(x => x.Id).Distinct().Count() != rates.Count)
+            rates.Select(x => x.Id).Distinct().Count() != rates.Count ||
+            replacements.Select(x => x.Id).Distinct().Count() != replacements.Count)
         {
             result.Blockers.Add("SourceEvidenceIdentifiersInvalid");
             return Stop(result);
@@ -75,6 +79,7 @@ public static class FinalInvoiceSourceProvenanceEvaluator
         var readingById = readings.ToDictionary(x => x.Id);
         var meterById = meters.ToDictionary(x => x.Id);
         var rateById = rates.ToDictionary(x => x.Id);
+        var replacementById = replacements.ToDictionary(x => x.Id);
         var firstDay = new DateTime(archive.BillingYear, archive.BillingMonth, 1);
         var lastDay = new DateTime(
             archive.BillingYear, archive.BillingMonth,
@@ -112,13 +117,50 @@ public static class FinalInvoiceSourceProvenanceEvaluator
                     meter.UtilityType != utility.UtilityType)
                     result.Blockers.Add("OriginalMeterResourceScopeMismatch");
 
+                if (segment.SourceType == MeterUsageSourceType.ReplacementClosing)
+                {
+                    // A replacement snapshot is NEVER a monthly reading:
+                    // the archived meter is the OLD meter, and SourceId
+                    // refers to a separate immutable MeterReplacement.
+                    if (!replacementById.TryGetValue(segment.SourceId,
+                        out var replacement))
+                    {
+                        result.Blockers.Add("OriginalMeterReplacementMissing");
+                        continue;
+                    }
+
+                    if (replacement.OldMeterId != segment.UtilityMeterId ||
+                        replacement.NewMeterId == replacement.OldMeterId ||
+                        replacement.RoomId != archive.RoomId ||
+                        replacement.UtilityType != utility.UtilityType ||
+                        replacement.ReplacementDate.Date != segment.RecordedDate.Date ||
+                        segment.RecordedDate.TimeOfDay != TimeSpan.Zero ||
+                        replacement.OldPreviousReading != segment.PreviousReading ||
+                        replacement.OldFinalReading != segment.CurrentReading ||
+                        replacement.OldFinalReading < replacement.OldPreviousReading)
+                        result.Blockers.Add(
+                            "OriginalMeterReplacementClosingDiffersFromSnapshot");
+
+                    if (!meterById.TryGetValue(replacement.NewMeterId,
+                        out var newMeter))
+                    {
+                        result.Blockers.Add("ReplacementNewMeterMissing");
+                        continue;
+                    }
+
+                    if (newMeter.IsDeleted)
+                        result.Blockers.Add("ReplacementNewMeterSoftDeleted");
+                    if (newMeter.RoomId != archive.RoomId ||
+                        newMeter.UtilityType != utility.UtilityType ||
+                        newMeter.InitialReading != replacement.NewInitialReading ||
+                        newMeter.InstalledDate.Date != replacement.ReplacementDate.Date)
+                        result.Blockers.Add("ReplacementNewMeterOpeningMismatch");
+                    continue;
+                }
+
                 if (segment.SourceType != MeterUsageSourceType.MonthlyReading)
                 {
-                    // Replacement-closing records are historical evidence
-                    // but NOT interchangeable with MeterReading. Until
-                    // explicitly loaded and verified, do not report green.
-                    result.Blockers.Add(
-                        "ReplacementClosingSourceRequiresIndependentAudit");
+                    result.Blockers.Add("UnsupportedMeterUsageSourceType");
                     continue;
                 }
 

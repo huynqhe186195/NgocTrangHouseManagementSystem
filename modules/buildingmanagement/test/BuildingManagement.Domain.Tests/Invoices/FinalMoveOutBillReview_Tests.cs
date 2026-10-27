@@ -1676,6 +1676,23 @@ public sealed class FinalMoveOutBillReview_Tests
         Assert.Contains("ReplacementNewMeterOpeningMismatch", result.Blockers);
     }
 
+    [Fact]
+    public void REPLACEMENTAUDIT06_Unexplained_Handover_Cannot_Confirm_Proof()
+    {
+        var (archive, building, readings, meters, rates, replacements) =
+            ReplacementAuditFixture();
+        typeof(MeterReplacement)
+            .GetProperty(nameof(MeterReplacement.Reason))!
+            .SetValue(replacements[0], " ");
+        var result = FinalInvoiceSourceProvenanceEvaluator.Assess(
+            archive, building, readings, meters, rates, replacements);
+
+        Assert.False(result.MatchesPersistedSources);
+        Assert.Contains("OriginalMeterReplacementClosingDiffersFromSnapshot",
+            result.Blockers);
+        Assert.False(result.CanIssue);
+    }
+
     private static (
         FinalInvoiceIssueEvidenceRecord Archive,
         Guid Building,

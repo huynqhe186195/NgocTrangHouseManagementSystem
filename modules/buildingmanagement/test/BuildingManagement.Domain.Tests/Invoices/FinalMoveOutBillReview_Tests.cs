@@ -1,5 +1,8 @@
 using System;
 using System.IO;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json.Nodes;
 using System.Linq;
 using BuildingManagement.Contracts;
 using BuildingManagement.Invoices;
@@ -528,6 +531,78 @@ public sealed class FinalMoveOutBillReview_Tests
             .GetProperty(nameof(FinalInvoiceIssueEvidenceRecord.EvidenceJson))!
             .SetValue(other, other.EvidenceJson + " ");
         Assert.Throws<InvalidDataException>(other.VerifyStoredEvidence);
+    }
+
+    [Theory]
+    [InlineData("MissingSourceId")]
+    [InlineData("MissingMeterId")]
+    [InlineData("InvalidSourceType")]
+    [InlineData("OutsideBillingPeriod")]
+    [InlineData("ReadingDeltaMismatch")]
+    [InlineData("MissingRateId")]
+    [InlineData("NonUtcCaptureTime")]
+    [InlineData("RepeatedMeterSource")]
+    public void ISSUEARCH07_Rehashed_But_Invalid_Historical_Meter_Evidence_Is_Rejected(
+        string corruption)
+    {
+        var (evidence, preflight) = StagingFixture();
+        var record = FinalInvoiceIssueEvidenceRecord.Prepare(
+            Guid.NewGuid(), Guid.NewGuid(), DateTime.UtcNow,
+            evidence, preflight);
+        record.VerifyStoredEvidence();
+
+        var root = JsonNode.Parse(record.EvidenceJson)!;
+        var firstUtility = root["Utilities"]![0]!;
+        var source = firstUtility["Sources"]![0]!;
+
+        switch (corruption)
+        {
+            case "MissingSourceId":
+                source["SourceId"] = Guid.Empty.ToString();
+                break;
+            case "MissingMeterId":
+                source["UtilityMeterId"] = Guid.Empty.ToString();
+                break;
+            case "InvalidSourceType":
+                source["SourceType"] = 999;
+                break;
+            case "OutsideBillingPeriod":
+                source["RecordedDate"] = "2026-10-31T00:00:00";
+                break;
+            case "ReadingDeltaMismatch":
+                source["CurrentReading"] = 999999m;
+                break;
+            case "MissingRateId":
+                firstUtility["UtilityRateId"] = Guid.Empty.ToString();
+                break;
+            case "NonUtcCaptureTime":
+                root["CapturedAtUtc"] = "2026-11-30T18:00:00";
+                break;
+            case "RepeatedMeterSource":
+                var second = root["Utilities"]![1]!["Sources"]![0]!;
+                second["SourceId"] = source["SourceId"]!.ToString();
+                second["SourceType"] = source["SourceType"]!.GetValue<int>();
+                break;
+            default:
+                throw new ArgumentException("Unknown test scenario", nameof(corruption));
+        }
+
+        // Deliberately recompute the checksum to show that SHA-256 alone
+        // is NOT business validation or a protected digital signature.
+        var modifiedJson = root.ToJsonString();
+        var modifiedHash = Convert.ToHexString(
+            SHA256.HashData(Encoding.UTF8.GetBytes(modifiedJson)))
+            .ToLowerInvariant();
+        typeof(FinalInvoiceIssueEvidenceRecord)
+            .GetProperty(nameof(FinalInvoiceIssueEvidenceRecord.EvidenceJson))!
+            .SetValue(record, modifiedJson);
+        typeof(FinalInvoiceIssueEvidenceRecord)
+            .GetProperty(nameof(FinalInvoiceIssueEvidenceRecord.EvidenceSha256))!
+            .SetValue(record, modifiedHash);
+
+        Assert.Throws<InvalidDataException>(record.VerifyStoredEvidence);
+        Assert.False(record.IsInvoiceIssued);
+        Assert.False(record.IsReceivablePosted);
     }
 
     private static (FinalInvoiceEvidencePackage, FinalInvoiceIssuePreflight)

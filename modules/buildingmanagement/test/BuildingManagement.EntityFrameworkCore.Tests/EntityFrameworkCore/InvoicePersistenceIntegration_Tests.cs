@@ -1359,12 +1359,19 @@ public sealed class InvoicePersistenceIntegration_Tests
         });
     }
 
+    private FinalInvoiceSourceProvenanceAppService MakeSourceProvenanceService()
+        => new(
+            GetRequiredService<IRepository<FinalInvoiceIssueEvidenceRecord, Guid>>(),
+            _rooms, _floors, _readings, _meters, _rates,
+            GetRequiredService<IDataFilter<ISoftDelete>>());
+
     private FinalInvoiceReleaseReadinessAppService MakeReleaseReadinessService()
         => new(
             MakeIssuePreflightService(),
             GetRequiredService<IRepository<FinalInvoiceIssueEvidenceRecord, Guid>>(),
             GetRequiredService<IRepository<InvoiceIssuanceReviewTicket, Guid>>(),
             MakeIssueDriftService(),
+            MakeSourceProvenanceService(),
             MakeAllocationReviewService());
 
     [Fact]

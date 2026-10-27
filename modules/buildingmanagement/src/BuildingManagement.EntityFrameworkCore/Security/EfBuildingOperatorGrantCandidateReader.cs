@@ -2,23 +2,21 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using BuildingManagement.Buildings;
-using BuildingManagement.Security;
 using Microsoft.EntityFrameworkCore;
 
 namespace BuildingManagement.EntityFrameworkCore.Security;
 
 /// <summary>
-/// Unregistered Slice A candidate: query original persisted memberships
+/// Unregistered, infrastructure-only Slice A candidate: query persisted memberships
 /// in SQL on EVERY request. This is NOT a production authorization grant:
 /// callers must still verify the authenticated ABP account, operation
 /// permission, resource graph and transaction/revocation boundary.
 ///
-/// Deliberately has no DI marker or service exposure. Runtime must retain
+/// Does not implement the Application-layer grant-reader interface: EF Core\n/// must not depend on Application. Tests adapt it explicitly, while runtime\n/// uses its Deny-All reader. No DI marker or service exposure. Runtime retains
 /// DenyAllBuildingOperatorGrantReader until the reviewed grant migration,
 /// active Identity adapter and atomic write protocol are ready.
 /// </summary>
 public sealed class EfBuildingOperatorGrantCandidateReader
-    : IBuildingOperatorGrantReader
 {
     private readonly DbContext _db;
     private readonly TimeProvider _clock;

@@ -291,9 +291,27 @@ public sealed class BuildingOperatorGrantCandidateQuery_Tests
         => new(
             new TestPrincipal(actor, permissionGranted),
             new TestAccount(accountActive),
-            new EfBuildingOperatorGrantCandidateReader(db,
-                new FixedClock(now)),
+            new CandidateGrantReaderAdapter(
+                new EfBuildingOperatorGrantCandidateReader(
+                    db, new FixedClock(now))),
             new StoredBuildingReader(db));
+
+    // Layering matters: EntityFrameworkCore references Domain, not
+    // Application. Adapt the infrastructure-only query ONLY in this
+    // disposable integration test; no production provider is registered.
+    private sealed class CandidateGrantReaderAdapter
+        : IBuildingOperatorGrantReader
+    {
+        private readonly EfBuildingOperatorGrantCandidateReader _candidate;
+
+        public CandidateGrantReaderAdapter(
+            EfBuildingOperatorGrantCandidateReader candidate)
+            => _candidate = candidate;
+
+        public Task<IReadOnlyCollection<Guid>> GetActiveBuildingIdsAsync(
+            Guid operatorId)
+            => _candidate.GetActiveBuildingIdsAsync(operatorId);
+    }
 
     private sealed class TestPrincipal : IBuildingBusinessPrincipalReader
     {

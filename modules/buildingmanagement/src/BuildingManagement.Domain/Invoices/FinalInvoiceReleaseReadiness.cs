@@ -165,6 +165,17 @@ public static class FinalInvoiceReleaseReadinessEvaluator
                 result.Blockers.Add("OriginalInvoiceSourcesChangedOrIncomplete");
         }
 
+        // A design signoff remains historical evidence, not a current
+        // approval, when the physical meter or tariff records have changed
+        // even though the staged JSON still matches the Draft exactly.
+        if (result.IndependentReviewApplicableToCurrentDraft &&
+            !result.OriginalSourcesVerified)
+        {
+            result.IndependentReviewApplicableToCurrentDraft = false;
+            result.Blockers.Add(
+                "IndependentInvoiceReviewSupersededBySourceChanges");
+        }
+
         if (stagedEvidence.Count == 0 && reviewTickets.Count != 0)
             result.Blockers.Add("InvoiceReviewWithoutEvidence");
 

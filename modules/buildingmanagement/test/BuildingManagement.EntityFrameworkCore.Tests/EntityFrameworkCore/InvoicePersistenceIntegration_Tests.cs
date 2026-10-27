@@ -1261,6 +1261,96 @@ public sealed class InvoicePersistenceIntegration_Tests
         });
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ISSUEREADYDB05_Historical_Review_Is_Superseded_When_Physical_Source_Changes(
+        bool mutateRate)
+    {
+        var data = await SeedIssuanceReviewAsync();
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var repository = GetRequiredService<
+                IRepository<InvoiceIssuanceReviewTicket, Guid>>();
+            var ticket = await repository.GetAsync(data.ReviewId);
+            // Rehydrate an already completed historical design review.
+            // This test-only setup never grants issuance authorization.
+            typeof(InvoiceIssuanceReviewTicket)
+                .GetProperty(nameof(InvoiceIssuanceReviewTicket.Status))!
+                .SetValue(ticket, InvoiceIssuanceReviewStatus.ReviewedForDesign);
+            typeof(InvoiceIssuanceReviewTicket)
+                .GetProperty(nameof(InvoiceIssuanceReviewTicket.ReviewedByUserId))!
+                .SetValue(ticket, Guid.NewGuid());
+            typeof(InvoiceIssuanceReviewTicket)
+                .GetProperty(nameof(InvoiceIssuanceReviewTicket.ReviewedAtUtc))!
+                .SetValue(ticket, ticket.SubmittedAtUtc.AddMinutes(1));
+            typeof(InvoiceIssuanceReviewTicket)
+                .GetProperty(nameof(InvoiceIssuanceReviewTicket.ReviewReason))!
+                .SetValue(ticket, "Physical sources were reviewed before a change.");
+            await repository.UpdateAsync(ticket, autoSave: true);
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var before = await MakeReleaseReadinessService()
+                .GetAsync(data.RequestId);
+            Assert.True(before.StagedEvidenceMatchesCurrentDraft);
+            Assert.True(before.OriginalSourcesVerified);
+            Assert.True(before.IndependentDesignReviewRecorded);
+            Assert.True(before.IndependentReviewApplicableToCurrentDraft);
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var archive = await GetRequiredService<
+                IRepository<FinalInvoiceIssueEvidenceRecord, Guid>>()
+                .GetAsync(data.ArchiveId);
+            using var json = JsonDocument.Parse(archive.EvidenceJson);
+            var electricity = json.RootElement.GetProperty("Utilities")[0];
+            if (mutateRate)
+            {
+                var rateId = electricity.GetProperty("UtilityRateId").GetGuid();
+                var rate = await _rates.GetAsync(rateId);
+                rate.Update(rate.BuildingId, rate.UtilityType,
+                    rate.UnitPrice + 750m, rate.EffectiveFrom, rate.EffectiveTo,
+                    "Changed original tariff after design review");
+                await _rates.UpdateAsync(rate, autoSave: true);
+            }
+            else
+            {
+                var readingId = electricity.GetProperty("Sources")[0]
+                    .GetProperty("SourceId").GetGuid();
+                var reading = await _readings.GetAsync(readingId);
+                reading.Update(reading.CurrentReading + 1m,
+                    reading.ReadingDate, "Changed reading after design review");
+                await _readings.UpdateAsync(reading, autoSave: true);
+            }
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var after = await MakeReleaseReadinessService()
+                .GetAsync(data.RequestId);
+            Assert.True(after.StagedEvidenceMatchesCurrentDraft);
+            Assert.True(after.IndependentDesignReviewRecorded);
+            Assert.False(after.IndependentReviewApplicableToCurrentDraft);
+            Assert.False(after.OriginalSourcesVerified);
+            Assert.Contains(
+                "IndependentInvoiceReviewSupersededBySourceChanges",
+                after.Blockers);
+            Assert.Contains(
+                "OriginalInvoiceSourcesChangedOrIncomplete", after.Blockers);
+            Assert.Contains(mutateRate
+                    ? "OriginalSources:OriginalUtilityRateDiffersFromSnapshot"
+                    : "OriginalSources:OriginalMeterReadingDiffersFromSnapshot",
+                after.Blockers);
+            Assert.False(after.CanIssue);
+            Assert.False(after.CanPostReceivable);
+            Assert.Equal(InvoiceStatus.Draft,
+                (await _invoices.GetAsync(data.DraftId)).Status);
+        });
+    }
+
     [Fact]
     public async Task REPLACEMENTAUDITDB01_Original_Closing_And_New_Meter_Reading_Are_Verified()
     {

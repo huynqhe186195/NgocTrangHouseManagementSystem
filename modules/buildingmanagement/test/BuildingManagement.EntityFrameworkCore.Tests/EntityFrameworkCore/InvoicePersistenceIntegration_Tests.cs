@@ -1162,6 +1162,112 @@ public sealed class InvoicePersistenceIntegration_Tests
     }
 
     [Fact]
+    public async Task ISSUEREADYDB01_Persisted_FinalInvoice_Report_Remains_Unissued()
+    {
+        var data = await SeedIssuanceReviewAsync();
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var report = await MakeReleaseReadinessService()
+                .GetAsync(data.RequestId);
+
+            Assert.Equal(data.DraftId, report.DraftInvoiceId);
+            Assert.Equal(data.ArchiveId, report.StagedEvidenceId);
+            Assert.True(report.StagedEvidenceMatchesCurrentDraft);
+            Assert.False(report.IndependentDesignReviewRecorded);
+            Assert.Contains("IndependentInvoiceReviewNotReady", report.Blockers);
+            Assert.Contains("FinancialTerms:AuxiliaryFeeAssessmentNotProvided",
+                report.Blockers);
+            Assert.Contains("FinancialTerms:InvoiceDueDatePolicyNotProvided",
+                report.Blockers);
+            Assert.False(report.CanIssue);
+            Assert.False(report.CanPostReceivable);
+            Assert.False(report.CanSettleDeposit);
+            Assert.Equal(InvoiceStatus.Draft,
+                (await _invoices.GetAsync(data.DraftId)).Status);
+        });
+    }
+
+    [Fact]
+    public async Task ISSUEREADYDB02_Invoice_Staging_Becomes_Stale_After_Meter_Edit()
+    {
+        var data = await SeedIssuanceReviewAsync();
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var items = await GetRequiredService<IRepository<InvoiceItem, Guid>>()
+                .GetListAsync(x => x.InvoiceId == data.DraftId);
+            var electricityId = items.Single(x =>
+                x.UtilityType == UtilityType.Electricity).Id;
+            var sourceRepository = GetRequiredService<
+                IRepository<InvoiceItemMeterSource, Guid>>();
+            var source = (await sourceRepository.GetListAsync(x =>
+                x.InvoiceItemId == electricityId)).Single();
+            typeof(InvoiceItemMeterSource)
+                .GetProperty(nameof(InvoiceItemMeterSource.RecordedDate))!
+                .SetValue(source, new DateTime(2026, 10, 30));
+            await sourceRepository.UpdateAsync(source, autoSave: true);
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var report = await MakeReleaseReadinessService()
+                .GetAsync(data.RequestId);
+            Assert.Contains("StagedInvoiceEvidenceNoLongerCurrent",
+                report.Blockers);
+            Assert.False(report.StagedEvidenceMatchesCurrentDraft);
+            Assert.False(report.CanIssue);
+            Assert.Equal(InvoiceStatus.Draft,
+                (await _invoices.GetAsync(data.DraftId)).Status);
+        });
+    }
+
+    [Fact]
+    public async Task ISSUEREADYDB03_Unjournaled_Draft_Payment_Still_Blocks_Readiness()
+    {
+        var data = await SeedIssuanceReviewAsync();
+        var tenantId = Guid.NewGuid();
+        await WithUnitOfWorkAsync(async () =>
+        {
+            await GetRequiredService<IRepository<Tenant, Guid>>()
+                .InsertAsync(new Tenant(
+                    tenantId, "Release Readiness Payer",
+                    "0900000169", null, null, null,
+                    IdentityType.CitizenId, Guid.NewGuid().ToString("N")),
+                    autoSave: true);
+            var payment = new Payment(
+                Guid.NewGuid(),
+                "RELEASE-" + Guid.NewGuid().ToString("N"),
+                tenantId, PaymentPurpose.InvoicePayment,
+                PaymentMethod.BankTransfer, PaymentChannel.Manual, 100000m,
+                contractId: data.ContractId, invoiceId: data.DraftId);
+            payment.Complete(DateTime.UtcNow);
+            await GetRequiredService<IRepository<Payment, Guid>>()
+                .InsertAsync(payment, autoSave: true);
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var report = await MakeReleaseReadinessService()
+                .GetAsync(data.RequestId);
+
+            Assert.Contains("Allocations:CompletedInvoicePaymentUnjournaled",
+                report.Blockers);
+            Assert.Contains("Preflight:Payment:CompletedPaymentLinkedToUnissuedDraft",
+                report.Blockers);
+            Assert.False(report.CanPostReceivable);
+            Assert.Equal(InvoiceStatus.Draft,
+                (await _invoices.GetAsync(data.DraftId)).Status);
+        });
+    }
+
+    private FinalInvoiceReleaseReadinessAppService MakeReleaseReadinessService()
+        => new(
+            MakeIssuePreflightService(),
+            GetRequiredService<IRepository<FinalInvoiceIssueEvidenceRecord, Guid>>(),
+            GetRequiredService<IRepository<InvoiceIssuanceReviewTicket, Guid>>(),
+            MakeIssueDriftService(),
+            MakeAllocationReviewService());
+
+    [Fact]
     public async Task ISSUEREVIEWDB01_Submitted_Ticket_Persists_And_Draft_Remains_Unissued()
     {
         var data = await SeedIssuanceReviewAsync();
@@ -1262,8 +1368,8 @@ public sealed class InvoicePersistenceIntegration_Tests
         });
     }
 
-    private async Task<(Guid DraftId, Guid ArchiveId, Guid ReviewId, Guid SubmittedBy)>
-        SeedIssuanceReviewAsync()
+    private async Task<(Guid DraftId, Guid ArchiveId, Guid ReviewId, Guid SubmittedBy,
+        Guid RequestId, Guid ContractId)> SeedIssuanceReviewAsync()
     {
         var (fixture, readingId) = await SeedReadyOctoberAsync();
         var draft = CreateDraft(fixture, readingId, Guid.NewGuid());
@@ -1303,7 +1409,8 @@ public sealed class InvoicePersistenceIntegration_Tests
                 .InsertAsync(review, autoSave: true);
         });
 
-        return (draft.Id, archiveId, reviewId, submittedBy);
+        return (draft.Id, archiveId, reviewId, submittedBy,
+            requestId, fixture.ContractId);
     }
 
     [Fact]

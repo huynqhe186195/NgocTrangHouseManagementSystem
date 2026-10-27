@@ -282,6 +282,163 @@ public sealed class FinalMoveOutBillReview_Tests
         Assert.False(result.CanIssue);
     }
 
+    [Fact]
+    public void ISSUEAUTH01_Matching_Scopes_Still_Cannot_Issue_Without_Financial_Policy()
+    {
+        var (preflight, facts) = IssueFacts();
+
+        var result = InvoiceIssuanceScopePolicy.Assess(preflight, facts);
+
+        Assert.True(result.IsScopeConsistent);
+        Assert.Contains("FinancialIssuancePrerequisitesIncomplete", result.Blockers);
+        Assert.False(result.CanIssue);
+        Assert.False(result.CanPostReceivable);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ISSUEAUTH02_No_Authenticated_Or_Entitled_Issuer_Is_Denied(bool missingId)
+    {
+        var (preflight, facts) = IssueFacts();
+        var invalid = missingId
+            ? facts with { AuthenticatedIssuerId = null }
+            : facts with { IssuerBuildingMemberships = Array.Empty<Guid>() };
+
+        var result = InvoiceIssuanceScopePolicy.Assess(preflight, invalid);
+
+        Assert.Contains("IssuerIdentityOrBuildingPermissionDenied", result.Blockers);
+        Assert.False(result.IsScopeConsistent);
+        Assert.False(result.CanIssue);
+    }
+
+    [Fact]
+    public void ISSUEAUTH03_Permission_Denied_Cannot_Be_Circumvented_By_Membership()
+    {
+        var (preflight, facts) = IssueFacts();
+
+        var result = InvoiceIssuanceScopePolicy.Assess(
+            preflight, facts with { IssuerPermissionGranted = false });
+
+        Assert.Contains("IssuerIdentityOrBuildingPermissionDenied", result.Blockers);
+        Assert.False(result.CanIssue);
+    }
+
+    [Fact]
+    public void ISSUEAUTH04_Cross_Contract_Room_Or_Floor_Is_Rejected()
+    {
+        var (preflight, facts) = IssueFacts();
+        var crossed = facts with
+        {
+            ContractId = Guid.NewGuid(),
+            RoomFloorId = Guid.NewGuid()
+        };
+
+        var result = InvoiceIssuanceScopePolicy.Assess(preflight, crossed);
+
+        Assert.Contains("IssuerResourceRelationshipMismatch", result.Blockers);
+        Assert.False(result.IsScopeConsistent);
+    }
+
+    [Fact]
+    public void ISSUEAUTH05_Another_Draft_Or_MoveOut_Cannot_Borrow_Authority()
+    {
+        var (preflight, facts) = IssueFacts();
+        var reused = facts with
+        {
+            RequestedDraftInvoiceId = Guid.NewGuid(),
+            RequestedMoveOutId = Guid.NewGuid()
+        };
+
+        var result = InvoiceIssuanceScopePolicy.Assess(preflight, reused);
+
+        Assert.Contains("IssuerResourceRelationshipMismatch", result.Blockers);
+        Assert.False(result.CanIssue);
+    }
+
+    [Fact]
+    public void ISSUEAUTH06_Unverified_Evidence_Digest_Never_Qualifies()
+    {
+        var (preflight, facts) = IssueFacts();
+
+        var result = InvoiceIssuanceScopePolicy.Assess(
+            preflight, facts with { PersistedEvidenceSha256 = new string('0', 64) });
+
+        Assert.Contains("PersistedInvoiceEvidenceMismatch", result.Blockers);
+        Assert.False(result.IsScopeConsistent);
+    }
+
+    [Fact]
+    public void ISSUEAUTH07_Duplicate_Invoice_For_Same_Period_Is_Blocked()
+    {
+        var (preflight, facts) = IssueFacts();
+
+        var result = InvoiceIssuanceScopePolicy.Assess(
+            preflight, facts with { ExistingIssuedInvoiceForPeriod = true });
+
+        Assert.Contains("InvoiceAlreadyIssuedForBillingPeriod", result.Blockers);
+        Assert.False(result.CanIssue);
+    }
+
+    [Fact]
+    public void ISSUEAUTH08_NotDraft_Status_Is_Rejected_Without_Changing_Invoice()
+    {
+        var (preflight, facts) = IssueFacts();
+
+        var result = InvoiceIssuanceScopePolicy.Assess(
+            preflight, facts with { PersistedInvoiceStatus = (InvoiceStatus)1 });
+
+        Assert.Contains("PersistedInvoiceNotDraft", result.Blockers);
+        Assert.False(result.IsScopeConsistent);
+    }
+
+    [Fact]
+    public void ISSUEAUTH09_Null_Preflight_Or_Facts_Are_Denied()
+    {
+        var (preflight, facts) = IssueFacts();
+
+        Assert.Contains("IssuerScopeFactsUnavailable",
+            InvoiceIssuanceScopePolicy.Assess(null, facts).Blockers);
+        Assert.Contains("IssuerScopeFactsUnavailable",
+            InvoiceIssuanceScopePolicy.Assess(preflight, null).Blockers);
+    }
+
+    private static (FinalInvoiceIssuePreflight, InvoiceIssuanceScopeFacts)
+        IssueFacts()
+    {
+        var (request, contract, draft) = Fixture();
+        var bill = Review(request, contract, draft);
+        var package = Package(request, contract, draft,
+            new DateTime(2026, 11, 30, 20, 0, 0, DateTimeKind.Utc));
+        var payments = FinalMoveOutPaymentEvidenceEvaluator.Assess(
+            bill, Array.Empty<Payment>());
+        var preflight = FinalInvoiceIssuePreflightEvaluator.Assess(
+            bill, package, payments);
+        var buildingId = Guid.NewGuid();
+        var floorId = Guid.NewGuid();
+        var facts = new InvoiceIssuanceScopeFacts(
+            AuthenticatedIssuerId: Guid.NewGuid(),
+            IssuerPermissionGranted: true,
+            RequestedMoveOutId: request.Id,
+            PersistedMoveOutId: request.Id,
+            RequestedDraftInvoiceId: draft.Id,
+            PersistedDraftInvoiceId: draft.Id,
+            InvoiceContractId: contract.Id,
+            InvoiceRoomId: contract.RoomId,
+            ContractId: contract.Id,
+            ContractRoomId: contract.RoomId,
+            RoomId: contract.RoomId,
+            RoomFloorId: floorId,
+            FloorId: floorId,
+            FloorBuildingId: buildingId,
+            BuildingId: buildingId,
+            IssuerBuildingMemberships: new[] { buildingId },
+            PersistedInvoiceStatus: draft.Status,
+            PersistedEvidenceSha256: package.EvidenceSha256,
+            ExistingIssuedInvoiceForPeriod: false);
+        return (preflight, facts);
+    }
+
     private static FinalMoveOutBillReview Review(
         MoveOutRequest request, Contract contract, Invoice draft)
         => FinalMoveOutBillReviewEvaluator.Assess(

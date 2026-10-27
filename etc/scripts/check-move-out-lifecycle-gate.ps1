@@ -34,6 +34,8 @@ $issuePreflight = Read-Source 'modules/buildingmanagement/src/BuildingManagement
 $issuePreflightService = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/Invoices/FinalInvoiceIssuePreflightAppService.cs'
 $invoiceIssuanceScope = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/InvoiceIssuanceScopePolicy.cs'
 $issueEvidenceRecord = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/FinalInvoiceIssueEvidenceRecord.cs'
+$issueDriftReview = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/FinalInvoiceIssueEvidenceDriftReview.cs'
+$issueDriftService = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/Invoices/FinalInvoiceIssueEvidenceDriftAppService.cs'
 $issueEvidenceSchema = Read-Source 'modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/EntityConfigurations/FinalInvoiceIssueEvidenceRecordConfiguration.cs'
 $issueEvidenceDbContext = Read-Source 'modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/EntityFrameworkCore/BuildingManagementDbContext.cs'
 $depositLedgerReview = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/DepositSettlements/ContractDepositLedgerReview.cs'
@@ -239,6 +241,24 @@ if ($issueEvidenceRecord -notmatch 'IsInvoiceIssued\s*=>\s*false' -or
     $issueEvidenceDbContext -notmatch 'FinalInvoiceIssueEvidenceRecordConfiguration' -or
     $issueEvidenceRecord -match '(?m)^\s*public\s+(?:async\s+)?(?:void|Task|Task<\w+>)\s+(?:Issue|Post|Pay|Refund|Delete)\s*\(') {
     throw 'Safety stop: staged invoice issue evidence was promoted to a live financial ledger.'
+}
+
+# Archive checksum integrity alone cannot prove that the live draft
+# remains unchanged. Rebuild the current persisted source graph using the
+# ORIGINAL capture time, and reject stale/mismatched evidence. The audit
+# must remain hidden and must not issue, settle or post anything.
+if ($issueDriftReview -notmatch 'archived\.VerifyStoredEvidence\(' -or
+    $issueDriftReview -notmatch 'CapturedAtUtc' -or
+    $issueDriftReview -notmatch 'FinalInvoiceEvidencePackage\.Capture\(' -or
+    $issueDriftReview -notmatch 'ArchivedEvidenceDiffersFromCurrentDraft' -or
+    $issueDriftReview -notmatch 'CurrentDraftEvidenceInvalid' -or
+    $issueDriftReview -notmatch 'CanIssue\s*=>\s*false' -or
+    $issueDriftReview -notmatch 'IsReceivablePosted\s*=>\s*false' -or
+    $issueDriftService -notmatch '\[RemoteService\(IsEnabled\s*=\s*false\)\]' -or
+    $issueDriftService -notmatch '\[UnitOfWork\(isTransactional:\s*true\)\]' -or
+    $issueDriftService -notmatch '_sources\.GetListAsync\(' -or
+    $issueDriftService -match '\.(Issue|PostDebt|Pay|Refund|End|Complete|InsertAsync|UpdateAsync|DeleteAsync)\s*\(') {
+    throw 'Safety stop: staged evidence drift review lost its source-graph or nonposting guard.'
 }
 
 Write-Host 'MOVE-OUT LIFECYCLE SOURCE GATE PASS.'

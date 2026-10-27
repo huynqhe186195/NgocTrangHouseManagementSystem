@@ -26,6 +26,17 @@ $gate = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Applicati
 $delegation = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/Security/BuildingOperatorChangeDesignGate.cs'
 $queries = Read-Source 'modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Security/BuildingBusinessScopedCollectionQueries.cs'
 
+# A real SQL-backed membership reader may be tested in isolation but MUST
+# not be auto-registered. Until the production migration and ABP Identity
+# integration pass review, DenyAllBuildingOperatorGrantReader stays active.
+$candidateReader = Read-Source 'modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Security/EfBuildingOperatorGrantCandidateReader.cs'
+if ($candidateReader -notmatch 'class EfBuildingOperatorGrantCandidateReader' -or
+    $candidateReader -notmatch 'BuildingOperatorGrantCandidateQuery' -or
+    $candidateReader -match ':\s*IBuildingOperatorGrantReader\s*,\s*ITransientDependency' -or
+    $candidateReader -match '\[(ExposeServices|Dependency)\s*\(') {
+    throw 'Safety stop: candidate membership reader changed or was auto-registered.'
+}
+
 # The candidate grant schema MUST remain exclusive to disposable test DbContexts
 # until a reviewed migration, identity integration and complete CRUD guard exist.
 foreach ($source in @($db, $model)) {

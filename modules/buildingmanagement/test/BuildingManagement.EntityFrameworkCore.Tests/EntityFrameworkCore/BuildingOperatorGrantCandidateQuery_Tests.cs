@@ -1,11 +1,14 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using BuildingManagement.Buildings;
+using BuildingManagement.Security;
 using BuildingManagement.EntityFrameworkCore.EntityConfigurations;
 using BuildingManagement.EntityFrameworkCore.Security;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Volo.Abp.Authorization;
 using Xunit;
 
 namespace BuildingManagement.EntityFrameworkCore;
@@ -166,6 +169,181 @@ public sealed class BuildingOperatorGrantCandidateQuery_Tests
         }
 
         Assert.Empty(await ReadAsync(store, actor, At.AddMinutes(3)));
+    }
+
+    [Fact]
+    public async Task GRANTPOLICY01_Persisted_Authorization_Allows_A_But_Rejects_B()
+    {
+        using var store = await DesignStore.CreateAsync();
+        var actor = Guid.NewGuid();
+        var a = Guid.NewGuid();
+        var b = Guid.NewGuid();
+        await AddBuildingAsync(store, a);
+        await AddBuildingAsync(store, b);
+        await AddGrantAsync(store, actor, a, At.AddDays(-1), null);
+
+        await using var db = store.Open();
+        var policy = Policy(db, actor, At);
+        await policy.EnsureBuildingAsync(
+            a, BuildingBusinessCapability.ReadBuilding);
+        await policy.EnsureBuildingAsync(
+            a, BuildingBusinessCapability.ManageBuilding);
+        Assert.Equal(new[] { a }, await policy.GetAuthorizedBuildingIdsAsync(
+            BuildingBusinessCapability.ReadBuilding));
+
+        await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+            policy.EnsureBuildingAsync(b,
+                BuildingBusinessCapability.ReadBuilding));
+        await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+            policy.EnsureBuildingAsync(b,
+                BuildingBusinessCapability.ManageBuilding));
+    }
+
+    [Fact]
+    public async Task GRANTPOLICY02_Revocation_Is_Observed_Without_Reusing_Cached_Grant()
+    {
+        using var store = await DesignStore.CreateAsync();
+        var actor = Guid.NewGuid();
+        var building = Guid.NewGuid();
+        await AddBuildingAsync(store, building);
+        var grantId = await AddGrantAsync(
+            store, actor, building, At.AddDays(-1), null);
+
+        await using var readerDb = store.Open();
+        var policy = Policy(readerDb, actor, At);
+        await policy.EnsureBuildingAsync(
+            building, BuildingBusinessCapability.ManageBuilding);
+
+        // Another database context changes the persisted grant. The same
+        // policy/reader object must SELECT again, not cache an allowance.
+        await using (var writerDb = store.Open())
+        {
+            var grant = await writerDb.Grants.SingleAsync(x =>
+                x.Id == grantId);
+            grant.Revoke(Guid.NewGuid(), At.AddMinutes(1));
+            await writerDb.SaveChangesAsync();
+        }
+
+        await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+            policy.EnsureBuildingAsync(
+                building, BuildingBusinessCapability.ManageBuilding));
+        Assert.Empty(await new EfBuildingOperatorGrantCandidateReader(
+            readerDb, new FixedClock(At.AddMinutes(2)))
+            .GetActiveBuildingIdsAsync(actor));
+    }
+
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public async Task GRANTPOLICY03_Stored_Membership_Alone_Never_Bypasses_Identity_Or_Permission(
+        bool permissionGranted, bool accountActive)
+    {
+        using var store = await DesignStore.CreateAsync();
+        var actor = Guid.NewGuid();
+        var building = Guid.NewGuid();
+        await AddBuildingAsync(store, building);
+        await AddGrantAsync(store, actor, building, At, null);
+
+        await using var db = store.Open();
+        var policy = Policy(db, actor, At,
+            permissionGranted, accountActive);
+        await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+            policy.EnsureBuildingAsync(
+                building, BuildingBusinessCapability.ReadBuilding));
+    }
+
+    [Fact]
+    public async Task GRANTPOLICY04_Unmapped_Runtime_Model_Fails_Closed()
+    {
+        // No connection is opened or migrated. The real runtime model
+        // lacks membership mapping, so a candidate cannot grant access.
+        using var connection = new SqliteConnection("Data Source=:memory:");
+        using var db = new BuildingManagementDbContext(
+            new DbContextOptionsBuilder<BuildingManagementDbContext>()
+                .UseSqlite(connection).Options);
+        var reader = new EfBuildingOperatorGrantCandidateReader(
+            db, new FixedClock(At));
+
+        Assert.Empty(await reader.GetActiveBuildingIdsAsync(Guid.NewGuid()));
+        Assert.Empty(await reader.GetActiveBuildingIdsAsync(Guid.Empty));
+    }
+
+    [Fact]
+    public async Task GRANTPOLICY05_Expired_Stored_Membership_Denies_Fresh_Crud()
+    {
+        using var store = await DesignStore.CreateAsync();
+        var actor = Guid.NewGuid();
+        var building = Guid.NewGuid();
+        await AddBuildingAsync(store, building);
+        await AddGrantAsync(store, actor, building, At, At.AddMinutes(1));
+
+        await using var db = store.Open();
+        await Policy(db, actor, At).EnsureBuildingAsync(
+            building, BuildingBusinessCapability.ReadBuilding);
+        await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+            Policy(db, actor, At.AddMinutes(1)).EnsureBuildingAsync(
+                building, BuildingBusinessCapability.ReadBuilding));
+    }
+
+    private static BuildingCrudAccessPolicy Policy(
+        DesignDbContext db, Guid actor, DateTime now,
+        bool permissionGranted = true, bool accountActive = true)
+        => new(
+            new TestPrincipal(actor, permissionGranted),
+            new TestAccount(accountActive),
+            new EfBuildingOperatorGrantCandidateReader(db,
+                new FixedClock(now)),
+            new StoredBuildingReader(db));
+
+    private sealed class TestPrincipal : IBuildingBusinessPrincipalReader
+    {
+        private readonly Guid _actor;
+        private readonly bool _granted;
+
+        public TestPrincipal(Guid actor, bool granted)
+        {
+            _actor = actor;
+            _granted = granted;
+        }
+
+        public Task<BuildingBusinessPrincipal?> ReadAsync(
+            BuildingBusinessCapability capability)
+            => Task.FromResult<BuildingBusinessPrincipal?>(
+                new BuildingBusinessPrincipal(_actor, _granted));
+    }
+
+    private sealed class TestAccount : IBuildingOperatorActiveAccountReader
+    {
+        private readonly bool _active;
+        public TestAccount(bool active) => _active = active;
+        public Task<bool> IsActiveAsync(Guid id)
+            => Task.FromResult(_active);
+    }
+
+    private sealed class StoredBuildingReader
+        : IBuildingBusinessResourceScopeReader
+    {
+        private readonly DesignDbContext _db;
+        public StoredBuildingReader(DesignDbContext db) => _db = db;
+
+        public async Task<BuildingBusinessResolvedScope?> ReadAsync(
+            BuildingBusinessResourceKind kind, Guid resourceId)
+        {
+            if (kind != BuildingBusinessResourceKind.Building ||
+                resourceId == Guid.Empty ||
+                !await _db.Buildings.AsNoTracking().AnyAsync(b =>
+                    b.Id == resourceId && !b.IsDeleted))
+                return null;
+
+            return new BuildingBusinessResolvedScope(resourceId, resourceId);
+        }
+    }
+
+    private sealed class FixedClock : TimeProvider
+    {
+        private readonly DateTimeOffset _now;
+        public FixedClock(DateTime utc) => _now = new DateTimeOffset(utc);
+        public override DateTimeOffset GetUtcNow() => _now;
     }
 
     private static async Task<Guid[]> ReadAsync(

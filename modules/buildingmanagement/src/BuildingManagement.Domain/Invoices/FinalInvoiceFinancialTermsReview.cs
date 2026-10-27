@@ -144,20 +144,10 @@ public static class FinalInvoiceFinancialTermsEvaluator
         }
         else
         {
-            if (charges.Any(x => x is null ||
-                !Enum.IsDefined(x.Kind) ||
-                string.IsNullOrWhiteSpace(x.ServiceCode) ||
-                x.ServiceCode.Trim().Length > 64 ||
-                string.IsNullOrWhiteSpace(x.Description) ||
-                x.Description.Trim().Length > 500 ||
-                string.IsNullOrWhiteSpace(x.ContractOrRateReference) ||
-                x.ContractOrRateReference.Trim().Length > 200 ||
-                x.Quantity <= 0m || x.UnitPrice <= 0m ||
-                x.Amount <= 0m || x.Quantity * x.UnitPrice != x.Amount ||
-                decimal.Truncate(x.Amount) != x.Amount))
+            if (charges.Any(x => !HasValidPricingEvidence(x)))
                 review.Blockers.Add("AuxiliaryChargeMissingValidPricingEvidence");
 
-            if (charges.GroupBy(x =>
+            if (charges.Where(x => x is not null).GroupBy(x =>
                     (x.Kind, x.ServiceCode?.Trim().ToUpperInvariant()))
                 .Any(g => g.Count() > 1))
                 review.Blockers.Add("DuplicateAuxiliaryServiceCharge");
@@ -167,10 +157,45 @@ public static class FinalInvoiceFinancialTermsEvaluator
                     x is "VerifiedFinalInvoiceBaseEvidenceRequired" or
                         "InvoiceDueDatePolicyNotProvided" or
                         "ProposedTermsDoNotMatchInvoiceEvidence"))
-                review.ProposedAuxiliaryAmount = charges.Sum(x => x.Amount);
+            {
+                try
+                {
+                    review.ProposedAuxiliaryAmount = charges.Sum(x => x.Amount);
+                }
+                catch (OverflowException)
+                {
+                    review.Blockers.Add("AuxiliaryChargeTotalOverflow");
+                }
+            }
         }
 
         return Stop(review);
+    }
+
+    private static bool HasValidPricingEvidence(
+        FinalInvoiceAuxiliaryChargeProposal? line)
+    {
+        if (line is null ||
+            !Enum.IsDefined(line.Kind) ||
+            string.IsNullOrWhiteSpace(line.ServiceCode) ||
+            line.ServiceCode.Trim().Length > 64 ||
+            string.IsNullOrWhiteSpace(line.Description) ||
+            line.Description.Trim().Length > 500 ||
+            string.IsNullOrWhiteSpace(line.ContractOrRateReference) ||
+            line.ContractOrRateReference.Trim().Length > 200 ||
+            line.Quantity <= 0m || line.UnitPrice <= 0m ||
+            line.Amount <= 0m ||
+            decimal.Truncate(line.Amount) != line.Amount)
+            return false;
+
+        try
+        {
+            return line.Quantity * line.UnitPrice == line.Amount;
+        }
+        catch (OverflowException)
+        {
+            return false;
+        }
     }
 
     private static FinalInvoiceFinancialTermsReview Stop(
@@ -179,8 +204,17 @@ public static class FinalInvoiceFinancialTermsEvaluator
         if (review.Blockers.Count == 0 &&
             review.VerifiedBaseAmount.HasValue &&
             review.ProposedAuxiliaryAmount.HasValue)
-            review.ProposedGrandTotal =
-                review.VerifiedBaseAmount.Value + review.ProposedAuxiliaryAmount.Value;
+        {
+            try
+            {
+                review.ProposedGrandTotal =
+                    review.VerifiedBaseAmount.Value + review.ProposedAuxiliaryAmount.Value;
+            }
+            catch (OverflowException)
+            {
+                review.Blockers.Add("ProposedGrandTotalOverflow");
+            }
+        }
 
         // This is a domain input assessment only. Identity rights,
         // fee approval, immutable issued ledger and audited payment

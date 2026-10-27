@@ -32,6 +32,8 @@ $paymentState = Read-Source 'modules/buildingmanagement/src/BuildingManagement.D
 $issuedDebtCalculation = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/IssuedInvoicePaymentReconciler.cs'
 $depositLedgerReview = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/DepositSettlements/ContractDepositLedgerReview.cs'
 $depositLedgerService = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/DepositSettlements/ContractDepositLedgerReviewAppService.cs'
+$depositSettlement = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/DepositSettlements/DepositSettlement.cs'
+$depositErrorCodes = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain.Shared/BuildingManagementErrorCodes.cs'
 $finalEvidence = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/FinalInvoiceEvidencePackage.cs'
 $finalEvidenceService = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/Invoices/FinalInvoiceEvidencePackageAppService.cs'
 
@@ -157,6 +159,18 @@ if ($depositLedgerReview -notmatch 'DepositPaymentOverAllocatedOrCrossContract' 
     $depositLedgerService -notmatch '_softDeleteFilter\.Disable\(' -or
     $depositLedgerService -match '\.(Refund|Pay|Complete|End|Issue|InsertAsync|UpdateAsync|DeleteAsync)\s*\(') {
     throw 'Safety stop: deposit allocation ledger review no longer fail-closed.'
+}
+
+# Contract-held deposit forfeitures need a documented cause, including
+# legacy pending records. Do not extend this constraint to the independent
+# fixed reservation no-show forfeiture policy.
+if ($depositSettlement -notmatch 'EnsureContractForfeitReason\(type, sourceContractId, Notes\)' -or
+    $depositSettlement -notmatch 'EnsureContractForfeitReason\(Type, SourceContractId, Notes\)' -or
+    $depositSettlement -notmatch 'DepositSettlementType\.Forfeit' -or
+    $depositSettlement -notmatch 'sourceContractId\.HasValue' -or
+    $depositErrorCodes -notmatch 'ContractDepositForfeitReasonRequired' -or
+    $depositLedgerReview -notmatch 'ContractDepositForfeitReasonMissing') {
+    throw 'Safety stop: contract deposit forfeiture lost documented-reason guard.'
 }
 
 Write-Host 'MOVE-OUT LIFECYCLE SOURCE GATE PASS.'

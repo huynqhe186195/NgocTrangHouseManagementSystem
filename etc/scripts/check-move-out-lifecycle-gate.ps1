@@ -33,6 +33,8 @@ $issuedDebtCalculation = Read-Source 'modules/buildingmanagement/src/BuildingMan
 $issuePreflight = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/FinalInvoiceIssuePreflight.cs'
 $financialTermsReview = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/FinalInvoiceFinancialTermsReview.cs'
 $invoiceReleaseReadiness = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/FinalInvoiceReleaseReadiness.cs'
+$invoiceSourceProvenance = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/FinalInvoiceSourceProvenanceReview.cs'
+$invoiceSourceProvenanceService = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/Invoices/FinalInvoiceSourceProvenanceAppService.cs'
 $invoiceReleaseService = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/Invoices/FinalInvoiceReleaseReadinessAppService.cs'
 $issuePreflightService = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/Invoices/FinalInvoiceIssuePreflightAppService.cs'
 $invoiceIssuanceScope = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/InvoiceIssuanceScopePolicy.cs'
@@ -366,6 +368,10 @@ if ($financialTermsReview -notmatch 'AuxiliaryFeeAssessmentNotProvided' -or
 # stale evidence and contract-wide payment allocations. Policy blockers
 # may not be inferred away; an audit result cannot become a permission.
 if ($invoiceReleaseReadiness -notmatch 'StagedInvoiceEvidenceNoLongerCurrent' -or
+    $invoiceReleaseReadiness -notmatch 'OriginalInvoiceSourcesNotAudited' -or
+    $invoiceReleaseReadiness -notmatch 'OriginalInvoiceSourcesChangedOrIncomplete' -or
+    $invoiceReleaseReadiness -notmatch 'OriginalSourcesVerified' -or
+    $invoiceReleaseService -notmatch '_sourceProvenance\.GetAsync\(' -or
     $invoiceReleaseReadiness -notmatch 'IndependentReviewApplicableToCurrentDraft\s*\{' -or
     $invoiceReleaseReadiness -notmatch 'IndependentInvoiceReviewSupersededByDraftChange' -or
     $invoiceReleaseReadiness -notmatch 'IndependentInvoiceReviewSupersededByNewAnomalies' -or
@@ -384,6 +390,27 @@ if ($invoiceReleaseReadiness -notmatch 'StagedInvoiceEvidenceNoLongerCurrent' -o
     $invoiceReleaseService -notmatch '_allocationLedger\.GetAsync\(' -or
     $invoiceReleaseService -match '\.(Issue|Post|Pay|Refund|End|Complete|InsertAsync|UpdateAsync|DeleteAsync)\s*\(') {
     throw 'Safety stop: consolidated invoice release readiness lost source audit, policy blockers or nonposting boundary.'
+}
+
+# Original physical meter/rate source must be verified independently of
+# draft checksum. Missing or soft-deleted source rows are blockers;
+# replacement closings require typed source evidence verification.
+if ($invoiceSourceProvenance -notmatch 'archive\.VerifyStoredEvidence\(' -or
+    $invoiceSourceProvenance -notmatch 'OriginalMeterReadingDiffersFromSnapshot' -or
+    $invoiceSourceProvenance -notmatch 'OriginalMeterResourceScopeMismatch' -or
+    $invoiceSourceProvenance -notmatch 'OriginalUtilityRateDiffersFromSnapshot' -or
+    $invoiceSourceProvenance -notmatch 'ReplacementClosingSourceRequiresIndependentAudit' -or
+    $invoiceSourceProvenance -notmatch 'MatchesPersistedSources' -or
+    $invoiceSourceProvenance -notmatch 'CanIssue\s*=>\s*false' -or
+    $invoiceSourceProvenance -notmatch 'CanPostReceivable\s*=>\s*false' -or
+    $invoiceSourceProvenanceService -notmatch '\[RemoteService\(IsEnabled\s*=\s*false\)\]' -or
+    $invoiceSourceProvenanceService -notmatch '\[UnitOfWork\(isTransactional:\s*true\)\]' -or
+    $invoiceSourceProvenanceService -notmatch '_softDeleteFilter\.Disable\(' -or
+    $invoiceSourceProvenanceService -notmatch '_readings\.GetListAsync\(' -or
+    $invoiceSourceProvenanceService -notmatch '_rates\.GetListAsync\(' -or
+    $invoiceSourceProvenanceService -notmatch 'floor\?\.BuildingId' -or
+    $invoiceSourceProvenanceService -match '\.(Issue|Post|Pay|Refund|End|Complete|InsertAsync|UpdateAsync|DeleteAsync)\s*\(') {
+    throw 'Safety stop: original meter/rate source provenance audit lost scope or read-only controls.'
 }
 
 Write-Host 'MOVE-OUT LIFECYCLE SOURCE GATE PASS.'

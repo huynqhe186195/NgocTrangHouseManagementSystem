@@ -31,7 +31,8 @@ CREATE TABLE "BuildingManagementOperatorBuildingGrants" (
     CONSTRAINT "CK_BM_Grant_Revocation" CHECK (
         ("RevokedAtUtc" IS NULL AND "RevokedByUserId" IS NULL)
         OR
-        ("RevokedAtUtc" >= "GrantedAtUtc" AND
+        ("RevokedAtUtc" IS NOT NULL AND
+         "RevokedAtUtc" >= "GrantedAtUtc" AND
          "RevokedByUserId" IS NOT NULL AND
          "RevokedByUserId" <> '00000000-0000-0000-0000-000000000000'::uuid)
     )

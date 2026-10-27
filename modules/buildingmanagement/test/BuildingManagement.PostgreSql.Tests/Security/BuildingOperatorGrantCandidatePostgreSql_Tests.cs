@@ -119,12 +119,18 @@ public sealed class BuildingOperatorGrantCandidatePostgreSql_Tests
             await ExpectFailureAsync(connection, tx,
                 GrantInsert(Guid.NewGuid(), Guid.NewGuid(), building, 1,
                     "NULL", "'2026-10-28T00:00:00Z'"), "23514");
+            // PostgreSQL CHECK permits UNKNOWN. Explicit IS NOT NULL in
+            // the second disjunct must reject revoker-without-timestamp.
+            await ExpectFailureAsync(connection, tx,
+                GrantInsert(Guid.NewGuid(), Guid.NewGuid(), building, 1,
+                    "NULL", "NULL", $"'{Guid.NewGuid():D}'"), "23514");
         });
     }
 
     private static string GrantInsert(
         Guid id, Guid user, Guid building, int revision,
-        string expiry = "NULL", string revocation = "NULL")
+        string expiry = "NULL", string revocation = "NULL",
+        string revokedBy = "NULL")
         => $"""
            INSERT INTO "{Table}"
                ("Id", "OperatorUserId", "BuildingId", "GrantedByUserId",
@@ -133,7 +139,7 @@ public sealed class BuildingOperatorGrantCandidatePostgreSql_Tests
                 "ExtraProperties", "ConcurrencyStamp")
            VALUES ('{id:D}', '{user:D}', '{building:D}', '{Guid.NewGuid():D}',
                    '2026-10-27T00:00:00Z', {expiry}, {revocation},
-                   NULL, {revision}, '{{}}', '{Guid.NewGuid():N}');
+                   {revokedBy}, {revision}, '{{}}', '{Guid.NewGuid():N}');
            """;
 
     private static async Task InScratchAsync(

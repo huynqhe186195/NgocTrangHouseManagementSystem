@@ -488,6 +488,30 @@ public sealed class FinalMoveOutBillReview_Tests
     }
 
     [Fact]
+    public void ISSUEARCH05_Different_Capture_Times_Require_A_Matching_Preflight()
+    {
+        var (request, contract, draft) = Fixture();
+        var firstSnapshot = Package(request, contract, draft,
+            new DateTime(2026, 11, 30, 18, 0, 0, DateTimeKind.Utc));
+        var secondSnapshot = Package(request, contract, draft,
+            new DateTime(2026, 11, 30, 18, 0, 1, DateTimeKind.Utc));
+        var bill = Review(request, contract, draft);
+        var paymentEvidence = FinalMoveOutPaymentEvidenceEvaluator.Assess(
+            bill, Array.Empty<Payment>());
+        var firstPreflight = FinalInvoiceIssuePreflightEvaluator.Assess(
+            bill, firstSnapshot, paymentEvidence);
+
+        Assert.Equal(firstSnapshot.KnownRentAndUtilities,
+            secondSnapshot.KnownRentAndUtilities);
+        Assert.NotEqual(firstSnapshot.EvidenceSha256,
+            secondSnapshot.EvidenceSha256);
+        Assert.Throws<InvalidOperationException>(() =>
+            FinalInvoiceIssueEvidenceRecord.Prepare(
+                Guid.NewGuid(), Guid.NewGuid(), DateTime.UtcNow,
+                secondSnapshot, firstPreflight));
+    }
+
+    [Fact]
     public void ISSUEARCH04_Changed_Stored_Amount_Or_Json_Is_Detected()
     {
         var (evidence, preflight) = StagingFixture();

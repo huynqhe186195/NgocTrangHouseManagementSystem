@@ -17,6 +17,7 @@ namespace BuildingManagement.PostgreSqlTests;
 public sealed class BuildingOperatorGrantConcurrencyPostgreSql_Tests
 {
     private const string Table = "BuildingManagementOperatorBuildingGrants";
+    private const string TestProperties = "{\"source\":\"scratch\"}";
     private const string OptIn = "BM_PG_MEMBERSHIP_CONCURRENCY_OPT_IN";
     private const string Accepted = "I_ACCEPT_EPHEMERAL_SCHEMA";
 
@@ -175,7 +176,7 @@ public sealed class BuildingOperatorGrantConcurrencyPostgreSql_Tests
                 "ExtraProperties", "ConcurrencyStamp")
            VALUES ('{id:D}', '{user:D}', '{building:D}', '{Guid.NewGuid():D}',
                    '2026-10-27T00:00:00Z', NULL, NULL,
-                   NULL, 1, '{{"source":"scratch"}}', '{Guid.NewGuid():N}');
+                   NULL, 1, '{TestProperties}', '{Guid.NewGuid():N}');
            """;
 
     private static string RevokeIfRevision(Guid id, int expected)
@@ -312,9 +313,12 @@ public sealed class BuildingOperatorGrantConcurrencyPostgreSql_Tests
         }
     }
 
-    private static Task<int> ExecuteAsync(
+    private static async Task<int> ExecuteAsync(
         NpgsqlConnection connection, NpgsqlTransaction? tx, string sql)
-        => new NpgsqlCommand(sql, connection, tx).ExecuteNonQueryAsync();
+    {
+        await using var command = new NpgsqlCommand(sql, connection, tx);
+        return await command.ExecuteNonQueryAsync();
+    }
 
     private static async Task<long> CountAsync(
         NpgsqlConnection connection, NpgsqlTransaction? tx, string sql)

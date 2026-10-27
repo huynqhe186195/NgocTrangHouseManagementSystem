@@ -1,0 +1,69 @@
+name: Slice A PostgreSQL membership scratch checks
+
+on:
+  push:
+    branches:
+      - wip/phase-2g2
+    paths:
+      - ".github/workflows/buildingmanagement-slice-a-postgres.yml"
+      - "modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/**"
+      - "etc/phase-audits/SliceA_OperatorBuildingGrant_*.sql"
+  pull_request:
+    branches:
+      - wip/phase-2g2
+    paths:
+      - ".github/workflows/buildingmanagement-slice-a-postgres.yml"
+      - "modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/**"
+      - "etc/phase-audits/SliceA_OperatorBuildingGrant_*.sql"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: membership-scratch-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  isolated-postgres-grants:
+    name: Disposable PostgreSQL grant SQL and concurrency probes
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    # A NEW container is created for each job. No production credentials,
+    # servers, migrations, application databases or user-supplied SQL.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: ngoctrang_integration_test
+          POSTGRES_USER: slice_a_ci
+          POSTGRES_PASSWORD: slice_a_ephemeral_ci_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U slice_a_ci -d ngoctrang_integration_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      BM_PG_TEST_CONNECTION: "Host=127.0.0.1;Port=5432;Database=ngoctrang_integration_test;Username=slice_a_ci;Password=slice_a_ephemeral_ci_only"
+      BM_PG_MEMBERSHIP_CONCURRENCY_OPT_IN: I_ACCEPT_EPHEMERAL_SCHEMA
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Membership SQL rollback and concurrent transaction probes
+        run: |
+          dotnet test modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/BuildingManagement.PostgreSql.Tests.csproj \
+            --filter "FullyQualifiedName~BuildingOperatorGrantCandidatePostgreSql_Tests|FullyQualifiedName~BuildingOperatorGrantConcurrencyPostgreSql_Tests" \
+            --logger "console;verbosity=normal"
+
+# Does not start the ABP app, use EF Migrate/DbMigrator, alter runtime
+# identity/grants, or connect to any real user's PostgreSQL database.

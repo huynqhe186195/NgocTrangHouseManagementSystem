@@ -736,6 +736,77 @@ public sealed class InvoicePersistenceIntegration_Tests
     }
 
     [Fact]
+    public async Task FINALPACKAGEDB01_Captures_Persisted_Utility_Source_Graph()
+    {
+        var (fixture, electricitySourceId) = await SeedReadyOctoberAsync();
+        var draft = CreateDraft(fixture, electricitySourceId, Guid.NewGuid());
+        var requestId = Guid.NewGuid();
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var request = new MoveOutRequest(requestId, fixture.ContractId,
+                fixture.RoomId, new DateOnly(2026, 10, 31), "Final invoice evidence");
+            request.Approve(DateTime.UtcNow, null);
+            await GetRequiredService<IRepository<MoveOutRequest, Guid>>()
+                .InsertAsync(request, autoSave: true);
+            await _invoices.InsertAsync(draft, autoSave: true);
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var service = MakeFinalEvidenceService();
+            var snapshot = await service.GetAsync(requestId);
+            Assert.Equal(draft.Id, snapshot.DraftInvoiceId);
+            Assert.Equal(fixture.ContractId, snapshot.ContractId);
+            Assert.Equal(3_000_000m, snapshot.FullMonthRent);
+            Assert.Equal(3_110_000m, snapshot.KnownRentAndUtilities);
+            Assert.Equal(2, snapshot.Utilities.Count);
+            Assert.Equal(64, snapshot.EvidenceSha256.Length);
+            Assert.True(snapshot.VerifyChecksum());
+            Assert.Contains(snapshot.Utilities.SelectMany(x => x.Sources),
+                s => s.SourceId == electricitySourceId);
+            Assert.False(snapshot.CanIssue);
+            Assert.False(snapshot.IsReceivablePosted);
+
+            var stored = await _invoices.GetAsync(draft.Id);
+            Assert.Equal(InvoiceStatus.Draft, stored.Status);
+        });
+    }
+
+    [Fact]
+    public async Task FINALPACKAGEDB02_Prior_Period_Cannot_Be_Mistaken_For_Final()
+    {
+        var (fixture, electricitySourceId) = await SeedReadyOctoberAsync();
+        var draft = CreateDraft(fixture, electricitySourceId, Guid.NewGuid());
+        var requestId = Guid.NewGuid();
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var request = new MoveOutRequest(requestId, fixture.ContractId,
+                fixture.RoomId, new DateOnly(2026, 11, 30), "Final invoice evidence");
+            request.Approve(DateTime.UtcNow, null);
+            await GetRequiredService<IRepository<MoveOutRequest, Guid>>()
+                .InsertAsync(request, autoSave: true);
+            await _invoices.InsertAsync(draft, autoSave: true);
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var error = await Assert.ThrowsAsync<Volo.Abp.BusinessException>(
+                () => MakeFinalEvidenceService().GetAsync(requestId));
+            Assert.Equal(InvoiceDraftErrorCodes.CandidateNotReady, error.Code);
+            Assert.Equal(InvoiceStatus.Draft,
+                (await _invoices.GetAsync(draft.Id)).Status);
+        });
+    }
+
+    private FinalInvoiceEvidencePackageAppService MakeFinalEvidenceService()
+        => new(
+            GetRequiredService<IRepository<MoveOutRequest, Guid>>(),
+            _contracts, _invoices,
+            GetRequiredService<IRepository<InvoiceItem, Guid>>(),
+            GetRequiredService<IRepository<InvoiceItemMeterSource, Guid>>(),
+            GetRequiredService<Volo.Abp.Timing.IClock>());
+
+    [Fact]
     public async Task PAYSTATEDB01_Completed_Deposit_Remains_Completed_After_Reload()
     {
         var data = await SeedAsync();

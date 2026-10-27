@@ -800,6 +800,107 @@ public sealed class InvoicePersistenceIntegration_Tests
     }
 
     [Fact]
+    public async Task ISSUEARCHDB01_Staged_Issue_Evidence_Persists_Without_Posting_Invoice()
+    {
+        var (fixture, electricityReadingId) = await SeedReadyOctoberAsync();
+        var draft = CreateDraft(fixture, electricityReadingId, Guid.NewGuid());
+        var requestId = Guid.NewGuid();
+        var archiveId = Guid.NewGuid();
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var request = new MoveOutRequest(requestId, fixture.ContractId,
+                fixture.RoomId, new DateOnly(2026, 10, 31),
+                "Staged issue evidence");
+            request.Approve(DateTime.UtcNow, null);
+            await GetRequiredService<IRepository<MoveOutRequest, Guid>>()
+                .InsertAsync(request, autoSave: true);
+            await _invoices.InsertAsync(draft, autoSave: true);
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var preflight = await MakeIssuePreflightService().GetAsync(requestId);
+            var source = await MakeFinalEvidenceService().GetAsync(requestId);
+            var archive = FinalInvoiceIssueEvidenceRecord.Prepare(
+                archiveId, Guid.NewGuid(), DateTime.UtcNow, source, preflight);
+            await GetRequiredService<
+                IRepository<FinalInvoiceIssueEvidenceRecord, Guid>>()
+                .InsertAsync(archive, autoSave: true);
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var archive = await GetRequiredService<
+                IRepository<FinalInvoiceIssueEvidenceRecord, Guid>>()
+                .GetAsync(archiveId);
+            archive.VerifyStoredEvidence();
+            Assert.Equal(requestId, archive.MoveOutRequestId);
+            Assert.Equal(draft.Id, archive.DraftInvoiceId);
+            Assert.Equal(fixture.ContractId, archive.ContractId);
+            Assert.Equal(2026, archive.BillingYear);
+            Assert.Equal(10, archive.BillingMonth);
+            Assert.Equal(3_110_000m, archive.KnownBaseChargeTotal);
+            Assert.False(archive.IsInvoiceIssued);
+            Assert.False(archive.IsReceivablePosted);
+            Assert.Equal(InvoiceStatus.Draft,
+                (await _invoices.GetAsync(draft.Id)).Status);
+        });
+    }
+
+    [Fact]
+    public async Task ISSUEARCHDB02_Database_Rejects_Second_Archive_For_Same_Draft()
+    {
+        var (fixture, electricityReadingId) = await SeedReadyOctoberAsync();
+        var draft = CreateDraft(fixture, electricityReadingId, Guid.NewGuid());
+        var requestId = Guid.NewGuid();
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var request = new MoveOutRequest(requestId, fixture.ContractId,
+                fixture.RoomId, new DateOnly(2026, 10, 31),
+                "Duplicate issue evidence guard");
+            request.Approve(DateTime.UtcNow, null);
+            await GetRequiredService<IRepository<MoveOutRequest, Guid>>()
+                .InsertAsync(request, autoSave: true);
+            await _invoices.InsertAsync(draft, autoSave: true);
+        });
+
+        FinalInvoiceEvidencePackage source = null!;
+        FinalInvoiceIssuePreflight preflight = null!;
+        await WithUnitOfWorkAsync(async () =>
+        {
+            source = await MakeFinalEvidenceService().GetAsync(requestId);
+            preflight = await MakeIssuePreflightService().GetAsync(requestId);
+            var first = FinalInvoiceIssueEvidenceRecord.Prepare(
+                Guid.NewGuid(), Guid.NewGuid(), DateTime.UtcNow,
+                source, preflight);
+            await GetRequiredService<
+                IRepository<FinalInvoiceIssueEvidenceRecord, Guid>>()
+                .InsertAsync(first, autoSave: true);
+        });
+
+        var failure = await Record.ExceptionAsync(async () =>
+            await WithUnitOfWorkAsync(async () =>
+            {
+                var duplicate = FinalInvoiceIssueEvidenceRecord.Prepare(
+                    Guid.NewGuid(), Guid.NewGuid(), DateTime.UtcNow,
+                    source, preflight);
+                await GetRequiredService<
+                    IRepository<FinalInvoiceIssueEvidenceRecord, Guid>>()
+                    .InsertAsync(duplicate, autoSave: true);
+            }));
+        Assert.NotNull(failure);
+        Assert.Contains("UNIQUE", failure.ToString(),
+            StringComparison.OrdinalIgnoreCase);
+        await WithUnitOfWorkAsync(async () =>
+        {
+            Assert.Equal(InvoiceStatus.Draft,
+                (await _invoices.GetAsync(draft.Id)).Status);
+        });
+    }
+
+    [Fact]
     public async Task ISSUEGATEDB01_Preflight_Reads_Actual_Draft_And_Leaves_It_Unissued()
     {
         var (fixture, electricityReadingId) = await SeedReadyOctoberAsync();

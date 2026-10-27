@@ -736,6 +736,54 @@ public sealed class InvoicePersistenceIntegration_Tests
     }
 
     [Fact]
+    public async Task PAYSTATEDB01_Completed_Deposit_Remains_Completed_After_Reload()
+    {
+        var data = await SeedAsync();
+        var tenantId = Guid.NewGuid();
+        var paymentId = Guid.NewGuid();
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            await GetRequiredService<IRepository<Tenant, Guid>>().InsertAsync(
+                new Tenant(tenantId, "State Payer", "0900000137", null,
+                    null, null, IdentityType.CitizenId,
+                    Guid.NewGuid().ToString("N")), autoSave: true);
+
+            var receipt = new Payment(paymentId,
+                "PAYSTATE-DB-" + Guid.NewGuid().ToString("N"), tenantId,
+                PaymentPurpose.ContractDeposit, PaymentMethod.BankTransfer,
+                PaymentChannel.Manual, 3000000m,
+                contractId: data.ContractId);
+            receipt.Complete(DateTime.UtcNow,
+                "PAYSTATE-DB-" + Guid.NewGuid().ToString("N"));
+            await GetRequiredService<IRepository<Payment, Guid>>()
+                .InsertAsync(receipt, autoSave: true);
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var stored = await GetRequiredService<IRepository<Payment, Guid>>()
+                .GetAsync(paymentId);
+            var completedAt = stored.PaidAt;
+            Assert.Equal(PaymentStatus.Completed, stored.Status);
+            Assert.Equal(DepositDisposition.Unapplied, stored.DepositDisposition);
+            Assert.Throws<InvalidOperationException>(stored.Cancel);
+            Assert.Throws<InvalidOperationException>(stored.Fail);
+            Assert.Throws<InvalidOperationException>(() =>
+                stored.Complete(DateTime.UtcNow));
+            Assert.Equal(completedAt, stored.PaidAt);
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var persisted = await GetRequiredService<IRepository<Payment, Guid>>()
+                .GetAsync(paymentId);
+            Assert.Equal(PaymentStatus.Completed, persisted.Status);
+            Assert.Equal(DepositDisposition.Unapplied, persisted.DepositDisposition);
+        });
+    }
+
+    [Fact]
     public async Task FINPAYDB02_Pending_MoveOut_Has_No_Draft_Or_Assigned_Debt()
     {
         var data = await SeedAsync();

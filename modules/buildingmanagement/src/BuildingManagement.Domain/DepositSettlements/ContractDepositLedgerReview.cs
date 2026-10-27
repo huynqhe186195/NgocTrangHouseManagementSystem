@@ -16,6 +16,9 @@ public sealed class ContractDepositLedgerReview
 {
     public Guid MoveOutRequestId { get; init; }
     public Guid ContractId { get; init; }
+    // Completed direct receipts are OBSERVED cash, not an approved held
+    // balance or evidence of a completed DepositSettlement.
+    public decimal? ObservedCompletedContractDepositReceiptsTotal { get; internal set; }
     public decimal? VerifiedIncomingAllocationTotal { get; internal set; }
     public decimal? RecordedCompletedOutgoingTotal { get; internal set; }
     public int CompletedIncomingCount { get; internal set; }
@@ -69,6 +72,24 @@ public static class ContractDepositLedgerReviewEvaluator
             return result;
         }
 
+        var completedContractReceipts = payments.Where(x =>
+            x.Purpose == PaymentPurpose.ContractDeposit &&
+            x.ContractId == request.ContractId &&
+            x.Status == PaymentStatus.Completed).ToArray();
+        result.ObservedCompletedContractDepositReceiptsTotal =
+            completedContractReceipts.Sum(x => x.Amount);
+
+        // The existing completion workflow enforces unique transaction
+        // references; preserve that check when auditing legacy/imported
+        // records which did not pass through the normal workflow.
+        var paymentReferences = payments
+            .Where(x => x.Status == PaymentStatus.Completed &&
+                        !string.IsNullOrWhiteSpace(x.TransactionReference))
+            .Select(x => x.TransactionReference!.Trim()).ToArray();
+        if (paymentReferences.Distinct(StringComparer.OrdinalIgnoreCase).Count() !=
+            paymentReferences.Length)
+            result.Blockers.Add("DuplicateDepositTransactionReference");
+
         var incoming = settlements.Where(x =>
             x.TargetContractId == request.ContractId &&
             x.Type is DepositSettlementType.AllocateToContractDeposit or
@@ -97,6 +118,14 @@ public static class ContractDepositLedgerReviewEvaluator
 
         if (verified.Length == 0)
             result.Blockers.Add("NoCompletedDepositAllocation");
+
+        // Direct contract deposit payments are normally fully journaled
+        // at completion. A missing or partial allocation must never be
+        // reported as cleared/held, even when no journal references it.
+        if (completedContractReceipts.Any(payment =>
+                verified.Where(x => x.PaymentId == payment.Id)
+                    .Sum(x => x.Amount) != payment.Amount))
+            result.Blockers.Add("CompletedContractDepositNotFullyAllocated");
 
         var paymentMap = payments.ToDictionary(x => x.Id);
         foreach (var allocation in verified)

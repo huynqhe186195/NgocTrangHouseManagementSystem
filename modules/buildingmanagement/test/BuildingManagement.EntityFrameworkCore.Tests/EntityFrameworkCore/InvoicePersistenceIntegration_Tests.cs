@@ -1349,6 +1349,16 @@ public sealed class InvoicePersistenceIntegration_Tests
             var contract = await _contracts.GetAsync(f.ContractId);
             contract.Activate();
             await _contracts.UpdateAsync(contract, autoSave: true);
+
+            // The filtered database UNIQUE index permits only one ACTIVE
+            // electricity meter per room. A physical handover must retire
+            // the old meter before inserting its replacement; retain the
+            // historical old-meter row for source provenance verification.
+            var oldMeter = await _meters.GetAsync(f.ElectricityMeterId);
+            Assert.True(oldMeter.IsActive);
+            oldMeter.Deactivate();
+            await _meters.UpdateAsync(oldMeter, autoSave: true);
+
             await _meters.InsertAsync(new UtilityMeter(
                 newMeterId, f.RoomId, UtilityType.Electricity,
                 "NEW-" + Guid.NewGuid().ToString("N"),
@@ -1422,6 +1432,22 @@ public sealed class InvoicePersistenceIntegration_Tests
             await GetRequiredService<
                 IRepository<FinalInvoiceIssueEvidenceRecord, Guid>>()
                 .InsertAsync(archive, autoSave: true);
+        });
+
+        // The archived evidence must still refer to the deactivated
+        // historical electricity meter and the newly active one. Verify
+        // database constraints remain enforced in the test fixture.
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var electricityMeters = await _meters.GetListAsync(x =>
+                x.RoomId == f.RoomId &&
+                x.UtilityType == UtilityType.Electricity);
+            Assert.Equal(2, electricityMeters.Count);
+            Assert.False(electricityMeters.Single(x =>
+                x.Id == f.ElectricityMeterId).IsActive);
+            Assert.True(electricityMeters.Single(x =>
+                x.Id == newMeterId).IsActive);
+            Assert.Single(electricityMeters.Where(x => x.IsActive));
         });
 
         return (archiveId, requestId, draft.Id, replacementId, newMeterId);

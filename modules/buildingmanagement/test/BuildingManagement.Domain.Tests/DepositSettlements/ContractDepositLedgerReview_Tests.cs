@@ -170,6 +170,31 @@ public sealed class ContractDepositLedgerReview_Tests
         Assert.Null(audit.VerifiedIncomingAllocationTotal);
     }
 
+    [Fact]
+    public void DEPLEDGER11_Legacy_Contract_Forfeit_Without_Reason_Is_Flagged()
+    {
+        var (request, contract) = Fixture();
+        var payment = Receipt(PaymentPurpose.ContractDeposit, contract.Id);
+        var incoming = Allocation(contract.Id, payment.Id, payment.Amount);
+        var outgoing = new DepositSettlement(Guid.NewGuid(),
+            DepositSettlementType.Forfeit, 100000m,
+            sourceContractId: contract.Id,
+            notes: "Broken item observed");
+
+        // A historical record can be corrupted independently from today's
+        // validated constructor. The audit must expose missing reasons.
+        typeof(DepositSettlement)
+            .GetProperty(nameof(DepositSettlement.Notes))!
+            .SetValue(outgoing, null);
+
+        var audit = Assess(request, contract,
+            new[] { incoming, outgoing }, new[] { payment });
+
+        Assert.Contains("ContractDepositForfeitReasonMissing", audit.Blockers);
+        Assert.Null(audit.RefundableBalance);
+        Assert.False(audit.CanRefund);
+    }
+
     private static ContractDepositLedgerReview Assess(
         MoveOutRequest request, Contract contract,
         DepositSettlement[] settlements, Payment[] payments)

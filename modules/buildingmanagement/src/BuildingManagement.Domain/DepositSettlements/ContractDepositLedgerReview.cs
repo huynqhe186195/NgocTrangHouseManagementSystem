@@ -64,7 +64,9 @@ public static class ContractDepositLedgerReviewEvaluator
              !x.CompletedAt.HasValue)) ||
             settlements.Select(x => x.Id).Distinct().Count() != settlements.Length ||
             payments.Any(x => x is null || x.Id == Guid.Empty ||
-                x.IsDeleted || x.Amount <= 0 || !Enum.IsDefined(x.Status)) ||
+                x.IsDeleted || x.Amount <= 0 || !Enum.IsDefined(x.Status) ||
+                (x.Status == PaymentStatus.Completed && !x.PaidAt.HasValue) ||
+                (x.Status != PaymentStatus.Completed && x.PaidAt.HasValue)) ||
             payments.Select(x => x.Id).Distinct().Count() != payments.Length)
         {
             result.Blockers.Add("LedgerEvidenceInvalid");

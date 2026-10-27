@@ -32,6 +32,8 @@ $paymentState = Read-Source 'modules/buildingmanagement/src/BuildingManagement.D
 $issuedDebtCalculation = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/IssuedInvoicePaymentReconciler.cs'
 $issuePreflight = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/FinalInvoiceIssuePreflight.cs'
 $financialTermsReview = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/FinalInvoiceFinancialTermsReview.cs'
+$invoiceReleaseReadiness = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/FinalInvoiceReleaseReadiness.cs'
+$invoiceReleaseService = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/Invoices/FinalInvoiceReleaseReadinessAppService.cs'
 $issuePreflightService = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/Invoices/FinalInvoiceIssuePreflightAppService.cs'
 $invoiceIssuanceScope = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/InvoiceIssuanceScopePolicy.cs'
 $issuanceReviewTicket = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/InvoiceIssuanceReviewTicket.cs'
@@ -349,6 +351,27 @@ if ($financialTermsReview -notmatch 'AuxiliaryFeeAssessmentNotProvided' -or
     $issuePreflight -notmatch 'AuxiliaryFeePolicyUndecided' -or
     $issuePreflight -notmatch 'InvoiceDueDatePolicyUndecided') {
     throw 'Safety stop: proposed invoice financial terms bypassed fee, due-date or posting approval.'
+}
+
+# Consolidated final invoice issuance readiness remains read-only:
+# it MUST inspect the live draft, archived evidence, independent review,
+# stale evidence and contract-wide payment allocations. Policy blockers
+# may not be inferred away; an audit result cannot become a permission.
+if ($invoiceReleaseReadiness -notmatch 'StagedInvoiceEvidenceNoLongerCurrent' -or
+    $invoiceReleaseReadiness -notmatch 'IndependentInvoiceReviewNotReady' -or
+    $invoiceReleaseReadiness -notmatch 'FinalInvoiceFinancialTermsEvaluator\.Assess\(' -or
+    $invoiceReleaseReadiness -notmatch 'proposal:\s*null' -or
+    $invoiceReleaseReadiness -notmatch 'Allocations:' -or
+    $invoiceReleaseReadiness -notmatch 'CanIssue\s*=>\s*false' -or
+    $invoiceReleaseReadiness -notmatch 'CanPostReceivable\s*=>\s*false' -or
+    $invoiceReleaseReadiness -notmatch 'CanSettleDeposit\s*=>\s*false' -or
+    $invoiceReleaseService -notmatch '\[RemoteService\(IsEnabled\s*=\s*false\)\]' -or
+    $invoiceReleaseService -notmatch '\[UnitOfWork\(isTransactional:\s*true\)\]' -or
+    $invoiceReleaseService -notmatch '_preflight\.GetAsync\(' -or
+    $invoiceReleaseService -notmatch '_drift\.GetAsync\(' -or
+    $invoiceReleaseService -notmatch '_allocationLedger\.GetAsync\(' -or
+    $invoiceReleaseService -match '\.(Issue|Post|Pay|Refund|End|Complete|InsertAsync|UpdateAsync|DeleteAsync)\s*\(') {
+    throw 'Safety stop: consolidated invoice release readiness lost source audit, policy blockers or nonposting boundary.'
 }
 
 Write-Host 'MOVE-OUT LIFECYCLE SOURCE GATE PASS.'

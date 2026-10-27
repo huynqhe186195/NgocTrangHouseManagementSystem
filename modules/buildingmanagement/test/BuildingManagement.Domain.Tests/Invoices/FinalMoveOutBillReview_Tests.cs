@@ -1378,6 +1378,41 @@ public sealed class FinalMoveOutBillReview_Tests
         Assert.False(stale.CanSettleDeposit);
     }
 
+    [Fact]
+    public void ISSUEREADY08_Other_Invoice_Unjournaled_Receipt_Supersedes_Review()
+    {
+        var (archive, ticket, preflight, drift, _) =
+            ReviewedReleaseFixture();
+        var unrelatedPayment = new Payment(
+            Guid.NewGuid(),
+            "OTHER-INVOICE-" + Guid.NewGuid().ToString("N"),
+            Guid.NewGuid(), PaymentPurpose.InvoicePayment,
+            PaymentMethod.BankTransfer, PaymentChannel.Manual, 50000m,
+            contractId: preflight.ContractId,
+            invoiceId: Guid.NewGuid());
+        unrelatedPayment.Complete(DateTime.UtcNow);
+        // The per-draft payment audit does not see another invoice's
+        // receipt, but the contract-wide allocation ledger does.
+        var allocations = InvoicePaymentAllocationJournalAuditor.Assess(
+            Array.Empty<InvoicePaymentAllocationJournalEntry>(),
+            new[] { unrelatedPayment }, preflight.ContractId);
+
+        var result = FinalInvoiceReleaseReadinessEvaluator.Assess(
+            preflight, new[] { archive }, new[] { ticket },
+            drift, allocations);
+
+        Assert.True(result.StagedEvidenceMatchesCurrentDraft);
+        Assert.True(result.IndependentDesignReviewRecorded);
+        Assert.False(result.IndependentReviewApplicableToCurrentDraft);
+        Assert.Contains(
+            "IndependentInvoiceReviewSupersededByAllocationAnomalies",
+            result.Blockers);
+        Assert.Contains("Allocations:CompletedInvoicePaymentUnjournaled",
+            result.Blockers);
+        Assert.False(result.CanIssue);
+        Assert.False(result.CanSettleDeposit);
+    }
+
     private static (
         FinalInvoiceIssueEvidenceRecord Archive,
         InvoiceIssuanceReviewTicket Ticket,

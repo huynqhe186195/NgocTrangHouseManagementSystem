@@ -334,6 +334,14 @@ if ($issuanceReviewTicket -notmatch 'CanIssue\s*=>\s*false' -or
     throw 'Safety stop: staged two-person invoice review lost its audit or nonposting boundary.'
 }
 
+# Pending, failed or cancelled invoice receipts must never carry PaidAt.
+# Preserve the anomaly in final invoice preflight; do not infer payment.
+if ($paymentEvidenceModel -notmatch 'p\.Status != PaymentStatus\.Completed && p\.PaidAt\.HasValue' -or
+    $paymentEvidenceModel -notmatch 'InvoicePaymentAttributionInvalid' -or
+    $issuePreflight -notmatch 'Payment:' ) {
+    throw 'Safety stop: final invoice payment completion timestamp provenance is unchecked.'
+}
+
 # Final invoice auxiliary charges and payment due date have NO approved
 # default policy in the current SRS. An explicitly documented no-fee
 # assessment is not an authorization and may not be silently synthesized.
@@ -358,6 +366,9 @@ if ($financialTermsReview -notmatch 'AuxiliaryFeeAssessmentNotProvided' -or
 # stale evidence and contract-wide payment allocations. Policy blockers
 # may not be inferred away; an audit result cannot become a permission.
 if ($invoiceReleaseReadiness -notmatch 'StagedInvoiceEvidenceNoLongerCurrent' -or
+    $invoiceReleaseReadiness -notmatch 'IndependentReviewApplicableToCurrentDraft\s*\{' -or
+    $invoiceReleaseReadiness -notmatch 'IndependentInvoiceReviewSupersededByDraftChange' -or
+    $invoiceReleaseReadiness -notmatch 'IndependentInvoiceReviewSupersededByNewAnomalies' -or
     $invoiceReleaseReadiness -notmatch 'IndependentInvoiceReviewNotReady' -or
     $invoiceReleaseReadiness -notmatch 'FinalInvoiceFinancialTermsEvaluator\.Assess\(' -or
     $invoiceReleaseReadiness -notmatch 'proposal:\s*null' -or

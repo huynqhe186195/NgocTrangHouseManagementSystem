@@ -139,6 +139,47 @@ public static class ContractDepositLedgerReviewEvaluator
             }
         }
 
+        // An allocation and a reservation refund/forfeit can reference the
+        // SAME completed deposit Payment, even when the refund is not
+        // directly linked to this contract. The reader has loaded all
+        // settlement rows sharing each allocated PaymentId. Without this
+        // second cross-type check a single source receipt can be disposed
+        // twice while each individual allocation looks valid.
+        var allocatedPaymentIds = verified
+            .Where(x => x.PaymentId.HasValue)
+            .Select(x => x.PaymentId!.Value).ToHashSet();
+        foreach (var group in settlements
+            .Where(x => x.PaymentId.HasValue &&
+                        allocatedPaymentIds.Contains(x.PaymentId.Value) &&
+                        x.Type is DepositSettlementType.AllocateToContractDeposit or
+                            DepositSettlementType.Refund or
+                            DepositSettlementType.Forfeit)
+            .GroupBy(x => x.PaymentId!.Value))
+        {
+            var completed = group.Where(x =>
+                x.Status == DepositSettlementStatus.Completed).ToArray();
+            if (paymentMap.TryGetValue(group.Key, out var payment) &&
+                completed.Sum(x => x.Amount) > payment.Amount)
+                result.Blockers.Add("DepositPaymentDoubleDisposed");
+
+            if (completed.Any(x =>
+                    x.Type is DepositSettlementType.Refund or
+                        DepositSettlementType.Forfeit) &&
+                completed.Any(x =>
+                    x.Type == DepositSettlementType.AllocateToContractDeposit))
+                result.Blockers.Add("MixedDepositDispositionRequiresReview");
+
+            if (group.Any(x => x.Status == DepositSettlementStatus.Pending))
+                result.Blockers.Add("PendingDepositPaymentDispositionRequiresReview");
+        }
+
+        // Outgoing amount cannot exceed confirmed completed allocations.
+        // Incoming transfer provenance has not been verified, so this is
+        // an anomaly indicator, NOT a final cash-balance calculation.
+        if (outgoing.Where(x => x.Status == DepositSettlementStatus.Completed)
+                .Sum(x => x.Amount) > verified.Sum(x => x.Amount))
+            result.Blockers.Add("RecordedOutgoingExceedsVerifiedIncoming");
+
         // Legacy or externally modified forfeiture rows can bypass the
         // current DepositSettlement constructor. Audit must still surface
         // an undocumented deduction even if it was already marked Complete.

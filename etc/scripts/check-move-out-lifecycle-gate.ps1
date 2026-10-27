@@ -226,6 +226,12 @@ if ($issueEvidenceRecord -notmatch 'IsInvoiceIssued\s*=>\s*false' -or
     $issueEvidenceRecord -notmatch 'IsReceivablePosted\s*=>\s*false' -or
     $issueEvidenceRecord -notmatch 'VerifyStoredEvidence\(' -or
     $issueEvidenceRecord -notmatch 'SHA256\.HashData' -or
+    $issueEvidenceRecord -notmatch 'staged\.VerifyStoredEvidence\(\)' -or
+    $issueEvidenceRecord -notmatch 'source\.Current - source\.Previous' -or
+    $issueEvidenceRecord -notmatch 'source\.RecordedDate\.Month != BillingMonth' -or
+    $issueEvidenceRecord -notmatch 'source\.SourceId == Guid\.Empty' -or
+    $issueEvidenceRecord -notmatch 'x\.RateId == Guid\.Empty' -or
+    $issueEvidenceRecord -notmatch 'capturedAtUtc\.Kind != DateTimeKind\.Utc' -or
     $issueEvidenceSchema -notmatch 'UX_BM_FinalIssueEvidence_Draft' -or
     $issueEvidenceSchema -notmatch 'UX_BM_FinalIssueEvidence_Contract_Period' -or
     $issueEvidenceSchema -notmatch 'UX_BM_FinalIssueEvidence_Room_Period' -or

@@ -605,6 +605,115 @@ public sealed class FinalMoveOutBillReview_Tests
         Assert.False(record.IsReceivablePosted);
     }
 
+    [Fact]
+    public void ISSUEDRIFT01_Unchanged_Draft_Matches_Original_Capture()
+    {
+        var (archive, request, contract, draft) = DriftFixture();
+        var result = DriftReview(archive, request, contract, draft);
+
+        Assert.True(result.MatchesCurrentDraft);
+        Assert.DoesNotContain("ArchivedEvidenceDiffersFromCurrentDraft",
+            result.Blockers);
+        Assert.Contains("InvoiceIssuanceAndDebtPostingNotImplemented",
+            result.Blockers);
+        Assert.False(result.CanIssue);
+        Assert.False(result.IsReceivablePosted);
+    }
+
+    [Fact]
+    public void ISSUEDRIFT02_Changing_Stored_Utility_Rate_Id_Is_Detected()
+    {
+        var (archive, request, contract, draft) = DriftFixture();
+        var electricity = draft.Items.Single(x =>
+            x.UtilityType == UtilityType.Electricity);
+        typeof(InvoiceItem).GetProperty(nameof(InvoiceItem.UtilityRateId))!
+            .SetValue(electricity, Guid.NewGuid());
+
+        var result = DriftReview(archive, request, contract, draft);
+
+        Assert.False(result.MatchesCurrentDraft);
+        Assert.Contains("ArchivedEvidenceDiffersFromCurrentDraft", result.Blockers);
+        Assert.False(result.CanIssue);
+    }
+
+    [Fact]
+    public void ISSUEDRIFT03_Changing_Meter_Source_Reading_Is_Detected()
+    {
+        var (archive, request, contract, draft) = DriftFixture();
+        var electricitySource = draft.Items.Single(x =>
+            x.UtilityType == UtilityType.Electricity).MeterSources.Single();
+        typeof(InvoiceItemMeterSource)
+            .GetProperty(nameof(InvoiceItemMeterSource.CurrentReading))!
+            .SetValue(electricitySource, electricitySource.CurrentReading + 1m);
+
+        var result = DriftReview(archive, request, contract, draft);
+
+        Assert.False(result.MatchesCurrentDraft);
+        Assert.Contains("CurrentDraftEvidenceInvalid", result.Blockers);
+    }
+
+    [Fact]
+    public void ISSUEDRIFT04_Missing_Or_Ambiguous_Draft_Is_Never_Current()
+    {
+        var (archive, request, contract, draft) = DriftFixture();
+        var items = draft.Items.ToArray();
+        var sources = items.SelectMany(x => x.MeterSources).ToArray();
+
+        var missing = FinalInvoiceIssueEvidenceDriftEvaluator.Assess(
+            archive, request, contract, Array.Empty<Invoice>(),
+            items, sources);
+        var ambiguous = FinalInvoiceIssueEvidenceDriftEvaluator.Assess(
+            archive, request, contract, new[] { draft, draft },
+            items, sources);
+
+        Assert.False(missing.MatchesCurrentDraft);
+        Assert.False(ambiguous.MatchesCurrentDraft);
+        Assert.Contains("CurrentDraftMissingAmbiguousOrChanged", missing.Blockers);
+        Assert.Contains("CurrentDraftMissingAmbiguousOrChanged", ambiguous.Blockers);
+    }
+
+    [Fact]
+    public void ISSUEDRIFT05_Request_Scope_Change_Blocks_Reusing_Archive()
+    {
+        var (archive, _, contract, draft) = DriftFixture();
+        var otherRequest = new MoveOutRequest(
+            Guid.NewGuid(), contract.Id, contract.RoomId,
+            new DateOnly(2026, 11, 30), "Other request");
+        otherRequest.Approve(DateTime.UtcNow, null);
+
+        var result = DriftReview(archive, otherRequest, contract, draft);
+
+        Assert.False(result.MatchesCurrentDraft);
+        Assert.Contains("MoveOutOrContractScopeChanged", result.Blockers);
+    }
+
+    private static FinalInvoiceIssueEvidenceDriftReview DriftReview(
+        FinalInvoiceIssueEvidenceRecord archive,
+        MoveOutRequest request, Contract contract, Invoice draft)
+    {
+        var items = draft.Items.ToArray();
+        return FinalInvoiceIssueEvidenceDriftEvaluator.Assess(
+            archive, request, contract, new[] { draft }, items,
+            items.SelectMany(x => x.MeterSources).ToArray());
+    }
+
+    private static (FinalInvoiceIssueEvidenceRecord, MoveOutRequest, Contract, Invoice)
+        DriftFixture()
+    {
+        var (request, contract, draft) = Fixture();
+        var package = Package(request, contract, draft,
+            new DateTime(2026, 11, 30, 18, 0, 0, DateTimeKind.Utc));
+        var review = Review(request, contract, draft);
+        var receipts = FinalMoveOutPaymentEvidenceEvaluator.Assess(
+            review, Array.Empty<Payment>());
+        var preflight = FinalInvoiceIssuePreflightEvaluator.Assess(
+            review, package, receipts);
+        var archive = FinalInvoiceIssueEvidenceRecord.Prepare(
+            Guid.NewGuid(), Guid.NewGuid(), DateTime.UtcNow,
+            package, preflight);
+        return (archive, request, contract, draft);
+    }
+
     private static (FinalInvoiceEvidencePackage, FinalInvoiceIssuePreflight)
         StagingFixture()
     {

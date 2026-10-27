@@ -899,6 +899,150 @@ public sealed class InvoicePersistenceIntegration_Tests
             GetRequiredService<IRepository<InvoiceItemMeterSource, Guid>>());
 
     [Fact]
+    public async Task ALLOCJOURNALDB01_Staged_Receipt_Attribution_Persists_But_Does_Not_Reduce_Debt()
+    {
+        var fixture = await SeedAsync();
+        var draft = CreateDraft(fixture, Guid.NewGuid(), Guid.NewGuid());
+        var tenantId = Guid.NewGuid();
+        var paymentId = Guid.NewGuid();
+        var journalId = Guid.NewGuid();
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            await _invoices.InsertAsync(draft, autoSave: true);
+            await GetRequiredService<IRepository<Tenant, Guid>>().InsertAsync(
+                new Tenant(tenantId, "Allocation Ledger Payer",
+                    "0900000153", null, null, null,
+                    IdentityType.CitizenId, Guid.NewGuid().ToString("N")),
+                autoSave: true);
+
+            // Synthetic legacy receipt attributed to an unissued draft.
+            // Persisted journal is test-only and NEVER recognizes payment.
+            var receipt = new Payment(paymentId,
+                "ALLOC-DB-" + Guid.NewGuid().ToString("N"), tenantId,
+                PaymentPurpose.InvoicePayment, PaymentMethod.BankTransfer,
+                PaymentChannel.Manual, 250000m,
+                contractId: fixture.ContractId, invoiceId: draft.Id);
+            receipt.Complete(DateTime.UtcNow,
+                "TRACE-ALLOC-DB-" + Guid.NewGuid().ToString("N"));
+            await GetRequiredService<IRepository<Payment, Guid>>()
+                .InsertAsync(receipt, autoSave: true);
+            var staged = InvoicePaymentAllocationJournalEntry.StageForValidation(
+                journalId, receipt, draft.Id, Guid.NewGuid(), DateTime.UtcNow);
+            await GetRequiredService<
+                IRepository<InvoicePaymentAllocationJournalEntry, Guid>>()
+                .InsertAsync(staged, autoSave: true);
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var receipt = await GetRequiredService<IRepository<Payment, Guid>>()
+                .GetAsync(paymentId);
+            var staged = await GetRequiredService<
+                IRepository<InvoicePaymentAllocationJournalEntry, Guid>>()
+                .GetAsync(journalId);
+            staged.VerifySourceReceipt(receipt);
+            var audit = InvoicePaymentAllocationJournalAuditor.Assess(
+                new[] { staged }, new[] { receipt });
+            Assert.Equal(1, audit.VerifiedStagedEntryCount);
+            Assert.Equal(250000m, audit.VerifiedStagedAmount);
+            Assert.False(audit.CanPost);
+            Assert.False(audit.CanReduceDebt);
+            Assert.False(audit.CanSettleDeposit);
+            Assert.False(staged.IsRecognizedAllocation);
+            Assert.Equal(InvoiceStatus.Draft,
+                (await _invoices.GetAsync(draft.Id)).Status);
+        });
+    }
+
+    [Fact]
+    public async Task ALLOCJOURNALDB02_Second_Entry_For_Same_Payment_Is_Denied_By_Database()
+    {
+        var fixture = await SeedAsync();
+        var draft = CreateDraft(fixture, Guid.NewGuid(), Guid.NewGuid());
+        var tenantId = Guid.NewGuid();
+        var paymentId = Guid.NewGuid();
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            await _invoices.InsertAsync(draft, autoSave: true);
+            await GetRequiredService<IRepository<Tenant, Guid>>().InsertAsync(
+                new Tenant(tenantId, "Duplicate Allocation Payer",
+                    "0900000154", null, null, null,
+                    IdentityType.CitizenId, Guid.NewGuid().ToString("N")),
+                autoSave: true);
+
+            var receipt = new Payment(paymentId,
+                "ALLOC-DUP-" + Guid.NewGuid().ToString("N"), tenantId,
+                PaymentPurpose.InvoicePayment, PaymentMethod.BankTransfer,
+                PaymentChannel.Manual, 250000m,
+                contractId: fixture.ContractId, invoiceId: draft.Id);
+            receipt.Complete(DateTime.UtcNow);
+            await GetRequiredService<IRepository<Payment, Guid>>()
+                .InsertAsync(receipt, autoSave: true);
+            await GetRequiredService<
+                IRepository<InvoicePaymentAllocationJournalEntry, Guid>>()
+                .InsertAsync(
+                    InvoicePaymentAllocationJournalEntry.StageForValidation(
+                        Guid.NewGuid(), receipt, draft.Id,
+                        Guid.NewGuid(), DateTime.UtcNow), autoSave: true);
+        });
+
+        var error = await Record.ExceptionAsync(async () =>
+            await WithUnitOfWorkAsync(async () =>
+            {
+                var receipt =
+                    await GetRequiredService<IRepository<Payment, Guid>>()
+                        .GetAsync(paymentId);
+                await GetRequiredService<
+                    IRepository<InvoicePaymentAllocationJournalEntry, Guid>>()
+                    .InsertAsync(
+                        InvoicePaymentAllocationJournalEntry.StageForValidation(
+                            Guid.NewGuid(), receipt, draft.Id,
+                            Guid.NewGuid(), DateTime.UtcNow),
+                        autoSave: true);
+            }));
+
+        Assert.NotNull(error);
+        Assert.Contains("UNIQUE", error.ToString(),
+            StringComparison.OrdinalIgnoreCase);
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var all = await GetRequiredService<
+                IRepository<InvoicePaymentAllocationJournalEntry, Guid>>()
+                .GetListAsync(x => x.PaymentId == paymentId);
+            Assert.Single(all);
+            Assert.Equal(InvoiceStatus.Draft,
+                (await _invoices.GetAsync(draft.Id)).Status);
+        });
+    }
+
+    [Fact]
+    public async Task ALLOCJOURNALDB03_Journal_Requires_Existing_Source_Receipt()
+    {
+        var fixture = await SeedAsync();
+        var transient = new Payment(Guid.NewGuid(),
+            "ALLOC-FK-" + Guid.NewGuid().ToString("N"),
+            Guid.NewGuid(), PaymentPurpose.InvoicePayment,
+            PaymentMethod.BankTransfer, PaymentChannel.Manual, 250000m,
+            contractId: fixture.ContractId, invoiceId: Guid.NewGuid());
+        transient.Complete(DateTime.UtcNow);
+        var staged = InvoicePaymentAllocationJournalEntry.StageForValidation(
+            Guid.NewGuid(), transient, transient.InvoiceId!.Value,
+            Guid.NewGuid(), DateTime.UtcNow);
+
+        var failure = await Record.ExceptionAsync(async () =>
+            await WithUnitOfWorkAsync(async () =>
+                await GetRequiredService<
+                    IRepository<InvoicePaymentAllocationJournalEntry, Guid>>()
+                    .InsertAsync(staged, autoSave: true)));
+
+        Assert.NotNull(failure);
+        Assert.Contains("FOREIGN KEY", failure.ToString(),
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task ISSUEARCHDB01_Staged_Issue_Evidence_Persists_Without_Posting_Invoice()
     {
         var (fixture, electricityReadingId) = await SeedReadyOctoberAsync();

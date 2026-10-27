@@ -117,6 +117,7 @@
     "BuildingManagement:InvalidDepositSettlementAmount": "Deposit settlement amount must be greater than 0.",
     "BuildingManagement:InvalidDepositSettlementReference": "The deposit settlement references are invalid.",
     "BuildingManagement:DepositSettlementCannotBeCompleted": "This deposit settlement cannot be completed in its current status.",
+    "BuildingManagement:ContractDepositForfeitReasonRequired": "A reason describing the damage or other basis is required before forfeiting a contract deposit.",
     "BuildingManagement:ContractDepositNotPayable": "This contract cannot receive deposit payments in its current status.",
     "BuildingManagement:ContractDepositExceedsRemaining": "The contract deposit payment exceeds the remaining required deposit.",
     "BuildingManagement:ContractDepositAlreadyFullyPaid": "The contract deposit has already been fully paid.",

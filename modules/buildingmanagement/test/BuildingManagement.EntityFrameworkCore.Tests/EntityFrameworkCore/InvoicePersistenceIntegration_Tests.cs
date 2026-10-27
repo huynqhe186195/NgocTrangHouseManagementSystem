@@ -1161,6 +1161,106 @@ public sealed class InvoicePersistenceIntegration_Tests
             StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ISSUEREADYDB04_Stored_Historical_Review_Is_Superseded_By_New_Facts(
+        bool introduceInvoicePayment)
+    {
+        var data = await SeedIssuanceReviewAsync();
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var repository = GetRequiredService<
+                IRepository<InvoiceIssuanceReviewTicket, Guid>>();
+            var stored = await repository.GetAsync(data.ReviewId);
+            // Seed a historically completed signoff to test readback.
+            // Domain-level tests separately exercise real scope checks;
+            // this EF setup does NOT authorize any issuance workflow.
+            typeof(InvoiceIssuanceReviewTicket)
+                .GetProperty(nameof(InvoiceIssuanceReviewTicket.Status))!
+                .SetValue(stored, InvoiceIssuanceReviewStatus.ReviewedForDesign);
+            typeof(InvoiceIssuanceReviewTicket)
+                .GetProperty(nameof(InvoiceIssuanceReviewTicket.ReviewedByUserId))!
+                .SetValue(stored, Guid.NewGuid());
+            typeof(InvoiceIssuanceReviewTicket)
+                .GetProperty(nameof(InvoiceIssuanceReviewTicket.ReviewedAtUtc))!
+                .SetValue(stored, stored.SubmittedAtUtc.AddMinutes(1));
+            typeof(InvoiceIssuanceReviewTicket)
+                .GetProperty(nameof(InvoiceIssuanceReviewTicket.ReviewReason))!
+                .SetValue(stored, "Evidence reviewed before subsequent changes.");
+            await repository.UpdateAsync(stored, autoSave: true);
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var before = await MakeReleaseReadinessService()
+                .GetAsync(data.RequestId);
+            Assert.True(before.StagedEvidenceMatchesCurrentDraft);
+            Assert.True(before.IndependentDesignReviewRecorded);
+            Assert.True(before.IndependentReviewApplicableToCurrentDraft);
+            Assert.False(before.CanIssue);
+        });
+
+        if (introduceInvoicePayment)
+        {
+            await WithUnitOfWorkAsync(async () =>
+            {
+                var tenantId = Guid.NewGuid();
+                await GetRequiredService<IRepository<Tenant, Guid>>()
+                    .InsertAsync(new Tenant(
+                        tenantId, "Invoice Review Drift Payer",
+                        "0900000179", null, null, null,
+                        IdentityType.CitizenId, Guid.NewGuid().ToString("N")),
+                        autoSave: true);
+                var payment = new Payment(
+                    Guid.NewGuid(),
+                    "DRIFT-PAY-" + Guid.NewGuid().ToString("N"),
+                    tenantId, PaymentPurpose.InvoicePayment,
+                    PaymentMethod.BankTransfer, PaymentChannel.Manual,
+                    100000m, contractId: data.ContractId,
+                    invoiceId: data.DraftId);
+                payment.Complete(DateTime.UtcNow);
+                await GetRequiredService<IRepository<Payment, Guid>>()
+                    .InsertAsync(payment, autoSave: true);
+            });
+        }
+        else
+        {
+            await WithUnitOfWorkAsync(async () =>
+            {
+                var items = await GetRequiredService<
+                    IRepository<InvoiceItem, Guid>>()
+                    .GetListAsync(x => x.InvoiceId == data.DraftId);
+                var electricityId = items.Single(x =>
+                    x.UtilityType == UtilityType.Electricity).Id;
+                var sources = GetRequiredService<
+                    IRepository<InvoiceItemMeterSource, Guid>>();
+                var source = (await sources.GetListAsync(x =>
+                    x.InvoiceItemId == electricityId)).Single();
+                typeof(InvoiceItemMeterSource)
+                    .GetProperty(nameof(InvoiceItemMeterSource.RecordedDate))!
+                    .SetValue(source, new DateTime(2026, 10, 30));
+                await sources.UpdateAsync(source, autoSave: true);
+            });
+        }
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var after = await MakeReleaseReadinessService()
+                .GetAsync(data.RequestId);
+            Assert.True(after.IndependentDesignReviewRecorded);
+            Assert.False(after.IndependentReviewApplicableToCurrentDraft);
+            Assert.Contains(introduceInvoicePayment
+                    ? "IndependentInvoiceReviewSupersededByNewAnomalies"
+                    : "IndependentInvoiceReviewSupersededByDraftChange",
+                after.Blockers);
+            Assert.False(after.CanIssue);
+            Assert.False(after.CanPostReceivable);
+            Assert.Equal(InvoiceStatus.Draft,
+                (await _invoices.GetAsync(data.DraftId)).Status);
+        });
+    }
+
     [Fact]
     public async Task ISSUEREADYDB01_Persisted_FinalInvoice_Report_Remains_Unissued()
     {

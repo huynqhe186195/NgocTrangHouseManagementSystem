@@ -36,6 +36,7 @@ $invoiceIssuanceScope = Read-Source 'modules/buildingmanagement/src/BuildingMana
 $issueEvidenceRecord = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/FinalInvoiceIssueEvidenceRecord.cs'
 $paymentAllocationJournal = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/InvoicePaymentAllocationJournalEntry.cs'
 $paymentAllocationAudit = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/InvoicePaymentAllocationJournalAudit.cs'
+$paymentAllocationReviewService = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/Invoices/InvoicePaymentAllocationLedgerReviewAppService.cs'
 $paymentAllocationSchema = Read-Source 'modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/EntityConfigurations/InvoicePaymentAllocationJournalEntryConfiguration.cs'
 $issueDriftReview = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/FinalInvoiceIssueEvidenceDriftReview.cs'
 $issueDriftService = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/Invoices/FinalInvoiceIssueEvidenceDriftAppService.cs'
@@ -286,6 +287,23 @@ if ($paymentAllocationJournal -notmatch 'IsRecognizedAllocation\s*=>\s*false' -o
     $issueEvidenceDbContext -notmatch 'InvoicePaymentAllocationJournalEntryConfiguration' -or
     $paymentAllocationJournal -match '(?m)^\s*public\s+(?:async\s+)?(?:void|Task|Task<\w+>)\s+(?:Issue|Post|Pay|Refund|Delete)\s*\(') {
     throw 'Safety stop: staged allocation journal escaped source-receipt uniqueness or money-posting boundary.'
+}
+
+# A contract-wide audit must discover completed invoice receipts that
+# have NO journal entry, and detect claims made from another contract.
+# Include soft-deleted Payment history. This remains an internal read-only
+# diagnostic and must never reduce debt or allocate security deposits.
+if ($paymentAllocationAudit -notmatch 'CompletedInvoicePaymentUnjournaled' -or
+    $paymentAllocationAudit -notmatch 'CompletedInvoicePaymentUnattributed' -or
+    $paymentAllocationAudit -notmatch 'CrossContractAllocationInLedger' -or
+    $paymentAllocationReviewService -notmatch '\[RemoteService\(IsEnabled\s*=\s*false\)\]' -or
+    $paymentAllocationReviewService -notmatch '\[UnitOfWork\(isTransactional:\s*true\)\]' -or
+    $paymentAllocationReviewService -notmatch '_softDeleteFilter\.Disable\(' -or
+    $paymentAllocationReviewService -notmatch 'receiptIds\.Contains\(x\.PaymentId\)' -or
+    $paymentAllocationReviewService -notmatch 'journalPaymentIds\.Contains\(x\.Id\)' -or
+    $paymentAllocationReviewService -notmatch 'journal, receipts, contractId' -or
+    $paymentAllocationReviewService -match '\.(Issue|Post|Pay|Refund|End|Complete|InsertAsync|UpdateAsync|DeleteAsync)\s*\(') {
+    throw 'Safety stop: contract-wide invoice allocation review lost full receipt scope or nonposting boundary.'
 }
 
 Write-Host 'MOVE-OUT LIFECYCLE SOURCE GATE PASS.'

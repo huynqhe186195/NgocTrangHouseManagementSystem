@@ -19,7 +19,7 @@ public sealed class FinalInvoiceIssueEvidenceRecordConfiguration
         {
             t.HasCheckConstraint(
                 "CK_BM_FinalIssueEvidence_Positive",
-                "\"\"KnownBaseChargeTotal\"\" > 0".Replace("\"\"", "\""));
+                "\"KnownBaseChargeTotal\" > 0");
             t.HasCheckConstraint(
                 "CK_BM_FinalIssueEvidence_Period",
                 "\"BillingYear\" BETWEEN 2000 AND 2200 AND " +

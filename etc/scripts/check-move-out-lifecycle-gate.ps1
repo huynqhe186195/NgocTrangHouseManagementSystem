@@ -369,6 +369,7 @@ if ($invoiceReleaseReadiness -notmatch 'StagedInvoiceEvidenceNoLongerCurrent' -o
     $invoiceReleaseReadiness -notmatch 'IndependentReviewApplicableToCurrentDraft\s*\{' -or
     $invoiceReleaseReadiness -notmatch 'IndependentInvoiceReviewSupersededByDraftChange' -or
     $invoiceReleaseReadiness -notmatch 'IndependentInvoiceReviewSupersededByNewAnomalies' -or
+    $invoiceReleaseReadiness -notmatch 'IndependentInvoiceReviewSupersededByAllocationAnomalies' -or
     $invoiceReleaseReadiness -notmatch 'IndependentInvoiceReviewNotReady' -or
     $invoiceReleaseReadiness -notmatch 'FinalInvoiceFinancialTermsEvaluator\.Assess\(' -or
     $invoiceReleaseReadiness -notmatch 'proposal:\s*null' -or

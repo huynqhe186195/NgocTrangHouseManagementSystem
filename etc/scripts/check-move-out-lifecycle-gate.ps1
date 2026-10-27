@@ -31,6 +31,7 @@ $paymentEvidenceModel = Read-Source 'modules/buildingmanagement/src/BuildingMana
 $paymentState = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Payments/Payment.cs'
 $issuedDebtCalculation = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/IssuedInvoicePaymentReconciler.cs'
 $issuePreflight = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/FinalInvoiceIssuePreflight.cs'
+$financialTermsReview = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/FinalInvoiceFinancialTermsReview.cs'
 $issuePreflightService = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/Invoices/FinalInvoiceIssuePreflightAppService.cs'
 $invoiceIssuanceScope = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/InvoiceIssuanceScopePolicy.cs'
 $issuanceReviewTicket = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/InvoiceIssuanceReviewTicket.cs'
@@ -329,6 +330,25 @@ if ($issuanceReviewTicket -notmatch 'CanIssue\s*=>\s*false' -or
     $issueEvidenceDbContext -notmatch 'InvoiceIssuanceReviewTicketConfiguration' -or
     $issuanceReviewTicket -match '(?m)^\s*public\s+(?:async\s+)?(?:void|Task|Task<\w+>)\s+(?:Issue|Post|Pay|Refund|End|Delete)\s*\(') {
     throw 'Safety stop: staged two-person invoice review lost its audit or nonposting boundary.'
+}
+
+# Final invoice auxiliary charges and payment due date have NO approved
+# default policy in the current SRS. An explicitly documented no-fee
+# assessment is not an authorization and may not be silently synthesized.
+# Damage compensation and deposit offsets have separate approval workflows.
+if ($financialTermsReview -notmatch 'AuxiliaryFeeAssessmentNotProvided' -or
+    $financialTermsReview -notmatch 'InvoiceDueDatePolicyNotProvided' -or
+    $financialTermsReview -notmatch 'AuxiliaryFeeAssessmentDecision\.ExplicitlyNoCharges' -or
+    $financialTermsReview -notmatch 'ProposedTermsDoNotMatchInvoiceEvidence' -or
+    $financialTermsReview -notmatch 'DuplicateAuxiliaryServiceCharge' -or
+    $financialTermsReview -notmatch 'AuxiliaryChargeMissingValidPricingEvidence' -or
+    $financialTermsReview -notmatch 'FinancialTermsProposalIsNotPostingAuthorization' -or
+    $financialTermsReview -notmatch 'CanIssue\s*=>\s*false' -or
+    $financialTermsReview -notmatch 'IsReceivablePosted\s*=>\s*false' -or
+    $financialTermsReview -notmatch 'CanSettleDeposit\s*=>\s*false' -or
+    $issuePreflight -notmatch 'AuxiliaryFeePolicyUndecided' -or
+    $issuePreflight -notmatch 'InvoiceDueDatePolicyUndecided') {
+    throw 'Safety stop: proposed invoice financial terms bypassed fee, due-date or posting approval.'
 }
 
 Write-Host 'MOVE-OUT LIFECYCLE SOURCE GATE PASS.'

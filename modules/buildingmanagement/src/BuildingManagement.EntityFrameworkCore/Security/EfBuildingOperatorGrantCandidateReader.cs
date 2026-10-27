@@ -12,7 +12,9 @@ namespace BuildingManagement.EntityFrameworkCore.Security;
 /// callers must still verify the authenticated ABP account, operation
 /// permission, resource graph and transaction/revocation boundary.
 ///
-/// Does not implement the Application-layer grant-reader interface: EF Core\n/// must not depend on Application. Tests adapt it explicitly, while runtime\n/// uses its Deny-All reader. No DI marker or service exposure. Runtime retains
+/// Does not implement the Application-layer grant-reader interface: EF Core
+/// must not depend on Application. Tests adapt it explicitly, while runtime
+/// uses its Deny-All reader. No DI marker or service exposure. Runtime retains
 /// DenyAllBuildingOperatorGrantReader until the reviewed grant migration,
 /// active Identity adapter and atomic write protocol are ready.
 /// </summary>

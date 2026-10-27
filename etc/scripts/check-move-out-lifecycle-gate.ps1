@@ -152,6 +152,10 @@ if ($paymentState -notmatch 'EnsureUnappliedCompletedDeposit\("apply"\)' -or
 # must never produce an authorized refundable balance.
 if ($depositLedgerReview -notmatch 'DepositPaymentOverAllocatedOrCrossContract' -or
     $depositLedgerReview -notmatch 'DepositAllocationPaymentMismatch' -or
+    $depositLedgerReview -notmatch 'DepositPaymentDoubleDisposed' -or
+    $depositLedgerReview -notmatch 'MixedDepositDispositionRequiresReview' -or
+    $depositLedgerReview -notmatch 'PendingDepositPaymentDispositionRequiresReview' -or
+    $depositLedgerReview -notmatch 'RecordedOutgoingExceedsVerifiedIncoming' -or
     $depositLedgerReview -notmatch 'RefundableBalance\s*=>\s*null' -or
     $depositLedgerReview -notmatch 'CanRefund\s*=>\s*false' -or
     $depositLedgerReview -notmatch 'CanOffsetDebt\s*=>\s*false' -or

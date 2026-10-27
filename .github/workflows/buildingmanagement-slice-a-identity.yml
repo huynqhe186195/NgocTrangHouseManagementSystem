@@ -1,0 +1,47 @@
+name: Slice A isolated ABP Identity membership composition
+
+on:
+  push:
+    branches:
+      - wip/phase-2g2
+    paths:
+      - "test/NgocTrangHouseManagementSystem.HttpApi.Host.Tests/**"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/AbpIdentityBuildingOperatorAccountProbe.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Properties/AssemblyInfo.cs"
+      - ".github/workflows/buildingmanagement-slice-a-identity.yml"
+  pull_request:
+    branches:
+      - wip/phase-2g2
+    paths:
+      - "test/NgocTrangHouseManagementSystem.HttpApi.Host.Tests/**"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/AbpIdentityBuildingOperatorAccountProbe.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Properties/AssemblyInfo.cs"
+      - ".github/workflows/buildingmanagement-slice-a-identity.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: slice-a-identity-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  isolated-identity-composition:
+    name: ABP identity + permission + SQLite membership test composition
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Run only isolated Identity composition tests
+        run: |
+          dotnet test test/NgocTrangHouseManagementSystem.HttpApi.Host.Tests/NgocTrangHouseManagementSystem.HttpApi.Host.Tests.csproj \
+            --filter "FullyQualifiedName~BuildingIdentityMembershipComposition_Tests" \
+            --logger "console;verbosity=normal"
+
+# No PostgreSQL or production Identity database, credentials, EF migrations,
+# privileged grant registration, role assignments, or live HTTP host.

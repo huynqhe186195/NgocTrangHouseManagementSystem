@@ -113,6 +113,10 @@ namespace BuildingManagement.Payments
             DateTime paidAt,
             string? transactionReference = null)
         {
+            EnsurePendingTransition("complete");
+            if (paidAt == default)
+                throw new ArgumentException("Completion timestamp is required.", nameof(paidAt));
+
             PaidAt =
                 paidAt;
 
@@ -141,14 +145,24 @@ namespace BuildingManagement.Payments
 
         public void Fail()
         {
-            Status =
-                PaymentStatus.Failed;
+            EnsurePendingTransition("fail");
+            Status = PaymentStatus.Failed;
         }
 
         public void Cancel()
         {
-            Status =
-                PaymentStatus.Cancelled;
+            EnsurePendingTransition("cancel");
+            Status = PaymentStatus.Cancelled;
+        }
+
+        private void EnsurePendingTransition(string transition)
+        {
+            // Completed financial receipts must never be silently rolled
+            // back by a generic state transition. Corrections/refunds
+            // require a separately audited, approved financial workflow.
+            if (Status != PaymentStatus.Pending)
+                throw new InvalidOperationException(
+                    $"Cannot {transition} a payment in status {Status}.");
         }
 
         public void MarkDepositAsAppliedToContract()

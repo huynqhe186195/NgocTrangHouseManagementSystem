@@ -195,6 +195,107 @@ public sealed class ContractDepositLedgerReview_Tests
         Assert.False(audit.CanRefund);
     }
 
+    [Fact]
+    public void DEPLEDGER12_Allocation_Plus_Refund_Cannot_Exceed_One_Receipt()
+    {
+        var (request, contract) = Fixture();
+        var reservationId = Guid.NewGuid();
+        var payment = Receipt(PaymentPurpose.ReservationDeposit,
+            contract.Id, reservationId: reservationId);
+        var allocation = Allocation(contract.Id, payment.Id, 400000m,
+            reservationId);
+        var refund = new DepositSettlement(Guid.NewGuid(),
+            DepositSettlementType.Refund, 200000m, paymentId: payment.Id,
+            sourceRoomReservationId: reservationId);
+        refund.Complete(DateTime.UtcNow);
+
+        var audit = Assess(request, contract,
+            new[] { allocation, refund }, new[] { payment });
+        Assert.Contains("DepositPaymentDoubleDisposed", audit.Blockers);
+        Assert.Contains("MixedDepositDispositionRequiresReview", audit.Blockers);
+        Assert.Null(audit.VerifiedIncomingAllocationTotal);
+        Assert.False(audit.CanRefund);
+    }
+
+    [Fact]
+    public void DEPLEDGER13_Partial_Allocation_And_Refund_Require_Review()
+    {
+        var (request, contract) = Fixture();
+        var reservationId = Guid.NewGuid();
+        var payment = Receipt(PaymentPurpose.ReservationDeposit,
+            contract.Id, reservationId: reservationId);
+        var allocation = Allocation(contract.Id, payment.Id, 200000m,
+            reservationId);
+        var refund = new DepositSettlement(Guid.NewGuid(),
+            DepositSettlementType.Refund, 300000m,
+            paymentId: payment.Id, sourceRoomReservationId: reservationId);
+        refund.Complete(DateTime.UtcNow);
+
+        var audit = Assess(request, contract,
+            new[] { allocation, refund }, new[] { payment });
+        Assert.DoesNotContain("DepositPaymentDoubleDisposed", audit.Blockers);
+        Assert.Contains("MixedDepositDispositionRequiresReview", audit.Blockers);
+        Assert.Null(audit.VerifiedIncomingAllocationTotal);
+    }
+
+    [Fact]
+    public void DEPLEDGER14_Pending_Refund_For_Allocated_Receipt_Is_Not_Ignored()
+    {
+        var (request, contract) = Fixture();
+        var reservationId = Guid.NewGuid();
+        var payment = Receipt(PaymentPurpose.ReservationDeposit,
+            contract.Id, reservationId: reservationId);
+        var allocation = Allocation(contract.Id, payment.Id, 500000m,
+            reservationId);
+        var pendingRefund = new DepositSettlement(Guid.NewGuid(),
+            DepositSettlementType.Refund, 100000m,
+            paymentId: payment.Id, sourceRoomReservationId: reservationId);
+
+        var audit = Assess(request, contract,
+            new[] { allocation, pendingRefund }, new[] { payment });
+        Assert.Contains("PendingDepositPaymentDispositionRequiresReview",
+            audit.Blockers);
+        Assert.Null(audit.VerifiedIncomingAllocationTotal);
+    }
+
+    [Fact]
+    public void DEPLEDGER15_Contract_Refund_Larger_Than_Confirmed_Deposit_Is_Flagged()
+    {
+        var (request, contract) = Fixture();
+        var payment = Receipt(PaymentPurpose.ContractDeposit, contract.Id);
+        var allocation = Allocation(contract.Id, payment.Id, 500000m);
+        var refund = new DepositSettlement(Guid.NewGuid(),
+            DepositSettlementType.Refund, 550000m,
+            sourceContractId: contract.Id);
+        refund.Complete(DateTime.UtcNow);
+
+        var audit = Assess(request, contract,
+            new[] { allocation, refund }, new[] { payment });
+        Assert.Contains("RecordedOutgoingExceedsVerifiedIncoming", audit.Blockers);
+        Assert.False(audit.CanRefund);
+        Assert.Null(audit.RefundableBalance);
+    }
+
+    [Fact]
+    public void DEPLEDGER16_Reservation_Forfeit_Using_Same_Receipt_Needs_Review()
+    {
+        var (request, contract) = Fixture();
+        var reservationId = Guid.NewGuid();
+        var payment = Receipt(PaymentPurpose.ReservationDeposit,
+            contract.Id, reservationId: reservationId);
+        var allocation = Allocation(contract.Id, payment.Id, 250000m,
+            reservationId);
+        var forfeit = new DepositSettlement(Guid.NewGuid(),
+            DepositSettlementType.Forfeit, 250000m,
+            paymentId: payment.Id, sourceRoomReservationId: reservationId);
+        forfeit.Complete(DateTime.UtcNow);
+
+        var audit = Assess(request, contract,
+            new[] { allocation, forfeit }, new[] { payment });
+        Assert.Contains("MixedDepositDispositionRequiresReview", audit.Blockers);
+        Assert.False(audit.CanOffsetDebt);
+    }
+
     private static ContractDepositLedgerReview Assess(
         MoveOutRequest request, Contract contract,
         DepositSettlement[] settlements, Payment[] payments)

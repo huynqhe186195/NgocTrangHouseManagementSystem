@@ -1479,7 +1479,15 @@ public sealed class InvoicePersistenceIntegration_Tests
         Guid RequestId, Guid ContractId)> SeedIssuanceReviewAsync()
     {
         var (fixture, readingId) = await SeedReadyOctoberAsync();
-        var draft = CreateDraft(fixture, readingId, Guid.NewGuid());
+        Guid waterReadingId = Guid.Empty;
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var matched = await _readings.GetListAsync(x =>
+                x.UtilityMeterId == fixture.WaterMeterId &&
+                x.BillingYear == 2026 && x.BillingMonth == 10);
+            waterReadingId = Assert.Single(matched).Id;
+        });
+        var draft = CreateDraft(fixture, readingId, waterReadingId);
         var requestId = Guid.NewGuid();
         var archiveId = Guid.NewGuid();
         var reviewId = Guid.NewGuid();

@@ -986,6 +986,72 @@ public sealed class InvoicePersistenceIntegration_Tests
     }
 
     [Fact]
+    public async Task DEPLEDGERDB02_Refund_And_Allocation_Cannot_Use_Same_Receipt_Twice()
+    {
+        var fixture = await SeedAsync();
+        var tenantId = Guid.NewGuid();
+        var requestId = Guid.NewGuid();
+        var paymentId = Guid.NewGuid();
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var contract = await _contracts.GetAsync(fixture.ContractId);
+            contract.Activate();
+            await _contracts.UpdateAsync(contract, autoSave: true);
+
+            var request = new MoveOutRequest(requestId, fixture.ContractId,
+                fixture.RoomId, new DateOnly(2026, 11, 30), "Double disposal audit");
+            request.Approve(DateTime.UtcNow, null);
+            await GetRequiredService<IRepository<MoveOutRequest, Guid>>()
+                .InsertAsync(request, autoSave: true);
+            await GetRequiredService<IRepository<Tenant, Guid>>().InsertAsync(
+                new Tenant(tenantId, "Double Disposition Payer", "0900000149",
+                    null, null, null, IdentityType.CitizenId,
+                    Guid.NewGuid().ToString("N")), autoSave: true);
+
+            var receipt = new Payment(paymentId,
+                "DEP-MIXED-DB-" + Guid.NewGuid().ToString("N"), tenantId,
+                PaymentPurpose.ContractDeposit, PaymentMethod.Cash,
+                PaymentChannel.Manual, 500000m,
+                contractId: fixture.ContractId);
+            receipt.Complete(DateTime.UtcNow);
+            await GetRequiredService<IRepository<Payment, Guid>>()
+                .InsertAsync(receipt, autoSave: true);
+
+            var journal = GetRequiredService<IRepository<DepositSettlement, Guid>>();
+            var allocation = new DepositSettlement(Guid.NewGuid(),
+                DepositSettlementType.AllocateToContractDeposit, 500000m,
+                paymentId: paymentId, targetContractId: fixture.ContractId);
+            allocation.Complete(DateTime.UtcNow);
+            await journal.InsertAsync(allocation, autoSave: true);
+
+            var refund = new DepositSettlement(Guid.NewGuid(),
+                DepositSettlementType.Refund, 500000m,
+                paymentId: paymentId, sourceContractId: fixture.ContractId);
+            refund.Complete(DateTime.UtcNow);
+            await journal.InsertAsync(refund, autoSave: true);
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var reader = new ContractDepositLedgerReviewAppService(
+                GetRequiredService<IRepository<MoveOutRequest, Guid>>(),
+                _contracts,
+                GetRequiredService<IRepository<DepositSettlement, Guid>>(),
+                GetRequiredService<IRepository<Payment, Guid>>(),
+                GetRequiredService<IDataFilter<ISoftDelete>>());
+            var audit = await reader.GetAsync(requestId);
+            Assert.Contains("DepositPaymentDoubleDisposed", audit.Blockers);
+            Assert.Contains("MixedDepositDispositionRequiresReview", audit.Blockers);
+            Assert.Null(audit.VerifiedIncomingAllocationTotal);
+            Assert.Null(audit.RefundableBalance);
+            Assert.False(audit.CanRefund);
+            Assert.Equal(ContractStatus.Active,
+                (await _contracts.GetAsync(fixture.ContractId)).Status);
+        });
+    }
+
+    [Fact]
     public async Task FINPAYDB02_Pending_MoveOut_Has_No_Draft_Or_Assigned_Debt()
     {
         var data = await SeedAsync();

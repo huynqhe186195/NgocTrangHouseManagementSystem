@@ -1102,6 +1102,56 @@ public sealed class FinalMoveOutBillReview_Tests
         Assert.Null(result.ProposedGrandTotal);
     }
 
+    [Fact]
+    public void FINPOLICY11_Overflow_In_Combined_Auxiliary_Charges_Is_Blocked()
+    {
+        var (_, preflight) = StagingFixture();
+        var huge = decimal.MaxValue;
+        var terms = FinancialTerms(preflight) with
+        {
+            AuxiliaryFeeDecision = AuxiliaryFeeAssessmentDecision.ItemizedCharges,
+            AuxiliaryCharges = new[]
+            {
+                new FinalInvoiceAuxiliaryChargeProposal(
+                    FinalInvoiceAuxiliaryFeeKind.Internet, "A", 1m, huge,
+                    huge, "TEST-TARIFF", "Internet service"),
+                new FinalInvoiceAuxiliaryChargeProposal(
+                    FinalInvoiceAuxiliaryFeeKind.Trash, "B", 1m, huge,
+                    huge, "TEST-TARIFF", "Trash service")
+            }
+        };
+
+        var review = FinalInvoiceFinancialTermsEvaluator.Assess(
+            preflight, terms);
+
+        Assert.Contains("AuxiliaryChargeTotalOverflow", review.Blockers);
+        Assert.Null(review.ProposedGrandTotal);
+        Assert.False(review.CanIssue);
+    }
+
+    [Fact]
+    public void FINPOLICY12_Null_Charge_And_Product_Overflow_Fail_Closed()
+    {
+        var (_, preflight) = StagingFixture();
+        var invalid = FinancialTerms(preflight) with
+        {
+            AuxiliaryFeeDecision = AuxiliaryFeeAssessmentDecision.ItemizedCharges,
+            AuxiliaryCharges = new FinalInvoiceAuxiliaryChargeProposal[]
+            {
+                null!,
+                new(FinalInvoiceAuxiliaryFeeKind.Parking,
+                    "CAR", decimal.MaxValue, decimal.MaxValue, 100000m,
+                    "TEST-TARIFF", "Parking service")
+            }
+        };
+
+        var review = FinalInvoiceFinancialTermsEvaluator.Assess(
+            preflight, invalid);
+        Assert.Contains("AuxiliaryChargeMissingValidPricingEvidence", review.Blockers);
+        Assert.Null(review.ProposedGrandTotal);
+        Assert.False(review.CanSettleDeposit);
+    }
+
     private static FinalInvoiceFinancialTermsProposal FinancialTerms(
         FinalInvoiceIssuePreflight preflight)
         => new(

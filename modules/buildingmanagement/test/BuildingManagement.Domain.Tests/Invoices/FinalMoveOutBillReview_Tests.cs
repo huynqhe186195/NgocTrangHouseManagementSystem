@@ -1592,6 +1592,172 @@ public sealed class FinalMoveOutBillReview_Tests
         return (archive, building, readings, meters, rates);
     }
 
+    [Fact]
+    public void REPLACEMENTAUDIT01_Original_Handover_And_Both_Meters_Agree()
+    {
+        var (archive, building, readings, meters, rates, replacements) =
+            ReplacementAuditFixture();
+        var result = FinalInvoiceSourceProvenanceEvaluator.Assess(
+            archive, building, readings, meters, rates, replacements);
+
+        Assert.True(result.MatchesPersistedSources);
+        Assert.DoesNotContain("OriginalMeterReplacementMissing", result.Blockers);
+        Assert.DoesNotContain("ReplacementNewMeterOpeningMismatch", result.Blockers);
+        Assert.False(result.CanIssue);
+        Assert.False(result.CanPostReceivable);
+    }
+
+    [Fact]
+    public void REPLACEMENTAUDIT02_Missing_Original_Closing_Is_Not_Confirmed()
+    {
+        var (archive, building, readings, meters, rates, _) =
+            ReplacementAuditFixture();
+        var result = FinalInvoiceSourceProvenanceEvaluator.Assess(
+            archive, building, readings, meters, rates,
+            Array.Empty<MeterReplacement>());
+
+        Assert.False(result.MatchesPersistedSources);
+        Assert.Contains("OriginalMeterReplacementMissing", result.Blockers);
+        Assert.False(result.CanIssue);
+    }
+
+    [Fact]
+    public void REPLACEMENTAUDIT03_Modified_Closing_Reading_Is_Detected()
+    {
+        var (archive, building, readings, meters, rates, replacements) =
+            ReplacementAuditFixture();
+        typeof(MeterReplacement)
+            .GetProperty(nameof(MeterReplacement.OldFinalReading))!
+            .SetValue(replacements[0], replacements[0].OldFinalReading + 1m);
+        var result = FinalInvoiceSourceProvenanceEvaluator.Assess(
+            archive, building, readings, meters, rates, replacements);
+
+        Assert.False(result.MatchesPersistedSources);
+        Assert.Contains("OriginalMeterReplacementClosingDiffersFromSnapshot",
+            result.Blockers);
+    }
+
+    [Fact]
+    public void REPLACEMENTAUDIT04_New_Meter_Opening_Must_Match_Handover()
+    {
+        var (archive, building, readings, meters, rates, replacements) =
+            ReplacementAuditFixture();
+        var nextMeter = meters.Single(x =>
+            x.Id == replacements[0].NewMeterId);
+        nextMeter.Update(nextMeter.MeterCode,
+            nextMeter.InitialReading + 1m, nextMeter.InstalledDate,
+            "Incorrect initial reading");
+        var result = FinalInvoiceSourceProvenanceEvaluator.Assess(
+            archive, building, readings, meters, rates, replacements);
+
+        Assert.False(result.MatchesPersistedSources);
+        Assert.Contains("ReplacementNewMeterOpeningMismatch", result.Blockers);
+    }
+
+    [Fact]
+    public void REPLACEMENTAUDIT05_Foreign_Or_Missing_New_Meter_Is_Denied()
+    {
+        var (archive, building, readings, meters, rates, replacements) =
+            ReplacementAuditFixture();
+        var noNew = FinalInvoiceSourceProvenanceEvaluator.Assess(
+            archive, building, readings,
+            meters.Where(x => x.Id != replacements[0].NewMeterId).ToArray(),
+            rates, replacements);
+        Assert.Contains("ReplacementNewMeterMissing", noNew.Blockers);
+
+        var foreign = new UtilityMeter(
+            replacements[0].NewMeterId, Guid.NewGuid(), UtilityType.Electricity,
+            "OTHER-" + Guid.NewGuid().ToString("N"), 2m,
+            replacements[0].ReplacementDate);
+        var changed = meters.Select(x =>
+            x.Id == replacements[0].NewMeterId ? foreign : x).ToArray();
+        var result = FinalInvoiceSourceProvenanceEvaluator.Assess(
+            archive, building, readings, changed, rates, replacements);
+        Assert.Contains("ReplacementNewMeterOpeningMismatch", result.Blockers);
+    }
+
+    private static (
+        FinalInvoiceIssueEvidenceRecord Archive,
+        Guid Building,
+        MeterReading[] Readings,
+        UtilityMeter[] Meters,
+        UtilityRate[] Rates,
+        MeterReplacement[] Replacements) ReplacementAuditFixture()
+    {
+        var (request, contract, _) = Fixture();
+        var oldMeterId = Guid.NewGuid();
+        var newMeterId = Guid.NewGuid();
+        var waterMeterId = Guid.NewGuid();
+        var closingId = Guid.NewGuid();
+        var waterReadingId = Guid.NewGuid();
+        var closingDate = new DateTime(2026, 11, 15);
+        var monthEnd = new DateTime(2026, 11, 30);
+        var rateElectricId = Guid.NewGuid();
+        var rateWaterId = Guid.NewGuid();
+
+        var electricSource = new InvoiceDraftMeterSegmentSnapshot(
+            closingId, oldMeterId, MeterUsageSourceType.ReplacementClosing,
+            closingDate, 10m, 20m);
+        var waterSource = new InvoiceDraftMeterSegmentSnapshot(
+            waterReadingId, waterMeterId, MeterUsageSourceType.MonthlyReading,
+            monthEnd, 100m, 105m);
+        var snapshot = InvoiceDraftSnapshot.Capture(
+            contract.Id, request.RoomId, 2026, 11,
+            new[]
+            {
+                new InvoiceDraftUtilityLineSnapshot(
+                    UtilityType.Electricity, rateElectricId,
+                    "SingleRateWholeMonth", 10m, 3000m, 30000m,
+                    new[] { electricSource }, Array.Empty<string>()),
+                new InvoiceDraftUtilityLineSnapshot(
+                    UtilityType.Water, rateWaterId,
+                    "SingleRateWholeMonth", 5m, 10000m, 50000m,
+                    new[] { waterSource }, Array.Empty<string>())
+            });
+        var draft = Invoice.CreateDraft(Guid.NewGuid(), snapshot, Guid.NewGuid);
+        var package = Package(request, contract, draft,
+            new DateTime(2026, 11, 30, 18, 0, 0, DateTimeKind.Utc));
+        var bill = Review(request, contract, draft);
+        var payments = FinalMoveOutPaymentEvidenceEvaluator.Assess(
+            bill, Array.Empty<Payment>());
+        var preflight = FinalInvoiceIssuePreflightEvaluator.Assess(
+            bill, package, payments);
+        var archive = FinalInvoiceIssueEvidenceRecord.Prepare(
+            Guid.NewGuid(), Guid.NewGuid(), DateTime.UtcNow, package, preflight);
+
+        var building = Guid.NewGuid();
+        var oldMeter = new UtilityMeter(
+            oldMeterId, request.RoomId, UtilityType.Electricity,
+            "OLD-" + Guid.NewGuid().ToString("N"), 10m,
+            new DateTime(2026, 1, 1));
+        var newMeter = new UtilityMeter(
+            newMeterId, request.RoomId, UtilityType.Electricity,
+            "NEW-" + Guid.NewGuid().ToString("N"), 2m, closingDate);
+        var waterMeter = new UtilityMeter(
+            waterMeterId, request.RoomId, UtilityType.Water,
+            "WATER-" + Guid.NewGuid().ToString("N"), 100m,
+            new DateTime(2026, 1, 1));
+        var replacement = new MeterReplacement(
+            closingId, oldMeterId, newMeterId,
+            request.RoomId, UtilityType.Electricity, closingDate,
+            10m, 20m, 2m, "Faulty meter replaced");
+        return (archive, building,
+            new[] { new MeterReading(
+                waterReadingId, waterMeterId, 2026, 11, 100m, 105m,
+                monthEnd) },
+            new[] { oldMeter, newMeter, waterMeter },
+            new[]
+            {
+                new UtilityRate(rateElectricId, building,
+                    UtilityType.Electricity, 3000m,
+                    new DateTime(2026, 11, 1), null),
+                new UtilityRate(rateWaterId, building,
+                    UtilityType.Water, 10000m,
+                    new DateTime(2026, 11, 1), null)
+            },
+            new[] { replacement });
+    }
+
     private static (FinalInvoiceEvidencePackage, FinalInvoiceIssuePreflight)
         StagingFixture()
     {

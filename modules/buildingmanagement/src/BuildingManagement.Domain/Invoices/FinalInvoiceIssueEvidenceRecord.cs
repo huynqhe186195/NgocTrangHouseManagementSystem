@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
@@ -141,7 +142,7 @@ public sealed class FinalInvoiceIssueEvidenceRecord : Entity<Guid>
                     x.Amount != x.Quantity * x.UnitPrice || x.SourceCount == 0) ||
                 total != rent + utilities.Sum(x => x.Amount) ||
                 PreparedByUserId == Guid.Empty ||
-                PreparedAtUtc.Kind != DateTimeKind.Utc)
+                PreparedAtUtc == default)
                 throw new InvalidDataException(
                     "Stored final invoice evidence disagrees with indexed metadata.");
         }

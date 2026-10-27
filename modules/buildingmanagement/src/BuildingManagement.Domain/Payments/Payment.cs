@@ -168,6 +168,12 @@ namespace BuildingManagement.Payments
         public void MarkDepositAsAppliedToContract()
         {
             EnsureUnappliedCompletedDeposit("apply");
+            // Only a RESERVATION deposit may be allocated to its
+            // Contract deposit. A Contract deposit is held until handover
+            // and is not a second source of initial allocation.
+            if (Purpose != PaymentPurpose.ReservationDeposit)
+                throw new InvalidOperationException(
+                    "Only reservation deposits can be applied to a contract.");
             DepositDisposition = Payments.DepositDisposition.AppliedToContract;
         }
 

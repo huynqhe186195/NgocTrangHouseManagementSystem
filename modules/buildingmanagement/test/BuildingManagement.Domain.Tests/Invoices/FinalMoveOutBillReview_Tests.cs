@@ -687,6 +687,36 @@ public sealed class FinalMoveOutBillReview_Tests
         Assert.Contains("MoveOutOrContractScopeChanged", result.Blockers);
     }
 
+    [Fact]
+    public void ISSUEDRIFT06_Archived_Hash_Corruption_Blocks_Currentness()
+    {
+        var (archive, request, contract, draft) = DriftFixture();
+        typeof(FinalInvoiceIssueEvidenceRecord)
+            .GetProperty(nameof(FinalInvoiceIssueEvidenceRecord.EvidenceSha256))!
+            .SetValue(archive, new string('0', 64));
+
+        var result = DriftReview(archive, request, contract, draft);
+
+        Assert.False(result.MatchesCurrentDraft);
+        Assert.Contains("ArchivedEvidenceInvalid", result.Blockers);
+        Assert.False(result.CanIssue);
+    }
+
+    [Fact]
+    public void ISSUEDRIFT07_Absent_Approved_Request_Blocks_Currentness()
+    {
+        var (archive, _, contract, draft) = DriftFixture();
+        var items = draft.Items.ToArray();
+
+        var result = FinalInvoiceIssueEvidenceDriftEvaluator.Assess(
+            archive, null, contract, new[] { draft }, items,
+            items.SelectMany(x => x.MeterSources).ToArray());
+
+        Assert.False(result.MatchesCurrentDraft);
+        Assert.Contains("MoveOutOrContractScopeChanged", result.Blockers);
+        Assert.False(result.IsReceivablePosted);
+    }
+
     private static FinalInvoiceIssueEvidenceDriftReview DriftReview(
         FinalInvoiceIssueEvidenceRecord archive,
         MoveOutRequest request, Contract contract, Invoice draft)

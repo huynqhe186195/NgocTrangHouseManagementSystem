@@ -38,7 +38,10 @@ public sealed record InvoiceIssuanceScopeFacts(
 public sealed class InvoiceIssuanceScopeReview
 {
     public List<string> Blockers { get; } = new();
-    public bool IsScopeConsistent => Blockers.Count == 0;
+    // This flag refers ONLY to graph/identity/evidence consistency, not
+    // issuance readiness. Financial prerequisites are checked separately.
+    public bool IsScopeConsistent => Blockers.All(
+        x => x == "FinancialIssuancePrerequisitesIncomplete");
     public bool CanIssue => false;
     public bool CanPostReceivable => false;
 }

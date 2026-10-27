@@ -1168,6 +1168,141 @@ public sealed class FinalMoveOutBillReview_Tests
         => new(kind, code, quantity, price, quantity * price,
             "TEST-CONTRACT-RATE", "Contracted service charge");
 
+    [Fact]
+    public void ISSUEREADY01_Reviewed_Evidence_Remains_Nonfinancial()
+    {
+        var (request, contract, draft) = Fixture();
+        var capture = Package(request, contract, draft,
+            new DateTime(2026, 11, 30, 18, 0, 0, DateTimeKind.Utc));
+        var bill = Review(request, contract, draft);
+        var receipts = FinalMoveOutPaymentEvidenceEvaluator.Assess(
+            bill, Array.Empty<Payment>());
+        var preflight = FinalInvoiceIssuePreflightEvaluator.Assess(
+            bill, capture, receipts);
+        var archive = FinalInvoiceIssueEvidenceRecord.Prepare(
+            Guid.NewGuid(), Guid.NewGuid(), DateTime.UtcNow,
+            capture, preflight);
+        var building = Guid.NewGuid();
+        var reviewer = Guid.NewGuid();
+        var ticket = InvoiceIssuanceReviewTicket.Stage(
+            Guid.NewGuid(), archive, building, Guid.NewGuid(),
+            new DateTime(2026, 12, 1, 0, 0, 0, DateTimeKind.Utc));
+        var facts = new InvoiceIssuanceScopeFacts(
+            reviewer, true, request.Id, request.Id,
+            draft.Id, draft.Id, contract.Id, contract.RoomId,
+            contract.Id, contract.RoomId, contract.RoomId,
+            Guid.NewGuid(), Guid.Empty, building, building,
+            new[] { building }, InvoiceStatus.Draft,
+            capture.EvidenceSha256, false);
+        facts = facts with { FloorId = facts.RoomFloorId };
+        ticket.RecordReviewForDesign(
+            reviewer, ticket.SubmittedAtUtc.AddMinutes(1), true,
+            "Source evidence reviewed for design only.", preflight, facts);
+
+        var items = draft.Items.ToArray();
+        var drift = FinalInvoiceIssueEvidenceDriftEvaluator.Assess(
+            archive, request, contract, new[] { draft }, items,
+            items.SelectMany(x => x.MeterSources).ToArray());
+        var allocation = InvoicePaymentAllocationJournalAuditor.Assess(
+            Array.Empty<InvoicePaymentAllocationJournalEntry>(),
+            Array.Empty<Payment>(), contract.Id);
+
+        var result = FinalInvoiceReleaseReadinessEvaluator.Assess(
+            preflight, new[] { archive }, new[] { ticket }, drift, allocation);
+
+        Assert.True(result.StagedEvidenceMatchesCurrentDraft);
+        Assert.True(result.IndependentDesignReviewRecorded);
+        Assert.Equal(archive.Id, result.StagedEvidenceId);
+        Assert.Equal(ticket.Id, result.ReviewTicketId);
+        Assert.Equal(preflight.KnownBaseChargeTotal, result.VerifiedBaseAmount);
+        Assert.Contains("FinancialTerms:AuxiliaryFeeAssessmentNotProvided",
+            result.Blockers);
+        Assert.Contains("FinancialTerms:InvoiceDueDatePolicyNotProvided",
+            result.Blockers);
+        Assert.False(result.CanIssue);
+        Assert.False(result.CanPostReceivable);
+        Assert.False(result.CanSettleDeposit);
+    }
+
+    [Fact]
+    public void ISSUEREADY02_Without_Archive_Or_Fee_Policy_Cannot_Issue()
+    {
+        var (_, preflight) = StagingFixture();
+        var allocation = InvoicePaymentAllocationJournalAuditor.Assess(
+            Array.Empty<InvoicePaymentAllocationJournalEntry>(),
+            Array.Empty<Payment>(), preflight.ContractId);
+        var result = FinalInvoiceReleaseReadinessEvaluator.Assess(
+            preflight,
+            Array.Empty<FinalInvoiceIssueEvidenceRecord>(),
+            Array.Empty<InvoiceIssuanceReviewTicket>(), null, allocation);
+
+        Assert.Contains("StagedInvoiceEvidenceMissing", result.Blockers);
+        Assert.Contains("FinancialTerms:AuxiliaryFeeAssessmentNotProvided",
+            result.Blockers);
+        Assert.False(result.StagedEvidenceMatchesCurrentDraft);
+        Assert.False(result.CanIssue);
+    }
+
+    [Fact]
+    public void ISSUEREADY03_Submitted_Review_Is_Not_Accepted_As_Independent()
+    {
+        var (archive, ticket, preflight, _, _) = ReviewTicketFixture();
+        var allocation = InvoicePaymentAllocationJournalAuditor.Assess(
+            Array.Empty<InvoicePaymentAllocationJournalEntry>(),
+            Array.Empty<Payment>(), preflight.ContractId);
+
+        var result = FinalInvoiceReleaseReadinessEvaluator.Assess(
+            preflight, new[] { archive }, new[] { ticket }, null, allocation);
+
+        Assert.Contains("IndependentInvoiceReviewNotReady", result.Blockers);
+        Assert.Contains("StagedInvoiceEvidenceNoLongerCurrent", result.Blockers);
+        Assert.False(result.IndependentDesignReviewRecorded);
+        Assert.False(result.CanIssue);
+    }
+
+    [Fact]
+    public void ISSUEREADY04_Mismatched_Archived_Scope_Is_Not_Reusable()
+    {
+        var (archive, ticket, preflight, _, _) = ReviewTicketFixture();
+        typeof(FinalInvoiceIssueEvidenceRecord)
+            .GetProperty(nameof(FinalInvoiceIssueEvidenceRecord.DraftInvoiceId))!
+            .SetValue(archive, Guid.NewGuid());
+        var allocation = InvoicePaymentAllocationJournalAuditor.Assess(
+            Array.Empty<InvoicePaymentAllocationJournalEntry>(),
+            Array.Empty<Payment>(), preflight.ContractId);
+
+        var result = FinalInvoiceReleaseReadinessEvaluator.Assess(
+            preflight, new[] { archive }, new[] { ticket }, null, allocation);
+
+        Assert.Contains("StagedInvoiceEvidenceCorrupt", result.Blockers);
+        Assert.Contains("IndependentInvoiceReviewCorrupt", result.Blockers);
+        Assert.False(result.CanIssue);
+    }
+
+    [Fact]
+    public void ISSUEREADY05_Unjournaled_Payment_Remains_A_Blocker()
+    {
+        var (archive, ticket, preflight, _, _) = ReviewTicketFixture();
+        var receipt = new Payment(
+            Guid.NewGuid(), "READINESS-" + Guid.NewGuid().ToString("N"),
+            Guid.NewGuid(), PaymentPurpose.InvoicePayment,
+            PaymentMethod.BankTransfer, PaymentChannel.Manual, 100000m,
+            contractId: preflight.ContractId,
+            invoiceId: preflight.UtilityDraftId);
+        receipt.Complete(DateTime.UtcNow);
+        var allocation = InvoicePaymentAllocationJournalAuditor.Assess(
+            Array.Empty<InvoicePaymentAllocationJournalEntry>(),
+            new[] { receipt }, preflight.ContractId);
+
+        var result = FinalInvoiceReleaseReadinessEvaluator.Assess(
+            preflight, new[] { archive }, new[] { ticket }, null, allocation);
+
+        Assert.Contains("Allocations:CompletedInvoicePaymentUnjournaled",
+            result.Blockers);
+        Assert.False(result.CanPostReceivable);
+        Assert.False(result.CanSettleDeposit);
+    }
+
     private static (FinalInvoiceEvidencePackage, FinalInvoiceIssuePreflight)
         StagingFixture()
     {

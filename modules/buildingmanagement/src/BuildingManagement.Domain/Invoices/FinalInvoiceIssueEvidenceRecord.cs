@@ -87,8 +87,13 @@ public sealed class FinalInvoiceIssueEvidenceRecord : Entity<Guid>
             throw new InvalidOperationException(
                 "A verified, consistent final invoice evidence preflight is required.");
 
-        return new FinalInvoiceIssueEvidenceRecord(
+        var staged = new FinalInvoiceIssueEvidenceRecord(
             id, preparedByUserId, evidence, preparedAtUtc);
+        // Validation must be identical before insertion and after EF
+        // rehydration. A matching hash alone cannot prove that source
+        // readings or rate identifiers are internally consistent.
+        staged.VerifyStoredEvidence();
+        return staged;
     }
 
     /// <summary>
@@ -112,14 +117,27 @@ public sealed class FinalInvoiceIssueEvidenceRecord : Entity<Guid>
             var root = document.RootElement;
             var billingDate = DateOnly.ParseExact(
                 root.GetProperty("FinalBillingDate").GetString()!, "yyyy-MM-dd");
+            var capturedAtUtc =
+                root.GetProperty("CapturedAtUtc").GetDateTime();
             var utilities = root.GetProperty("Utilities").EnumerateArray()
                 .Select(x => new
                 {
                     Type = (UtilityType)x.GetProperty("UtilityType").GetInt32(),
+                    RateId = x.GetProperty("UtilityRateId").GetGuid(),
                     Amount = x.GetProperty("Amount").GetDecimal(),
                     Quantity = x.GetProperty("Quantity").GetDecimal(),
                     UnitPrice = x.GetProperty("UnitPrice").GetDecimal(),
-                    SourceCount = x.GetProperty("Sources").GetArrayLength()
+                    Sources = x.GetProperty("Sources").EnumerateArray()
+                        .Select(source => new
+                        {
+                            SourceId = source.GetProperty("SourceId").GetGuid(),
+                            MeterId = source.GetProperty("UtilityMeterId").GetGuid(),
+                            Type = (MeterUsageSourceType)source
+                                .GetProperty("SourceType").GetInt32(),
+                            RecordedDate = source.GetProperty("RecordedDate").GetDateTime(),
+                            Previous = source.GetProperty("PreviousReading").GetDecimal(),
+                            Current = source.GetProperty("CurrentReading").GetDecimal()
+                        }).ToArray()
                 }).ToArray();
             var rent = root.GetProperty("FullMonthRent").GetDecimal();
             var total = root.GetProperty("KnownRentAndUtilities").GetDecimal();
@@ -133,13 +151,30 @@ public sealed class FinalInvoiceIssueEvidenceRecord : Entity<Guid>
                 billingDate.Day != DateTime.DaysInMonth(BillingYear, BillingMonth) ||
                 total != KnownBaseChargeTotal ||
                 rent <= 0m ||
+                capturedAtUtc == default ||
+                capturedAtUtc.Kind != DateTimeKind.Utc ||
                 utilities.Length != 2 ||
                 utilities.Select(x => x.Type).Distinct().Count() != 2 ||
                 !utilities.Any(x => x.Type == UtilityType.Electricity) ||
                 !utilities.Any(x => x.Type == UtilityType.Water) ||
                 utilities.Any(x =>
+                    x.RateId == Guid.Empty ||
                     x.Quantity < 0m || x.UnitPrice <= 0m || x.Amount < 0m ||
-                    x.Amount != x.Quantity * x.UnitPrice || x.SourceCount == 0) ||
+                    x.Amount != x.Quantity * x.UnitPrice ||
+                    x.Sources.Length == 0 ||
+                    x.Sources.Sum(source => source.Current - source.Previous)
+                        != x.Quantity ||
+                    x.Sources.Any(source =>
+                        source.SourceId == Guid.Empty ||
+                        source.MeterId == Guid.Empty ||
+                        !Enum.IsDefined(source.Type) ||
+                        source.RecordedDate.Year != BillingYear ||
+                        source.RecordedDate.Month != BillingMonth ||
+                        source.Previous < 0m ||
+                        source.Current < source.Previous)) ||
+                utilities.SelectMany(x => x.Sources)
+                    .Select(source => (source.Type, source.SourceId))
+                    .Distinct().Count() != utilities.Sum(x => x.Sources.Length) ||
                 total != rent + utilities.Sum(x => x.Amount) ||
                 PreparedByUserId == Guid.Empty ||
                 PreparedAtUtc == default)

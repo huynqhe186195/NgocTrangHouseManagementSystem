@@ -3,6 +3,8 @@ using System.Linq;
 using BuildingManagement.Contracts;
 using BuildingManagement.Invoices;
 using BuildingManagement.MoveOuts;
+using BuildingManagement.Payments;
+using BuildingManagement.Payments.BuildingManagement.Payments;
 using BuildingManagement.Utilities;
 using Xunit;
 
@@ -167,6 +169,118 @@ public sealed class FinalMoveOutBillReview_Tests
             request, contract, draft, draft.Items.ToArray(),
             draft.Items.SelectMany(x => x.MeterSources).ToArray(),
             capturedAtUtc);
+
+    [Fact]
+    public void ISSUEGATE01_Three_Known_Line_Amounts_Do_Not_Issue_Draft()
+    {
+        var (request, contract, draft) = Fixture();
+        var review = Review(request, contract, draft);
+        var package = Package(request, contract, draft, DateTime.UtcNow);
+        var receipts = FinalMoveOutPaymentEvidenceEvaluator.Assess(
+            review, Array.Empty<Payment>());
+
+        var result = FinalInvoiceIssuePreflightEvaluator.Assess(
+            review, package, receipts);
+
+        Assert.Equal(draft.Id, result.UtilityDraftId);
+        Assert.Equal(3_550_000m, result.KnownBaseChargeTotal);
+        Assert.Equal(package.EvidenceSha256, result.EvidenceSha256);
+        Assert.Equal(3, result.BaseCharges.Count);
+        Assert.Equal(3_500_000m, result.BaseCharges.Single(x =>
+            x.Type == FinalInvoiceBaseChargeType.FullMonthRent).Amount);
+        Assert.Equal(30_000m, result.BaseCharges.Single(x =>
+            x.Type == FinalInvoiceBaseChargeType.Electricity).Amount);
+        Assert.Equal(20_000m, result.BaseCharges.Single(x =>
+            x.Type == FinalInvoiceBaseChargeType.Water).Amount);
+        Assert.Contains("AuxiliaryFeePolicyUndecided", result.Blockers);
+        Assert.Contains("InvoiceDueDatePolicyUndecided", result.Blockers);
+        Assert.Contains("IssuerBuildingAuthorizationUnavailable", result.Blockers);
+        Assert.Contains("ImmutableIssuedInvoiceLedgerNotImplemented", result.Blockers);
+        Assert.Contains("AuditedPaymentAllocationNotImplemented", result.Blockers);
+        Assert.False(result.CanIssue);
+        Assert.False(result.IsReceivablePosted);
+        Assert.False(result.IsDebtCalculated);
+    }
+
+    [Fact]
+    public void ISSUEGATE02_Missing_Evidence_Does_Not_Create_Charge_Lines()
+    {
+        var (request, contract, draft) = Fixture();
+        var review = Review(request, contract, draft);
+        var receipts = FinalMoveOutPaymentEvidenceEvaluator.Assess(
+            review, Array.Empty<Payment>());
+
+        var result = FinalInvoiceIssuePreflightEvaluator.Assess(
+            review, null, receipts);
+
+        Assert.Null(result.KnownBaseChargeTotal);
+        Assert.Null(result.EvidenceSha256);
+        Assert.Empty(result.BaseCharges);
+        Assert.Contains("VerifiedFinalInvoiceEvidenceMissing", result.Blockers);
+        Assert.False(result.CanIssue);
+    }
+
+    [Fact]
+    public void ISSUEGATE03_Other_Contract_Evidence_Is_Rejected()
+    {
+        var (request, contract, draft) = Fixture();
+        var review = Review(request, contract, draft);
+        var receipts = FinalMoveOutPaymentEvidenceEvaluator.Assess(
+            review, Array.Empty<Payment>());
+        var (foreignRequest, foreignContract, foreignDraft) = Fixture();
+        var foreign = Package(
+            foreignRequest, foreignContract, foreignDraft, DateTime.UtcNow);
+
+        var result = FinalInvoiceIssuePreflightEvaluator.Assess(
+            review, foreign, receipts);
+
+        Assert.Contains("VerifiedEvidenceMismatch", result.Blockers);
+        Assert.Null(result.KnownBaseChargeTotal);
+        Assert.Empty(result.BaseCharges);
+        Assert.False(result.CanIssue);
+    }
+
+    [Fact]
+    public void ISSUEGATE04_Completed_Receipt_On_Unissued_Draft_Is_Anomaly()
+    {
+        var (request, contract, draft) = Fixture();
+        var review = Review(request, contract, draft);
+        var package = Package(request, contract, draft, DateTime.UtcNow);
+        var receipt = new Payment(
+            Guid.NewGuid(), "ISSUEGATE-" + Guid.NewGuid().ToString("N"),
+            Guid.NewGuid(), PaymentPurpose.InvoicePayment,
+            PaymentMethod.Cash, PaymentChannel.Manual, 100000m,
+            contractId: contract.Id, invoiceId: draft.Id);
+        receipt.Complete(DateTime.UtcNow);
+        var payments = FinalMoveOutPaymentEvidenceEvaluator.Assess(
+            review, new[] { receipt });
+
+        var result = FinalInvoiceIssuePreflightEvaluator.Assess(
+            review, package, payments);
+
+        Assert.Contains(
+            "Payment:CompletedPaymentLinkedToUnissuedDraft", result.Blockers);
+        Assert.Equal(3_550_000m, result.KnownBaseChargeTotal);
+        Assert.False(result.IsDebtCalculated);
+        Assert.False(result.CanIssue);
+    }
+
+    [Fact]
+    public void ISSUEGATE05_Pending_MoveOut_Never_Presents_Issuable_Line_Items()
+    {
+        var (request, contract, draft) = Fixture(approve: false);
+        var review = Review(request, contract, draft);
+        var payments = FinalMoveOutPaymentEvidenceEvaluator.Assess(
+            review, Array.Empty<Payment>());
+
+        var result = FinalInvoiceIssuePreflightEvaluator.Assess(
+            review, null, payments);
+
+        Assert.Contains("Bill:MoveOutNotApproved", result.Blockers);
+        Assert.Null(result.KnownBaseChargeTotal);
+        Assert.Empty(result.BaseCharges);
+        Assert.False(result.CanIssue);
+    }
 
     private static FinalMoveOutBillReview Review(
         MoveOutRequest request, Contract contract, Invoice draft)

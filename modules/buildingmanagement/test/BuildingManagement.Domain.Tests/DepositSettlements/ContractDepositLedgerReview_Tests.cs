@@ -375,6 +375,23 @@ public sealed class ContractDepositLedgerReview_Tests
         Assert.False(audit.CanRefund);
     }
 
+    [Fact]
+    public void DEPLEDGER21_Corrupt_Completed_Receipt_Without_PaidTime_Is_Not_Observed()
+    {
+        var (request, contract) = Fixture();
+        var received = Receipt(PaymentPurpose.ContractDeposit, contract.Id);
+        typeof(Payment).GetProperty(nameof(Payment.PaidAt))!
+            .SetValue(received, null);
+
+        var audit = Assess(request, contract,
+            Array.Empty<DepositSettlement>(), new[] { received });
+
+        Assert.Contains("LedgerEvidenceInvalid", audit.Blockers);
+        Assert.Null(audit.ObservedCompletedContractDepositReceiptsTotal);
+        Assert.Null(audit.VerifiedIncomingAllocationTotal);
+        Assert.False(audit.CanRefund);
+    }
+
     private static ContractDepositLedgerReview Assess(
         MoveOutRequest request, Contract contract,
         DepositSettlement[] settlements, Payment[] payments)

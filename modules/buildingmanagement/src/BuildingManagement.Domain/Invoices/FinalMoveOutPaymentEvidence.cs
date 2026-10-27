@@ -66,7 +66,9 @@ public static class FinalMoveOutPaymentEvidenceEvaluator
             p.Purpose != PaymentPurpose.InvoicePayment ||
             p.ContractId != review.ContractId ||
             p.InvoiceId != review.UtilityDraftId ||
-            (p.Status == PaymentStatus.Completed && !p.PaidAt.HasValue) ||
+            (p.Status == PaymentStatus.Completed &&
+                (!p.PaidAt.HasValue || p.PaidAt.Value == default)) ||
+            (p.Status != PaymentStatus.Completed && p.PaidAt.HasValue) ||
             !Enum.IsDefined(p.Status)))
             result.Blockers.Add("InvoicePaymentAttributionInvalid");
 

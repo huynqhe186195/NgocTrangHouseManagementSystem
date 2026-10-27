@@ -24,10 +24,15 @@ public static class InvoicePaymentAllocationJournalAuditor
 {
     public static InvoicePaymentAllocationJournalAudit Assess(
         IReadOnlyCollection<InvoicePaymentAllocationJournalEntry> entries,
-        IReadOnlyCollection<Payment> receipts)
+        IReadOnlyCollection<Payment> receipts,
+        Guid? auditedContractId = null)
     {
         ArgumentNullException.ThrowIfNull(entries);
         ArgumentNullException.ThrowIfNull(receipts);
+        if (auditedContractId == Guid.Empty)
+            throw new ArgumentException(
+                "Contract scope must be non-empty when provided.",
+                nameof(auditedContractId));
 
         var review = new InvoicePaymentAllocationJournalAudit();
         if (entries.Any(x => x is null || x.Id == Guid.Empty) ||
@@ -59,6 +64,35 @@ public static class InvoicePaymentAllocationJournalAuditor
             {
                 review.Blockers.Add("AllocationSourceReceiptMismatch");
             }
+        }
+
+        // A contract-scope review must be complete, not just consistent
+        // for the selected journal entries. Historical receipts that were
+        // completed without an entry are anomalies even when the journal
+        // happens to contain no rows at all. This does not grant posting.
+        if (auditedContractId.HasValue)
+        {
+            var contractId = auditedContractId.Value;
+            if (entries.Any(x => x.ContractId != contractId ||
+                (paymentMap.TryGetValue(x.PaymentId, out var p) &&
+                 p.ContractId != contractId)))
+                review.Blockers.Add("CrossContractAllocationInLedger");
+
+            var journaledPaymentIds = entries
+                .Select(x => x.PaymentId).ToHashSet();
+            if (receipts.Any(x =>
+                x.ContractId == contractId &&
+                x.Purpose == PaymentPurpose.InvoicePayment &&
+                x.Status == PaymentStatus.Completed &&
+                !journaledPaymentIds.Contains(x.Id)))
+                review.Blockers.Add("CompletedInvoicePaymentUnjournaled");
+
+            if (receipts.Any(x =>
+                x.ContractId == contractId &&
+                x.Purpose == PaymentPurpose.InvoicePayment &&
+                x.Status == PaymentStatus.Completed &&
+                !x.InvoiceId.HasValue))
+                review.Blockers.Add("CompletedInvoicePaymentUnattributed");
         }
 
         var references = entries.Select(x => x.PaymentTransactionReferenceSnapshot)

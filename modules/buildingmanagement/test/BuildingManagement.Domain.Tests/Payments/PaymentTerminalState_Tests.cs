@@ -93,6 +93,118 @@ public sealed class PaymentTerminalState_Tests
         Assert.Equal(DepositDisposition.Unapplied, payment.DepositDisposition);
     }
 
+    [Theory]
+    [InlineData(PaymentPurpose.ReservationDeposit)]
+    [InlineData(PaymentPurpose.ContractDeposit)]
+    public void DEPSTATE01_Pending_Deposit_Cannot_Be_Disposed(
+        PaymentPurpose purpose)
+    {
+        var payment = NewPayment(purpose);
+
+        Assert.Throws<InvalidOperationException>(
+            payment.MarkDepositAsAppliedToContract);
+        Assert.Throws<InvalidOperationException>(
+            payment.MarkDepositAsRefunded);
+        Assert.Throws<InvalidOperationException>(
+            payment.MarkDepositAsForfeited);
+        Assert.Equal(PaymentStatus.Pending, payment.Status);
+        Assert.Null(payment.DepositDisposition);
+    }
+
+    [Fact]
+    public void DEPSTATE02_Invoice_Receipt_Never_Becomes_Deposit()
+    {
+        var payment = NewPayment(PaymentPurpose.InvoicePayment);
+        payment.Complete(DateTime.UtcNow);
+
+        Assert.Throws<InvalidOperationException>(
+            payment.MarkDepositAsAppliedToContract);
+        Assert.Throws<InvalidOperationException>(
+            payment.MarkDepositAsRefunded);
+        Assert.Throws<InvalidOperationException>(
+            payment.MarkDepositAsForfeited);
+        Assert.Equal(PaymentStatus.Completed, payment.Status);
+        Assert.Null(payment.DepositDisposition);
+    }
+
+    [Fact]
+    public void DEPSTATE03_Applied_Deposit_Cannot_Be_Refunded_Or_Forfeited()
+    {
+        var payment = NewPayment(PaymentPurpose.ReservationDeposit);
+        payment.Complete(DateTime.UtcNow);
+        payment.MarkDepositAsAppliedToContract();
+
+        Assert.Equal(DepositDisposition.AppliedToContract,
+            payment.DepositDisposition);
+        Assert.Throws<InvalidOperationException>(
+            payment.MarkDepositAsAppliedToContract);
+        Assert.Throws<InvalidOperationException>(
+            payment.MarkDepositAsRefunded);
+        Assert.Throws<InvalidOperationException>(
+            payment.MarkDepositAsForfeited);
+        Assert.Equal(DepositDisposition.AppliedToContract,
+            payment.DepositDisposition);
+    }
+
+    [Fact]
+    public void DEPSTATE04_Refunded_Deposit_Cannot_Be_Applied_Or_Forfeited()
+    {
+        var payment = NewPayment(PaymentPurpose.ContractDeposit);
+        payment.Complete(DateTime.UtcNow);
+        payment.MarkDepositAsRefunded();
+
+        Assert.Equal(DepositDisposition.Refunded,
+            payment.DepositDisposition);
+        Assert.Throws<InvalidOperationException>(
+            payment.MarkDepositAsRefunded);
+        Assert.Throws<InvalidOperationException>(
+            payment.MarkDepositAsAppliedToContract);
+        Assert.Throws<InvalidOperationException>(
+            payment.MarkDepositAsForfeited);
+        Assert.Equal(DepositDisposition.Refunded,
+            payment.DepositDisposition);
+    }
+
+    [Fact]
+    public void DEPSTATE05_Forfeited_Deposit_Cannot_Be_Refunded_Or_Applied()
+    {
+        var payment = NewPayment(PaymentPurpose.ContractDeposit);
+        payment.Complete(DateTime.UtcNow);
+        payment.MarkDepositAsForfeited();
+
+        Assert.Equal(DepositDisposition.Forfeited,
+            payment.DepositDisposition);
+        Assert.Throws<InvalidOperationException>(
+            payment.MarkDepositAsForfeited);
+        Assert.Throws<InvalidOperationException>(
+            payment.MarkDepositAsRefunded);
+        Assert.Throws<InvalidOperationException>(
+            payment.MarkDepositAsAppliedToContract);
+        Assert.Equal(DepositDisposition.Forfeited,
+            payment.DepositDisposition);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void DEPSTATE06_Failed_Or_Cancelled_Deposit_Cannot_Be_Disposed(
+        bool fail)
+    {
+        var payment = NewPayment(PaymentPurpose.ContractDeposit);
+        if (fail)
+            payment.Fail();
+        else
+            payment.Cancel();
+
+        Assert.Throws<InvalidOperationException>(
+            payment.MarkDepositAsRefunded);
+        Assert.Throws<InvalidOperationException>(
+            payment.MarkDepositAsAppliedToContract);
+        Assert.Throws<InvalidOperationException>(
+            payment.MarkDepositAsForfeited);
+        Assert.Null(payment.DepositDisposition);
+    }
+
     private static Payment NewPayment(PaymentPurpose purpose)
         => new Payment(
             Guid.NewGuid(),

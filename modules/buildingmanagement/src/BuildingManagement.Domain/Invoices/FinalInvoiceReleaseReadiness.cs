@@ -19,6 +19,7 @@ public sealed class FinalInvoiceReleaseReadiness
     public Guid? StagedEvidenceId { get; internal set; }
     public Guid? ReviewTicketId { get; internal set; }
     public bool StagedEvidenceMatchesCurrentDraft { get; internal set; }
+    public bool OriginalSourcesVerified { get; internal set; }
     public bool IndependentDesignReviewRecorded { get; internal set; }
     // Historical signoff alone is insufficient. This flag requires the
     // source Draft still match the archived evidence AND no new preflight
@@ -38,7 +39,8 @@ public static class FinalInvoiceReleaseReadinessEvaluator
         IReadOnlyCollection<FinalInvoiceIssueEvidenceRecord> stagedEvidence,
         IReadOnlyCollection<InvoiceIssuanceReviewTicket> reviewTickets,
         FinalInvoiceIssueEvidenceDriftReview? driftReview,
-        InvoicePaymentAllocationJournalAudit allocationAudit)
+        InvoicePaymentAllocationJournalAudit allocationAudit,
+        FinalInvoiceSourceProvenanceReview? sourceProvenance = null)
     {
         ArgumentNullException.ThrowIfNull(preflight);
         ArgumentNullException.ThrowIfNull(stagedEvidence);
@@ -143,6 +145,24 @@ public static class FinalInvoiceReleaseReadinessEvaluator
                     result.Blockers.Add("IndependentInvoiceReviewCorrupt");
                 }
             }
+        }
+
+        // Independent audit against the PHYSICAL MeterReading, Meter and
+        // pricing records. A perfect archived JSON/Draft checksum does not
+        // establish that the original source records were unchanged.
+        if (!result.StagedEvidenceId.HasValue ||
+            sourceProvenance is null ||
+            sourceProvenance.StagedEvidenceId != result.StagedEvidenceId.Value)
+            result.Blockers.Add("OriginalInvoiceSourcesNotAudited");
+        else
+        {
+            foreach (var blocker in sourceProvenance.Blockers.Where(x =>
+                x != "OriginalSourcesAuditIsNotIssuanceAuthorization"))
+                result.Blockers.Add("OriginalSources:" + blocker);
+            if (sourceProvenance.MatchesPersistedSources)
+                result.OriginalSourcesVerified = true;
+            else
+                result.Blockers.Add("OriginalInvoiceSourcesChangedOrIncomplete");
         }
 
         if (stagedEvidence.Count == 0 && reviewTickets.Count != 0)

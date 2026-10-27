@@ -168,6 +168,93 @@ public sealed class InvoicePaymentAllocationJournal_Tests
             () => entry.VerifySourceReceipt(payment));
     }
 
+    [Fact]
+    public void ALLOCJOURNAL12_Contract_Scope_Audit_Finds_Unjournaled_Completed_Receipt()
+    {
+        var (payment, _, contractId) = Receipt();
+        var audit = InvoicePaymentAllocationJournalAuditor.Assess(
+            Array.Empty<InvoicePaymentAllocationJournalEntry>(),
+            new[] { payment }, contractId);
+
+        Assert.Contains("CompletedInvoicePaymentUnjournaled", audit.Blockers);
+        Assert.Null(audit.VerifiedStagedAmount);
+        Assert.False(audit.CanReduceDebt);
+    }
+
+    [Fact]
+    public void ALLOCJOURNAL13_Contract_Scope_Audit_Rejects_Entry_From_Other_Contract()
+    {
+        var (payment, invoiceId, contractId) = Receipt();
+        var journal = Stage(payment, invoiceId);
+        typeof(InvoicePaymentAllocationJournalEntry)
+            .GetProperty(nameof(InvoicePaymentAllocationJournalEntry.ContractId))!
+            .SetValue(journal, Guid.NewGuid());
+
+        var audit = InvoicePaymentAllocationJournalAuditor.Assess(
+            new[] { journal }, new[] { payment }, contractId);
+
+        Assert.Contains("CrossContractAllocationInLedger", audit.Blockers);
+        Assert.Contains("AllocationSourceReceiptMismatch", audit.Blockers);
+        Assert.Null(audit.VerifiedStagedAmount);
+    }
+
+    [Fact]
+    public void ALLOCJOURNAL14_Completed_Invoice_Receipt_Without_Invoice_Id_Is_Reported()
+    {
+        var contractId = Guid.NewGuid();
+        var payment = new Payment(
+            Guid.NewGuid(), "UNATTR-" + Guid.NewGuid().ToString("N"),
+            Guid.NewGuid(), PaymentPurpose.InvoicePayment,
+            PaymentMethod.BankTransfer, PaymentChannel.Manual, 125000m,
+            contractId: contractId);
+        payment.Complete(DateTime.UtcNow);
+
+        var audit = InvoicePaymentAllocationJournalAuditor.Assess(
+            Array.Empty<InvoicePaymentAllocationJournalEntry>(),
+            new[] { payment }, contractId);
+
+        Assert.Contains("CompletedInvoicePaymentUnattributed", audit.Blockers);
+        Assert.Contains("CompletedInvoicePaymentUnjournaled", audit.Blockers);
+    }
+
+    [Fact]
+    public void ALLOCJOURNAL15_Pending_Unjournaled_Receipt_Is_Not_Recognized()
+    {
+        var invoiceId = Guid.NewGuid();
+        var contractId = Guid.NewGuid();
+        var pending = NewReceipt(invoiceId, contractId);
+
+        var audit = InvoicePaymentAllocationJournalAuditor.Assess(
+            Array.Empty<InvoicePaymentAllocationJournalEntry>(),
+            new[] { pending }, contractId);
+
+        Assert.DoesNotContain("CompletedInvoicePaymentUnjournaled", audit.Blockers);
+        Assert.Equal(0m, audit.VerifiedStagedAmount);
+        Assert.False(audit.CanReduceDebt);
+    }
+
+    [Fact]
+    public void ALLOCJOURNAL16_Valid_Staged_Payment_Matches_Scope_Without_Posting()
+    {
+        var (payment, invoiceId, contractId) = Receipt();
+        var audit = InvoicePaymentAllocationJournalAuditor.Assess(
+            new[] { Stage(payment, invoiceId) }, new[] { payment }, contractId);
+
+        Assert.DoesNotContain("CompletedInvoicePaymentUnjournaled", audit.Blockers);
+        Assert.DoesNotContain("CrossContractAllocationInLedger", audit.Blockers);
+        Assert.Equal(payment.Amount, audit.VerifiedStagedAmount);
+        Assert.False(audit.CanPost);
+    }
+
+    [Fact]
+    public void ALLOCJOURNAL17_Empty_Contract_Id_Is_Not_A_Valid_Scope()
+    {
+        Assert.Throws<ArgumentException>(() =>
+            InvoicePaymentAllocationJournalAuditor.Assess(
+                Array.Empty<InvoicePaymentAllocationJournalEntry>(),
+                Array.Empty<Payment>(), Guid.Empty));
+    }
+
     private static (Payment Payment, Guid InvoiceId, Guid ContractId) Receipt()
     {
         var invoiceId = Guid.NewGuid();

@@ -1261,6 +1261,172 @@ public sealed class InvoicePersistenceIntegration_Tests
         });
     }
 
+    [Fact]
+    public async Task REPLACEMENTAUDITDB01_Original_Closing_And_New_Meter_Reading_Are_Verified()
+    {
+        var data = await SeedReplacementArchiveAsync();
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var source = await MakeSourceProvenanceService()
+                .GetAsync(data.ArchiveId);
+            Assert.True(source.MatchesPersistedSources);
+            Assert.DoesNotContain("OriginalMeterReplacementMissing",
+                source.Blockers);
+            Assert.False(source.CanIssue);
+
+            var ready = await MakeReleaseReadinessService()
+                .GetAsync(data.RequestId);
+            Assert.True(ready.OriginalSourcesVerified);
+            Assert.True(ready.StagedEvidenceMatchesCurrentDraft);
+            Assert.False(ready.CanIssue);
+            Assert.False(ready.CanPostReceivable);
+            Assert.Equal(InvoiceStatus.Draft,
+                (await _invoices.GetAsync(data.DraftId)).Status);
+        });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task REPLACEMENTAUDITDB02_Changed_Handover_Or_New_Opening_Is_Flagged(
+        bool changeNewMeter)
+    {
+        var data = await SeedReplacementArchiveAsync();
+        await WithUnitOfWorkAsync(async () =>
+        {
+            if (changeNewMeter)
+            {
+                var meter = await _meters.GetAsync(data.NewMeterId);
+                meter.Update(meter.MeterCode,
+                    meter.InitialReading + 1m, meter.InstalledDate,
+                    "Changed new meter initial reading");
+                await _meters.UpdateAsync(meter, autoSave: true);
+            }
+            else
+            {
+                var repo = GetRequiredService<IRepository<MeterReplacement, Guid>>();
+                var handover = await repo.GetAsync(data.ReplacementId);
+                typeof(MeterReplacement)
+                    .GetProperty(nameof(MeterReplacement.OldFinalReading))!
+                    .SetValue(handover, handover.OldFinalReading + 1m);
+                await repo.UpdateAsync(handover, autoSave: true);
+            }
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var source = await MakeSourceProvenanceService()
+                .GetAsync(data.ArchiveId);
+            Assert.False(source.MatchesPersistedSources);
+            Assert.Contains(changeNewMeter
+                    ? "ReplacementNewMeterOpeningMismatch"
+                    : "OriginalMeterReplacementClosingDiffersFromSnapshot",
+                source.Blockers);
+            var ready = await MakeReleaseReadinessService()
+                .GetAsync(data.RequestId);
+            Assert.False(ready.OriginalSourcesVerified);
+            Assert.Contains("OriginalInvoiceSourcesChangedOrIncomplete",
+                ready.Blockers);
+            Assert.False(ready.CanIssue);
+            Assert.Equal(InvoiceStatus.Draft,
+                (await _invoices.GetAsync(data.DraftId)).Status);
+        });
+    }
+
+    private async Task<(
+        Guid ArchiveId, Guid RequestId, Guid DraftId,
+        Guid ReplacementId, Guid NewMeterId)> SeedReplacementArchiveAsync()
+    {
+        var f = await SeedAsync();
+        var replacementId = Guid.NewGuid();
+        var newMeterId = Guid.NewGuid();
+        var newReadingId = Guid.NewGuid();
+        var waterReadingId = Guid.NewGuid();
+        var replacementDate = new DateTime(2026, 10, 15);
+        var monthEnd = new DateTime(2026, 10, 31);
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var contract = await _contracts.GetAsync(f.ContractId);
+            contract.Activate();
+            await _contracts.UpdateAsync(contract, autoSave: true);
+            await _meters.InsertAsync(new UtilityMeter(
+                newMeterId, f.RoomId, UtilityType.Electricity,
+                "NEW-" + Guid.NewGuid().ToString("N"),
+                2m, replacementDate), autoSave: true);
+            await GetRequiredService<IRepository<MeterReplacement, Guid>>()
+                .InsertAsync(new MeterReplacement(
+                    replacementId, f.ElectricityMeterId, newMeterId,
+                    f.RoomId, UtilityType.Electricity,
+                    replacementDate, 10m, 20m, 2m,
+                    "Replacement with final closing proof"), autoSave: true);
+            await _readings.InsertAsync(new MeterReading(
+                newReadingId, newMeterId, 2026, 10,
+                2m, 6m, monthEnd), autoSave: true);
+            await _readings.InsertAsync(new MeterReading(
+                waterReadingId, f.WaterMeterId, 2026, 10,
+                100m, 105m, monthEnd), autoSave: true);
+        });
+
+        var snapshot = InvoiceDraftSnapshot.Capture(
+            f.ContractId, f.RoomId, 2026, 10,
+            new[]
+            {
+                new InvoiceDraftUtilityLineSnapshot(
+                    UtilityType.Electricity, f.ElectricityRateId,
+                    "SingleRateWholeMonth", 14m, 3500m, 49000m,
+                    new[]
+                    {
+                        new InvoiceDraftMeterSegmentSnapshot(
+                            replacementId, f.ElectricityMeterId,
+                            MeterUsageSourceType.ReplacementClosing,
+                            replacementDate, 10m, 20m),
+                        new InvoiceDraftMeterSegmentSnapshot(
+                            newReadingId, newMeterId,
+                            MeterUsageSourceType.MonthlyReading,
+                            monthEnd, 2m, 6m)
+                    }, Array.Empty<string>()),
+                new InvoiceDraftUtilityLineSnapshot(
+                    UtilityType.Water, f.WaterRateId,
+                    "SingleRateWholeMonth", 5m, 15000m, 75000m,
+                    new[]
+                    {
+                        new InvoiceDraftMeterSegmentSnapshot(
+                            waterReadingId, f.WaterMeterId,
+                            MeterUsageSourceType.MonthlyReading,
+                            monthEnd, 100m, 105m)
+                    }, Array.Empty<string>())
+            });
+        var draft = Invoice.CreateDraft(Guid.NewGuid(), snapshot, Guid.NewGuid);
+        var requestId = Guid.NewGuid();
+        var archiveId = Guid.NewGuid();
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var request = new MoveOutRequest(
+                requestId, f.ContractId, f.RoomId,
+                new DateOnly(2026, 10, 31),
+                "Final invoice with an in-month meter replacement");
+            request.Approve(DateTime.UtcNow, null);
+            await GetRequiredService<IRepository<MoveOutRequest, Guid>>()
+                .InsertAsync(request, autoSave: true);
+            await _invoices.InsertAsync(draft, autoSave: true);
+        });
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var bundle = await MakeIssuePreflightService()
+                .GetEvidenceBundleAsync(requestId);
+            var evidence = Assert.IsType<FinalInvoiceEvidencePackage>(
+                bundle.Evidence);
+            var archive = FinalInvoiceIssueEvidenceRecord.Prepare(
+                archiveId, Guid.NewGuid(), DateTime.UtcNow,
+                evidence, bundle.Preflight);
+            await GetRequiredService<
+                IRepository<FinalInvoiceIssueEvidenceRecord, Guid>>()
+                .InsertAsync(archive, autoSave: true);
+        });
+
+        return (archiveId, requestId, draft.Id, replacementId, newMeterId);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

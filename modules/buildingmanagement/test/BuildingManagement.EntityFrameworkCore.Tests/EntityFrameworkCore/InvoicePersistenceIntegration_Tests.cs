@@ -803,6 +803,101 @@ public sealed class InvoicePersistenceIntegration_Tests
         });
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ISSUEDRIFTDB01_Staged_Evidence_Detects_Current_Draft_Source_Change(
+        bool inconsistentReadings)
+    {
+        var (fixture, readingId) = await SeedReadyOctoberAsync();
+        var draft = CreateDraft(fixture, readingId, Guid.NewGuid());
+        var requestId = Guid.NewGuid();
+        var archiveId = Guid.NewGuid();
+        var sourceItemId = draft.Items.Single(x =>
+            x.UtilityType == UtilityType.Electricity).MeterSources.Single().Id;
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var request = new MoveOutRequest(requestId, fixture.ContractId,
+                fixture.RoomId, new DateOnly(2026, 10, 31),
+                "Staged proof drift test");
+            request.Approve(DateTime.UtcNow, null);
+            await GetRequiredService<IRepository<MoveOutRequest, Guid>>()
+                .InsertAsync(request, autoSave: true);
+            await _invoices.InsertAsync(draft, autoSave: true);
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var bundle = await MakeIssuePreflightService()
+                .GetEvidenceBundleAsync(requestId);
+            var evidence = Assert.IsType<FinalInvoiceEvidencePackage>(
+                bundle.Evidence);
+            var archive = FinalInvoiceIssueEvidenceRecord.Prepare(
+                archiveId, Guid.NewGuid(), DateTime.UtcNow,
+                evidence, bundle.Preflight);
+            await GetRequiredService<
+                IRepository<FinalInvoiceIssueEvidenceRecord, Guid>>()
+                .InsertAsync(archive, autoSave: true);
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var audit = await MakeIssueDriftService().GetAsync(archiveId);
+            Assert.True(audit.MatchesCurrentDraft);
+            Assert.False(audit.CanIssue);
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var repository = GetRequiredService<
+                IRepository<InvoiceItemMeterSource, Guid>>();
+            var source = await repository.GetAsync(sourceItemId);
+            if (inconsistentReadings)
+            {
+                typeof(InvoiceItemMeterSource)
+                    .GetProperty(nameof(InvoiceItemMeterSource.CurrentReading))!
+                    .SetValue(source, source.CurrentReading + 1m);
+            }
+            else
+            {
+                // Changed historical source date, same quantity and total:
+                // valid meter arithmetic, but evidence digest must differ.
+                typeof(InvoiceItemMeterSource)
+                    .GetProperty(nameof(InvoiceItemMeterSource.RecordedDate))!
+                    .SetValue(source, new DateTime(2026, 10, 30));
+            }
+            await repository.UpdateAsync(source, autoSave: true);
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var audit = await MakeIssueDriftService().GetAsync(archiveId);
+            Assert.False(audit.MatchesCurrentDraft);
+            Assert.Contains(inconsistentReadings
+                    ? "CurrentDraftEvidenceInvalid"
+                    : "ArchivedEvidenceDiffersFromCurrentDraft",
+                audit.Blockers);
+            Assert.False(audit.CanIssue);
+            Assert.False(audit.IsReceivablePosted);
+            var archive = await GetRequiredService<
+                IRepository<FinalInvoiceIssueEvidenceRecord, Guid>>()
+                .GetAsync(archiveId);
+            archive.VerifyStoredEvidence();
+            Assert.Equal(InvoiceStatus.Draft,
+                (await _invoices.GetAsync(draft.Id)).Status);
+        });
+    }
+
+    private FinalInvoiceIssueEvidenceDriftAppService MakeIssueDriftService()
+        => new(
+            GetRequiredService<IRepository<FinalInvoiceIssueEvidenceRecord, Guid>>(),
+            GetRequiredService<IRepository<MoveOutRequest, Guid>>(),
+            _contracts,
+            _invoices,
+            GetRequiredService<IRepository<InvoiceItem, Guid>>(),
+            GetRequiredService<IRepository<InvoiceItemMeterSource, Guid>>());
+
     [Fact]
     public async Task ISSUEARCHDB01_Staged_Issue_Evidence_Persists_Without_Posting_Invoice()
     {

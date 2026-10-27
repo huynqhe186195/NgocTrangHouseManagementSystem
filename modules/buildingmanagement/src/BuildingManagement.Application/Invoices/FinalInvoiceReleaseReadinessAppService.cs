@@ -20,6 +20,7 @@ public class FinalInvoiceReleaseReadinessAppService : ApplicationService
     private readonly IRepository<FinalInvoiceIssueEvidenceRecord, Guid> _evidence;
     private readonly IRepository<InvoiceIssuanceReviewTicket, Guid> _reviews;
     private readonly FinalInvoiceIssueEvidenceDriftAppService _drift;
+    private readonly FinalInvoiceSourceProvenanceAppService _sourceProvenance;
     private readonly InvoicePaymentAllocationLedgerReviewAppService _allocationLedger;
 
     public FinalInvoiceReleaseReadinessAppService(
@@ -27,12 +28,14 @@ public class FinalInvoiceReleaseReadinessAppService : ApplicationService
         IRepository<FinalInvoiceIssueEvidenceRecord, Guid> evidence,
         IRepository<InvoiceIssuanceReviewTicket, Guid> reviews,
         FinalInvoiceIssueEvidenceDriftAppService drift,
+        FinalInvoiceSourceProvenanceAppService sourceProvenance,
         InvoicePaymentAllocationLedgerReviewAppService allocationLedger)
     {
         _preflight = preflight;
         _evidence = evidence;
         _reviews = reviews;
         _drift = drift;
+        _sourceProvenance = sourceProvenance;
         _allocationLedger = allocationLedger;
     }
 
@@ -53,13 +56,17 @@ public class FinalInvoiceReleaseReadinessAppService : ApplicationService
             x.MoveOutRequestId == moveOutRequestId);
 
         FinalInvoiceIssueEvidenceDriftReview? drift = null;
+        FinalInvoiceSourceProvenanceReview? provenance = null;
         if (archives.Count == 1)
+        {
             drift = await _drift.GetAsync(archives[0].Id);
+            provenance = await _sourceProvenance.GetAsync(archives[0].Id);
+        }
 
         var allocation = await _allocationLedger.GetAsync(
             preflight.ContractId);
 
         return FinalInvoiceReleaseReadinessEvaluator.Assess(
-            preflight, archives, reviewTickets, drift, allocation);
+            preflight, archives, reviewTickets, drift, allocation, provenance);
     }
 }

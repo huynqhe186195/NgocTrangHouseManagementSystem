@@ -744,6 +744,164 @@ public sealed class FinalMoveOutBillReview_Tests
         return (archive, request, contract, draft);
     }
 
+    [Fact]
+    public void ISSUEREVIEW01_Independent_Reviewer_May_Sign_Off_For_Design_But_Not_Issue()
+    {
+        var (archive, ticket, preflight, facts, reviewer) = ReviewTicketFixture();
+
+        ticket.RecordReviewForDesign(
+            reviewer, DateTime.UtcNow.AddMinutes(1), true,
+            "Evidence cross-checked for design only.", preflight, facts);
+        ticket.VerifyStagedEvidence(archive);
+
+        Assert.Equal(InvoiceIssuanceReviewStatus.ReviewedForDesign, ticket.Status);
+        Assert.Equal(reviewer, ticket.ReviewedByUserId);
+        Assert.False(ticket.CanIssue);
+        Assert.False(ticket.CanPostReceivable);
+        Assert.False(ticket.CanReduceDebt);
+    }
+
+    [Fact]
+    public void ISSUEREVIEW02_Self_Review_Is_Always_Denied()
+    {
+        var (_, ticket, preflight, facts, _) = ReviewTicketFixture();
+        Assert.Throws<InvalidOperationException>(() =>
+            ticket.RecordReviewForDesign(
+                ticket.SubmittedByUserId, DateTime.UtcNow.AddMinutes(1), true,
+                "Attempted self-review must fail.", preflight, facts));
+        Assert.Equal(InvoiceIssuanceReviewStatus.Submitted, ticket.Status);
+    }
+
+    [Fact]
+    public void ISSUEREVIEW03_Sign_Off_Cannot_Be_Replayed_Or_Rejected_Afterward()
+    {
+        var (_, ticket, preflight, facts, reviewer) = ReviewTicketFixture();
+        ticket.RecordReviewForDesign(
+            reviewer, DateTime.UtcNow.AddMinutes(1), true,
+            "Reviewed with valid staging evidence.", preflight, facts);
+        Assert.Throws<InvalidOperationException>(() =>
+            ticket.RecordReviewForDesign(
+                reviewer, DateTime.UtcNow.AddMinutes(2), false,
+                "Changing the decision is forbidden.", preflight, facts));
+        Assert.Equal(InvoiceIssuanceReviewStatus.ReviewedForDesign, ticket.Status);
+    }
+
+    [Fact]
+    public void ISSUEREVIEW04_Another_Building_Or_Denied_Permission_Blocks_Review()
+    {
+        var (_, ticket, preflight, facts, reviewer) = ReviewTicketFixture();
+        Assert.Throws<InvalidOperationException>(() =>
+            ticket.RecordReviewForDesign(
+                reviewer, DateTime.UtcNow.AddMinutes(1), true,
+                "Wrong building permission.", preflight,
+                facts with { BuildingId = Guid.NewGuid() }));
+        Assert.Throws<InvalidOperationException>(() =>
+            ticket.RecordReviewForDesign(
+                reviewer, DateTime.UtcNow.AddMinutes(1), true,
+                "Missing effective permission.", preflight,
+                facts with { IssuerPermissionGranted = false }));
+        Assert.Equal(InvoiceIssuanceReviewStatus.Submitted, ticket.Status);
+    }
+
+    [Fact]
+    public void ISSUEREVIEW05_Changed_Evidence_Digest_Or_Reviewer_Id_Is_Denied()
+    {
+        var (_, ticket, preflight, facts, reviewer) = ReviewTicketFixture();
+        Assert.Throws<InvalidOperationException>(() =>
+            ticket.RecordReviewForDesign(
+                reviewer, DateTime.UtcNow.AddMinutes(1), true,
+                "Wrong historical evidence hash.", preflight,
+                facts with { PersistedEvidenceSha256 = new string('0', 64) }));
+        Assert.Throws<InvalidOperationException>(() =>
+            ticket.RecordReviewForDesign(
+                reviewer, DateTime.UtcNow.AddMinutes(1), true,
+                "Caller cannot impersonate the reviewer.", preflight,
+                facts with { AuthenticatedIssuerId = Guid.NewGuid() }));
+    }
+
+    [Fact]
+    public void ISSUEREVIEW06_Reason_And_Chronological_Utc_Audit_Are_Required()
+    {
+        var (_, ticket, preflight, facts, reviewer) = ReviewTicketFixture();
+        Assert.Throws<ArgumentException>(() =>
+            ticket.RecordReviewForDesign(
+                reviewer, DateTime.UtcNow.AddMinutes(1), true,
+                "short", preflight, facts));
+        Assert.Throws<ArgumentException>(() =>
+            ticket.RecordReviewForDesign(
+                reviewer, DateTime.SpecifyKind(
+                    DateTime.UtcNow.AddMinutes(1), DateTimeKind.Unspecified),
+                true, "Invalid review timestamp.", preflight, facts));
+        Assert.Throws<ArgumentException>(() =>
+            ticket.RecordReviewForDesign(
+                reviewer, ticket.SubmittedAtUtc.AddSeconds(-1),
+                true, "Review predates submission.", preflight, facts));
+        Assert.Equal(InvoiceIssuanceReviewStatus.Submitted, ticket.Status);
+    }
+
+    [Fact]
+    public void ISSUEREVIEW07_Documented_Rejection_Persists_Without_Payment_Changes()
+    {
+        var (archive, ticket, preflight, facts, reviewer) = ReviewTicketFixture();
+        ticket.RecordReviewForDesign(
+            reviewer, DateTime.UtcNow.AddMinutes(1), false,
+            "Auxiliary service charges not yet approved.", preflight, facts);
+        ticket.VerifyStagedEvidence(archive);
+        Assert.Equal(InvoiceIssuanceReviewStatus.Rejected, ticket.Status);
+        Assert.False(ticket.CanIssue);
+        Assert.False(ticket.CanReduceDebt);
+    }
+
+    [Fact]
+    public void ISSUEREVIEW08_Corrupted_Evidence_Link_Cannot_Pass_Audit()
+    {
+        var (archive, ticket, _, _, _) = ReviewTicketFixture();
+        typeof(InvoiceIssuanceReviewTicket)
+            .GetProperty(nameof(InvoiceIssuanceReviewTicket.EvidenceSha256))!
+            .SetValue(ticket, new string('0', 64));
+        Assert.Throws<InvalidDataException>(
+            () => ticket.VerifyStagedEvidence(archive));
+    }
+
+    private static (FinalInvoiceIssueEvidenceRecord Archive,
+        InvoiceIssuanceReviewTicket Ticket, FinalInvoiceIssuePreflight Preflight,
+        InvoiceIssuanceScopeFacts Facts, Guid ReviewerId) ReviewTicketFixture()
+    {
+        var (package, preflight) = StagingFixture();
+        var archive = FinalInvoiceIssueEvidenceRecord.Prepare(
+            Guid.NewGuid(), Guid.NewGuid(),
+            new DateTime(2026, 12, 1, 1, 0, 0, DateTimeKind.Utc),
+            package, preflight);
+        var buildingId = Guid.NewGuid();
+        var floorId = Guid.NewGuid();
+        var reviewer = Guid.NewGuid();
+        var ticket = InvoiceIssuanceReviewTicket.Stage(
+            Guid.NewGuid(), archive, buildingId, Guid.NewGuid(),
+            new DateTime(2026, 12, 1, 2, 0, 0, DateTimeKind.Utc),
+            "Ready for internal review");
+        var facts = new InvoiceIssuanceScopeFacts(
+            AuthenticatedIssuerId: reviewer,
+            IssuerPermissionGranted: true,
+            RequestedMoveOutId: package.MoveOutRequestId,
+            PersistedMoveOutId: package.MoveOutRequestId,
+            RequestedDraftInvoiceId: package.DraftInvoiceId,
+            PersistedDraftInvoiceId: package.DraftInvoiceId,
+            InvoiceContractId: package.ContractId,
+            InvoiceRoomId: package.RoomId,
+            ContractId: package.ContractId,
+            ContractRoomId: package.RoomId,
+            RoomId: package.RoomId,
+            RoomFloorId: floorId,
+            FloorId: floorId,
+            FloorBuildingId: buildingId,
+            BuildingId: buildingId,
+            IssuerBuildingMemberships: new[] { buildingId },
+            PersistedInvoiceStatus: InvoiceStatus.Draft,
+            PersistedEvidenceSha256: package.EvidenceSha256,
+            ExistingIssuedInvoiceForPeriod: false);
+        return (archive, ticket, preflight, facts, reviewer);
+    }
+
     private static (FinalInvoiceEvidencePackage, FinalInvoiceIssuePreflight)
         StagingFixture()
     {

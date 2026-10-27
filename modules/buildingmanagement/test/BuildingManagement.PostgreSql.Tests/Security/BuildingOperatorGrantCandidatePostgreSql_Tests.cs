@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Npgsql;
 using Xunit;
@@ -198,15 +199,11 @@ public sealed class BuildingOperatorGrantCandidatePostgreSql_Tests
             var sql = reader.ReadToEnd().TrimStart('\uFEFF');
             Assert.Contains($""" "{Table}" """.Trim(), sql,
                 StringComparison.Ordinal);
-            Assert.DoesNotContain("CREATE ROLE", sql,
-                StringComparison.OrdinalIgnoreCase);
-            Assert.DoesNotContain("GRANT ", sql,
-                StringComparison.OrdinalIgnoreCase);
-            Assert.DoesNotContain("ALTER ROLE", sql,
-                StringComparison.OrdinalIgnoreCase);
+            // Check executable statement starts, not ordinary review
+            // comments such as "a grant is reusable only after revoke".
+            Assert.False(Regex.IsMatch(sql,
+                @"(?im)^\s*(GRANT|CREATE ROLE|ALTER ROLE|DROP DATABASE|BEGIN|COMMIT)\b"));
             Assert.DoesNotContain("public.", sql,
-                StringComparison.OrdinalIgnoreCase);
-            Assert.DoesNotContain("COMMIT;", sql,
                 StringComparison.OrdinalIgnoreCase);
             return sql;
         }

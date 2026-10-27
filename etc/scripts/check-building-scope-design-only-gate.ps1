@@ -68,6 +68,27 @@ foreach ($name in @('IQueryable<Building>', 'IQueryable<Floor>',
     }
 }
 
+# The reviewed OFFLINE candidate must remain separate from runtime EF and
+# never grant DB roles or run destructive SQL.
+$grantUp = Read-Source 'etc/phase-audits/SliceA_OperatorBuildingGrant_Up_Candidate.sql'
+$grantDown = Read-Source 'etc/phase-audits/SliceA_OperatorBuildingGrant_Down_Candidate.sql'
+if ($grantUp -notmatch 'CREATE TABLE "BuildingManagementOperatorBuildingGrants"' -or
+    $grantUp -notmatch 'UX_BM_OperatorBuilding_Unrevoked' -or
+    $grantUp -notmatch 'FK_BM_OperatorBuildingGrants_Building' -or
+    $grantUp -notmatch 'CK_BM_Grant_Revocation' -or
+    $grantDown -notmatch 'ACCESS EXCLUSIVE MODE' -or
+    $grantDown -notmatch 'IF EXISTS' -or
+    $grantDown -notmatch 'RAISE EXCEPTION' -or
+    $grantDown -notmatch 'DROP TABLE' -or
+    $grantUp -match '(?im)^\s*(GRANT|CREATE ROLE|ALTER ROLE|DROP DATABASE|BEGIN|COMMIT)\b' -or
+    $grantDown -match '(?im)^\s*(GRANT|CREATE ROLE|ALTER ROLE|DROP DATABASE|BEGIN|COMMIT)\b') {
+    throw 'Safety stop: unreviewed grant SQL candidate or unsafe SQL operation.'
+}
+if ($grantDown.IndexOf('LOCK TABLE') -ge $grantDown.IndexOf('IF EXISTS') -or
+    $grantDown.IndexOf('IF EXISTS') -ge $grantDown.IndexOf('DROP TABLE')) {
+    throw 'Safety stop: grant rollback lock/check/drop ordering changed.'
+}
+
 # A candidate scoped read service must remain internal and must not be
 # prematurely used as a positive authorization token by old CRUD endpoints.
 $scopedRead = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/Security/BuildingScopedReadDesignGate.cs'

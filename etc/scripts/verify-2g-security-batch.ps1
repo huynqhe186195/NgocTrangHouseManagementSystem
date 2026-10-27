@@ -36,6 +36,14 @@ try {
         }
     }
 
+    # Compile PostgreSQL-specific test code without ever connecting to PG.
+    # PostgreSQL tests are opt-in and NEVER executed by this Full batch.
+    Write-Host '== COMPILE ONLY: PostgreSQL isolated test project (no DB) =='
+    & dotnet build '.\modules\buildingmanagement\test\BuildingManagement.PostgreSql.Tests\BuildingManagement.PostgreSql.Tests.csproj' --nologo
+    if ($LASTEXITCODE -ne 0) {
+        throw 'PostgreSQL test project failed to compile. No database was accessed.'
+    }
+
     $projects = @(
         @{
             Name = 'Domain'
@@ -85,7 +93,7 @@ try {
     }
 
     Write-Host '=== QUALITY GATE PASS: ALL REQUESTED TEST RUNS SUCCEEDED ==='
-    Write-Host 'NO DATABASE MIGRATION, NO POSTGRESQL TEST, NO LIVE APPLICATION STARTED.'
+    Write-Host 'NO DATABASE MIGRATION, NO POSTGRESQL TEST (COMPILE ONLY), NO LIVE APPLICATION STARTED.'
     Write-Host 'Source-only checks are NOT proof of authenticated cross-building CRUD security.'
 
     # Shows any unexpected changes without modifying them. In particular the

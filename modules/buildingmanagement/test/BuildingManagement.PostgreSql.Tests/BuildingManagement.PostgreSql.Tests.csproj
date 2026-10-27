@@ -15,6 +15,12 @@
          rollback-only, schema-isolated PostgreSQL smoke test. -->
     <EmbeddedResource Include="..\..\..\..\etc\phase-audits\Phase2G3A4_InvoiceDraftSchema_Review.sql"
                       LogicalName="Phase2G3A4_InvoiceDraftSchema_Review.sql" />
+    <!-- SQL candidate remains inert until an explicit localhost PG test.
+         Compile the test in CI, but never run it as part of Full. -->
+    <EmbeddedResource Include="..\..\..\..\etc\phase-audits\SliceA_OperatorBuildingGrant_Up_Candidate.sql"
+                      LogicalName="SliceA_OperatorBuildingGrant_Up_Candidate.sql" />
+    <EmbeddedResource Include="..\..\..\..\etc\phase-audits\SliceA_OperatorBuildingGrant_Down_Candidate.sql"
+                      LogicalName="SliceA_OperatorBuildingGrant_Down_Candidate.sql" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />

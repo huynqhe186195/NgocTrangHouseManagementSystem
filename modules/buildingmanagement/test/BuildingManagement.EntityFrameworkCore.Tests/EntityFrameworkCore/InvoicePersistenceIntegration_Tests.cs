@@ -820,10 +820,14 @@ public sealed class InvoicePersistenceIntegration_Tests
 
         await WithUnitOfWorkAsync(async () =>
         {
-            var preflight = await MakeIssuePreflightService().GetAsync(requestId);
-            var source = await MakeFinalEvidenceService().GetAsync(requestId);
+            var bundle = await MakeIssuePreflightService()
+                .GetEvidenceBundleAsync(requestId);
+            var source = Assert.IsType<FinalInvoiceEvidencePackage>(
+                bundle.Evidence);
+            Assert.Equal(source.EvidenceSha256, bundle.Preflight.EvidenceSha256);
             var archive = FinalInvoiceIssueEvidenceRecord.Prepare(
-                archiveId, Guid.NewGuid(), DateTime.UtcNow, source, preflight);
+                archiveId, Guid.NewGuid(), DateTime.UtcNow,
+                source, bundle.Preflight);
             await GetRequiredService<
                 IRepository<FinalInvoiceIssueEvidenceRecord, Guid>>()
                 .InsertAsync(archive, autoSave: true);
@@ -866,15 +870,17 @@ public sealed class InvoicePersistenceIntegration_Tests
             await _invoices.InsertAsync(draft, autoSave: true);
         });
 
-        FinalInvoiceEvidencePackage source = null!;
-        FinalInvoiceIssuePreflight preflight = null!;
+        FinalInvoiceIssueEvidenceBundle bundle = null!;
         await WithUnitOfWorkAsync(async () =>
         {
-            source = await MakeFinalEvidenceService().GetAsync(requestId);
-            preflight = await MakeIssuePreflightService().GetAsync(requestId);
+            bundle = await MakeIssuePreflightService()
+                .GetEvidenceBundleAsync(requestId);
+            var source = Assert.IsType<FinalInvoiceEvidencePackage>(
+                bundle.Evidence);
+            Assert.Equal(source.EvidenceSha256, bundle.Preflight.EvidenceSha256);
             var first = FinalInvoiceIssueEvidenceRecord.Prepare(
                 Guid.NewGuid(), Guid.NewGuid(), DateTime.UtcNow,
-                source, preflight);
+                source, bundle.Preflight);
             await GetRequiredService<
                 IRepository<FinalInvoiceIssueEvidenceRecord, Guid>>()
                 .InsertAsync(first, autoSave: true);
@@ -883,9 +889,11 @@ public sealed class InvoicePersistenceIntegration_Tests
         var failure = await Record.ExceptionAsync(async () =>
             await WithUnitOfWorkAsync(async () =>
             {
+                var source = Assert.IsType<FinalInvoiceEvidencePackage>(
+                    bundle.Evidence);
                 var duplicate = FinalInvoiceIssueEvidenceRecord.Prepare(
                     Guid.NewGuid(), Guid.NewGuid(), DateTime.UtcNow,
-                    source, preflight);
+                    source, bundle.Preflight);
                 await GetRequiredService<
                     IRepository<FinalInvoiceIssueEvidenceRecord, Guid>>()
                     .InsertAsync(duplicate, autoSave: true);

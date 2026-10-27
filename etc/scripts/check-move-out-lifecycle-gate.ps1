@@ -33,6 +33,9 @@ $issuedDebtCalculation = Read-Source 'modules/buildingmanagement/src/BuildingMan
 $issuePreflight = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/FinalInvoiceIssuePreflight.cs'
 $issuePreflightService = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/Invoices/FinalInvoiceIssuePreflightAppService.cs'
 $invoiceIssuanceScope = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/InvoiceIssuanceScopePolicy.cs'
+$issueEvidenceRecord = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/FinalInvoiceIssueEvidenceRecord.cs'
+$issueEvidenceSchema = Read-Source 'modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/EntityConfigurations/FinalInvoiceIssueEvidenceRecordConfiguration.cs'
+$issueEvidenceDbContext = Read-Source 'modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/EntityFrameworkCore/BuildingManagementDbContext.cs'
 $depositLedgerReview = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/DepositSettlements/ContractDepositLedgerReview.cs'
 $depositLedgerService = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/DepositSettlements/ContractDepositLedgerReviewAppService.cs'
 $depositSettlement = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/DepositSettlements/DepositSettlement.cs'
@@ -211,6 +214,23 @@ if ($invoiceIssuanceScope -notmatch 'IssuerBuildingMemberships\.Contains\(facts\
     $invoiceIssuanceScope -notmatch 'CanIssue\s*=>\s*false' -or
     $invoiceIssuanceScope -notmatch 'CanPostReceivable\s*=>\s*false') {
     throw 'Safety stop: design-only invoice issuer scope escaped its financial authorization boundary.'
+}
+
+# Prepared final-invoice proof is STAGED evidence, NOT an issued ledger.
+# The approved PostgreSQL migration and lock-protected authorized issuer
+# do not yet exist. Preserve the DB uniqueness and FK relationships while
+# keeping all financial status transitions disabled.
+if ($issueEvidenceRecord -notmatch 'IsInvoiceIssued\s*=>\s*false' -or
+    $issueEvidenceRecord -notmatch 'IsReceivablePosted\s*=>\s*false' -or
+    $issueEvidenceRecord -notmatch 'VerifyStoredEvidence\(' -or
+    $issueEvidenceRecord -notmatch 'SHA256\.HashData' -or
+    $issueEvidenceSchema -notmatch 'UX_BM_FinalIssueEvidence_Draft' -or
+    $issueEvidenceSchema -notmatch 'UX_BM_FinalIssueEvidence_Contract_Period' -or
+    $issueEvidenceSchema -notmatch 'UX_BM_FinalIssueEvidence_Room_Period' -or
+    $issueEvidenceSchema -notmatch 'DeleteBehavior\.Restrict' -or
+    $issueEvidenceDbContext -notmatch 'FinalInvoiceIssueEvidenceRecordConfiguration' -or
+    $issueEvidenceRecord -match '(?m)^\s*public\s+(?:async\s+)?(?:void|Task|Task<\w+>)\s+(?:Issue|Post|Pay|Refund|Delete)\s*\(') {
+    throw 'Safety stop: staged invoice issue evidence was promoted to a live financial ledger.'
 }
 
 Write-Host 'MOVE-OUT LIFECYCLE SOURCE GATE PASS.'

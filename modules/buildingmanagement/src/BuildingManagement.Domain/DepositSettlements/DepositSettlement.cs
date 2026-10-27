@@ -111,6 +111,11 @@ public class DepositSettlement
                 ? null
                 : notes.Trim();
 
+        // A forfeiture from a held CONTRACT deposit is a financial
+        // deduction and requires a reason. Reservation no-show forfeiture
+        // is a separate pre-move-in policy, so preserve that workflow.
+        EnsureContractForfeitReason(type, sourceContractId, Notes);
+
         Status =
             DepositSettlementStatus.Pending;
     }
@@ -127,10 +132,26 @@ public class DepositSettlement
             );
         }
 
+        // Also guard legacy/deserialized Pending rows that predate
+        // constructor validation and may lack a contract-forfeit reason.
+        EnsureContractForfeitReason(Type, SourceContractId, Notes);
+
         Status =
             DepositSettlementStatus.Completed;
 
         CompletedAt = completedAt;
+    }
+
+    private static void EnsureContractForfeitReason(
+        DepositSettlementType type,
+        Guid? sourceContractId,
+        string? notes)
+    {
+        if (type == DepositSettlementType.Forfeit &&
+            sourceContractId.HasValue &&
+            string.IsNullOrWhiteSpace(notes))
+            throw new BusinessException(
+                BuildingManagementErrorCodes.ContractDepositForfeitReasonRequired);
     }
 
     private static void ValidateReferences(

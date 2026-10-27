@@ -30,6 +30,8 @@ $paymentEvidence = Read-Source 'modules/buildingmanagement/src/BuildingManagemen
 $paymentEvidenceModel = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/FinalMoveOutPaymentEvidence.cs'
 $paymentState = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Payments/Payment.cs'
 $issuedDebtCalculation = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/IssuedInvoicePaymentReconciler.cs'
+$finalEvidence = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/FinalInvoiceEvidencePackage.cs'
+$finalEvidenceService = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/Invoices/FinalInvoiceEvidencePackageAppService.cs'
 
 if ($contract -notmatch '(?s)\[RemoteService\(IsEnabled\s*=\s*false\)\]\s*public\s+async\s+Task<ContractDto>\s+EndAsync\s*\(') {
     throw 'Safety stop: direct Contract.EndAsync route is no longer disabled.'
@@ -114,6 +116,19 @@ if ($paymentState -notmatch 'EnsurePendingTransition\("complete"\)' -or
     $issuedDebtCalculation -notmatch 'DuplicatePaymentIdentifier|same PaymentId cannot be applied twice' -or
     $issuedDebtCalculation -notmatch 'CanSettleDeposit\s*=>\s*false') {
     throw 'Safety stop: payment terminal states or issued-invoice reconciliation guards missing.'
+}
+
+# Immutable final-month issuance evidence is still only a PREPARATION.
+# It must include both metered utility snapshots, a SHA-256 digest and
+# must NOT authorize issue, receivable posting or deposit settlement.
+if ($finalEvidence -notmatch 'SHA256\.HashData' -or
+    $finalEvidence -notmatch 'VerifyChecksum\(' -or
+    $finalEvidence -notmatch 'CanIssue\s*=>\s*false' -or
+    $finalEvidence -notmatch 'IsReceivablePosted\s*=>\s*false' -or
+    $finalEvidenceService -notmatch '\[RemoteService\(IsEnabled\s*=\s*false\)\]' -or
+    $finalEvidenceService -notmatch 'public\s+virtual\s+async\s+Task<FinalInvoiceEvidencePackage>\s+GetAsync' -or
+    $finalEvidenceService -match '\.(Issue|PostDebt|Pay|Refund|End|Complete|InsertAsync|UpdateAsync|DeleteAsync)\s*\(') {
+    throw 'Safety stop: immutable final invoice evidence exposed or converted to a monetary writer.'
 }
 
 Write-Host 'MOVE-OUT LIFECYCLE SOURCE GATE PASS.'

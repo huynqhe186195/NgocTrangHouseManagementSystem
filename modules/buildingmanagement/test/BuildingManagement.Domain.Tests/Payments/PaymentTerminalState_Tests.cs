@@ -184,6 +184,18 @@ public sealed class PaymentTerminalState_Tests
             payment.DepositDisposition);
     }
 
+    [Fact]
+    public void DEPSTATE07_Completed_Contract_Deposit_Cannot_Be_Applied_Again()
+    {
+        var payment = NewPayment(PaymentPurpose.ContractDeposit);
+        payment.Complete(DateTime.UtcNow);
+
+        Assert.Throws<InvalidOperationException>(
+            payment.MarkDepositAsAppliedToContract);
+        Assert.Equal(DepositDisposition.Unapplied, payment.DepositDisposition);
+        Assert.Equal(PaymentStatus.Completed, payment.Status);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

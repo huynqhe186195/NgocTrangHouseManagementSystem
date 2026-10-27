@@ -199,6 +199,8 @@ if ($issuePreflight -notmatch 'CanIssue\s*=>\s*false' -or
     $issuePreflight -notmatch 'AuditedPaymentAllocationNotImplemented' -or
     $issuePreflightService -notmatch '\[RemoteService\(IsEnabled\s*=\s*false\)\]' -or
     $issuePreflightService -notmatch '\[UnitOfWork\(isTransactional:\s*true\)\]' -or
+    $issuePreflightService -notmatch 'GetEvidenceBundleAsync\(' -or
+    $issuePreflightService -notmatch 'new FinalInvoiceIssueEvidenceBundle\(' -or
     $issuePreflightService -match '\.(Issue|PostDebt|Pay|Refund|End|Complete|InsertAsync|UpdateAsync|DeleteAsync)\s*\(') {
     throw 'Safety stop: invoice issuance preparation lost fail-closed financial or HTTP boundary.'
 }

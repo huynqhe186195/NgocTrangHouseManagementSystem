@@ -130,6 +130,10 @@ public static class FinalInvoiceReleaseReadinessEvaluator
                                 not "AuditedPaymentAllocationNotImplemented"))
                             result.Blockers.Add(
                                 "IndependentInvoiceReviewSupersededByNewAnomalies");
+                        else if (allocationAudit.Blockers.Any(x =>
+                            x != "IssuedInvoiceLedgerAndAllocationAuthorizationMissing"))
+                            result.Blockers.Add(
+                                "IndependentInvoiceReviewSupersededByAllocationAnomalies");
                         else
                             result.IndependentReviewApplicableToCurrentDraft = true;
                     }

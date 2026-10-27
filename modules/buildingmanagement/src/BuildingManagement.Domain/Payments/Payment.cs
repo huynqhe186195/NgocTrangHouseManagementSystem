@@ -167,23 +167,33 @@ namespace BuildingManagement.Payments
 
         public void MarkDepositAsAppliedToContract()
         {
-            DepositDisposition =
-                Payments.DepositDisposition
-                    .AppliedToContract;
+            EnsureUnappliedCompletedDeposit("apply");
+            DepositDisposition = Payments.DepositDisposition.AppliedToContract;
         }
 
         public void MarkDepositAsRefunded()
         {
-            DepositDisposition =
-                Payments.DepositDisposition
-                    .Refunded;
+            EnsureUnappliedCompletedDeposit("refund");
+            DepositDisposition = Payments.DepositDisposition.Refunded;
         }
 
         public void MarkDepositAsForfeited()
         {
-            DepositDisposition =
-                Payments.DepositDisposition
-                    .Forfeited;
+            EnsureUnappliedCompletedDeposit("forfeit");
+            DepositDisposition = Payments.DepositDisposition.Forfeited;
+        }
+
+        private void EnsureUnappliedCompletedDeposit(string transition)
+        {
+            // This is only a domain invariant, NOT settlement authorization.
+            // Calling services must additionally verify a unique audited
+            // DepositSettlement, the owner's approval and the locked payment.
+            if ((Purpose != PaymentPurpose.ReservationDeposit &&
+                 Purpose != PaymentPurpose.ContractDeposit) ||
+                Status != PaymentStatus.Completed ||
+                DepositDisposition != Payments.DepositDisposition.Unapplied)
+                throw new InvalidOperationException(
+                    $"Cannot {transition} a deposit without a completed, unapplied deposit payment.");
         }
 
         private static string? NormalizeOptional(

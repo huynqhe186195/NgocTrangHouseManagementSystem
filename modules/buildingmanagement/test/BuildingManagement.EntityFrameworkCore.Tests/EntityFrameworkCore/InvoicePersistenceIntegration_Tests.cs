@@ -1459,6 +1459,7 @@ public sealed class InvoicePersistenceIntegration_Tests
         => new(
             GetRequiredService<IRepository<FinalInvoiceIssueEvidenceRecord, Guid>>(),
             _rooms, _floors, _readings, _meters, _rates,
+            GetRequiredService<IRepository<MeterReplacement, Guid>>(),
             GetRequiredService<IDataFilter<ISoftDelete>>());
 
     private FinalInvoiceReleaseReadinessAppService MakeReleaseReadinessService()

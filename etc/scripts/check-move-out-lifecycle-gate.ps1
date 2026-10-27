@@ -32,6 +32,7 @@ $paymentState = Read-Source 'modules/buildingmanagement/src/BuildingManagement.D
 $issuedDebtCalculation = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/IssuedInvoicePaymentReconciler.cs'
 $issuePreflight = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/FinalInvoiceIssuePreflight.cs'
 $issuePreflightService = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/Invoices/FinalInvoiceIssuePreflightAppService.cs'
+$invoiceIssuanceScope = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/InvoiceIssuanceScopePolicy.cs'
 $depositLedgerReview = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/DepositSettlements/ContractDepositLedgerReview.cs'
 $depositLedgerService = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/DepositSettlements/ContractDepositLedgerReviewAppService.cs'
 $depositSettlement = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/DepositSettlements/DepositSettlement.cs'
@@ -197,6 +198,19 @@ if ($issuePreflight -notmatch 'CanIssue\s*=>\s*false' -or
     $issuePreflightService -notmatch '\[UnitOfWork\(isTransactional:\s*true\)\]' -or
     $issuePreflightService -match '\.(Issue|PostDebt|Pay|Refund|End|Complete|InsertAsync|UpdateAsync|DeleteAsync)\s*\(') {
     throw 'Safety stop: invoice issuance preparation lost fail-closed financial or HTTP boundary.'
+}
+
+# Invoice issue scope preparation is not a reusable permission token.
+# Future issuing must still resolve the graph in a locked DB transaction,
+# persist issued evidence and prevent a repeated invoice for the period.
+if ($invoiceIssuanceScope -notmatch 'IssuerBuildingMemberships\.Contains\(facts\.BuildingId\)' -or
+    $invoiceIssuanceScope -notmatch 'IssuerResourceRelationshipMismatch' -or
+    $invoiceIssuanceScope -notmatch 'PersistedInvoiceEvidenceMismatch' -or
+    $invoiceIssuanceScope -notmatch 'ExistingIssuedInvoiceForPeriod' -or
+    $invoiceIssuanceScope -notmatch 'FinancialIssuancePrerequisitesIncomplete' -or
+    $invoiceIssuanceScope -notmatch 'CanIssue\s*=>\s*false' -or
+    $invoiceIssuanceScope -notmatch 'CanPostReceivable\s*=>\s*false') {
+    throw 'Safety stop: design-only invoice issuer scope escaped its financial authorization boundary.'
 }
 
 Write-Host 'MOVE-OUT LIFECYCLE SOURCE GATE PASS.'

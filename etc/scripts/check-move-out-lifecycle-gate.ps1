@@ -33,6 +33,8 @@ $issuedDebtCalculation = Read-Source 'modules/buildingmanagement/src/BuildingMan
 $issuePreflight = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/FinalInvoiceIssuePreflight.cs'
 $issuePreflightService = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/Invoices/FinalInvoiceIssuePreflightAppService.cs'
 $invoiceIssuanceScope = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/InvoiceIssuanceScopePolicy.cs'
+$issuanceReviewTicket = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/InvoiceIssuanceReviewTicket.cs'
+$issuanceReviewSchema = Read-Source 'modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/EntityConfigurations/InvoiceIssuanceReviewTicketConfiguration.cs'
 $issueEvidenceRecord = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/FinalInvoiceIssueEvidenceRecord.cs'
 $paymentAllocationJournal = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/InvoicePaymentAllocationJournalEntry.cs'
 $paymentAllocationAudit = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/InvoicePaymentAllocationJournalAudit.cs'
@@ -304,6 +306,27 @@ if ($paymentAllocationAudit -notmatch 'CompletedInvoicePaymentUnjournaled' -or
     $paymentAllocationReviewService -notmatch 'journal, receipts, contractId' -or
     $paymentAllocationReviewService -match '\.(Issue|Post|Pay|Refund|End|Complete|InsertAsync|UpdateAsync|DeleteAsync)\s*\(') {
     throw 'Safety stop: contract-wide invoice allocation review lost full receipt scope or nonposting boundary.'
+}
+
+# Two-person invoice issue reviews are STAGED administrative evidence,
+# never invoice issuance permission or paid debt. Future service must
+# re-resolve live Identity/building entitlements under DB locks.
+if ($issuanceReviewTicket -notmatch 'CanIssue\s*=>\s*false' -or
+    $issuanceReviewTicket -notmatch 'CanPostReceivable\s*=>\s*false' -or
+    $issuanceReviewTicket -notmatch 'CanReduceDebt\s*=>\s*false' -or
+    $issuanceReviewTicket -notmatch 'reviewerUserId == SubmittedByUserId' -or
+    $issuanceReviewTicket -notmatch 'InvoiceIssuanceScopePolicy\.Assess\(' -or
+    $issuanceReviewTicket -notmatch 'scope\.IsScopeConsistent' -or
+    $issuanceReviewTicket -notmatch 'PersistedEvidenceSha256' -or
+    $issuanceReviewTicket -notmatch 'Status != InvoiceIssuanceReviewStatus\.Submitted' -or
+    $issuanceReviewSchema -notmatch 'UX_BM_IssueReview_Evidence' -or
+    $issuanceReviewSchema -notmatch 'UX_BM_IssueReview_Draft' -or
+    $issuanceReviewSchema -notmatch 'CK_BM_IssueReview_IndependentReviewer' -or
+    $issuanceReviewSchema -notmatch 'HasOne<FinalInvoiceIssueEvidenceRecord>' -or
+    $issuanceReviewSchema -notmatch 'DeleteBehavior\.Restrict' -or
+    $issueEvidenceDbContext -notmatch 'InvoiceIssuanceReviewTicketConfiguration' -or
+    $issuanceReviewTicket -match '(?m)^\s*public\s+(?:async\s+)?(?:void|Task|Task<\w+>)\s+(?:Issue|Post|Pay|Refund|End|Delete)\s*\(') {
+    throw 'Safety stop: staged two-person invoice review lost its audit or nonposting boundary.'
 }
 
 Write-Host 'MOVE-OUT LIFECYCLE SOURCE GATE PASS.'

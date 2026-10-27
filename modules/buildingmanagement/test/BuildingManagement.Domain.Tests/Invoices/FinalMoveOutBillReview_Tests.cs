@@ -750,7 +750,7 @@ public sealed class FinalMoveOutBillReview_Tests
         var (archive, ticket, preflight, facts, reviewer) = ReviewTicketFixture();
 
         ticket.RecordReviewForDesign(
-            reviewer, DateTime.UtcNow.AddMinutes(1), true,
+            reviewer, ticket.SubmittedAtUtc.AddMinutes(1), true,
             "Evidence cross-checked for design only.", preflight, facts);
         ticket.VerifyStagedEvidence(archive);
 
@@ -767,7 +767,7 @@ public sealed class FinalMoveOutBillReview_Tests
         var (_, ticket, preflight, facts, _) = ReviewTicketFixture();
         Assert.Throws<InvalidOperationException>(() =>
             ticket.RecordReviewForDesign(
-                ticket.SubmittedByUserId, DateTime.UtcNow.AddMinutes(1), true,
+                ticket.SubmittedByUserId, ticket.SubmittedAtUtc.AddMinutes(1), true,
                 "Attempted self-review must fail.", preflight, facts));
         Assert.Equal(InvoiceIssuanceReviewStatus.Submitted, ticket.Status);
     }
@@ -777,11 +777,11 @@ public sealed class FinalMoveOutBillReview_Tests
     {
         var (_, ticket, preflight, facts, reviewer) = ReviewTicketFixture();
         ticket.RecordReviewForDesign(
-            reviewer, DateTime.UtcNow.AddMinutes(1), true,
+            reviewer, ticket.SubmittedAtUtc.AddMinutes(1), true,
             "Reviewed with valid staging evidence.", preflight, facts);
         Assert.Throws<InvalidOperationException>(() =>
             ticket.RecordReviewForDesign(
-                reviewer, DateTime.UtcNow.AddMinutes(2), false,
+                reviewer, ticket.SubmittedAtUtc.AddMinutes(2), false,
                 "Changing the decision is forbidden.", preflight, facts));
         Assert.Equal(InvoiceIssuanceReviewStatus.ReviewedForDesign, ticket.Status);
     }
@@ -792,12 +792,12 @@ public sealed class FinalMoveOutBillReview_Tests
         var (_, ticket, preflight, facts, reviewer) = ReviewTicketFixture();
         Assert.Throws<InvalidOperationException>(() =>
             ticket.RecordReviewForDesign(
-                reviewer, DateTime.UtcNow.AddMinutes(1), true,
+                reviewer, ticket.SubmittedAtUtc.AddMinutes(1), true,
                 "Wrong building permission.", preflight,
                 facts with { BuildingId = Guid.NewGuid() }));
         Assert.Throws<InvalidOperationException>(() =>
             ticket.RecordReviewForDesign(
-                reviewer, DateTime.UtcNow.AddMinutes(1), true,
+                reviewer, ticket.SubmittedAtUtc.AddMinutes(1), true,
                 "Missing effective permission.", preflight,
                 facts with { IssuerPermissionGranted = false }));
         Assert.Equal(InvoiceIssuanceReviewStatus.Submitted, ticket.Status);
@@ -809,12 +809,12 @@ public sealed class FinalMoveOutBillReview_Tests
         var (_, ticket, preflight, facts, reviewer) = ReviewTicketFixture();
         Assert.Throws<InvalidOperationException>(() =>
             ticket.RecordReviewForDesign(
-                reviewer, DateTime.UtcNow.AddMinutes(1), true,
+                reviewer, ticket.SubmittedAtUtc.AddMinutes(1), true,
                 "Wrong historical evidence hash.", preflight,
                 facts with { PersistedEvidenceSha256 = new string('0', 64) }));
         Assert.Throws<InvalidOperationException>(() =>
             ticket.RecordReviewForDesign(
-                reviewer, DateTime.UtcNow.AddMinutes(1), true,
+                reviewer, ticket.SubmittedAtUtc.AddMinutes(1), true,
                 "Caller cannot impersonate the reviewer.", preflight,
                 facts with { AuthenticatedIssuerId = Guid.NewGuid() }));
     }
@@ -825,12 +825,12 @@ public sealed class FinalMoveOutBillReview_Tests
         var (_, ticket, preflight, facts, reviewer) = ReviewTicketFixture();
         Assert.Throws<ArgumentException>(() =>
             ticket.RecordReviewForDesign(
-                reviewer, DateTime.UtcNow.AddMinutes(1), true,
+                reviewer, ticket.SubmittedAtUtc.AddMinutes(1), true,
                 "short", preflight, facts));
         Assert.Throws<ArgumentException>(() =>
             ticket.RecordReviewForDesign(
                 reviewer, DateTime.SpecifyKind(
-                    DateTime.UtcNow.AddMinutes(1), DateTimeKind.Unspecified),
+                    ticket.SubmittedAtUtc.AddMinutes(1), DateTimeKind.Unspecified),
                 true, "Invalid review timestamp.", preflight, facts));
         Assert.Throws<ArgumentException>(() =>
             ticket.RecordReviewForDesign(
@@ -844,7 +844,7 @@ public sealed class FinalMoveOutBillReview_Tests
     {
         var (archive, ticket, preflight, facts, reviewer) = ReviewTicketFixture();
         ticket.RecordReviewForDesign(
-            reviewer, DateTime.UtcNow.AddMinutes(1), false,
+            reviewer, ticket.SubmittedAtUtc.AddMinutes(1), false,
             "Auxiliary service charges not yet approved.", preflight, facts);
         ticket.VerifyStagedEvidence(archive);
         Assert.Equal(InvoiceIssuanceReviewStatus.Rejected, ticket.Status);

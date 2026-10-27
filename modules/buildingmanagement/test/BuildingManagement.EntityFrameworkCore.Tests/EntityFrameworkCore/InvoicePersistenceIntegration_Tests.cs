@@ -807,6 +807,55 @@ public sealed class InvoicePersistenceIntegration_Tests
             GetRequiredService<Volo.Abp.Timing.IClock>());
 
     [Fact]
+    public async Task DEPSTATEDB01_Refund_Disposition_Cannot_Be_Replayed_After_Reload()
+    {
+        var fixture = await SeedAsync();
+        var tenantId = Guid.NewGuid();
+        var paymentId = Guid.NewGuid();
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            await GetRequiredService<IRepository<Tenant, Guid>>().InsertAsync(
+                new Tenant(tenantId, "Deposit State Payer", "0900000199",
+                    null, null, null, IdentityType.CitizenId,
+                    Guid.NewGuid().ToString("N")), autoSave: true);
+
+            var deposit = new Payment(paymentId,
+                "DEPSTATE-DB-" + Guid.NewGuid().ToString("N"), tenantId,
+                PaymentPurpose.ContractDeposit, PaymentMethod.BankTransfer,
+                PaymentChannel.Manual, 3000000m,
+                contractId: fixture.ContractId);
+            deposit.Complete(DateTime.UtcNow,
+                "DEPSTATE-DB-" + Guid.NewGuid().ToString("N"));
+            deposit.MarkDepositAsRefunded(); // Domain transition test ONLY.
+            await GetRequiredService<IRepository<Payment, Guid>>()
+                .InsertAsync(deposit, autoSave: true);
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var stored = await GetRequiredService<IRepository<Payment, Guid>>()
+                .GetAsync(paymentId);
+            Assert.Equal(PaymentStatus.Completed, stored.Status);
+            Assert.Equal(DepositDisposition.Refunded, stored.DepositDisposition);
+            Assert.Throws<InvalidOperationException>(
+                stored.MarkDepositAsRefunded);
+            Assert.Throws<InvalidOperationException>(
+                stored.MarkDepositAsForfeited);
+            Assert.Throws<InvalidOperationException>(
+                stored.MarkDepositAsAppliedToContract);
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var stored = await GetRequiredService<IRepository<Payment, Guid>>()
+                .GetAsync(paymentId);
+            Assert.Equal(DepositDisposition.Refunded, stored.DepositDisposition);
+            Assert.Equal(PaymentStatus.Completed, stored.Status);
+        });
+    }
+
+    [Fact]
     public async Task PAYSTATEDB01_Completed_Deposit_Remains_Completed_After_Reload()
     {
         var data = await SeedAsync();

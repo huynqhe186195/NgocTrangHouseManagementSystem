@@ -1457,6 +1457,125 @@ public sealed class FinalMoveOutBillReview_Tests
         return (archive, ticket, preflight, drift, allocations);
     }
 
+    [Fact]
+    public void SOURCEAUDIT01_Original_Readings_Meters_And_Rates_Match_Snapshot()
+    {
+        var (archive, building, readings, meters, rates) = SourceAuditFixture();
+        var audit = FinalInvoiceSourceProvenanceEvaluator.Assess(
+            archive, building, readings, meters, rates);
+
+        Assert.True(audit.MatchesPersistedSources);
+        Assert.Equal(new[] { "OriginalSourcesAuditIsNotIssuanceAuthorization" },
+            audit.Blockers);
+        Assert.False(audit.CanIssue);
+        Assert.False(audit.CanPostReceivable);
+    }
+
+    [Fact]
+    public void SOURCEAUDIT02_Changed_Physical_Meter_Reading_Is_Detected()
+    {
+        var (archive, building, readings, meters, rates) = SourceAuditFixture();
+        var reading = readings[0];
+        reading.Update(reading.CurrentReading + 1m,
+            reading.ReadingDate, "History was edited after draft capture");
+        var audit = FinalInvoiceSourceProvenanceEvaluator.Assess(
+            archive, building, readings, meters, rates);
+
+        Assert.False(audit.MatchesPersistedSources);
+        Assert.Contains("OriginalMeterReadingDiffersFromSnapshot", audit.Blockers);
+    }
+
+    [Fact]
+    public void SOURCEAUDIT03_Changed_Original_Rate_Cannot_Silently_Reprice()
+    {
+        var (archive, building, readings, meters, rates) = SourceAuditFixture();
+        var original = rates[0];
+        original.Update(building, original.UtilityType,
+            original.UnitPrice + 500m, original.EffectiveFrom,
+            original.EffectiveTo, "Changed after snapshot");
+        var audit = FinalInvoiceSourceProvenanceEvaluator.Assess(
+            archive, building, readings, meters, rates);
+
+        Assert.False(audit.MatchesPersistedSources);
+        Assert.Contains("OriginalUtilityRateDiffersFromSnapshot", audit.Blockers);
+        Assert.False(audit.CanPostReceivable);
+    }
+
+    [Fact]
+    public void SOURCEAUDIT04_Missing_Reading_Or_Foreign_Room_Meter_Is_Denied()
+    {
+        var (archive, building, readings, meters, rates) = SourceAuditFixture();
+        var missing = FinalInvoiceSourceProvenanceEvaluator.Assess(
+            archive, building, new[] { readings[0] }, meters, rates);
+        Assert.Contains("OriginalMeterReadingMissing", missing.Blockers);
+
+        var original = meters[0];
+        var foreign = new UtilityMeter(original.Id, Guid.NewGuid(),
+            original.UtilityType, "FOREIGN-" + Guid.NewGuid().ToString("N"),
+            0m, new DateTime(2026, 1, 1));
+        var foreignAudit = FinalInvoiceSourceProvenanceEvaluator.Assess(
+            archive, building, readings, new[] { foreign, meters[1] }, rates);
+        Assert.Contains("OriginalMeterResourceScopeMismatch",
+            foreignAudit.Blockers);
+    }
+
+    [Fact]
+    public void SOURCEAUDIT05_Building_And_Rate_Identity_Must_Be_Server_Verified()
+    {
+        var (archive, building, readings, meters, rates) = SourceAuditFixture();
+        var unknownBuilding = FinalInvoiceSourceProvenanceEvaluator.Assess(
+            archive, Guid.Empty, readings, meters, rates);
+        Assert.Contains("SourceBuildingScopeUnavailable",
+            unknownBuilding.Blockers);
+        Assert.Contains("OriginalUtilityRateDiffersFromSnapshot",
+            unknownBuilding.Blockers);
+
+        var foreignBuilding = FinalInvoiceSourceProvenanceEvaluator.Assess(
+            archive, Guid.NewGuid(), readings, meters, rates);
+        Assert.Contains("OriginalUtilityRateDiffersFromSnapshot",
+            foreignBuilding.Blockers);
+    }
+
+    private static (FinalInvoiceIssueEvidenceRecord Archive, Guid Building,
+        MeterReading[] Readings, UtilityMeter[] Meters, UtilityRate[] Rates)
+        SourceAuditFixture()
+    {
+        var (request, contract, draft) = Fixture();
+        var source = Package(request, contract, draft,
+            new DateTime(2026, 11, 30, 18, 0, 0, DateTimeKind.Utc));
+        var review = Review(request, contract, draft);
+        var paymentEvidence = FinalMoveOutPaymentEvidenceEvaluator.Assess(
+            review, Array.Empty<Payment>());
+        var preflight = FinalInvoiceIssuePreflightEvaluator.Assess(
+            review, source, paymentEvidence);
+        var archive = FinalInvoiceIssueEvidenceRecord.Prepare(
+            Guid.NewGuid(), Guid.NewGuid(), DateTime.UtcNow,
+            source, preflight);
+        var building = Guid.NewGuid();
+
+        var readings = source.Utilities
+            .SelectMany(x => x.Sources)
+            .Select(x => new MeterReading(
+                x.SourceId, x.UtilityMeterId,
+                source.FinalBillingDate.Year, source.FinalBillingDate.Month,
+                x.PreviousReading, x.CurrentReading, x.RecordedDate))
+            .ToArray();
+        var meters = source.Utilities
+            .SelectMany(x => x.Sources.Select(y => (
+                Utility: x.UtilityType, Source: y)))
+            .Select(x => new UtilityMeter(
+                x.Source.UtilityMeterId, source.RoomId, x.Utility,
+                "SOURCE-" + Guid.NewGuid().ToString("N"),
+                x.Source.PreviousReading, new DateTime(2026, 1, 1)))
+            .ToArray();
+        var rates = source.Utilities
+            .Select(x => new UtilityRate(
+                x.UtilityRateId, building, x.UtilityType, x.UnitPrice,
+                new DateTime(2026, 11, 1), null))
+            .ToArray();
+        return (archive, building, readings, meters, rates);
+    }
+
     private static (FinalInvoiceEvidencePackage, FinalInvoiceIssuePreflight)
         StagingFixture()
     {

@@ -926,6 +926,198 @@ public sealed class FinalMoveOutBillReview_Tests
         return (archive, ticket, preflight, facts, reviewer);
     }
 
+    [Fact]
+    public void FINPOLICY01_Explicit_No_Charge_Requires_Documented_Assessment()
+    {
+        var (_, preflight) = StagingFixture();
+        var result = FinalInvoiceFinancialTermsEvaluator.Assess(
+            preflight, FinancialTerms(preflight));
+
+        Assert.Equal(preflight.KnownBaseChargeTotal, result.VerifiedBaseAmount);
+        Assert.Equal(0m, result.ProposedAuxiliaryAmount);
+        Assert.Equal(preflight.KnownBaseChargeTotal, result.ProposedGrandTotal);
+        Assert.Equal(new DateOnly(2026, 12, 5), result.DocumentedDueDate);
+        Assert.Contains("FinancialTermsProposalIsNotPostingAuthorization",
+            result.Blockers);
+        Assert.False(result.CanIssue);
+        Assert.False(result.IsReceivablePosted);
+        Assert.False(result.CanSettleDeposit);
+    }
+
+    [Fact]
+    public void FINPOLICY02_Itemized_Fees_Require_Individual_Rate_Evidence()
+    {
+        var (_, preflight) = StagingFixture();
+        var terms = FinancialTerms(preflight) with
+        {
+            AuxiliaryFeeDecision = AuxiliaryFeeAssessmentDecision.ItemizedCharges,
+            AuxiliaryCharges = new[]
+            {
+                Aux(FinalInvoiceAuxiliaryFeeKind.Internet, "INET", 1m, 90000m),
+                Aux(FinalInvoiceAuxiliaryFeeKind.Trash, "TRASH", 1m, 30000m),
+                Aux(FinalInvoiceAuxiliaryFeeKind.Parking, "PARK", 2m, 50000m)
+            }
+        };
+
+        var result = FinalInvoiceFinancialTermsEvaluator.Assess(preflight, terms);
+
+        Assert.Equal(220000m, result.ProposedAuxiliaryAmount);
+        Assert.Equal(preflight.KnownBaseChargeTotal + 220000m,
+            result.ProposedGrandTotal);
+        Assert.DoesNotContain("AuxiliaryChargeMissingValidPricingEvidence",
+            result.Blockers);
+        Assert.False(result.CanIssue);
+    }
+
+    [Fact]
+    public void FINPOLICY03_No_Terms_Never_Infers_No_Fees_Or_Due_Date()
+    {
+        var (_, preflight) = StagingFixture();
+        var result = FinalInvoiceFinancialTermsEvaluator.Assess(preflight, null);
+
+        Assert.Contains("AuxiliaryFeeAssessmentNotProvided", result.Blockers);
+        Assert.Contains("InvoiceDueDatePolicyNotProvided", result.Blockers);
+        Assert.Null(result.ProposedAuxiliaryAmount);
+        Assert.Null(result.ProposedGrandTotal);
+        Assert.Null(result.DocumentedDueDate);
+    }
+
+    [Fact]
+    public void FINPOLICY04_Foreign_Evidence_Digest_Is_Not_Reusable()
+    {
+        var (_, preflight) = StagingFixture();
+        var terms = FinancialTerms(preflight) with
+        {
+            EvidenceSha256 = new string('0', 64)
+        };
+
+        var result = FinalInvoiceFinancialTermsEvaluator.Assess(preflight, terms);
+        Assert.Contains("ProposedTermsDoNotMatchInvoiceEvidence", result.Blockers);
+        Assert.Null(result.ProposedGrandTotal);
+    }
+
+    [Fact]
+    public void FINPOLICY05_Explicit_No_Fees_Cannot_Contain_Charges()
+    {
+        var (_, preflight) = StagingFixture();
+        var terms = FinancialTerms(preflight) with
+        {
+            AuxiliaryCharges = new[]
+            {
+                Aux(FinalInvoiceAuxiliaryFeeKind.Internet, "NET", 1m, 10000m)
+            }
+        };
+
+        var result = FinalInvoiceFinancialTermsEvaluator.Assess(preflight, terms);
+        Assert.Contains("ExplicitNoFeeDecisionHasChargeLines", result.Blockers);
+        Assert.Null(result.ProposedGrandTotal);
+    }
+
+    [Fact]
+    public void FINPOLICY06_Identical_Service_Cannot_Be_Billed_Twice()
+    {
+        var (_, preflight) = StagingFixture();
+        var terms = FinancialTerms(preflight) with
+        {
+            AuxiliaryFeeDecision = AuxiliaryFeeAssessmentDecision.ItemizedCharges,
+            AuxiliaryCharges = new[]
+            {
+                Aux(FinalInvoiceAuxiliaryFeeKind.Parking, "CAR1", 1m, 50000m),
+                Aux(FinalInvoiceAuxiliaryFeeKind.Parking, " car1 ", 1m, 50000m)
+            }
+        };
+
+        var result = FinalInvoiceFinancialTermsEvaluator.Assess(preflight, terms);
+        Assert.Contains("DuplicateAuxiliaryServiceCharge", result.Blockers);
+        Assert.Null(result.ProposedGrandTotal);
+    }
+
+    [Theory]
+    [InlineData(0.5, 1, 0.5)]
+    [InlineData(1, 0, 0)]
+    [InlineData(1, 50000, 40000)]
+    public void FINPOLICY07_Invalid_Or_Fractional_Fees_Are_Not_Allowed(
+        double quantity, double unitPrice, double amount)
+    {
+        var (_, preflight) = StagingFixture();
+        var charge = new FinalInvoiceAuxiliaryChargeProposal(
+            FinalInvoiceAuxiliaryFeeKind.Internet, "INET",
+            (decimal)quantity, (decimal)unitPrice, (decimal)amount,
+            "TEST-TARIFF", "Internet agreed in contract");
+        var terms = FinancialTerms(preflight) with
+        {
+            AuxiliaryFeeDecision = AuxiliaryFeeAssessmentDecision.ItemizedCharges,
+            AuxiliaryCharges = new[] { charge }
+        };
+        var result = FinalInvoiceFinancialTermsEvaluator.Assess(preflight, terms);
+        Assert.Contains("AuxiliaryChargeMissingValidPricingEvidence", result.Blockers);
+        Assert.Null(result.ProposedGrandTotal);
+    }
+
+    [Fact]
+    public void FINPOLICY08_No_Due_Date_Rule_Or_Reviewer_Is_A_Blocker()
+    {
+        var (_, preflight) = StagingFixture();
+        var terms = FinancialTerms(preflight) with
+        {
+            DueDatePolicyReference = null,
+            AuxiliaryFeeReviewerId = null
+        };
+
+        var result = FinalInvoiceFinancialTermsEvaluator.Assess(preflight, terms);
+        Assert.Contains("InvoiceDueDatePolicyNotProvided", result.Blockers);
+        Assert.Contains("AuxiliaryFeeAssessmentNotProvided", result.Blockers);
+        Assert.Null(result.ProposedGrandTotal);
+    }
+
+    [Fact]
+    public void FINPOLICY09_Unknown_Fee_Category_Cannot_Sneak_In_As_Damage()
+    {
+        var (_, preflight) = StagingFixture();
+        var terms = FinancialTerms(preflight) with
+        {
+            AuxiliaryFeeDecision = AuxiliaryFeeAssessmentDecision.ItemizedCharges,
+            AuxiliaryCharges = new[]
+            {
+                Aux((FinalInvoiceAuxiliaryFeeKind)99, "DAMAGE", 1m, 70000m)
+            }
+        };
+
+        var result = FinalInvoiceFinancialTermsEvaluator.Assess(preflight, terms);
+        Assert.Contains("AuxiliaryChargeMissingValidPricingEvidence", result.Blockers);
+        Assert.False(result.CanSettleDeposit);
+    }
+
+    [Fact]
+    public void FINPOLICY10_Anomalous_Payment_Evidence_Prevents_Grand_Total()
+    {
+        var (_, preflight) = StagingFixture();
+        preflight.Blockers.Add("Payment:CompletedPaymentLinkedToUnissuedDraft");
+
+        var result = FinalInvoiceFinancialTermsEvaluator.Assess(
+            preflight, FinancialTerms(preflight));
+
+        Assert.Contains("VerifiedFinalInvoiceBaseEvidenceRequired", result.Blockers);
+        Assert.Null(result.VerifiedBaseAmount);
+        Assert.Null(result.ProposedGrandTotal);
+    }
+
+    private static FinalInvoiceFinancialTermsProposal FinancialTerms(
+        FinalInvoiceIssuePreflight preflight)
+        => new(
+            preflight.UtilityDraftId!.Value, preflight.ContractId,
+            preflight.RoomId, preflight.EvidenceSha256!,
+            new DateOnly(2026, 12, 5), "TEST-DUE-DATE-POLICY",
+            AuxiliaryFeeAssessmentDecision.ExplicitlyNoCharges,
+            "TEST-OWNER-FEE-ASSESSMENT", Guid.NewGuid(),
+            Array.Empty<FinalInvoiceAuxiliaryChargeProposal>());
+
+    private static FinalInvoiceAuxiliaryChargeProposal Aux(
+        FinalInvoiceAuxiliaryFeeKind kind, string code, decimal quantity,
+        decimal price)
+        => new(kind, code, quantity, price, quantity * price,
+            "TEST-CONTRACT-RATE", "Contracted service charge");
+
     private static (FinalInvoiceEvidencePackage, FinalInvoiceIssuePreflight)
         StagingFixture()
     {

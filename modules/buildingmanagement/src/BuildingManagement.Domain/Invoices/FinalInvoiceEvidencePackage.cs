@@ -96,6 +96,14 @@ public sealed class FinalInvoiceEvidencePackage
             throw new InvalidOperationException(
                 "Final invoice evidence requires approved month-end rent and complete, scoped utility draft sources.");
 
+        var firstDay = new DateTime(date.Year, date.Month, 1);
+        var lastDay = date.ToDateTime(TimeOnly.MaxValue);
+        if (sources.Any(source =>
+            source.RecordedDate < firstDay ||
+            source.RecordedDate > lastDay))
+            throw new InvalidOperationException(
+                "Meter evidence outside the approved final billing month cannot be included.");
+
         // The stored source trail is copied by VALUE, not referenced as a
         // mutable EF collection or evaluated using current tariff prices.
         var lines = items

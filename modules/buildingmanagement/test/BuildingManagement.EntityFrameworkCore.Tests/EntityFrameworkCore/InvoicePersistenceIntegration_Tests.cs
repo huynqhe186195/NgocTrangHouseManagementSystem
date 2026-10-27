@@ -1261,6 +1261,102 @@ public sealed class InvoicePersistenceIntegration_Tests
         });
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SOURCEAUDITDB01_Archived_Draft_Detects_Original_Reading_Or_Rate_Edit(
+        bool updatePhysicalRate)
+    {
+        var data = await SeedIssuanceReviewAsync();
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var before = await MakeSourceProvenanceService().GetAsync(data.ArchiveId);
+            Assert.True(before.MatchesPersistedSources);
+            Assert.False(before.CanIssue);
+            var readiness = await MakeReleaseReadinessService()
+                .GetAsync(data.RequestId);
+            Assert.True(readiness.OriginalSourcesVerified);
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var archive = await GetRequiredService<
+                IRepository<FinalInvoiceIssueEvidenceRecord, Guid>>()
+                .GetAsync(data.ArchiveId);
+            using var json = JsonDocument.Parse(archive.EvidenceJson);
+            var electric = json.RootElement.GetProperty("Utilities")[0];
+            if (updatePhysicalRate)
+            {
+                var rateId = electric.GetProperty("UtilityRateId").GetGuid();
+                var rate = await _rates.GetAsync(rateId);
+                rate.Update(rate.BuildingId, rate.UtilityType,
+                    rate.UnitPrice + 750m, rate.EffectiveFrom, rate.EffectiveTo,
+                    "Rate mutated after invoice evidence was staged");
+                await _rates.UpdateAsync(rate, autoSave: true);
+            }
+            else
+            {
+                var readingId = electric.GetProperty("Sources")[0]
+                    .GetProperty("SourceId").GetGuid();
+                var reading = await _readings.GetAsync(readingId);
+                reading.Update(reading.CurrentReading + 1m,
+                    reading.ReadingDate, "Changed original reading");
+                await _readings.UpdateAsync(reading, autoSave: true);
+            }
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var audit = await MakeSourceProvenanceService().GetAsync(data.ArchiveId);
+            Assert.False(audit.MatchesPersistedSources);
+            Assert.Contains(updatePhysicalRate
+                    ? "OriginalUtilityRateDiffersFromSnapshot"
+                    : "OriginalMeterReadingDiffersFromSnapshot",
+                audit.Blockers);
+            var ready = await MakeReleaseReadinessService()
+                .GetAsync(data.RequestId);
+            Assert.False(ready.OriginalSourcesVerified);
+            Assert.Contains("OriginalInvoiceSourcesChangedOrIncomplete",
+                ready.Blockers);
+            Assert.True(ready.StagedEvidenceMatchesCurrentDraft);
+            Assert.False(ready.CanIssue);
+            Assert.False(ready.CanPostReceivable);
+            Assert.Equal(InvoiceStatus.Draft,
+                (await _invoices.GetAsync(data.DraftId)).Status);
+        });
+    }
+
+    [Fact]
+    public async Task SOURCEAUDITDB02_SoftDeleted_Source_Is_Still_Found_And_Flagged()
+    {
+        var data = await SeedIssuanceReviewAsync();
+        Guid readingId = Guid.Empty;
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var archive = await GetRequiredService<
+                IRepository<FinalInvoiceIssueEvidenceRecord, Guid>>()
+                .GetAsync(data.ArchiveId);
+            using var json = JsonDocument.Parse(archive.EvidenceJson);
+            readingId = json.RootElement.GetProperty("Utilities")[0]
+                .GetProperty("Sources")[0].GetProperty("SourceId").GetGuid();
+            await _readings.DeleteAsync(readingId, autoSave: true);
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var audit = await MakeSourceProvenanceService().GetAsync(data.ArchiveId);
+            Assert.False(audit.MatchesPersistedSources);
+            Assert.Contains("OriginalMeterReadingSoftDeleted", audit.Blockers);
+            Assert.DoesNotContain("OriginalMeterReadingMissing", audit.Blockers);
+            var ready = await MakeReleaseReadinessService()
+                .GetAsync(data.RequestId);
+            Assert.Contains("OriginalSources:OriginalMeterReadingSoftDeleted",
+                ready.Blockers);
+            Assert.False(ready.OriginalSourcesVerified);
+            Assert.False(ready.CanIssue);
+        });
+    }
+
     [Fact]
     public async Task ISSUEREADYDB01_Persisted_FinalInvoice_Report_Remains_Unissued()
     {

@@ -16,14 +16,27 @@ public sealed class AbpIdentityBuildingOperatorAccountProbe :
     IBuildingOperatorActiveAccountReader
 {
     private readonly IIdentityUserRepository _users;
-    private readonly IdentityUserManager _manager;
+    private readonly Func<IdentityUser, Task<bool>> _isLockedOut;
 
+    // The public candidate always delegates lockout checks to ABP's
+    // IdentityUserManager. Production does NOT register this candidate.
     public AbpIdentityBuildingOperatorAccountProbe(
         IIdentityUserRepository users,
         IdentityUserManager manager)
+        : this(users, (manager ?? throw new ArgumentNullException(nameof(manager)))
+            .IsLockedOutAsync)
     {
-        _users = users;
-        _manager = manager;
+    }
+
+    // Only the isolated test assembly can exercise the inherited Identity
+    // UserManager lockout semantics without a production Identity database.
+    internal AbpIdentityBuildingOperatorAccountProbe(
+        IIdentityUserRepository users,
+        Func<IdentityUser, Task<bool>> isLockedOut)
+    {
+        _users = users ?? throw new ArgumentNullException(nameof(users));
+        _isLockedOut = isLockedOut ??
+            throw new ArgumentNullException(nameof(isLockedOut));
     }
 
     public async Task<bool> IsActiveAsync(Guid userId)
@@ -38,6 +51,6 @@ public sealed class AbpIdentityBuildingOperatorAccountProbe :
         if (account is null || !account.IsActive)
             return false;
 
-        return !await _manager.IsLockedOutAsync(account);
+        return !await _isLockedOut(account);
     }
 }

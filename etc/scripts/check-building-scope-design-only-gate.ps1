@@ -47,7 +47,9 @@ foreach ($source in @($db, $model)) {
 
 # Match actual declaration/attributes, not comments documenting the absence
 # of such registration. Effective DI remains a separate runtime test.
-if ($identity -match ':\s*IBuildingOperatorActiveAccountReader\s*,\s*ITransientDependency' -or
+if ($identity -notmatch 'IdentityUserManager manager' -or
+    $identity -notmatch 'IsLockedOutAsync' -or
+    $identity -match ':\s*IBuildingOperatorActiveAccountReader\s*,\s*ITransientDependency' -or
     $identity -match '\[(ExposeServices|Dependency)\s*\(') {
     throw 'Safety stop: experimental identity adapter appears auto-registered.'
 }

@@ -1162,6 +1162,151 @@ public sealed class InvoicePersistenceIntegration_Tests
     }
 
     [Fact]
+    public async Task ISSUEREVIEWDB01_Submitted_Ticket_Persists_And_Draft_Remains_Unissued()
+    {
+        var data = await SeedIssuanceReviewAsync();
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var review = await GetRequiredService<
+                IRepository<InvoiceIssuanceReviewTicket, Guid>>()
+                .GetAsync(data.ReviewId);
+            var archive = await GetRequiredService<
+                IRepository<FinalInvoiceIssueEvidenceRecord, Guid>>()
+                .GetAsync(data.ArchiveId);
+            review.VerifyStagedEvidence(archive);
+            Assert.Equal(InvoiceIssuanceReviewStatus.Submitted, review.Status);
+            Assert.Equal(data.DraftId, review.DraftInvoiceId);
+            Assert.False(review.CanIssue);
+            Assert.False(review.CanPostReceivable);
+            Assert.False(review.CanReduceDebt);
+            Assert.Equal(InvoiceStatus.Draft,
+                (await _invoices.GetAsync(data.DraftId)).Status);
+        });
+    }
+
+    [Fact]
+    public async Task ISSUEREVIEWDB02_Database_Rejects_Second_Review_For_Same_Evidence()
+    {
+        var data = await SeedIssuanceReviewAsync();
+
+        var exception = await Record.ExceptionAsync(async () =>
+            await WithUnitOfWorkAsync(async () =>
+            {
+                var archive = await GetRequiredService<
+                    IRepository<FinalInvoiceIssueEvidenceRecord, Guid>>()
+                    .GetAsync(data.ArchiveId);
+                var second = InvoiceIssuanceReviewTicket.Stage(
+                    Guid.NewGuid(), archive, Guid.NewGuid(),
+                    Guid.NewGuid(), DateTime.UtcNow,
+                    "Competing review for the same evidence");
+                await GetRequiredService<
+                    IRepository<InvoiceIssuanceReviewTicket, Guid>>()
+                    .InsertAsync(second, autoSave: true);
+            }));
+        Assert.NotNull(exception);
+        Assert.Contains("UNIQUE", exception.ToString(),
+            StringComparison.OrdinalIgnoreCase);
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var count = await GetRequiredService<
+                IRepository<InvoiceIssuanceReviewTicket, Guid>>()
+                .CountAsync(x => x.StagedEvidenceId == data.ArchiveId);
+            Assert.Equal(1, count);
+            Assert.Equal(InvoiceStatus.Draft,
+                (await _invoices.GetAsync(data.DraftId)).Status);
+        });
+    }
+
+    [Fact]
+    public async Task ISSUEREVIEWDB03_Database_Rejects_Forged_Self_Review()
+    {
+        var data = await SeedIssuanceReviewAsync();
+
+        var exception = await Record.ExceptionAsync(async () =>
+            await WithUnitOfWorkAsync(async () =>
+            {
+                var repository = GetRequiredService<
+                    IRepository<InvoiceIssuanceReviewTicket, Guid>>();
+                var review = await repository.GetAsync(data.ReviewId);
+                // Simulate bypassing domain workflow through privileged
+                // manipulation of a materialized EF entity.
+                typeof(InvoiceIssuanceReviewTicket)
+                    .GetProperty(nameof(InvoiceIssuanceReviewTicket.Status))!
+                    .SetValue(review, InvoiceIssuanceReviewStatus.ReviewedForDesign);
+                typeof(InvoiceIssuanceReviewTicket)
+                    .GetProperty(nameof(InvoiceIssuanceReviewTicket.ReviewedByUserId))!
+                    .SetValue(review, data.SubmittedBy);
+                typeof(InvoiceIssuanceReviewTicket)
+                    .GetProperty(nameof(InvoiceIssuanceReviewTicket.ReviewedAtUtc))!
+                    .SetValue(review, review.SubmittedAtUtc.AddMinutes(1));
+                typeof(InvoiceIssuanceReviewTicket)
+                    .GetProperty(nameof(InvoiceIssuanceReviewTicket.ReviewReason))!
+                    .SetValue(review, "Forged same-person approval is forbidden.");
+                await repository.UpdateAsync(review, autoSave: true);
+            }));
+        Assert.NotNull(exception);
+        Assert.Contains("CHECK", exception.ToString(),
+            StringComparison.OrdinalIgnoreCase);
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var review = await GetRequiredService<
+                IRepository<InvoiceIssuanceReviewTicket, Guid>>()
+                .GetAsync(data.ReviewId);
+            Assert.Equal(InvoiceIssuanceReviewStatus.Submitted, review.Status);
+            Assert.Null(review.ReviewedByUserId);
+            Assert.Equal(InvoiceStatus.Draft,
+                (await _invoices.GetAsync(data.DraftId)).Status);
+        });
+    }
+
+    private async Task<(Guid DraftId, Guid ArchiveId, Guid ReviewId, Guid SubmittedBy)>
+        SeedIssuanceReviewAsync()
+    {
+        var (fixture, readingId) = await SeedReadyOctoberAsync();
+        var draft = CreateDraft(fixture, readingId, Guid.NewGuid());
+        var requestId = Guid.NewGuid();
+        var archiveId = Guid.NewGuid();
+        var reviewId = Guid.NewGuid();
+        var submittedBy = Guid.NewGuid();
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var moveOut = new MoveOutRequest(requestId, fixture.ContractId,
+                fixture.RoomId, new DateOnly(2026, 10, 31),
+                "Two-person staged issuance review");
+            moveOut.Approve(DateTime.UtcNow, null);
+            await GetRequiredService<IRepository<MoveOutRequest, Guid>>()
+                .InsertAsync(moveOut, autoSave: true);
+            await _invoices.InsertAsync(draft, autoSave: true);
+        });
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var bundle = await MakeIssuePreflightService()
+                .GetEvidenceBundleAsync(requestId);
+            var source = Assert.IsType<FinalInvoiceEvidencePackage>(
+                bundle.Evidence);
+            var archive = FinalInvoiceIssueEvidenceRecord.Prepare(
+                archiveId, Guid.NewGuid(), DateTime.UtcNow,
+                source, bundle.Preflight);
+            await GetRequiredService<
+                IRepository<FinalInvoiceIssueEvidenceRecord, Guid>>()
+                .InsertAsync(archive, autoSave: true);
+            var review = InvoiceIssuanceReviewTicket.Stage(
+                reviewId, archive, Guid.NewGuid(), submittedBy,
+                DateTime.UtcNow, "Evidence prepared for independent review");
+            await GetRequiredService<
+                IRepository<InvoiceIssuanceReviewTicket, Guid>>()
+                .InsertAsync(review, autoSave: true);
+        });
+
+        return (draft.Id, archiveId, reviewId, submittedBy);
+    }
+
+    [Fact]
     public async Task ISSUEARCHDB01_Staged_Issue_Evidence_Persists_Without_Posting_Invoice()
     {
         var (fixture, electricityReadingId) = await SeedReadyOctoberAsync();

@@ -30,6 +30,8 @@ $paymentEvidence = Read-Source 'modules/buildingmanagement/src/BuildingManagemen
 $paymentEvidenceModel = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/FinalMoveOutPaymentEvidence.cs'
 $paymentState = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Payments/Payment.cs'
 $issuedDebtCalculation = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/IssuedInvoicePaymentReconciler.cs'
+$depositLedgerReview = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/DepositSettlements/ContractDepositLedgerReview.cs'
+$depositLedgerService = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/DepositSettlements/ContractDepositLedgerReviewAppService.cs'
 $finalEvidence = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/FinalInvoiceEvidencePackage.cs'
 $finalEvidenceService = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/Invoices/FinalInvoiceEvidencePackageAppService.cs'
 
@@ -140,6 +142,21 @@ if ($paymentState -notmatch 'EnsureUnappliedCompletedDeposit\("apply"\)' -or
     $paymentState -notmatch 'Purpose != PaymentPurpose\.ReservationDeposit' -or
     $paymentState -notmatch 'DepositDisposition != Payments\.DepositDisposition\.Unapplied') {
     throw 'Safety stop: deposit disposition can be replayed or double-counted.'
+}
+
+# Existing deposit allocations are audit evidence only. A payment marked
+# Unapplied is not cash held in this contract unless a completed allocation
+# exists. Internal review must detect cross-contract reallocation and
+# must never produce an authorized refundable balance.
+if ($depositLedgerReview -notmatch 'DepositPaymentOverAllocatedOrCrossContract' -or
+    $depositLedgerReview -notmatch 'DepositAllocationPaymentMismatch' -or
+    $depositLedgerReview -notmatch 'RefundableBalance\s*=>\s*null' -or
+    $depositLedgerReview -notmatch 'CanRefund\s*=>\s*false' -or
+    $depositLedgerReview -notmatch 'CanOffsetDebt\s*=>\s*false' -or
+    $depositLedgerService -notmatch '\[RemoteService\(IsEnabled\s*=\s*false\)\]' -or
+    $depositLedgerService -notmatch '_softDeleteFilter\.Disable\(' -or
+    $depositLedgerService -match '\.(Refund|Pay|Complete|End|Issue|InsertAsync|UpdateAsync|DeleteAsync)\s*\(') {
+    throw 'Safety stop: deposit allocation ledger review no longer fail-closed.'
 }
 
 Write-Host 'MOVE-OUT LIFECYCLE SOURCE GATE PASS.'

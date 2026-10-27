@@ -407,6 +407,9 @@ public sealed class BuildingManagementAutoApiAuthorization_Tests
                 typeof(BuildingManagement.Invoices.FinalInvoiceIssueEvidenceDriftAppService));
         Assert.DoesNotContain(exposed, action =>
             action!.ControllerTypeInfo.AsType() ==
+                typeof(BuildingManagement.Invoices.InvoicePaymentAllocationLedgerReviewAppService));
+        Assert.DoesNotContain(exposed, action =>
+            action!.ControllerTypeInfo.AsType() ==
                 typeof(BuildingManagement.Invoices.FinalMoveOutPaymentEvidenceAppService));
         Assert.DoesNotContain(exposed, action =>
             action!.ControllerTypeInfo.AsType() ==

@@ -31,3 +31,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\etc\scripts\verify-2g-secu
 ```
 
 The Full workflow executes these isolated host tests and ensures the safety source gates remain intact.
+
+## Authenticated HTTP mutation completeness
+
+Added `APIAUTO14–15` to the isolated real ABP conventional-controller
+host. The first test exercises **all six update/delete HTTP mutations**
+(Building/Floor/Room) with authenticated but unassigned identities. The test
+host's repository proxies abort if touched before authorization, proving
+fail-closed behavior beyond a status-code-only assertion. The second test
+rejects forged client-side "admin", "permission" and "building" headers.
+Existing APIAUTO09–12 already cover get/list/create, totaling the **15
+CRUD entry-point categories**. These are negative HTTP tests; positive A/B
+end-to-end HTTP on persisted PostgreSQL still needs the explicitly approved
+bootstrap/Identity/migration activation plan.
+
+**Ship gate:** no public grant delegation, runtime grant provider substitution,
+default admin bypass, production schema apply, or financial API activation.

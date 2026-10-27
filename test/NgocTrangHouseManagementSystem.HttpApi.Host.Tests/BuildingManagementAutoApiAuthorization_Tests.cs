@@ -335,6 +335,71 @@ public sealed class BuildingManagementAutoApiAuthorization_Tests
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
+    [Fact]
+    public async Task APIAUTO14_Authenticated_User_Cannot_Update_Or_Delete_Any_Of_Three_Resources()
+    {
+        await using var app = await StartIsolatedAbpHostAsync();
+        using var client = AuthenticatedClient(app);
+        var actions = GetGeneratedActions(app);
+        var guessed = Guid.NewGuid().ToString("D");
+
+        // Previously checked GET/list/create, but not the 6 HTTP mutations.
+        // Exercise the actual generated endpoints for EACH service. All must
+        // fail at the permission+membership policy, not reach repositories.
+        foreach (var (service, payload) in new[]
+        {
+            ("BuildingAppService",
+                "{\"name\":\"Denied update\",\"address\":\"No access\"}"),
+            ("FloorAppService",
+                "{\"floorNumber\":1,\"name\":\"Denied update\"}"),
+            ("RoomAppService",
+                "{\"roomNumber\":\"101\",\"name\":\"Denied update\"," +
+                "\"area\":25,\"capacity\":2,\"status\":0}")
+        })
+        {
+            foreach (var method in new[] { "UpdateAsync", "DeleteAsync" })
+            {
+                var action = Assert.Single(actions, a =>
+                    a.ControllerTypeInfo.Name == service &&
+                    a.MethodInfo.Name == method);
+                var route = Assert.IsType<string>(
+                    action.AttributeRouteInfo?.Template);
+                Assert.Contains("{", route); // route must carry resource ID
+                var url = "/" + Regex.Replace(route,
+                    @"\{[^}]+\}", guessed).TrimStart('/');
+
+                using var request = method == "UpdateAsync"
+                    ? new HttpRequestMessage(HttpMethod.Put, url)
+                    {
+                        Content = new StringContent(payload, Encoding.UTF8,
+                            "application/json")
+                    }
+                    : new HttpRequestMessage(HttpMethod.Delete, url);
+                using var response = await client.SendAsync(request);
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task APIAUTO15_Spoofed_Admin_Or_Building_Headers_Do_Not_Grant_Scope()
+    {
+        await using var app = await StartIsolatedAbpHostAsync();
+        using var client = AuthenticatedClient(app);
+        client.DefaultRequestHeaders.Add("X-Is-Admin", "true");
+        client.DefaultRequestHeaders.Add("X-Building-Id",
+            Guid.NewGuid().ToString("D"));
+        client.DefaultRequestHeaders.Add("X-Permission",
+            "BuildingManagement.Buildings.Manage");
+
+        var action = Assert.Single(GetGeneratedActions(app), a =>
+            a.ControllerTypeInfo.AsType() == typeof(BuildingAppService) &&
+            a.MethodInfo.Name == nameof(BuildingAppService.GetListAsync));
+        var route = Assert.IsType<string>(action.AttributeRouteInfo?.Template);
+        using var response = await client.GetAsync("/" + route.TrimStart('/'));
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
     private static HttpClient AuthenticatedClient(WebApplication app)
     {
         var client = app.GetTestClient();

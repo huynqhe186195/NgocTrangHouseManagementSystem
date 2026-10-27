@@ -1458,6 +1458,22 @@ public sealed class FinalMoveOutBillReview_Tests
     }
 
     [Fact]
+    public void SOURCEAUDIT00_Missing_Original_Source_Audit_Blocks_Release()
+    {
+        var (_, preflight) = StagingFixture();
+        var allocations = InvoicePaymentAllocationJournalAuditor.Assess(
+            Array.Empty<InvoicePaymentAllocationJournalEntry>(),
+            Array.Empty<Payment>(), preflight.ContractId);
+        var release = FinalInvoiceReleaseReadinessEvaluator.Assess(
+            preflight, Array.Empty<FinalInvoiceIssueEvidenceRecord>(),
+            Array.Empty<InvoiceIssuanceReviewTicket>(),
+            null, allocations, sourceProvenance: null);
+        Assert.Contains("OriginalInvoiceSourcesNotAudited", release.Blockers);
+        Assert.False(release.OriginalSourcesVerified);
+        Assert.False(release.CanIssue);
+    }
+
+    [Fact]
     public void SOURCEAUDIT01_Original_Readings_Meters_And_Rates_Match_Snapshot()
     {
         var (archive, building, readings, meters, rates) = SourceAuditFixture();

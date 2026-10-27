@@ -21,6 +21,7 @@ using NgocTrangHouseManagementSystem.Security;
 using Volo.Abp.Authorization;
 using Volo.Abp.Authorization.Permissions;
 using Volo.Abp.Identity;
+using Volo.Abp.Identity.EntityFrameworkCore;
 using IdentityUser = Volo.Abp.Identity.IdentityUser;
 using Volo.Abp.Users;
 using Xunit;
@@ -243,6 +244,71 @@ public sealed class BuildingIdentityMembershipComposition_Tests
     }
 
     [Fact]
+    public async Task IDMEM11_ABP_Identity_Entities_Persist_Account_Lockout_And_Revocation()
+    {
+        await using var f = await Fixture.CreateAsync();
+        await using var identities = await IdentityStore.CreateAsync();
+        await using (var initial = identities.Open())
+        {
+            initial.Users.Add(NewAccount(f.Actor));
+            await initial.SaveChangesAsync();
+        }
+
+        // Test-only IIdentityUserRepository adapter uses the ACTUAL ABP
+        // IdentityUser EF mapping and a fresh AsNoTracking query each time.
+        // Production Identity DbContext, repository and permissions are not
+        // reconfigured or registered by this isolated test.
+        f.AccountsRepo.ResolveAsync = async id =>
+        {
+            await using var db = identities.Open();
+            return await db.Users.AsNoTracking().SingleOrDefaultAsync(x =>
+                x.Id == id && !x.IsDeleted);
+        };
+        f.Lockouts.ReadFromEntity = true;
+        f.Permissions.Allowed.Add(BuildingManagementPermissions.Buildings.Read);
+        await f.GrantAsync(f.Actor, f.BuildingA);
+
+        await f.Policy.EnsureBuildingAsync(f.BuildingA,
+            BuildingBusinessCapability.ReadBuilding);
+
+        await using (var db = identities.Open())
+        {
+            var user = await db.Users.SingleAsync(x => x.Id == f.Actor);
+            user.SetIsActive(false);
+            await db.SaveChangesAsync();
+        }
+        await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+            f.Policy.EnsureBuildingAsync(f.BuildingA,
+                BuildingBusinessCapability.ReadBuilding));
+
+        await using (var db = identities.Open())
+        {
+            var user = await db.Users.SingleAsync(x => x.Id == f.Actor);
+            user.SetIsActive(true);
+            db.Entry(user).Property(x => x.LockoutEnabled).CurrentValue = true;
+            db.Entry(user).Property(x => x.LockoutEnd).CurrentValue =
+                DateTimeOffset.UtcNow.AddMinutes(15);
+            await db.SaveChangesAsync();
+        }
+        await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+            f.Policy.EnsureBuildingAsync(f.BuildingA,
+                BuildingBusinessCapability.ReadBuilding));
+
+        await using (var db = identities.Open())
+        {
+            var user = await db.Users.SingleAsync(x => x.Id == f.Actor);
+            db.Entry(user).Property(x => x.LockoutEnd).CurrentValue =
+                DateTimeOffset.UtcNow.AddMinutes(-1);
+            await db.SaveChangesAsync();
+        }
+        await f.Policy.EnsureBuildingAsync(f.BuildingA,
+            BuildingBusinessCapability.ReadBuilding);
+        await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+            f.Policy.EnsureBuildingAsync(f.BuildingB,
+                BuildingBusinessCapability.ReadBuilding));
+    }
+
+    [Fact]
     public async Task IDMEM10_Production_DI_Does_Not_Use_Identity_Or_Grant_Candidates()
     {
         // The cross-building positives above are ONLY for explicitly
@@ -369,6 +435,7 @@ public sealed class BuildingIdentityMembershipComposition_Tests
     public class IdentityRepositoryProxy : DispatchProxy
     {
         public Dictionary<Guid, IdentityUser> Accounts { get; set; } = new();
+        public Func<Guid, Task<IdentityUser?>>? ResolveAsync { get; set; }
         public int Calls { get; private set; }
 
         protected override object? Invoke(MethodInfo? method, object?[]? args)
@@ -376,6 +443,8 @@ public sealed class BuildingIdentityMembershipComposition_Tests
             if (method?.Name == "FindAsync" && args?.FirstOrDefault() is Guid id)
             {
                 Calls++;
+                if (ResolveAsync is not null)
+                    return ResolveAsync(id);
                 return Task.FromResult(
                     Accounts.TryGetValue(id, out var user) ? user : null);
             }
@@ -468,10 +537,12 @@ public sealed class BuildingIdentityMembershipComposition_Tests
     public sealed class LockoutStore : IUserLockoutStore<IdentityUser>
     {
         private readonly Dictionary<Guid, (bool Enabled, DateTimeOffset? End)> _state = new();
+        public bool ReadFromEntity { get; set; }
         public void Set(Guid user, bool enabled, DateTimeOffset? end)
             => _state[user] = (enabled, end);
         private (bool Enabled, DateTimeOffset? End) State(IdentityUser u)
-            => _state.TryGetValue(u.Id, out var s) ? s : (true, null);
+            => ReadFromEntity ? (u.LockoutEnabled, u.LockoutEnd) :
+                _state.TryGetValue(u.Id, out var s) ? s : (true, null);
 
         public Task<bool> GetLockoutEnabledAsync(IdentityUser u, CancellationToken ct)
             => Task.FromResult(State(u).Enabled);
@@ -512,6 +583,46 @@ public sealed class BuildingIdentityMembershipComposition_Tests
         public Task<IdentityResult> DeleteAsync(IdentityUser u, CancellationToken ct)
             => Task.FromResult(IdentityResult.Success);
         public void Dispose() { }
+    }
+
+    private sealed class IdentityStore : IAsyncDisposable
+    {
+        private readonly SqliteConnection _connection;
+        private readonly DbContextOptions<IdentityDb> _options;
+
+        private IdentityStore(SqliteConnection connection)
+        {
+            _connection = connection;
+            _options = new DbContextOptionsBuilder<IdentityDb>()
+                .UseSqlite(connection).Options;
+        }
+
+        public static async Task<IdentityStore> CreateAsync()
+        {
+            var connection = new SqliteConnection("Data Source=:memory:");
+            await connection.OpenAsync();
+            var store = new IdentityStore(connection);
+            await using var db = store.Open();
+            await db.Database.EnsureCreatedAsync();
+            return store;
+        }
+
+        public IdentityDb Open() => new(_options);
+        public ValueTask DisposeAsync() => _connection.DisposeAsync();
+    }
+
+    private sealed class IdentityDb : DbContext
+    {
+        public IdentityDb(DbContextOptions<IdentityDb> options) : base(options) { }
+        public DbSet<IdentityUser> Users => Set<IdentityUser>();
+
+        protected override void OnModelCreating(ModelBuilder builder)
+        {
+            base.OnModelCreating(builder);
+            // The SAME ABP Identity mapping invoked by the application's
+            // real NgocTrangHouseManagementSystemDbContext.
+            builder.ConfigureIdentity();
+        }
     }
 
     private sealed class Store : IDisposable

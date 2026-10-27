@@ -1238,7 +1238,12 @@ public sealed class FinalMoveOutBillReview_Tests
 
         Assert.True(result.StagedEvidenceMatchesCurrentDraft);
         Assert.True(result.IndependentDesignReviewRecorded);
-        Assert.True(result.IndependentReviewApplicableToCurrentDraft);
+        // This domain-only fixture does not supply an audited physical source.
+        // A stored design review must not imply current source approval.
+        Assert.False(result.IndependentReviewApplicableToCurrentDraft);
+        Assert.Contains("OriginalInvoiceSourcesNotAudited", result.Blockers);
+        Assert.Contains("IndependentInvoiceReviewSupersededBySourceChanges",
+            result.Blockers);
         Assert.Equal(archive.Id, result.StagedEvidenceId);
         Assert.Equal(ticket.Id, result.ReviewTicketId);
         Assert.Equal(preflight.KnownBaseChargeTotal, result.VerifiedBaseAmount);
@@ -1339,9 +1344,13 @@ public sealed class FinalMoveOutBillReview_Tests
         var current = FinalInvoiceReleaseReadinessEvaluator.Assess(
             preflight, new[] { archive }, new[] { ticket }, drift, allocations);
         Assert.True(current.IndependentDesignReviewRecorded);
-        Assert.True(current.IndependentReviewApplicableToCurrentDraft);
+        Assert.False(current.IndependentReviewApplicableToCurrentDraft);
+        Assert.Contains("OriginalInvoiceSourcesNotAudited", current.Blockers);
+        Assert.Contains("IndependentInvoiceReviewSupersededBySourceChanges",
+            current.Blockers);
 
-        // A stored prior review must not remain "applicable" after drift.
+        // Even without provenance approval, a later Draft change must
+        // still be independently reported as stale source evidence.
         var staleDrift = new FinalInvoiceIssueEvidenceDriftReview
         {
             EvidenceRecordId = archive.Id,

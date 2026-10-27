@@ -30,6 +30,17 @@ public class FinalInvoiceIssuePreflightAppService : ApplicationService
 
     [UnitOfWork(isTransactional: true)]
     public virtual async Task<FinalInvoiceIssuePreflight> GetAsync(Guid requestId)
+        => (await GetEvidenceBundleAsync(requestId)).Preflight;
+
+    /// <summary>
+    /// Returns the snapshot AND the review derived from THAT EXACT snapshot.
+    /// Re-reading evidence at a later instant changes CapturedAtUtc and
+    /// consequently the SHA-256, even when monetary amounts are unchanged.
+    /// Neither response permits invoice issuance, debt posting or payment.
+    /// </summary>
+    [UnitOfWork(isTransactional: true)]
+    public virtual async Task<FinalInvoiceIssueEvidenceBundle> GetEvidenceBundleAsync(
+        Guid requestId)
     {
         var bill = await _billReview.GetAsync(requestId);
         // The payment review is read-only and includes historical receipt
@@ -51,7 +62,17 @@ public class FinalInvoiceIssuePreflightAppService : ApplicationService
             }
         }
 
-        return FinalInvoiceIssuePreflightEvaluator.Assess(
-            bill, package, payments);
+        return new FinalInvoiceIssueEvidenceBundle(
+            package,
+            FinalInvoiceIssuePreflightEvaluator.Assess(
+                bill, package, payments));
     }
 }
+
+/// <summary>
+/// In-memory read result; not a durable issuance authorization token.
+/// Its two parts share the same captured evidence checksum.
+/// </summary>
+public sealed record FinalInvoiceIssueEvidenceBundle(
+    FinalInvoiceEvidencePackage? Evidence,
+    FinalInvoiceIssuePreflight Preflight);

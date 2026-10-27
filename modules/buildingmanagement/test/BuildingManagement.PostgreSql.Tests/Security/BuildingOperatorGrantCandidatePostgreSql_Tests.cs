@@ -18,6 +18,7 @@ namespace BuildingManagement.PostgreSqlTests;
 public sealed class BuildingOperatorGrantCandidatePostgreSql_Tests
 {
     private const string Table = "BuildingManagementOperatorBuildingGrants";
+    private const string EmptyJson = "{}";
 
     [Fact]
     public async Task PGMEMBER01_Grant_Schema_Rejects_Duplicate_And_Invalid_Data()
@@ -139,7 +140,7 @@ public sealed class BuildingOperatorGrantCandidatePostgreSql_Tests
                 "ExtraProperties", "ConcurrencyStamp")
            VALUES ('{id:D}', '{user:D}', '{building:D}', '{Guid.NewGuid():D}',
                    '2026-10-27T00:00:00Z', {expiry}, {revocation},
-                   {revokedBy}, {revision}, '{{}}', '{Guid.NewGuid():N}');
+                   {revokedBy}, {revision}, '{EmptyJson}', '{Guid.NewGuid():N}');
            """;
 
     private static async Task InScratchAsync(
@@ -208,7 +209,7 @@ public sealed class BuildingOperatorGrantCandidatePostgreSql_Tests
             // Check executable statement starts, not ordinary review
             // comments such as "a grant is reusable only after revoke".
             Assert.False(Regex.IsMatch(sql,
-                @"(?im)^\s*(GRANT|CREATE ROLE|ALTER ROLE|DROP DATABASE|START TRANSACTION|BEGIN\s*;|COMMIT)\b"));
+                @"(?im)^\s*(?:GRANT\b|CREATE\s+ROLE\b|ALTER\s+ROLE\b|DROP\s+DATABASE\b|START\s+TRANSACTION\b|COMMIT\b|BEGIN\s*(?:TRANSACTION\b|;))"));
             Assert.DoesNotContain("public.", sql,
                 StringComparison.OrdinalIgnoreCase);
             return sql;

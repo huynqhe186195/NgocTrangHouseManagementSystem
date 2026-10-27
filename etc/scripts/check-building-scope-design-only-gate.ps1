@@ -80,8 +80,8 @@ if ($grantUp -notmatch 'CREATE TABLE "BuildingManagementOperatorBuildingGrants"'
     $grantDown -notmatch 'IF EXISTS' -or
     $grantDown -notmatch 'RAISE EXCEPTION' -or
     $grantDown -notmatch 'DROP TABLE' -or
-    $grantUp -match '(?im)^\s*(GRANT|CREATE ROLE|ALTER ROLE|DROP DATABASE|START TRANSACTION|BEGIN\s*;|COMMIT)\b' -or
-    $grantDown -match '(?im)^\s*(GRANT|CREATE ROLE|ALTER ROLE|DROP DATABASE|START TRANSACTION|BEGIN\s*;|COMMIT)\b') {
+    $grantUp -match '(?im)^\s*(?:GRANT\b|CREATE\s+ROLE\b|ALTER\s+ROLE\b|DROP\s+DATABASE\b|START\s+TRANSACTION\b|COMMIT\b|BEGIN\s*(?:TRANSACTION\b|;))' -or
+    $grantDown -match '(?im)^\s*(?:GRANT\b|CREATE\s+ROLE\b|ALTER\s+ROLE\b|DROP\s+DATABASE\b|START\s+TRANSACTION\b|COMMIT\b|BEGIN\s*(?:TRANSACTION\b|;))') {
     throw 'Safety stop: unreviewed grant SQL candidate or unsafe SQL operation.'
 }
 if ($grantDown.IndexOf('LOCK TABLE') -ge $grantDown.IndexOf('IF EXISTS') -or

@@ -1748,6 +1748,12 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 var ctx = await sp.GetRequiredService<
                     IDbContextProvider<BuildingManagementDbContext>>()
                     .GetDbContextAsync();
+                // Restore the pre-existing Slice A room deletion scenario:
+                // the cross-building read fixture must not leave a reservation
+                // linked to Room A after its assertions complete.
+                var scratchReservation = await ctx.RoomReservations.FindAsync(reservationA)
+                    ?? throw new InvalidOperationException("Missing scratch reservation A.");
+                ctx.RoomReservations.Remove(scratchReservation);
                 var scratchContract = await ctx.Contracts.FindAsync(contractA)
                     ?? throw new InvalidOperationException("Missing scratch contract A.");
                 ctx.Contracts.Remove(scratchContract);

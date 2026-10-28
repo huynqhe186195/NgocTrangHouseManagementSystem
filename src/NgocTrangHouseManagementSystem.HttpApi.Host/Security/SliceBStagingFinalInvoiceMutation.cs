@@ -8,6 +8,7 @@ using BuildingManagement.EntityFrameworkCore.Security;
 using BuildingManagement.Invoices;
 using BuildingManagement.MoveOuts;
 using BuildingManagement.Payments;
+using BuildingManagement.Payments.BuildingManagement.Payments;
 using BuildingManagement.Rooms;
 using BuildingManagement.Security;
 using Microsoft.EntityFrameworkCore;

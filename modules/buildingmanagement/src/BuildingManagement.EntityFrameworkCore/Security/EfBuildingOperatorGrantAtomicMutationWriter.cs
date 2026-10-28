@@ -42,8 +42,12 @@ public sealed class EfBuildingOperatorGrantAtomicMutationWriter :
              expiresAtUtc.Value <= now))
             throw new ArgumentOutOfRangeException(nameof(expiresAtUtc));
 
-        await using var tx = await _db.Database.BeginTransactionAsync(
-            IsolationLevel.Serializable);
+        // Join the ABP UoW transaction when one already exists.
+        // A PostgreSQL read-committed outer UoW is safe only because
+        // EnsureIssuerGrantAsync rechecks and locks the issuer's row.
+        var owned = _db.Database.CurrentTransaction is null
+            ? await _db.Database.BeginTransactionAsync(IsolationLevel.Serializable)
+            : null;
         try
         {
             await EnsureIssuerGrantAsync(trustedIssuerId, buildingId, now);
@@ -55,13 +59,20 @@ public sealed class EfBuildingOperatorGrantAtomicMutationWriter :
             // Partial unique index rejects two unrevoked (even expired)
             // grants for the same recipient/building.
             await _db.SaveChangesAsync();
-            await tx.CommitAsync();
+            if (owned is not null)
+                await owned.CommitAsync();
             return grant.Id;
         }
         catch
         {
-            await tx.RollbackAsync();
+            if (owned is not null)
+                await owned.RollbackAsync();
             throw;
+        }
+        finally
+        {
+            if (owned is not null)
+                await owned.DisposeAsync();
         }
     }
 
@@ -91,12 +102,19 @@ public sealed class EfBuildingOperatorGrantAtomicMutationWriter :
 
             grant.Revoke(trustedIssuerId, now);
             await _db.SaveChangesAsync();
-            await tx.CommitAsync();
+            if (owned is not null)
+                await owned.CommitAsync();
         }
         catch
         {
-            await tx.RollbackAsync();
+            if (owned is not null)
+                await owned.RollbackAsync();
             throw;
+        }
+        finally
+        {
+            if (owned is not null)
+                await owned.DisposeAsync();
         }
     }
 

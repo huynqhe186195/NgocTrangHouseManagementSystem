@@ -39,7 +39,12 @@ public sealed class EfBuildingOwnerBootstrapAtomicWriter :
 
         // Requires relational provider with explicit transactions.
         // Never use in memory/InMemory provider as proof of atomicity.
-        await using var transaction = await _db.Database.BeginTransactionAsync();
+        // In a real ABP ApplicationService, its UoW may already own the
+        // Building DB transaction. Both inserts must use THAT transaction.
+        // Never commit a transaction managed by a parent UoW.
+        var owned = _db.Database.CurrentTransaction is null
+            ? await _db.Database.BeginTransactionAsync()
+            : null;
         try
         {
             var building = new Building(
@@ -53,13 +58,20 @@ public sealed class EfBuildingOwnerBootstrapAtomicWriter :
             _db.Set<BuildingOperatorAccessGrant>().Add(firstGrant);
             await _db.SaveChangesAsync();
 
-            await transaction.CommitAsync();
+            if (owned is not null)
+                await owned.CommitAsync();
             return building;
         }
         catch
         {
-            await transaction.RollbackAsync();
+            if (owned is not null)
+                await owned.RollbackAsync();
             throw;
+        }
+        finally
+        {
+            if (owned is not null)
+                await owned.DisposeAsync();
         }
     }
 }

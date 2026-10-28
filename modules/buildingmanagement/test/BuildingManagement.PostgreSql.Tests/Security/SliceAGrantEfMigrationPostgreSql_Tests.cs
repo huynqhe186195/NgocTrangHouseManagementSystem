@@ -313,6 +313,117 @@ public sealed class SliceAGrantEfMigrationPostgreSql_Tests
         });
     }
 
+    [Fact]
+    public async Task EFMEMBER07_Write_Membership_Lock_Precedes_Revoke_And_PostRevoke_Denies()
+    {
+        await InScratchAsync(async cs =>
+        {
+            var owner = Guid.NewGuid();
+            var worker = Guid.NewGuid();
+            Guid buildingId;
+            await using (var seed = OpenGrantDb(cs))
+            {
+                await seed.Database.MigrateAsync();
+                buildingId = (await new EfBuildingOwnerBootstrapAtomicWriter(seed)
+                    .CreateWithOwnerAtomicallyAsync(owner, "Before", "Scratch", null)).Id;
+                await new EfBuildingOperatorGrantAtomicMutationWriter(
+                    seed, TimeProvider.System)
+                    .AssignAtomicallyAsync(owner, worker, buildingId, null);
+            }
+
+            var locked = new TaskCompletionSource<bool>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            var resume = new TaskCompletionSource<bool>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            var write = Task.Run(async () =>
+            {
+                await using var db = OpenGrantDb(cs);
+                var fence = new EfBuildingScopedWriteFenceCandidate(
+                    db, TimeProvider.System);
+                return await fence.ExecuteAsync(worker, buildingId, async () =>
+                {
+                    await db.Database.ExecuteSqlInterpolatedAsync(
+                        $"UPDATE \"Buildings\" SET \"Name\" = {"Completed"} WHERE \"Id\" = {buildingId}");
+                    locked.SetResult(true);
+                    await resume.Task.WaitAsync(TimeSpan.FromSeconds(15));
+                    return 1;
+                });
+            });
+
+            try
+            {
+                await locked.Task.WaitAsync(TimeSpan.FromSeconds(15));
+                var start = new TaskCompletionSource<bool>(
+                    TaskCreationOptions.RunContinuationsAsynchronously);
+                var revoke = Task.Run(async () =>
+                {
+                    await using var db = OpenGrantDb(cs);
+                    var writer = new EfBuildingOperatorGrantAtomicMutationWriter(
+                        db, TimeProvider.System);
+                    start.SetResult(true);
+                    await writer.RevokeAtomicallyAsync(
+                        owner, worker, buildingId, 1);
+                });
+                await start.Task.WaitAsync(TimeSpan.FromSeconds(15));
+                await Task.Delay(250);
+                Assert.False(revoke.IsCompleted,
+                    "Revocation must wait for write's shared grant-row lock.");
+                resume.TrySetResult(true);
+                Assert.Equal(1, await write.WaitAsync(TimeSpan.FromSeconds(15)));
+                await revoke.WaitAsync(TimeSpan.FromSeconds(15));
+
+                await using var verify = OpenGrantDb(cs);
+                Assert.Equal("Completed",
+                    (await verify.Buildings.SingleAsync(x => x.Id == buildingId)).Name);
+                var fence = new EfBuildingScopedWriteFenceCandidate(
+                    verify, TimeProvider.System);
+                var touched = false;
+                await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+                    fence.ExecuteAsync(worker, buildingId, () =>
+                    {
+                        touched = true;
+                        return Task.FromResult(2);
+                    }));
+                Assert.False(touched);
+            }
+            finally
+            {
+                resume.TrySetResult(true);
+            }
+        });
+    }
+
+    [Fact]
+    public async Task EFMEMBER08_Fence_Cannot_Mutate_Another_Building()
+    {
+        await InScratchAsync(async cs =>
+        {
+            var a = Guid.NewGuid();
+            var b = Guid.NewGuid();
+            Guid buildingA, buildingB;
+            await using (var seed = OpenGrantDb(cs))
+            {
+                await seed.Database.MigrateAsync();
+                var bootstrap = new EfBuildingOwnerBootstrapAtomicWriter(seed);
+                buildingA = (await bootstrap.CreateWithOwnerAtomicallyAsync(
+                    a, "A", "Scratch", null)).Id;
+                buildingB = (await bootstrap.CreateWithOwnerAtomicallyAsync(
+                    b, "B", "Scratch", null)).Id;
+            }
+            await using var db = OpenGrantDb(cs);
+            var fence = new EfBuildingScopedWriteFenceCandidate(
+                db, TimeProvider.System);
+            var touched = 0;
+            Task<int> Update() => Task.FromResult(++touched);
+            await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+                fence.ExecuteAsync(a, buildingB, Update));
+            await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+                fence.ExecuteAsync(Guid.NewGuid(), buildingA, Update));
+            Assert.Equal(0, touched);
+            Assert.Equal(1, await fence.ExecuteAsync(a, buildingA, Update));
+        });
+    }
+
     private static SliceAGrantScratchDb OpenGrantDb(string cs)
         => new(new DbContextOptionsBuilder<SliceAGrantScratchDb>()
             .UseNpgsql(cs, n => n.MigrationsAssembly(

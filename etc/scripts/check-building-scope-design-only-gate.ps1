@@ -75,6 +75,15 @@ foreach ($name in @('IQueryable<Building>', 'IQueryable<Floor>',
     }
 }
 
+# Staged CRUD writes must remain locked to unrevoked membership, never auto DI.
+$fence = Read-Source 'modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Security/EfBuildingScopedWriteFenceCandidate.cs'
+if ($fence -notmatch 'FOR SHARE OF g' -or
+    $fence -notmatch 'IsolationLevel.ReadCommitted' -or
+    $fence -notmatch 'GetDbTransaction' -or
+    $fence -match ':\s*ITransientDependency' -or
+    $fence -match '\[(ExposeServices|Dependency)\s*\(') {
+    throw 'Safety stop: unregistered write fence was weakened or auto-registered.'
+}
 # Fail closed: the staging grant/revoke writer must remain unregistered.
 $mutation = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/Security/BuildingOperatorChangeCoordinator.cs'
 $mutationEf = Read-Source 'modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Security/EfBuildingOperatorGrantAtomicMutationWriter.cs'

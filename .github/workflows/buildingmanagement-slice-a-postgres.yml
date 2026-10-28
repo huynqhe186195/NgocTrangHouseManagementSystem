@@ -9,6 +9,8 @@ on:
       - "modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/**"
       - "etc/phase-audits/SliceA_OperatorBuildingGrant_*.sql"
       - "modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Security/EfBuildingOwnerBootstrapAtomicWriter.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Security/EfBuildingOperatorGrantAtomicMutationWriter.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Security/EfBuildingScopedWriteFenceCandidate.cs"
   pull_request:
     branches:
       - wip/phase-2g2
@@ -17,6 +19,8 @@ on:
       - "modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/**"
       - "etc/phase-audits/SliceA_OperatorBuildingGrant_*.sql"
       - "modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Security/EfBuildingOwnerBootstrapAtomicWriter.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Security/EfBuildingOperatorGrantAtomicMutationWriter.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Security/EfBuildingScopedWriteFenceCandidate.cs"
 
 permissions:
   contents: read

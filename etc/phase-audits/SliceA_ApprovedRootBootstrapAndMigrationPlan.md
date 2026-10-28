@@ -43,3 +43,19 @@ asserts effective default-DenyAll DI.
 or a full concurrent role revocation/write proof; grant issuer strings cannot
 be trusted directly from clients. No production migration, grant activation,
 new public endpoint or finance mutation is included.
+
+## 2026-10-28 — transaction-bound membership write fence (candidate)
+
+`EfBuildingScopedWriteFenceCandidate` acquires PostgreSQL
+`SELECT ... FOR SHARE OF g` on a fresh unrevoked membership inside the
+**same READ COMMITTED transaction** as the guarded CRUD mutation.
+It blocks concurrent revoke/update until commit; afterward, future
+writes cannot acquire a live grant. The candidate has **no ABP DI marker**,
+is not registered in production, and cannot authorize an operation by
+itself: caller must separately establish authenticated ABP identity,
+active account, operation permission, and server-resolved Building resource.
+
+`EFMEMBER07–08` validate the deterministic PostgreSQL row-lock
+revoke/write ordering and cross-Building denial. No production CRUD
+app-service is yet wired into this fence; ABP permission/account
+revocation races on other storage are still explicit release blockers.

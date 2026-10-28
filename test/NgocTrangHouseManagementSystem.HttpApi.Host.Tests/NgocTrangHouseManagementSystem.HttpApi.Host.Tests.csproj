@@ -11,6 +11,9 @@
 
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <!-- Exact guarded read-only SQL for REAL isolated ABP Identity DB. -->
+    <EmbeddedResource Include="..\..\etc\phase-audits\SliceA_IdentityRuntimeDbRole_ReadOnlyAudit.sql"
+                      LogicalName="SliceA_IdentityRuntimeDbRole_ReadOnlyAudit.sql" />
     <ProjectReference Include="..\..\src\NgocTrangHouseManagementSystem.HttpApi.Host\NgocTrangHouseManagementSystem.HttpApi.Host.csproj" />
     <PackageReference Include="Microsoft.AspNetCore.TestHost" Version="10.0.9" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.9" />

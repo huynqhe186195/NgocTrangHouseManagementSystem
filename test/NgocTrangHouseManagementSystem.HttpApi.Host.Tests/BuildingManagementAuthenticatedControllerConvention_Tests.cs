@@ -101,7 +101,8 @@ public sealed class BuildingManagementAuthenticatedControllerConvention_Tests
             typeof(BuildingManagement.Contracts.ContractRenewalHoldAppService),
             typeof(BuildingManagement.Tenants.TenantAppService),
             typeof(BuildingManagement.RoomReservations.RoomReservationAppService),
-            typeof(BuildingManagement.MoveOuts.MoveOutRequestAppService)
+            typeof(BuildingManagement.MoveOuts.MoveOutRequestAppService),
+            typeof(BuildingManagement.Payments.PaymentAppService)
         };
         foreach (var service in protectedServices)
         {

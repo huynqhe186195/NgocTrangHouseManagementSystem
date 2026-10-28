@@ -4,6 +4,7 @@ using BuildingManagement;
 using BuildingManagement.Contracts;
 using BuildingManagement.MoveOuts;
 using BuildingManagement.RoomReservations;
+using BuildingManagement.Payments;
 using BuildingManagement.Tenants;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc.ApplicationModels;
@@ -25,7 +26,7 @@ public sealed class BuildingManagementAuthenticatedControllerConvention
             .RequireAuthenticatedUser()
             .Build());
 
-    // No Slice B contract/tenant/reservation/move-out endpoint has yet
+    // No legacy Slice B contract/tenant/reservation/move-out/payment endpoint has yet
     // demonstrated current-account + persisted permission + resource-to-
     // building membership. An authenticated caller MUST NOT fall through
     // into the existing unscoped services (tenant PII and contract writes).
@@ -42,7 +43,8 @@ public sealed class BuildingManagementAuthenticatedControllerConvention
            type == typeof(ContractRenewalHoldAppService) ||
            type == typeof(TenantAppService) ||
            type == typeof(RoomReservationAppService) ||
-           type == typeof(MoveOutRequestAppService);
+           type == typeof(MoveOutRequestAppService) ||
+           type == typeof(PaymentAppService);
 
     public void Apply(ApplicationModel application)
     {

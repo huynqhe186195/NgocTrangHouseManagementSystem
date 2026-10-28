@@ -275,3 +275,17 @@ Room→Floor→Building graph under PostgreSQL row locks before commit, and
 keeps global ContractDeposit, generic Payment APIs and bank integration
 blocked. Isolated PostgreSQL HTTP tests cover mismatched route, successful
 cash confirmation, duplicate denial and persisted Reserved status.
+
+
+## Critical legacy payment HTTP boundary
+
+\`PaymentAppService\` was previously covered by authentication only and
+had no current resource-to-building authorization. The conventional
+controller policy now explicitly DENIES every legacy PaymentAppService
+HTTP action before action execution, including global GET/list, deposit
+creation/completion/cancellation and allocation/settlement. Isolated
+staging's explicit reservation-specific routes remain separately fenced.
+The MVC policy test adds PaymentAppService to the denied service set.
+This is mandatory for privacy and avoiding a bypass around staged
+Contracts.Manage enforcement. No changes to internal PaymentAppService
+transaction logic or production rollout.

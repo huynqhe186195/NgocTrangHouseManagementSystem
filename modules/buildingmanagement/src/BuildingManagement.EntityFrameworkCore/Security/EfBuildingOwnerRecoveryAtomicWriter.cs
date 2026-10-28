@@ -59,34 +59,53 @@ public sealed class EfBuildingOwnerRecoveryAtomicWriter :
                 isolation != IsolationLevel.Serializable)
                 throw Denied();
 
-            // Founding row is locked until the same transaction commits.
-            // This root-issued record is never updated or revoked here.
             var conn = _db.Database.GetDbConnection();
+            // Serialize the founding-owner check with every FK-enforced
+            // grant INSERT. FOR UPDATE on the Building row conflicts with
+            // the foreign-key KEY SHARE that an INSERT must acquire. This
+            // prevents a second self-issued founder appearing between the
+            // uniqueness check and the recovery grant commit.
+            await using (var buildingLock = conn.CreateCommand())
+            {
+                buildingLock.Transaction = transaction.GetDbTransaction();
+                buildingLock.CommandText = """
+                    SELECT "Id" FROM "Buildings"
+                     WHERE "Id" = @building AND "IsDeleted" = FALSE
+                     FOR UPDATE
+                    """;
+                var id = buildingLock.CreateParameter();
+                id.ParameterName = "building";
+                id.Value = buildingId;
+                buildingLock.Parameters.Add(id);
+                if (await buildingLock.ExecuteScalarAsync() is not Guid)
+                    throw Denied();
+            }
+
+            // All live self-issued grants, not just a caller-selected one,
+            // must have a SINGLE matching founder. Lock each such row so
+            // revocation cannot change this identity during recovery.
+            var founders = new System.Collections.Generic.HashSet<Guid>();
             await using (var command = conn.CreateCommand())
             {
                 command.Transaction = transaction.GetDbTransaction();
                 command.CommandText = """
-                    SELECT g."Id"
+                    SELECT g."OperatorUserId"
                     FROM "BuildingManagementOperatorBuildingGrants" AS g
-                    JOIN "Buildings" AS b ON b."Id" = g."BuildingId"
                     WHERE g."BuildingId" = @building
-                      AND g."OperatorUserId" = @founder
-                      AND g."GrantedByUserId" = @founder
+                      AND g."OperatorUserId" = g."GrantedByUserId"
                       AND g."RevokedAtUtc" IS NULL
-                      AND b."IsDeleted" = FALSE
                     FOR SHARE OF g
                     """;
                 var building = command.CreateParameter();
                 building.ParameterName = "building";
                 building.Value = buildingId;
                 command.Parameters.Add(building);
-                var founder = command.CreateParameter();
-                founder.ParameterName = "founder";
-                founder.Value = originalOwnerId;
-                command.Parameters.Add(founder);
-                if (await command.ExecuteScalarAsync() is not Guid)
-                    throw Denied();
+                await using var rows = await command.ExecuteReaderAsync();
+                while (await rows.ReadAsync())
+                    founders.Add(rows.GetGuid(0));
             }
+            if (founders.Count != 1 || !founders.Contains(originalOwnerId))
+                throw Denied();
 
             var now = _clock.GetUtcNow().UtcDateTime;
             // Both signatures are persisted independently by authenticated
@@ -152,6 +171,7 @@ public sealed class EfBuildingOwnerRecoveryAtomicWriter :
                    AND "NewOwnerId" = {newOwnerId}
                    AND "ApprovedByUserId" IN ({firstApprovedRootId}, {secondApprovedRootId})
                    AND "ConsumedAtUtc" IS NULL
+                   AND "ExpiresAtUtc" > clock_timestamp()
                 """);
             if (consumed != 2)
                 throw Denied();

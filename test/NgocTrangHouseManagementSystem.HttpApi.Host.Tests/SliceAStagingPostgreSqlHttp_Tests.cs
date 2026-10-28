@@ -182,6 +182,17 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     BuildingManagementPermissions.Buildings.Read, true);
                 await permissions.SetForUserAsync(operatorB,
                     BuildingManagementPermissions.Buildings.RevokeOperators, true);
+                foreach (var id in new[] { root, operatorB })
+                {
+                    await permissions.SetForUserAsync(id,
+                        BuildingManagementPermissions.Floors.Read, true);
+                    await permissions.SetForUserAsync(id,
+                        BuildingManagementPermissions.Floors.Manage, true);
+                    await permissions.SetForUserAsync(id,
+                        BuildingManagementPermissions.Rooms.Read, true);
+                    await permissions.SetForUserAsync(id,
+                        BuildingManagementPermissions.Rooms.Manage, true);
+                }
                 await unit.CompleteAsync();
             }
 
@@ -249,6 +260,108 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 Assert.Contains(b.ToString("D"), body, StringComparison.OrdinalIgnoreCase);
                 Assert.DoesNotContain(a.ToString("D"), body, StringComparison.OrdinalIgnoreCase);
             }
+            // Exercise actual PostgreSQL transactional write fences for
+            // Floor/Room, not the SQLite-only test boundary. Root legitimately
+            // sees both buildings; B must see ONLY its delegated Building B.
+            string ChildRoute(Type service, string method) => "/" + Assert.IsType<string>(
+                Assert.Single(actions, action =>
+                    action.ControllerTypeInfo.AsType() == service &&
+                    action.MethodInfo.Name == method).AttributeRouteInfo?.Template)
+                .TrimStart('/');
+            string ChildId(string route, Guid id) => Regex.Replace(
+                route, @"\{[^}]+\}", id.ToString("D"));
+            async Task<Guid> CreateChildAsync(HttpClient client, string path, object request)
+            {
+                using var payload = new StringContent(JsonSerializer.Serialize(request),
+                    Encoding.UTF8, "application/json");
+                using var response = await client.PostAsync(path, payload);
+                var body = await response.Content.ReadAsStringAsync();
+                Assert.True(response.StatusCode is HttpStatusCode.OK or HttpStatusCode.Created,
+                    $"Postgres child create {response.StatusCode}: {body}");
+                using var document = JsonDocument.Parse(body);
+                return document.RootElement.GetProperty("id").GetGuid();
+            }
+            var floorCreate = ChildRoute(typeof(BuildingManagement.Floors.FloorAppService),
+                "CreateAsync");
+            var floorGet = ChildRoute(typeof(BuildingManagement.Floors.FloorAppService),
+                "GetAsync");
+            var floorList = ChildRoute(typeof(BuildingManagement.Floors.FloorAppService),
+                "GetListAsync");
+            var floorUpdate = ChildRoute(typeof(BuildingManagement.Floors.FloorAppService),
+                "UpdateAsync");
+            var floorDelete = ChildRoute(typeof(BuildingManagement.Floors.FloorAppService),
+                "DeleteAsync");
+            var roomCreate = ChildRoute(typeof(BuildingManagement.Rooms.RoomAppService),
+                "CreateAsync");
+            var roomGet = ChildRoute(typeof(BuildingManagement.Rooms.RoomAppService),
+                "GetAsync");
+            var roomList = ChildRoute(typeof(BuildingManagement.Rooms.RoomAppService),
+                "GetListAsync");
+            var roomUpdate = ChildRoute(typeof(BuildingManagement.Rooms.RoomAppService),
+                "UpdateAsync");
+            var roomDelete = ChildRoute(typeof(BuildingManagement.Rooms.RoomAppService),
+                "DeleteAsync");
+            var floorA = await CreateChildAsync(clientRoot, floorCreate,
+                new { buildingId = a, floorNumber = 1, name = "PG Floor A1" });
+            var floorB = await CreateChildAsync(clientB, floorCreate,
+                new { buildingId = b, floorNumber = 1, name = "PG Floor B1" });
+            using (var response = await clientB.GetAsync(ChildId(floorGet, floorA)))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var response = await clientB.GetAsync(ChildId(floorGet, floorB)))
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            using (var response = await clientB.GetAsync(floorList))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                var body = await response.Content.ReadAsStringAsync();
+                Assert.Contains(floorB.ToString("D"), body, StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain(floorA.ToString("D"), body, StringComparison.OrdinalIgnoreCase);
+            }
+            var roomA = await CreateChildAsync(clientRoot, roomCreate,
+                new { floorId = floorA, roomNumber = "101", name = "PG A101",
+                    area = 25.0, capacity = 2, status = 0 });
+            var roomB = await CreateChildAsync(clientB, roomCreate,
+                new { floorId = floorB, roomNumber = "101", name = "PG B101",
+                    area = 25.0, capacity = 2, status = 0 });
+            using (var response = await clientB.GetAsync(ChildId(roomGet, roomA)))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var response = await clientB.GetAsync(ChildId(roomGet, roomB)))
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            using (var response = await clientB.GetAsync(roomList))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                var body = await response.Content.ReadAsStringAsync();
+                Assert.Contains(roomB.ToString("D"), body, StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain(roomA.ToString("D"), body, StringComparison.OrdinalIgnoreCase);
+            }
+            async Task PutChildAsync(HttpClient client, string route, Guid id,
+                string json, HttpStatusCode expected)
+            {
+                using var payload = new StringContent(json, Encoding.UTF8,
+                    "application/json");
+                using var response = await client.PutAsync(ChildId(route, id), payload);
+                Assert.Equal(expected, response.StatusCode);
+            }
+            await PutChildAsync(clientRoot, floorUpdate, floorA,
+                """{"floorNumber":1,"name":"PG Floor A1 updated"}""",
+                HttpStatusCode.OK);
+            await PutChildAsync(clientB, floorUpdate, floorA,
+                """{"floorNumber":1,"name":"Forbidden"}""",
+                HttpStatusCode.Forbidden);
+            await PutChildAsync(clientRoot, roomUpdate, roomA,
+                """{"roomNumber":"101","name":"PG A101 updated","area":26,"capacity":2,"status":0}""",
+                HttpStatusCode.OK);
+            await PutChildAsync(clientB, roomUpdate, roomA,
+                """{"roomNumber":"101","name":"Forbidden","area":26,"capacity":2,"status":0}""",
+                HttpStatusCode.Forbidden);
+            using (var response = await clientB.DeleteAsync(ChildId(roomDelete, roomA)))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var response = await clientB.DeleteAsync(ChildId(floorDelete, floorA)))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var response = await clientRoot.DeleteAsync(ChildId(roomDelete, roomA)))
+                Assert.True(response.StatusCode is HttpStatusCode.OK or HttpStatusCode.NoContent);
+            using (var response = await clientRoot.DeleteAsync(ChildId(floorDelete, floorA)))
+                Assert.True(response.StatusCode is HttpStatusCode.OK or HttpStatusCode.NoContent);
+
             // The PostgreSQL-backed HTTP path must also honor fresh ABP
             // Identity account state and durable user permission changes.
             // A still-valid membership is NEVER sufficient by itself.
@@ -304,6 +417,10 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             using (var response = await clientRoot.PostAsync(grants + "/revoke", payload))
                 Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
             using (var response = await clientB.GetAsync(GetAt(b)))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var response = await clientB.GetAsync(ChildId(floorGet, floorB)))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var response = await clientB.GetAsync(ChildId(roomGet, roomB)))
                 Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
             using (var response = await clientRoot.GetAsync(GetAt(b)))
                 Assert.Equal(HttpStatusCode.OK, response.StatusCode);

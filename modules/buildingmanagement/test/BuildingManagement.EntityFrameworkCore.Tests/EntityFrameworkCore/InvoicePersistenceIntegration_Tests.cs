@@ -1865,11 +1865,22 @@ public sealed class InvoicePersistenceIntegration_Tests
                 IRepository<FinalInvoiceIssueEvidenceRecord, Guid>>()
                 .GetAsync(data.ArchiveId);
 
+            // SQLite may rehydrate UTC as Unspecified: force a valid
+            // UTC input so the rejection specifically checks ordering.
+            var backdatedUtc = DateTime.SpecifyKind(
+                archive.PreparedAtUtc.AddMinutes(-1), DateTimeKind.Utc);
             Assert.Throws<ArgumentException>(() =>
                 InvoiceIssuanceReviewTicket.Stage(
                     Guid.NewGuid(), archive, Guid.NewGuid(), Guid.NewGuid(),
-                    archive.PreparedAtUtc.AddMinutes(-1),
-                    "Backdated independent review attempt"));
+                    backdatedUtc, "Backdated independent review attempt"));
+
+            // A submission at the precise preparation instant is valid.
+            var sameInstantUtc = DateTime.SpecifyKind(
+                archive.PreparedAtUtc, DateTimeKind.Utc);
+            var sameInstant = InvoiceIssuanceReviewTicket.Stage(
+                Guid.NewGuid(), archive, Guid.NewGuid(), Guid.NewGuid(),
+                sameInstantUtc, "Independent review begins at preparation");
+            Assert.Equal(archive.Id, sameInstant.StagedEvidenceId);
         });
     }
 

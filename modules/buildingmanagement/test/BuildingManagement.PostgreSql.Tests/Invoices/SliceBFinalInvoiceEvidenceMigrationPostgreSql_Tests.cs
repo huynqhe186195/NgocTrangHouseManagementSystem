@@ -75,8 +75,12 @@ public sealed class SliceBFinalInvoiceEvidenceMigrationPostgreSql_Tests
             // would permit double-billing and must fail at SQL level.
             await ExpectFailureAsync(db, tx,
                 EvidenceSql(Guid.NewGuid(), draft, hash), "23505");
+            // Use another billing period so this case isolates the
+            // missing Draft FK rather than the period-uniqueness checks.
             await ExpectFailureAsync(db, tx,
-                EvidenceSql(Guid.NewGuid(), Guid.NewGuid(), hash), "23503");
+                EvidenceSql(Guid.NewGuid(), Guid.NewGuid(), hash)
+                    .Replace(",2026,10,", ",2026,11,",
+                        StringComparison.Ordinal), "23503");
             await ExpectFailureAsync(db, tx,
                 "UPDATE \"BuildingManagementFinalInvoiceIssueEvidence\" " +
                 "SET \"KnownBaseChargeTotal\" = 1", "23514");

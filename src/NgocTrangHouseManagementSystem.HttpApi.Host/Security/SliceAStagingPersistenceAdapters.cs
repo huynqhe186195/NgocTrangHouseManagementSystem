@@ -46,15 +46,18 @@ public sealed class SliceAStagingWriteBoundary : IBuildingScopedWriteBoundary
     private readonly IDbContextProvider<BuildingManagementDbContext> _provider;
     private readonly ICurrentUser _user;
     private readonly IBuildingCrudAccessPolicy _policy;
+    private readonly SliceAStagingIdentityCommitLease _lease;
 
     public SliceAStagingWriteBoundary(
         IDbContextProvider<BuildingManagementDbContext> provider,
         ICurrentUser user,
-        IBuildingCrudAccessPolicy policy)
+        IBuildingCrudAccessPolicy policy,
+        SliceAStagingIdentityCommitLease lease)
     {
         _provider = provider;
         _user = user;
         _policy = policy;
+        _lease = lease;
     }
 
     public async Task<T> ExecuteBuildingAsync<T>(
@@ -74,6 +77,11 @@ public sealed class SliceAStagingWriteBoundary : IBuildingScopedWriteBoundary
             _ => throw new Volo.Abp.Authorization.AbpAuthorizationException(
                 "Unknown building write capability.")
         };
+
+        // Identity row locks survive until the ABP Building transaction
+        // commits, serializing account disable/lockout and direct-user
+        // permission revocation against writes. No role-only bypass.
+        await _lease.AcquireAsync(_user.Id.Value, permission);
 
         // Re-evaluate CURRENT ABP Identity account + operation permission +
         // scoped membership after mutation, while the Building PostgreSQL

@@ -14,6 +14,15 @@ namespace BuildingManagement.Security;
 public sealed record BuildingOwnerRecoveryApproval(
     Guid FirstRootId, Guid SecondRootId, Guid EvidenceId);
 
+/// <summary>
+/// Recovery co-signer accounts are NEVER implicitly allowed to bootstrap
+/// buildings. A single configured BootstrapOwner remains the only creator.
+/// </summary>
+public sealed class BuildingOwnerRecoverySecurityOptions
+{
+    public System.Collections.Generic.HashSet<Guid> CoSignerUserIds { get; set; } = new();
+}
+
 public interface IBuildingOwnerRecoveryApprovalReader
 {
     Task<BuildingOwnerRecoveryApproval?> ReadApprovedAsync(
@@ -69,6 +78,7 @@ public sealed class BuildingOwnerRecoveryCoordinator : ITransientDependency
     private readonly IBuildingOwnerRecoveryFounderReader _founders;
     private readonly IBuildingOwnerRecoveryWriter _writer;
     private readonly IOptions<BuildingOwnerBootstrapSecurityOptions> _options;
+    private readonly IOptions<BuildingOwnerRecoverySecurityOptions> _recoveryOptions;
 
     public BuildingOwnerRecoveryCoordinator(
         IBuildingOwnerBootstrapPrincipalReader currentRoot,
@@ -76,7 +86,8 @@ public sealed class BuildingOwnerRecoveryCoordinator : ITransientDependency
         IBuildingOwnerRecoveryApprovalReader approvals,
         IBuildingOwnerRecoveryFounderReader founders,
         IBuildingOwnerRecoveryWriter writer,
-        IOptions<BuildingOwnerBootstrapSecurityOptions> options)
+        IOptions<BuildingOwnerBootstrapSecurityOptions> options,
+        IOptions<BuildingOwnerRecoverySecurityOptions> recoveryOptions)
     {
         _currentRoot = currentRoot;
         _accounts = accounts;
@@ -84,6 +95,7 @@ public sealed class BuildingOwnerRecoveryCoordinator : ITransientDependency
         _founders = founders;
         _writer = writer;
         _options = options;
+        _recoveryOptions = recoveryOptions;
     }
 
     public async Task<Guid> RecoverAsync(Guid buildingId, Guid newOwnerId)
@@ -99,16 +111,16 @@ public sealed class BuildingOwnerRecoveryCoordinator : ITransientDependency
         if (proof is null || proof.EvidenceId == Guid.Empty ||
             proof.FirstRootId == Guid.Empty || proof.SecondRootId == Guid.Empty ||
             proof.FirstRootId == proof.SecondRootId ||
-            (caller.Value != proof.FirstRootId &&
-             caller.Value != proof.SecondRootId))
+            caller.Value != proof.FirstRootId)
             throw Denied();
 
         // A single configured root makes recovery impossible, not weaker.
         // Two explicitly designated roots AND one LIVE authenticated root
         // must participate; the normal root-only bootstrap policy is intact.
         var roots = _options.Value.RootUserIds;
+        var cosigners = _recoveryOptions.Value.CoSignerUserIds;
         if (roots?.Contains(proof.FirstRootId) != true ||
-            roots.Contains(proof.SecondRootId) != true)
+            cosigners?.Contains(proof.SecondRootId) != true)
             throw Denied();
 
         var original = await _founders.ReadFoundingOwnerAsync(buildingId);

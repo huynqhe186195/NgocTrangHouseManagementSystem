@@ -158,6 +158,36 @@ public sealed class SliceBStagingContractsController : ControllerBase
             id, requestId, input);
     }
 
+    [HttpPost("{id:guid}/move-out-requests/{requestId:guid}/reject")]
+    [UnitOfWork(true)]
+    public Task<MoveOutRequestDto> RejectMoveOutRequestAsync(
+        [FromRoute] Guid id, [FromRoute] Guid requestId,
+        [FromBody] RejectMoveOutRequestDto input)
+    {
+        RequireIsolatedStaging();
+        return (_mutation ?? throw Denied()).RejectMoveOutRequestAsync(
+            id, requestId, input);
+    }
+
+    [HttpPost("{id:guid}/move-out-requests/{requestId:guid}/cancel")]
+    [UnitOfWork(true)]
+    public Task<MoveOutRequestDto> CancelMoveOutRequestAsync(
+        [FromRoute] Guid id, [FromRoute] Guid requestId)
+    {
+        RequireIsolatedStaging();
+        return (_mutation ?? throw Denied()).CancelMoveOutRequestAsync(
+            id, requestId);
+    }
+
+    [HttpGet("{id:guid}/move-out-requests/{requestId:guid}/checklist")]
+    [UnitOfWork(true)]
+    public Task<IReadOnlyList<SliceBScopedMoveOutChecklistRead>> GetMoveOutChecklistAsync(
+        [FromRoute] Guid id, [FromRoute] Guid requestId)
+    {
+        RequireIsolatedStaging();
+        return (_query ?? throw Denied()).GetMoveOutChecklistAsync(id, requestId);
+    }
+
     [HttpPost("{id:guid}/renewal-holds")]
     [UnitOfWork(true)]
     public Task<ContractRenewalHoldDto> CreateRenewalHoldAsync(

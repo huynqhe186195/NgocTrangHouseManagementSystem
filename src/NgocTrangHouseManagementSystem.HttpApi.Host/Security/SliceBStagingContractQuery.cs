@@ -136,6 +136,57 @@ public sealed class SliceBStagingContractQuery
             .ToListAsync();
     }
 
+    /// <summary>
+    /// The checklist must be scoped using the request's current Contract,
+    /// Room and Building, not by trusting an arbitrary request ID.
+    /// </summary>
+    public async Task<IReadOnlyList<SliceBScopedMoveOutChecklistRead>> GetMoveOutChecklistAsync(
+        Guid contractId, Guid requestId)
+    {
+        if (contractId == Guid.Empty || requestId == Guid.Empty)
+            throw Denied();
+        var actor = RequireActor();
+        await _access.EnsureResourceAsync(
+            BuildingBusinessResourceKind.Contract, contractId,
+            BuildingBusinessCapability.ReadContract);
+        await _identityLease.AcquireContractReadAsync(actor);
+
+        var db = await _provider.GetDbContextAsync();
+        var now = DateTime.UtcNow;
+        var authorizedRequest = await (
+            from request in db.MoveOutRequests.AsNoTracking()
+            join contract in db.Contracts.AsNoTracking()
+                on request.ContractId equals contract.Id
+            join room in db.Rooms.AsNoTracking()
+                on contract.RoomId equals room.Id
+            join floor in db.Floors.AsNoTracking()
+                on room.FloorId equals floor.Id
+            join building in db.Buildings.AsNoTracking()
+                on floor.BuildingId equals building.Id
+            where request.Id == requestId && request.ContractId == contractId &&
+                request.RoomId == room.Id &&
+                !request.IsDeleted && !contract.IsDeleted && !room.IsDeleted &&
+                !floor.IsDeleted && !building.IsDeleted &&
+                db.OperatorBuildingGrants.Any(grant =>
+                    grant.OperatorUserId == actor &&
+                    grant.BuildingId == building.Id &&
+                    grant.RevokedAtUtc == null &&
+                    grant.GrantedAtUtc <= now &&
+                    (grant.ExpiresAtUtc == null || grant.ExpiresAtUtc > now))
+            select request.Id).AnyAsync();
+        if (!authorizedRequest)
+            throw Denied();
+
+        return await db.MoveOutChecklistTasks.AsNoTracking()
+            .Where(task => task.MoveOutRequestId == requestId &&
+                           !task.IsDeleted)
+            .OrderBy(task => task.Type)
+            .Select(task => new SliceBScopedMoveOutChecklistRead(
+                task.Id, task.MoveOutRequestId, task.Type,
+                task.IsCompleted, task.CompletedAt))
+            .ToListAsync();
+    }
+
     private Guid RequireActor()
     {
         if (!_currentUser.IsAuthenticated || _currentUser.Id is not Guid id ||
@@ -191,3 +242,9 @@ public sealed record SliceBScopedMoveOutRequestRead(
     Guid Id, Guid ContractId, Guid RoomId, Guid BuildingId,
     MoveOutRequestStatus Status, DateOnly RequestedMoveOutDate,
     DateOnly? ApprovedMoveOutDate, DateTime CreationTime);
+
+
+/// <summary>Checklist progress only; no unrelated tenant identity data.</summary>
+public sealed record SliceBScopedMoveOutChecklistRead(
+    Guid Id, Guid MoveOutRequestId, MoveOutChecklistTaskType Type,
+    bool IsCompleted, DateTime? CompletedAt);

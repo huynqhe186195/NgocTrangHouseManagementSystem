@@ -129,6 +129,40 @@ public sealed class SliceBStagingContractMutation
         });
     }
 
+    public Task<MoveOutRequestDto> RejectMoveOutRequestAsync(
+        Guid contractId, Guid requestId, RejectMoveOutRequestDto input)
+    {
+        if (input is null || string.IsNullOrWhiteSpace(input.Reason))
+            throw Denied();
+        return MutateMoveOutRequestAsync(contractId, requestId,
+            () => _moveOuts.RejectAsync(requestId, input));
+    }
+
+    public Task<MoveOutRequestDto> CancelMoveOutRequestAsync(
+        Guid contractId, Guid requestId)
+        => MutateMoveOutRequestAsync(contractId, requestId,
+            () => _moveOuts.CancelAsync(requestId));
+
+    /// <summary>
+    /// Reject/cancel use the same Contract FOR UPDATE gate as approve.
+    /// Check the route's contract against the persisted request while
+    /// the parent contract is locked, before calling the original service.
+    /// </summary>
+    private Task<MoveOutRequestDto> MutateMoveOutRequestAsync(
+        Guid contractId, Guid requestId, Func<Task<MoveOutRequestDto>> change)
+    {
+        if (contractId == Guid.Empty || requestId == Guid.Empty)
+            throw Denied();
+        return MutateLinkAsync(contractId, async (db, _) =>
+        {
+            if (!await db.MoveOutRequests.AnyAsync(request =>
+                request.Id == requestId && request.ContractId == contractId &&
+                !request.IsDeleted))
+                throw Denied();
+            return await change();
+        });
+    }
+
     public async Task<ContractDto> CreateAsync(CreateContractDto input)
     {
         if (input is null || input.RoomId == Guid.Empty)

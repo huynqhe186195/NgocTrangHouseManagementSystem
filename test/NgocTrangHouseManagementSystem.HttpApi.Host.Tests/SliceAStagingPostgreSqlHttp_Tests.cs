@@ -1703,6 +1703,72 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             using (var response = await clientB.GetAsync(
                 MoveOutRoute(contractA)))
                 Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+
+            // The original request is pending: reject it with a reason, then
+            // create another and cancel it. Both must release the open-request
+            // predicate without ending the contract or releasing the room.
+            using (var payload = new StringContent(
+                """{"reason":"Rejected after review"}""",
+                Encoding.UTF8, "application/json"))
+            using (var response = await clientB.PostAsync(
+                MoveOutRoute(contractA) + "/" +
+                moveOutRequest.ToString("D") + "/reject", payload))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var payload = new StringContent(
+                """{"reason":"Rejected after review"}""",
+                Encoding.UTF8, "application/json"))
+            using (var response = await clientB.PostAsync(
+                MoveOutRoute(cancelContract) + "/" +
+                moveOutRequest.ToString("D") + "/reject", payload))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await response.Content.ReadAsStringAsync());
+                Assert.Equal((int)BuildingManagement.MoveOuts.MoveOutRequestStatus.Rejected,
+                    json.RootElement.GetProperty("status").GetInt32());
+            }
+            // A terminal rejected request cannot be approved retroactively.
+            using (var payload = new StringContent("{}",
+                Encoding.UTF8, "application/json"))
+            using (var response = await clientB.PostAsync(
+                MoveOutRoute(cancelContract) + "/" +
+                moveOutRequest.ToString("D") + "/approve", payload))
+                Assert.NotEqual(HttpStatusCode.OK, response.StatusCode);
+
+            using (var payload = new StringContent(
+                MoveOutBody(cancelContract), Encoding.UTF8, "application/json"))
+            using (var response = await clientB.PostAsync(
+                MoveOutRoute(cancelContract), payload))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await response.Content.ReadAsStringAsync());
+                moveOutRequest = json.RootElement.GetProperty("id").GetGuid();
+            }
+            using (var response = await clientB.PostAsync(
+                MoveOutRoute(contractA) + "/" +
+                moveOutRequest.ToString("D") + "/cancel", null))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var response = await clientB.PostAsync(
+                MoveOutRoute(cancelContract) + "/" +
+                moveOutRequest.ToString("D") + "/cancel", null))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await response.Content.ReadAsStringAsync());
+                Assert.Equal((int)BuildingManagement.MoveOuts.MoveOutRequestStatus.Cancelled,
+                    json.RootElement.GetProperty("status").GetInt32());
+            }
+            using (var payload = new StringContent(
+                MoveOutBody(cancelContract), Encoding.UTF8, "application/json"))
+            using (var response = await clientB.PostAsync(
+                MoveOutRoute(cancelContract), payload))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await response.Content.ReadAsStringAsync());
+                moveOutRequest = json.RootElement.GetProperty("id").GetGuid();
+            }
             using (var response = await clientB.GetAsync(
                 MoveOutRoute(cancelContract)))
             {
@@ -1725,6 +1791,27 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 MoveOutRoute(cancelContract) + "/" +
                 moveOutRequest.ToString("D") + "/approve", payload))
                 Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            using (var response = await clientB.GetAsync(
+                MoveOutRoute(contractA) + "/" + moveOutRequest.ToString("D") +
+                "/checklist"))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var response = await clientB.GetAsync(
+                MoveOutRoute(cancelContract) + "/" + Guid.NewGuid().ToString("D") +
+                "/checklist"))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var response = await clientB.GetAsync(
+                MoveOutRoute(cancelContract) + "/" + moveOutRequest.ToString("D") +
+                "/checklist"))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                var body = await response.Content.ReadAsStringAsync();
+                using var json = JsonDocument.Parse(body);
+                Assert.NotEmpty(json.RootElement.EnumerateArray());
+                Assert.DoesNotContain("phoneNumber", body,
+                    StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain("identityNumber", body,
+                    StringComparison.OrdinalIgnoreCase);
+            }
             using (var scope = app.Services.CreateScope())
             {
                 var sp = scope.ServiceProvider;

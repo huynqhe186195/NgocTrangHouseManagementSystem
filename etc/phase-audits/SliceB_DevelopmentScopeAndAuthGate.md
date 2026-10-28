@@ -211,3 +211,19 @@ Contract termination or Room release is enabled.
 The disposable PostgreSQL HTTP fixture exercises foreign contract denial,
 body/route mismatch, authorized scheduling and approval, privacy-preserving
 read, checklist persistence and unchanged occupied Room state.
+
+
+## Scoped move-out rejection, cancellation and checklist (isolated staging)
+
+The staged contract routes \`POST /{contractId}/move-out-requests/{id}/reject\`,
+\`POST /{contractId}/move-out-requests/{id}/cancel\`, and
+\`GET /{contractId}/move-out-requests/{id}/checklist\` are now scoped to
+the authenticated building operator. Both mutations use persisted
+Contracts.Manage, the Identity commit lease, contract-row UPDATE lock, live
+membership and an exact request→contract ownership check. The original
+domain service still rejects non-pending lifecycle transitions. Checklist
+read uses Contracts.Read and verifies the live request→contract→room→floor→
+building graph with SQL membership, exposing only task status/types.
+The disposable PG HTTP suite tests foreign route/request rejection,
+successful reject/cancel followed by new scheduling, invalid later approve,
+checklist privacy, and unchanged contract/room state.

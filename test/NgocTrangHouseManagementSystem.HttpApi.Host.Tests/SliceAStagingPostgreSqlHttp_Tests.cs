@@ -1785,6 +1785,118 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 await uow.CompleteAsync();
             }
 
+            // An actual completed hold must be allocated to the matching
+            // Active contract once, not to an unrelated room or building.
+            var allocationRoom = await CreateChildAsync(clientB, roomCreate,
+                new { floorId = floorB, roomNumber = "104",
+                    name = "PG B104 allocation", area = 25.0,
+                    capacity = 2, status = 0 });
+            Guid allocationReservation;
+            using (var body = new StringContent(ReservationJson(
+                allocationRoom, tenantB), Encoding.UTF8, "application/json"))
+            using (var response = await clientB.PostAsync(reservationRoute, body))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await response.Content.ReadAsStringAsync());
+                allocationReservation = json.RootElement.GetProperty("id").GetGuid();
+            }
+            var allocationPending = await TryCreateDepositAsync(
+                allocationReservation, allocationReservation);
+            Assert.Equal(HttpStatusCode.OK, allocationPending.Status);
+            Guid allocationPayment;
+            using (var json = JsonDocument.Parse(allocationPending.Body))
+                allocationPayment = json.RootElement.GetProperty("id").GetGuid();
+            using (var body = new StringContent("{}",
+                Encoding.UTF8, "application/json"))
+            using (var response = await clientB.PostAsync(
+                reservationRoute + "/" + allocationReservation.ToString("D") +
+                "/deposit-payments/" + allocationPayment.ToString("D") +
+                "/complete", body))
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+            Guid allocationContract;
+            using (var body = new StringContent(CreateJson(allocationRoom,
+                "STAGE-ALLOC-" + Guid.NewGuid().ToString("N")),
+                Encoding.UTF8, "application/json"))
+            using (var response = await clientB.PostAsync(scopedContracts, body))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await response.Content.ReadAsStringAsync());
+                allocationContract = json.RootElement.GetProperty("id").GetGuid();
+            }
+            Assert.Equal(HttpStatusCode.OK,
+                await PostMemberAsync(allocationContract, tenantB, 1));
+            using (var response = await clientB.PostAsync(
+                scopedContracts + "/" + allocationContract.ToString("D") +
+                "/sign", null))
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            using (var response = await clientB.PostAsync(
+                scopedContracts + "/" + allocationContract.ToString("D") +
+                "/activate", null))
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+            string AllocationRoute(Guid contract, Guid reservation) =>
+                scopedContracts + "/" + contract.ToString("D") +
+                "/allocate-reservation/" + reservation.ToString("D");
+            using (var response = await clientB.PostAsync(
+                AllocationRoute(contractA, allocationReservation), null))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var response = await clientB.PostAsync(
+                AllocationRoute(allocationContract, reservationA), null))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var response = await clientB.PostAsync(
+                AllocationRoute(cancelContract, allocationReservation), null))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var response = await clientB.PostAsync(
+                AllocationRoute(allocationContract, allocationReservation), null))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await response.Content.ReadAsStringAsync());
+                Assert.Equal(500000m,
+                    json.RootElement.GetProperty("allocatedAmount").GetDecimal());
+                Assert.Equal(500000m,
+                    json.RootElement.GetProperty("coveredDeposit").GetDecimal());
+            }
+            using (var response = await clientB.PostAsync(
+                AllocationRoute(allocationContract, allocationReservation), null))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await response.Content.ReadAsStringAsync());
+                Assert.Equal(0m,
+                    json.RootElement.GetProperty("allocatedAmount").GetDecimal());
+                Assert.Equal(500000m,
+                    json.RootElement.GetProperty("coveredDeposit").GetDecimal());
+            }
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var db = await sp.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>()
+                    .GetDbContextAsync();
+                var settlements = await db.DepositSettlements
+                    .Where(s => s.SourceRoomReservationId == allocationReservation)
+                    .ToListAsync();
+                Assert.Single(settlements);
+                Assert.Equal(
+                    BuildingManagement.DepositSettlements.DepositSettlementType.AllocateToContractDeposit,
+                    settlements[0].Type);
+                Assert.Equal(500000m, settlements[0].Amount);
+                Assert.Equal(allocationContract, settlements[0].TargetContractId);
+                var converted = await db.RoomReservations
+                    .SingleAsync(r => r.Id == allocationReservation);
+                Assert.Equal(
+                    BuildingManagement.RoomReservations.RoomReservationStatus.ConvertedToContract,
+                    converted.Status);
+                Assert.Equal(allocationContract, converted.ConvertedContractId);
+                await uow.CompleteAsync();
+            }
+
             // Record the real room state rather than assuming occupancy:
             // other independent contract tests may have changed it earlier.
             BuildingManagement.Rooms.RoomStatus originalRoomStatus;

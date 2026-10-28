@@ -20,6 +20,30 @@ public sealed class InvoiceSchema_Tests
     }
 
     [Fact]
+    public void Issued_Ledger_Has_Immutable_Source_Relationships_And_Unique_Keys()
+    {
+        using var db = Model();
+        var entity = db.Model.FindEntityType(typeof(IssuedInvoiceLedgerRecord));
+        Assert.NotNull(entity);
+        Assert.Equal("BuildingManagementIssuedInvoiceLedger", entity.GetTableName());
+        foreach (var key in new[]
+        {
+            new[] { "InvoiceNumber" },
+            new[] { "DraftInvoiceId" },
+            new[] { "StagedEvidenceId" },
+            new[] { "ReviewTicketId" },
+            new[] { "ContractId", "BillingYear", "BillingMonth" },
+            new[] { "RoomId", "BillingYear", "BillingMonth" }
+        })
+            Assert.Contains(entity.GetIndexes(), x =>
+                x.IsUnique && x.Properties.Select(p => p.Name).SequenceEqual(key));
+
+        Assert.Equal(3, entity.GetForeignKeys().Count());
+        Assert.All(entity.GetForeignKeys(),
+            x => Assert.Equal(DeleteBehavior.Restrict, x.DeleteBehavior));
+    }
+
+    [Fact]
     public void Invoice_Header_Has_Contract_Period_Unique_Key()
     {
         using var db = Model();

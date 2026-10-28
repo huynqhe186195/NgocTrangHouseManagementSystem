@@ -161,6 +161,7 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule // syst
                 IBuildingOperatorGrantMutationWriter, SliceAStagingGrantMutationWriter>());
             context.Services.AddTransient<SliceAStagingIdentityCommitLease>();
             context.Services.AddTransient<SliceAStagingOperatorGrantQuery>();
+            context.Services.AddTransient<SliceBStagingContractQuery>();
             context.Services.Replace(ServiceDescriptor.Transient<
                 IBuildingScopedWriteBoundary, SliceAStagingWriteBoundary>());
 

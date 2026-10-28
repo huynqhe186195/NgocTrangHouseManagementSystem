@@ -56,3 +56,19 @@ cover positive scope, cross-building denial, read/manage separation and
 capability/resource mismatch. This is an internal prerequisite only; the
 five unscoped Slice B HTTP services remain denied until mutations actually
 call the policy and use an Identity/Building commit-bound fence.
+
+## Verified first functional Slice B read slice
+
+Added a separate **isolated-staging-only** authenticated contract GET/list
+controller. It does not reuse or unlock legacy unscoped ContractAppService.
+Both requests require ABP `Contracts.Read`, a live Identity account, a
+commit-bound Identity permission lease, and current per-building membership.
+The SQL query joins Contract → Room → Floor → Building and filters
+membership inside the same SQL statement BEFORE ordering/paging.
+
+The disposable PostgreSQL HTTP test seeds separate contracts in buildings
+A and B, checks that a B-only operator sees only B and cannot GET A,
+verifies root's two-building listing, rejects oversize pagination and proves
+direct Contracts.Read revocation waits until the read UoW completes.
+Any legacy write/action remains intentionally blocked. This does **not**
+complete Slice B write authorization or tenant privacy.

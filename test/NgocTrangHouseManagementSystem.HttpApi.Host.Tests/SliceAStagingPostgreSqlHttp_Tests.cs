@@ -200,6 +200,8 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 foreach (var id in new[] { root, operatorB })
                 {
                     await permissions.SetForUserAsync(id,
+                        BuildingManagementPermissions.Contracts.Read, true);
+                    await permissions.SetForUserAsync(id,
                         BuildingManagementPermissions.Floors.Read, true);
                     await permissions.SetForUserAsync(id,
                         BuildingManagementPermissions.Floors.Manage, true);
@@ -890,6 +892,116 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 Assert.Contains(roomB.ToString("D"), body, StringComparison.OrdinalIgnoreCase);
                 Assert.DoesNotContain(roomA.ToString("D"), body, StringComparison.OrdinalIgnoreCase);
             }
+            // Slice B first functional vertical: authenticated contract
+            // reads filtered in SQL by current Building membership. The
+            // legacy ContractAppService remains HTTP deny-all.
+            var contractA = Guid.NewGuid();
+            var contractB = Guid.NewGuid();
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var ctx = await sp.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>()
+                    .GetDbContextAsync();
+                ctx.Contracts.AddRange(
+                    new BuildingManagement.Contracts.Contract(
+                        contractA, "SLICEB-A-" + contractA.ToString("N"), roomA,
+                        new DateTime(2026, 10, 1, 0, 0, 0, DateTimeKind.Utc),
+                        null, 2500000m),
+                    new BuildingManagement.Contracts.Contract(
+                        contractB, "SLICEB-B-" + contractB.ToString("N"), roomB,
+                        new DateTime(2026, 10, 1, 0, 0, 0, DateTimeKind.Utc),
+                        null, 3500000m));
+                await ctx.SaveChangesAsync();
+                await uow.CompleteAsync();
+            }
+            const string scopedContracts = "/api/slice-b-staging/contracts";
+            using (var response = await clientB.GetAsync(scopedContracts))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await response.Content.ReadAsStringAsync());
+                var rows = json.RootElement.EnumerateArray().ToArray();
+                Assert.Contains(rows, row => row.GetProperty("id").GetGuid() == contractB);
+                Assert.DoesNotContain(rows, row => row.GetProperty("id").GetGuid() == contractA);
+            }
+            using (var response = await clientRoot.GetAsync(scopedContracts))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await response.Content.ReadAsStringAsync());
+                var rows = json.RootElement.EnumerateArray().ToArray();
+                Assert.Contains(rows, row => row.GetProperty("id").GetGuid() == contractA);
+                Assert.Contains(rows, row => row.GetProperty("id").GetGuid() == contractB);
+            }
+            using (var response = await clientB.GetAsync(
+                scopedContracts + "/" + contractA.ToString("D")))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var response = await clientB.GetAsync(
+                scopedContracts + "/" + contractB.ToString("D")))
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            using (var response = await clientB.GetAsync(
+                scopedContracts + "?maxResultCount=101"))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+
+            // Cross-database revocation cannot overtake contract list
+            // disclosure while the read UoW is still open.
+            Task<int>? revokeContractRead = null;
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                var principal = sp.GetRequiredService<ICurrentPrincipalAccessor>();
+                using (principal.Change(new ClaimsPrincipal(new ClaimsIdentity(
+                    new[]
+                    {
+                        new Claim(AbpClaimTypes.UserId, operatorB.ToString("D")),
+                        new Claim(ClaimTypes.NameIdentifier, operatorB.ToString("D"))
+                    }, "CommitBoundContractRead"))))
+                {
+                    using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                        .Begin(requiresNew: true, isTransactional: true);
+                    var results = await sp.GetRequiredService<SliceBStagingContractQuery>()
+                        .GetListAsync(0, 10);
+                    Assert.Contains(results, row => row.Id == contractB);
+                    Assert.DoesNotContain(results, row => row.Id == contractA);
+                    revokeContractRead = Task.Run(async () =>
+                    {
+                        await using var connection = new NpgsqlConnection(idCs);
+                        await connection.OpenAsync();
+                        await using var command = new NpgsqlCommand(
+                            """
+                            DELETE FROM "AbpPermissionGrants"
+                             WHERE "ProviderName" = 'U'
+                               AND "ProviderKey" = @actor
+                               AND "Name" = @permission
+                            """, connection);
+                        command.Parameters.AddWithValue("actor", operatorB.ToString("D"));
+                        command.Parameters.AddWithValue("permission",
+                            BuildingManagementPermissions.Contracts.Read);
+                        return await command.ExecuteNonQueryAsync();
+                    });
+                    await Task.Delay(250);
+                    Assert.False(revokeContractRead.IsCompleted,
+                        "Contracts.Read revocation must wait for contract read UoW.");
+                    await uow.CompleteAsync();
+                }
+            }
+            Assert.NotNull(revokeContractRead);
+            Assert.Equal(1, await revokeContractRead!.WaitAsync(TimeSpan.FromSeconds(15)));
+            using (var response = await clientB.GetAsync(scopedContracts))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                await sp.GetRequiredService<IPermissionManager>().SetForUserAsync(
+                    operatorB, BuildingManagementPermissions.Contracts.Read, true);
+                await uow.CompleteAsync();
+            }
+
             async Task PutChildAsync(HttpClient client, string route, Guid id,
                 string json, HttpStatusCode expected)
             {
@@ -1574,6 +1686,7 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     SliceAStagingGrantMutationWriter>());
             context.Services.AddTransient<SliceAStagingIdentityCommitLease>();
             context.Services.AddTransient<SliceAStagingOperatorGrantQuery>();
+            context.Services.AddTransient<SliceBStagingContractQuery>();
             context.Services.Replace(
                 ServiceDescriptor.Transient<IBuildingScopedWriteBoundary,
                     SliceAStagingWriteBoundary>());

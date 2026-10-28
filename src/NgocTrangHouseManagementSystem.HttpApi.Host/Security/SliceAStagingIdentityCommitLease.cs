@@ -115,6 +115,15 @@ public sealed class SliceAStagingIdentityCommitLease
         }
     }
 
+    /// <summary>
+    /// Slice B read-only contract queries must prove a currently persisted
+    /// Contracts.Read ABP permission, not a stale role or permission cache.
+    /// The Identity lock lasts through the transactional Building read UoW.
+    /// </summary>
+    public Task AcquireContractReadAsync(Guid authenticatedOperatorId)
+        => AcquirePermissionAsync(authenticatedOperatorId,
+            BuildingManagementPermissions.Contracts.Read, null);
+
     public Task AcquireAsync(
         Guid trustedUserId, BuildingBusinessCapability capability)
         => AcquirePermissionAsync(trustedUserId, capability switch

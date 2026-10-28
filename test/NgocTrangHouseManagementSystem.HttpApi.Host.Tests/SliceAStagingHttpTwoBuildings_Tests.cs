@@ -504,7 +504,7 @@ public sealed class SliceAStagingHttpTwoBuildings_Tests
     {
         public override void PreConfigureServices(ServiceConfigurationContext context)
         {
-            PreConfigure<Microsoft.AspNetCore.Mvc.IMvcBuilder>(mvcBuilder =>
+            PreConfigure<IMvcBuilder>(mvcBuilder =>
                 mvcBuilder.AddApplicationPartIfNotExists(
                     typeof(SliceAStagingOperatorGrantsController).Assembly));
             PreConfigure<AbpAspNetCoreMvcOptions>(options =>

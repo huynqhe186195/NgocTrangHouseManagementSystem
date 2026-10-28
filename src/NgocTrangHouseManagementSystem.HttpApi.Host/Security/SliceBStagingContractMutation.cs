@@ -5,8 +5,10 @@ using BuildingManagement.Contracts;
 using BuildingManagement.EntityFrameworkCore;
 using BuildingManagement.EntityFrameworkCore.Security;
 using BuildingManagement.Security;
+using BuildingManagement.Tenants;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
+using Volo.Abp;
 using Volo.Abp.Authorization;
 using Volo.Abp.EntityFrameworkCore;
 using Volo.Abp.Users;
@@ -29,6 +31,7 @@ public sealed class SliceBStagingContractMutation
     private readonly ICurrentUser _user;
     private readonly SliceAStagingIdentityCommitLease _identity;
     private readonly IContractAppService _contracts;
+    private readonly ITenantAppService _tenants;
 
     public SliceBStagingContractMutation(
         IDbContextProvider<BuildingManagementDbContext> provider,
@@ -36,7 +39,7 @@ public sealed class SliceBStagingContractMutation
         IBuildingBusinessResourceScopeReader resources,
         ICurrentUser user,
         SliceAStagingIdentityCommitLease identity,
-        IContractAppService contracts)
+        IContractAppService contracts, ITenantAppService tenants)
     {
         _provider = provider;
         _policy = policy;
@@ -44,6 +47,7 @@ public sealed class SliceBStagingContractMutation
         _user = user;
         _identity = identity;
         _contracts = contracts;
+        _tenants = tenants;
     }
 
     public async Task<ContractDto> CreateAsync(CreateContractDto input)
@@ -104,6 +108,51 @@ public sealed class SliceBStagingContractMutation
                 id, BuildingBusinessCapability.ManageContract);
             await _policy.EnsureResourceAsync(BuildingBusinessResourceKind.Room,
                 input.RoomId, BuildingBusinessCapability.ManageContract);
+        });
+    }
+
+    /// <summary>
+    /// The only new-tenant onboarding route: atomically create a new global
+    /// profile AND bind it to a Draft contract of an authorized building.
+    /// Never expose generic TenantAppService CRUD or create orphan profiles.
+    /// Duplicate citizen ID/phone errors must not reveal which global
+    /// person record already exists in another building.
+    /// </summary>
+    public Task<SliceBScopedContractTenantLink> RegisterTenantAsync(
+        Guid contractId, SliceBNewContractTenantInput input)
+    {
+        if (input is null || input.Tenant is null ||
+            !Enum.IsDefined(input.Role))
+            throw Denied();
+        return MutateLinkAsync(contractId, async (db, _) =>
+        {
+            // Contract row is already FOR UPDATE locked by MutateLinkAsync.
+            // Reject a non-Draft before inserting private tenant data.
+            if (!await db.Contracts.AnyAsync(c =>
+                c.Id == contractId && !c.IsDeleted &&
+                c.Status == ContractStatus.Draft))
+                throw Denied();
+
+            TenantDto tenant;
+            try
+            {
+                tenant = await _tenants.CreateAsync(input.Tenant);
+            }
+            catch (BusinessException)
+            {
+                // Never echo globally unique phone/citizen ID back to an
+                // otherwise authorized operator in a different building.
+                // ABP completes the request with a generic denial and
+                // rolls back the enclosing Building UnitOfWork.
+                throw Denied();
+            }
+            await _contracts.AddTenantAsync(contractId,
+                new AddContractTenantDto
+                {
+                    TenantId = tenant.Id,
+                    Role = input.Role
+                });
+            return new SliceBScopedContractTenantLink(tenant.Id, input.Role);
         });
     }
 
@@ -291,4 +340,10 @@ public sealed class SliceBStagingContractMutation
 
     private static AbpAuthorizationException Denied()
         => new("Draft contract change requires a current building-scoped Contracts.Manage grant.");
+}
+
+public sealed class SliceBNewContractTenantInput
+{
+    public CreateTenantDto Tenant { get; set; } = default!;
+    public ContractTenantRole Role { get; set; }
 }

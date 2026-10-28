@@ -112,3 +112,20 @@ Existing-link role change and removal require a draft, `Contracts.Manage`,
 the persisted Identity commit lease, a locked current contract row, room/floor
 graph, member grant and exact link row; original domain validation remains
 authoritative. Source/target inter-building operations remain DENY.
+
+## Atomic new-tenant onboarding (staging only)
+
+POST `/api/slice-b-staging/contracts/{id}/tenants/new` takes a
+`CreateTenantDto` plus an explicit member/primary role. It is the only
+reviewed new-tenant entry point: authenticated `Contracts.Manage` with a
+persisted Identity commit lease, live grant row lock, verified
+Contract → Room → Floor → Building graph, **Draft** state under contract
+row lock, then tenant creation and contract-tenant relationship insertion in
+the **same Building transaction**. Both original services retain their
+phone/identity normalization, uniqueness and primary-role validation;
+failures roll back the entire UnitOfWork, leaving no orphan profile.
+
+Global phone and citizen-ID uniqueness failures are deliberately presented
+as generic denials, never with the existing record's identifying value.
+Successful API responses contain only `TenantId` and `Role`, not tenant
+names, phones or identity documents. This does not open generic Tenant CRUD.

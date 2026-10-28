@@ -227,3 +227,20 @@ building graph with SQL membership, exposing only task status/types.
 The disposable PG HTTP suite tests foreign route/request rejection,
 successful reject/cancel followed by new scheduling, invalid later approve,
 checklist privacy, and unchanged contract/room state.
+
+
+## Scoped reservation cancellation (isolated staging only)
+
+\`POST /api/slice-b-staging/contracts/reservations/{id}/cancel\`
+requires an active persisted Contracts.Manage permission, locked Identity
+account/permission until commit, and live building membership for the
+reservation's server-resolved Room. The existing reservation row is locked
+FOR UPDATE and its current Room→Floor→Building graph is locked and
+revalidated in the same Building transaction. The original
+RoomReservationAppService.CancelAsync still validates cancellation reasons
+and performs paid-deposit refund/forfeit in the same UoW; we do not expose
+the raw settlement service or silently change room occupancy. Foreign and
+missing reservations fail closed. The PostgreSQL HTTP fixture checks
+cross-building denial, successful pending cancellation, duplicate denial,
+and no invented settlement for an unpaid reservation. The existing PG01–04
+transaction tests remain responsible for actual paid refund/forfeit rollback.

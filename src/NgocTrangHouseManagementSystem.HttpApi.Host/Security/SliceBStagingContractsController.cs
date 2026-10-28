@@ -127,6 +127,17 @@ public sealed class SliceBStagingContractsController : ControllerBase
         return (_mutation ?? throw Denied()).CreateRoomReservationAsync(input);
     }
 
+    // Only the scoped reservation can be cancelled. The domain service
+    // atomically applies its existing deposit disposition on paid holds.
+    [HttpPost("reservations/{id:guid}/cancel")]
+    [UnitOfWork(true)]
+    public Task<RoomReservationDto> CancelRoomReservationAsync(
+        [FromRoute] Guid id, [FromBody] CancelRoomReservationDto input)
+    {
+        RequireIsolatedStaging();
+        return (_mutation ?? throw Denied()).CancelRoomReservationAsync(id, input);
+    }
+
     // Move-out scheduling/approval only; never completes move-out, settles
     // deposits, ends a contract, or releases an occupied room.
     [HttpGet("{id:guid}/move-out-requests")]

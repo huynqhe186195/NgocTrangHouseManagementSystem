@@ -1650,6 +1650,44 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 reservationRoute + "?maxResultCount=101"))
                 Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
 
+            // Scoped reservation cancellation must not permit foreign-room
+            // enumeration or cross-building mutations. The pending B hold
+            // has no completed payment, so no settlement may be created.
+            async Task<HttpStatusCode> TryCancelReservationAsync(Guid id)
+            {
+                using var payload = new StringContent("""{"reason":1}""",
+                    Encoding.UTF8, "application/json");
+                using var response = await clientB.PostAsync(
+                    reservationRoute + "/" + id.ToString("D") + "/cancel", payload);
+                return response.StatusCode;
+            }
+            Assert.Equal(HttpStatusCode.Forbidden,
+                await TryCancelReservationAsync(reservationA));
+            Assert.Equal(HttpStatusCode.Forbidden,
+                await TryCancelReservationAsync(Guid.NewGuid()));
+            Assert.Equal(HttpStatusCode.OK,
+                await TryCancelReservationAsync(reservationB));
+            Assert.NotEqual(HttpStatusCode.OK,
+                await TryCancelReservationAsync(reservationB));
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var db = await sp.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>()
+                    .GetDbContextAsync();
+                Assert.Equal(BuildingManagement.RoomReservations.RoomReservationStatus.Cancelled,
+                    (await db.RoomReservations.SingleAsync(r =>
+                        r.Id == reservationB)).Status);
+                Assert.False(await db.DepositSettlements.AnyAsync(s =>
+                    s.SourceRoomReservationId == reservationB));
+                Assert.Equal(BuildingManagement.RoomReservations.RoomReservationStatus.PendingPayment,
+                    (await db.RoomReservations.SingleAsync(r =>
+                        r.Id == reservationA)).Status);
+                await uow.CompleteAsync();
+            }
+
             // Record the real room state rather than assuming occupancy:
             // other independent contract tests may have changed it earlier.
             BuildingManagement.Rooms.RoomStatus originalRoomStatus;

@@ -95,6 +95,54 @@ public sealed class SliceBStagingContractMutation
     }
 
     /// <summary>
+    /// Cancel a reservation under the resolved Room building only. Lock
+    /// Reservation before graph, preserving the original cancellation and
+    /// settlement lock order. No client-supplied room/building authority.
+    /// No second transaction or direct manual settlement endpoint.
+    /// </summary>
+    public async Task<RoomReservationDto> CancelRoomReservationAsync(
+        Guid reservationId, CancelRoomReservationDto input)
+    {
+        if (reservationId == Guid.Empty || input is null)
+            throw Denied();
+        var db = await _provider.GetDbContextAsync();
+        var roomId = await db.RoomReservations.AsNoTracking()
+            .Where(r => r.Id == reservationId && !r.IsDeleted)
+            .Select(r => r.RoomId).SingleOrDefaultAsync();
+        if (roomId == Guid.Empty)
+            throw Denied();
+
+        var buildingId = await ResolveAsync(
+            BuildingBusinessResourceKind.Room, roomId);
+        await _policy.EnsureResourceAsync(
+            BuildingBusinessResourceKind.Room, roomId,
+            BuildingBusinessCapability.ManageContract);
+        var actor = RequireActor();
+        await _identity.AcquireContractManageAsync(actor);
+
+        return await Fence(db).ExecuteAsync(actor, buildingId, async () =>
+        {
+            // Lock the exact reservation (not just a stale scalar lookup)
+            // before its current Room graph or deposit disposition.
+            await using var command = Command(db, """
+                SELECT r."RoomId"
+                  FROM "BuildingManagementRoomReservations" AS r
+                 WHERE r."Id" = @id AND r."IsDeleted" = FALSE
+                 FOR UPDATE OF r
+                """);
+            AddId(command, reservationId);
+            if (await command.ExecuteScalarAsync() is not Guid lockedRoom ||
+                lockedRoom != roomId ||
+                await LockRoomBuildingAsync(db, lockedRoom) != buildingId)
+                throw Denied();
+
+            return await _reservations.CancelAsync(reservationId, input);
+        }, () => _policy.EnsureResourceAsync(
+            BuildingBusinessResourceKind.Room, roomId,
+            BuildingBusinessCapability.ManageContract));
+    }
+
+    /// <summary>
     /// Create a notice only for the route's own authorized Active contract.
     /// The body cannot substitute a foreign ContractId. Existing domain
     /// notice-date, open-request and transaction rules remain authoritative.

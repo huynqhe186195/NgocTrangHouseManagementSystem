@@ -249,6 +249,47 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 Assert.Contains(b.ToString("D"), body, StringComparison.OrdinalIgnoreCase);
                 Assert.DoesNotContain(a.ToString("D"), body, StringComparison.OrdinalIgnoreCase);
             }
+            // The PostgreSQL-backed HTTP path must also honor fresh ABP
+            // Identity account state and durable user permission changes.
+            // A still-valid membership is NEVER sufficient by itself.
+            async Task ChangeAccountAsync(bool active, bool locked)
+            {
+                await using var db = new NgocTrangHouseManagementSystemDbContext(
+                    new DbContextOptionsBuilder<NgocTrangHouseManagementSystemDbContext>()
+                        .UseNpgsql(idCs).Options);
+                var user = await db.Users.SingleAsync(x => x.Id == operatorB);
+                user.SetIsActive(active);
+                db.Entry(user).Property(x => x.LockoutEnabled).CurrentValue = locked;
+                db.Entry(user).Property(x => x.LockoutEnd).CurrentValue =
+                    locked ? DateTimeOffset.UtcNow.AddMinutes(15) : (DateTimeOffset?)null;
+                await db.SaveChangesAsync();
+            }
+            async Task SetReadPermissionAsync(bool enabled)
+            {
+                using var scope = app.Services.CreateScope();
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                await sp.GetRequiredService<IPermissionManager>().SetForUserAsync(
+                    operatorB, BuildingManagementPermissions.Buildings.Read, enabled);
+                await uow.CompleteAsync();
+            }
+            await ChangeAccountAsync(active: false, locked: false);
+            using (var response = await clientB.GetAsync(GetAt(b)))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            await ChangeAccountAsync(active: true, locked: true);
+            using (var response = await clientB.GetAsync(GetAt(b)))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            await ChangeAccountAsync(active: true, locked: false);
+            using (var response = await clientB.GetAsync(GetAt(b)))
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            await SetReadPermissionAsync(false);
+            using (var response = await clientB.GetAsync(GetAt(b)))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            await SetReadPermissionAsync(true);
+            using (var response = await clientB.GetAsync(GetAt(b)))
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
             // Even the delegated staff with a real RevokeOperators ABP
             // grant may not revoke the immutable founding root membership.
             using (var payload = new StringContent(JsonSerializer.Serialize(

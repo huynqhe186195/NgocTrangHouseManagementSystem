@@ -109,14 +109,24 @@ public sealed class SliceBIssuedInvoiceLedger : Migration
                 -- issuance attempts with edits to its source header.
                 SELECT * INTO draft FROM "BuildingManagementInvoices"
                   WHERE "Id" = NEW."DraftInvoiceId" FOR UPDATE;
+                IF NOT FOUND THEN
+                    RAISE EXCEPTION 'Issued ledger draft missing'
+                        USING ERRCODE = '23514';
+                END IF;
                 SELECT * INTO archived FROM "BuildingManagementFinalInvoiceIssueEvidence"
                   WHERE "Id" = NEW."StagedEvidenceId" FOR SHARE;
+                IF NOT FOUND THEN
+                    RAISE EXCEPTION 'Issued ledger archive missing'
+                        USING ERRCODE = '23514';
+                END IF;
                 SELECT * INTO ticket FROM "BuildingManagementInvoiceIssuanceReviews"
                   WHERE "Id" = NEW."ReviewTicketId" FOR SHARE;
+                IF NOT FOUND THEN
+                    RAISE EXCEPTION 'Issued ledger review missing'
+                        USING ERRCODE = '23514';
+                END IF;
 
-                IF draft."Id" IS NULL OR archived."Id" IS NULL
-                   OR ticket."Id" IS NULL
-                   OR draft."Status" <> 0
+                IF draft."Status" <> 0
                    OR draft."ContractId" IS DISTINCT FROM NEW."ContractId"
                    OR draft."RoomId" IS DISTINCT FROM NEW."RoomId"
                    OR draft."BillingYear" IS DISTINCT FROM NEW."BillingYear"
@@ -176,6 +186,92 @@ public sealed class SliceBIssuedInvoiceLedger : Migration
             CREATE TRIGGER "TR_BM_IssuedLedger_ProtectDraft"
                 BEFORE UPDATE OR DELETE ON "BuildingManagementInvoices"
                 FOR EACH ROW EXECUTE FUNCTION "BM_GuardIssuedDraftMutation"();
+
+            -- Item/reading rows are also mutable draft sources. Lock the
+            -- same parent invoice row to serialize their edits against
+            -- issuance. Source rows for an issued draft never change.
+            CREATE FUNCTION "BM_GuardIssuedInvoiceItemMutation"()
+            RETURNS trigger LANGUAGE plpgsql AS $item_guard$
+            BEGIN
+                IF TG_OP IN ('UPDATE','DELETE') THEN
+                    PERFORM 1 FROM "BuildingManagementInvoices"
+                      WHERE "Id" = OLD."InvoiceId" FOR UPDATE;
+                    IF EXISTS (
+                        SELECT 1 FROM "BuildingManagementIssuedInvoiceLedger"
+                        WHERE "DraftInvoiceId" = OLD."InvoiceId"
+                    ) THEN
+                        RAISE EXCEPTION 'Issued invoice items are immutable'
+                            USING ERRCODE = '23514';
+                    END IF;
+                END IF;
+                IF TG_OP IN ('UPDATE','INSERT') THEN
+                    PERFORM 1 FROM "BuildingManagementInvoices"
+                      WHERE "Id" = NEW."InvoiceId" FOR UPDATE;
+                    IF EXISTS (
+                        SELECT 1 FROM "BuildingManagementIssuedInvoiceLedger"
+                        WHERE "DraftInvoiceId" = NEW."InvoiceId"
+                    ) THEN
+                        RAISE EXCEPTION 'Cannot alter an issued invoice line'
+                            USING ERRCODE = '23514';
+                    END IF;
+                END IF;
+                RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+            END;
+            $item_guard$;
+
+            CREATE TRIGGER "TR_BM_IssuedLedger_ProtectItems"
+                BEFORE INSERT OR UPDATE OR DELETE ON "BuildingManagementInvoiceItems"
+                FOR EACH ROW EXECUTE FUNCTION "BM_GuardIssuedInvoiceItemMutation"();
+
+            -- Meter sources inherit immutable billing scope through
+            -- InvoiceItemId. An attachment/reassignment must not evade
+            -- the parent source lock.
+            CREATE FUNCTION "BM_GuardIssuedInvoiceMeterSourceMutation"()
+            RETURNS trigger LANGUAGE plpgsql AS $meter_guard$
+            DECLARE invoice_id uuid;
+            DECLARE target_item uuid;
+            BEGIN
+                IF TG_OP IN ('UPDATE','DELETE') THEN
+                    target_item := OLD."InvoiceItemId";
+                    SELECT "InvoiceId" INTO invoice_id
+                      FROM "BuildingManagementInvoiceItems"
+                     WHERE "Id" = target_item;
+                    IF FOUND THEN
+                        PERFORM 1 FROM "BuildingManagementInvoices"
+                          WHERE "Id" = invoice_id FOR UPDATE;
+                        IF EXISTS (
+                            SELECT 1 FROM "BuildingManagementIssuedInvoiceLedger"
+                             WHERE "DraftInvoiceId" = invoice_id
+                        ) THEN
+                            RAISE EXCEPTION 'Issued meter sources are immutable'
+                                USING ERRCODE = '23514';
+                        END IF;
+                    END IF;
+                END IF;
+                IF TG_OP IN ('UPDATE','INSERT') THEN
+                    target_item := NEW."InvoiceItemId";
+                    SELECT "InvoiceId" INTO invoice_id
+                      FROM "BuildingManagementInvoiceItems"
+                     WHERE "Id" = target_item;
+                    IF FOUND THEN
+                        PERFORM 1 FROM "BuildingManagementInvoices"
+                          WHERE "Id" = invoice_id FOR UPDATE;
+                        IF EXISTS (
+                            SELECT 1 FROM "BuildingManagementIssuedInvoiceLedger"
+                             WHERE "DraftInvoiceId" = invoice_id
+                        ) THEN
+                            RAISE EXCEPTION 'Cannot alter an issued meter source'
+                                USING ERRCODE = '23514';
+                        END IF;
+                    END IF;
+                END IF;
+                RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+            END;
+            $meter_guard$;
+            CREATE TRIGGER "TR_BM_IssuedLedger_ProtectMeterSources"
+                BEFORE INSERT OR UPDATE OR DELETE
+                ON "BuildingManagementInvoiceItemMeterSources"
+                FOR EACH ROW EXECUTE FUNCTION "BM_GuardIssuedInvoiceMeterSourceMutation"();
             """);
     }
 
@@ -195,7 +291,13 @@ public sealed class SliceBIssuedInvoiceLedger : Migration
             $ledger_down$;
             DROP TRIGGER "TR_BM_IssuedLedger_ProtectDraft"
                 ON "BuildingManagementInvoices";
+            DROP TRIGGER "TR_BM_IssuedLedger_ProtectItems"
+                ON "BuildingManagementInvoiceItems";
+            DROP TRIGGER "TR_BM_IssuedLedger_ProtectMeterSources"
+                ON "BuildingManagementInvoiceItemMeterSources";
             DROP TABLE "BuildingManagementIssuedInvoiceLedger";
+            DROP FUNCTION "BM_GuardIssuedInvoiceMeterSourceMutation"();
+            DROP FUNCTION "BM_GuardIssuedInvoiceItemMutation"();
             DROP FUNCTION "BM_GuardIssuedDraftMutation"();
             DROP FUNCTION "BM_GuardIssuedInvoiceLedger"();
             """);

@@ -436,3 +436,10 @@ registered DB posting role or payment/deposit settlement. The presence of
 migration source or a matching evidence hash cannot turn staged money into a
 recognized receivable. Do not turn on an issuance endpoint until those
 conditions and their concurrency/rollback tests have been implemented.
+
+The issued ledger's source immutability also covers InvoiceItems and
+InvoiceItemMeterSources, not only the Draft header. Both mutation triggers
+lock the owning Draft row before checking issued history; this lock order
+serializes with ledger insertion and prevents late inserts/updates/deletes of
+meter evidence after issue. Additional PostgreSQL probes exercise those
+paths. No application issuer is enabled by these database checks.

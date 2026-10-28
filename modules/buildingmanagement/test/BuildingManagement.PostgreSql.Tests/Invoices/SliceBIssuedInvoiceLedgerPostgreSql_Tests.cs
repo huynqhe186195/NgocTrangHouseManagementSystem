@@ -31,6 +31,16 @@ public sealed class SliceBIssuedInvoiceLedgerPostgreSql_Tests
         {
             var f = await SeedReviewedInvoiceAsync(connection, tx);
             var issuedId = Guid.NewGuid();
+            var itemId = Guid.NewGuid();
+            var meterId = Guid.NewGuid();
+            await ExecuteAsync(connection, tx, $"""
+                INSERT INTO "BuildingManagementInvoiceItems" ("Id", "InvoiceId")
+                    VALUES ('{itemId:D}','{f.Draft:D}');
+                INSERT INTO "BuildingManagementInvoiceItemMeterSources"
+                    ("Id","InvoiceItemId")
+                    VALUES ('{meterId:D}','{itemId:D}');
+                """);
+
             var issue = InsertSql(f, issuedId, "FINAL-001");
             await ExecuteAsync(connection, tx, issue);
             Assert.Equal(1L, await CountAsync(connection, tx,
@@ -52,6 +62,29 @@ public sealed class SliceBIssuedInvoiceLedgerPostgreSql_Tests
             await ExpectFailureAsync(connection, tx, $"""
                 DELETE FROM "BuildingManagementInvoices"
                 WHERE "Id" = '{f.Draft:D}';
+                """, "23514");
+
+            await ExpectFailureAsync(connection, tx, $"""
+                UPDATE "BuildingManagementInvoiceItems"
+                   SET "InvoiceId"='{f.Draft:D}'
+                 WHERE "Id"='{itemId:D}';
+                """, "23514");
+            await ExpectFailureAsync(connection, tx, $"""
+                DELETE FROM "BuildingManagementInvoiceItems"
+                 WHERE "Id"='{itemId:D}';
+                """, "23514");
+            await ExpectFailureAsync(connection, tx, $"""
+                INSERT INTO "BuildingManagementInvoiceItems"
+                    ("Id","InvoiceId") VALUES ('{Guid.NewGuid():D}','{f.Draft:D}');
+                """, "23514");
+            await ExpectFailureAsync(connection, tx, $"""
+                UPDATE "BuildingManagementInvoiceItemMeterSources"
+                   SET "InvoiceItemId"='{itemId:D}'
+                 WHERE "Id"='{meterId:D}';
+                """, "23514");
+            await ExpectFailureAsync(connection, tx, $"""
+                INSERT INTO "BuildingManagementInvoiceItemMeterSources"
+                    ("Id","InvoiceItemId") VALUES ('{Guid.NewGuid():D}','{itemId:D}');
                 """, "23514");
 
             await ExpectFailureAsync(connection, tx,
@@ -120,13 +153,17 @@ public sealed class SliceBIssuedInvoiceLedgerPostgreSql_Tests
     {
         await InScratchAsync(async (connection, tx, down) =>
         {
-            Assert.Equal(3L, await CountAsync(connection, tx,
+            Assert.Equal(5L, await CountAsync(connection, tx,
                 """
                 SELECT count(*) FROM pg_trigger
                 WHERE NOT tgisinternal AND
                   (tgrelid = '"BuildingManagementIssuedInvoiceLedger"'::regclass
                    OR (tgrelid = '"BuildingManagementInvoices"'::regclass
-                       AND tgname = 'TR_BM_IssuedLedger_ProtectDraft'))
+                       AND tgname = 'TR_BM_IssuedLedger_ProtectDraft')
+                   OR (tgrelid = '"BuildingManagementInvoiceItems"'::regclass
+                       AND tgname = 'TR_BM_IssuedLedger_ProtectItems')
+                   OR (tgrelid = '"BuildingManagementInvoiceItemMeterSources"'::regclass
+                       AND tgname = 'TR_BM_IssuedLedger_ProtectMeterSources'))
                 """));
             await ExecuteAsync(connection, tx, down);
             Assert.Equal(1L, await CountAsync(connection, tx, """
@@ -257,6 +294,14 @@ public sealed class SliceBIssuedInvoiceLedgerPostgreSql_Tests
                         "Status" integer NOT NULL);
                     CREATE TABLE "BuildingManagementMoveOutRequests" (
                         "Id" uuid NOT NULL PRIMARY KEY);
+                    CREATE TABLE "BuildingManagementInvoiceItems" (
+                        "Id" uuid NOT NULL PRIMARY KEY,
+                        "InvoiceId" uuid NOT NULL
+                            REFERENCES "BuildingManagementInvoices" ("Id"));
+                    CREATE TABLE "BuildingManagementInvoiceItemMeterSources" (
+                        "Id" uuid NOT NULL PRIMARY KEY,
+                        "InvoiceItemId" uuid NOT NULL
+                            REFERENCES "BuildingManagementInvoiceItems" ("Id"));
                     """);
                 await ExecuteAsync(connection, tx, evidenceSql);
                 await ExecuteAsync(connection, tx, up);

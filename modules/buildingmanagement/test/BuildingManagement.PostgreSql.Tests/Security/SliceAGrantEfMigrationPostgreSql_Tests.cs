@@ -1111,6 +1111,58 @@ public sealed class SliceAGrantEfMigrationPostgreSql_Tests
         });
     }
 
+    [Fact]
+    public async Task EFMEMBER21_Revoked_Original_Founder_Cannot_Be_Replaced_By_SelfIssued_Grant()
+    {
+        await InScratchAsync(async cs =>
+        {
+            var realFounder = Guid.NewGuid();
+            var replacementFounder = Guid.NewGuid();
+            var recipient = Guid.NewGuid();
+            Guid building;
+            await using (var seed = OpenGrantDb(cs))
+            {
+                await seed.Database.MigrateAsync();
+                building = (await new EfBuildingOwnerBootstrapAtomicWriter(seed)
+                    .CreateWithOwnerAtomicallyAsync(
+                        realFounder, "Founder history", "Scratch PG", null)).Id;
+                // Simulate a privileged out-of-band historical revocation.
+                // The public delegation API cannot revoke the first owner.
+                await seed.Database.ExecuteSqlInterpolatedAsync($"""
+                    UPDATE "BuildingManagementOperatorBuildingGrants"
+                       SET "RevokedAtUtc" = {DateTime.UtcNow.AddSeconds(1)},
+                           "RevokedByUserId" = {replacementFounder},
+                           "RevisionNumber" = {2}
+                     WHERE "BuildingId" = {building}
+                       AND "OperatorUserId" = {realFounder}
+                    """);
+                await seed.Database.ExecuteSqlInterpolatedAsync($"""
+                    INSERT INTO "BuildingManagementOperatorBuildingGrants"
+                        ("Id","OperatorUserId","BuildingId","GrantedByUserId",
+                         "GrantedAtUtc","RevisionNumber","ExtraProperties",
+                         "ConcurrencyStamp")
+                    VALUES ({Guid.NewGuid()}, {replacementFounder}, {building},
+                            {replacementFounder}, {DateTime.UtcNow},
+                            {1}, {"{}"}, {Guid.NewGuid().ToString("N")})
+                    """);
+            }
+
+            await using (var operation = OpenGrantDb(cs))
+                await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+                    new EfBuildingOwnerRecoveryAtomicWriter(
+                        operation, TimeProvider.System)
+                    .RecoverAtomicallyAsync(building, replacementFounder,
+                        recipient, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid()));
+
+            await using var verify = OpenGrantDb(cs);
+            Assert.Equal(2, await verify.Grants.CountAsync(g =>
+                g.BuildingId == building &&
+                g.OperatorUserId == g.GrantedByUserId));
+            Assert.False(await verify.Grants.AnyAsync(g =>
+                g.BuildingId == building && g.OperatorUserId == recipient));
+        });
+    }
+
     private static SliceAGrantScratchDb OpenGrantDb(string cs)
         => new(new DbContextOptionsBuilder<SliceAGrantScratchDb>()
             .UseNpgsql(cs, n => n.MigrationsAssembly(

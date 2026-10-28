@@ -40,6 +40,19 @@ public sealed class AbpIdentityPermissionRealDi_Tests
         if (File.Exists(filename))
             throw new InvalidOperationException("Scratch file collision");
         var cs = "Data Source=" + filename;
+
+        // Create the FULL application Identity+Permission model first. ABP
+        // modules can create a partial schema during initialization; once
+        // ANY SQLite table exists, EnsureCreated() stops creating the rest.
+        await using (var schema = new NgocTrangHouseManagementSystemDbContext(
+            new DbContextOptionsBuilder<NgocTrangHouseManagementSystemDbContext>()
+                .UseSqlite(cs).Options))
+        {
+            Assert.True(await schema.Database.EnsureCreatedAsync());
+            await schema.Database.ExecuteSqlRawAsync(
+                "SELECT 1 FROM \"AbpUsers\" LIMIT 1");
+        }
+
         IAbpApplication? application = null;
         try
         {

@@ -93,12 +93,15 @@ public sealed class SliceAStagingIdentityCommitLease
             var direct = false;
             await using (var grant = new NpgsqlCommand(
                 """
-                SELECT "Id" FROM "AbpPermissionGrants"
-                 WHERE "ProviderName" = 'U' AND "ProviderKey" = @user
-                   AND "Name" = @permission
-                 FOR SHARE
+                SELECT p."Id" FROM "AbpPermissionGrants" AS p
+                  JOIN "AbpUsers" AS u ON u."Id" = @actor
+                 WHERE p."ProviderName" = 'U' AND p."ProviderKey" = @user
+                   AND p."Name" = @permission
+                   AND p."TenantId" IS NOT DISTINCT FROM u."TenantId"
+                 FOR SHARE OF p
                 """, connection, transaction))
             {
+                grant.Parameters.AddWithValue("actor", trustedUserId);
                 grant.Parameters.AddWithValue("user",
                     trustedUserId.ToString("D"));
                 grant.Parameters.AddWithValue("permission", permission);
@@ -110,12 +113,15 @@ public sealed class SliceAStagingIdentityCommitLease
                     """
                     SELECT p."Id"
                       FROM "AbpUserRoles" AS ur
+                      JOIN "AbpUsers" AS u ON u."Id" = ur."UserId"
                       JOIN "AbpRoles" AS r ON r."Id" = ur."RoleId"
                       JOIN "AbpPermissionGrants" AS p
                         ON p."ProviderName" = 'R'
                        AND p."ProviderKey" = r."Name"
                        AND p."Name" = @permission
+                       AND p."TenantId" IS NOT DISTINCT FROM r."TenantId"
                      WHERE ur."UserId" = @actor
+                       AND r."TenantId" IS NOT DISTINCT FROM u."TenantId"
                      ORDER BY r."Id"
                      LIMIT 1
                      FOR SHARE OF ur, r, p

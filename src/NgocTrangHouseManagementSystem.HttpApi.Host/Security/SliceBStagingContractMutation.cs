@@ -229,17 +229,34 @@ public sealed class SliceBStagingContractMutation
     {
         if (input is null)
             throw Denied();
-        return MutateLinkAsync(currentContractId, async (db, _) =>
+        return MutateRenewalWithRoomLockAsync(currentContractId, input);
+    }
+
+    private async Task<ContractDto> MutateRenewalWithRoomLockAsync(
+        Guid currentContractId, RenewContractDto input)
+    {
+        if (currentContractId == Guid.Empty)
+            throw Denied();
+        var actor = RequireActor();
+        var buildingId = await ResolveAsync(
+            BuildingBusinessResourceKind.Contract, currentContractId);
+        await _policy.EnsureResourceAsync(
+            BuildingBusinessResourceKind.Contract, currentContractId,
+            BuildingBusinessCapability.ManageContract);
+        await _identity.AcquireContractManageAsync(actor);
+        var db = await _provider.GetDbContextAsync();
+        return await Fence(db).ExecuteAsync(actor, buildingId, async () =>
         {
-            // The contract is already locked by MutateLinkAsync. Lock the
-            // room before checking renew date overlaps and reservations so
-            // another contract sign/activate cannot overtake the checks.
-            var roomId = await db.Contracts.AsNoTracking()
-                .Where(x => x.Id == currentContractId && !x.IsDeleted)
-                .Select(x => x.RoomId).SingleAsync();
+            // Lock order must be Contract -> Room UPDATE -> graph SHARE,
+            // never first acquire Room SHARE then upgrade to UPDATE.
+            var roomId = await LockContractRoomAsync(db, currentContractId);
             await LockRoomExclusivelyAsync(db, roomId);
+            if (await LockRoomBuildingAsync(db, roomId) != buildingId)
+                throw Denied();
             return await _contracts.RenewAsync(currentContractId, input);
-        });
+        }, () => _policy.EnsureResourceAsync(
+            BuildingBusinessResourceKind.Contract, currentContractId,
+            BuildingBusinessCapability.ManageContract));
     }
 
     /// <summary>

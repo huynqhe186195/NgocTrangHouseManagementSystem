@@ -1002,6 +1002,26 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 await uow.CompleteAsync();
             }
 
+            // Contract A was created solely to prove cross-building
+            // isolation. Remove that SCRATCH contract before existing
+            // Slice A room/floor deletion checks. Otherwise the room
+            // correctly retains a contract history and cannot be deleted,
+            // changing the pre-existing acceptance scenario.
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var ctx = await sp.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>()
+                    .GetDbContextAsync();
+                var scratchContract = await ctx.Contracts.FindAsync(contractA)
+                    ?? throw new InvalidOperationException("Missing scratch contract A.");
+                ctx.Contracts.Remove(scratchContract);
+                await ctx.SaveChangesAsync();
+                await uow.CompleteAsync();
+            }
+
             async Task PutChildAsync(HttpClient client, string route, Guid id,
                 string json, HttpStatusCode expected)
             {

@@ -141,3 +141,12 @@ runtime Identity/account/grant/read/write providers still default
 to DenyAll; code does NOT run DbMigrator on startup in this batch.
 CI cannot establish a production backup, DBA-approved least-privilege
 role, operation windows or live database state.
+
+### Reviewed migration metadata alignment
+
+`BuildingOperatorAccessGrantDesignConfiguration`, model snapshot and
+native Up SQL now use the SAME primary key, Building FK, filtered
+user/building unique index and Building lookup index names. This
+reduces accidental EF migration drift. `PGCHAIN01` must PASS against
+the runtime migration on a disposable populated PG database before
+release signoff. No schema or permission change was made on production.

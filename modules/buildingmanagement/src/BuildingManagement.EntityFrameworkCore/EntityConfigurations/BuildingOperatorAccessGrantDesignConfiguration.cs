@@ -17,6 +17,7 @@ public sealed class BuildingOperatorAccessGrantDesignConfiguration
     {
         builder.ToTable("BuildingManagementOperatorBuildingGrants");
         builder.ConfigureByConvention();
+        builder.HasKey(x => x.Id).HasName("PK_BM_OperatorBuildingGrants");
 
         builder.Property(x => x.OperatorUserId).IsRequired();
         builder.Property(x => x.BuildingId).IsRequired();
@@ -35,10 +36,12 @@ public sealed class BuildingOperatorAccessGrantDesignConfiguration
         builder.HasOne<Building>()
             .WithMany()
             .HasForeignKey(x => x.BuildingId)
-            .OnDelete(DeleteBehavior.Restrict);
+            .OnDelete(DeleteBehavior.Restrict)
+            .HasConstraintName("FK_BM_OperatorBuildingGrants_Building");
 
         // ABP identity data belongs to a different DbContext. A user FK
         // must not be invented without integration/migration review.
-        builder.HasIndex(x => x.BuildingId);
+        builder.HasIndex(x => x.BuildingId)
+            .HasDatabaseName("IX_BM_OperatorBuilding_BuildingId");
     }
 }

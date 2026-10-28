@@ -109,8 +109,9 @@ namespace BuildingManagement.Migrations
                     b.Property<string>("ExtraProperties")
                         .IsRequired().HasColumnType("text")
                         .HasColumnName("ExtraProperties");
-                    b.HasKey("Id");
-                    b.HasIndex("BuildingId");
+                    b.HasKey("Id").HasName("PK_BM_OperatorBuildingGrants");
+                    b.HasIndex("BuildingId")
+                        .HasDatabaseName("IX_BM_OperatorBuilding_BuildingId");
                     b.HasIndex("OperatorUserId", "BuildingId")
                         .IsUnique()
                         .HasDatabaseName("UX_BM_OperatorBuilding_Unrevoked")
@@ -1868,7 +1869,8 @@ namespace BuildingManagement.Migrations
                         .WithMany()
                         .HasForeignKey("BuildingId")
                         .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .IsRequired()
+                        .HasConstraintName("FK_BM_OperatorBuildingGrants_Building");
                 });
 
             modelBuilder.Entity("BuildingManagement.Invoices.Invoice", b =>

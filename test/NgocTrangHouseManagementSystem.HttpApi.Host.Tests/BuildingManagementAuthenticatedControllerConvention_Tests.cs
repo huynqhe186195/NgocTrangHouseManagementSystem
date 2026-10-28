@@ -92,6 +92,38 @@ public sealed class BuildingManagementAuthenticatedControllerConvention_Tests
             requirement => requirement is DenyAnonymousAuthorizationRequirement);
     }
 
+    [Fact]
+    public void AUTHMODEL07_SliceB_Requires_DenyAll_Until_Scoped_Authorization()
+    {
+        var protectedServices = new[]
+        {
+            typeof(BuildingManagement.Contracts.ContractAppService),
+            typeof(BuildingManagement.Contracts.ContractRenewalHoldAppService),
+            typeof(BuildingManagement.Tenants.TenantAppService),
+            typeof(BuildingManagement.RoomReservations.RoomReservationAppService),
+            typeof(BuildingManagement.MoveOuts.MoveOutRequestAppService)
+        };
+        foreach (var service in protectedServices)
+        {
+            var controller = ModelFor(service);
+            new BuildingManagementAuthenticatedControllerConvention()
+                .Apply(AppWith(controller));
+            var filters = controller.Filters.OfType<AuthorizeFilter>().ToArray();
+            Assert.Equal(2, filters.Length);
+            Assert.Contains(filters, filter => filter.Policy!.Requirements.Any(
+                requirement => requirement is
+                    Microsoft.AspNetCore.Authorization.Infrastructure
+                        .AssertionRequirement));
+        }
+
+        // Existing 15 Slice A CRUD actions retain their own scoped policy,
+        // and unrelated controllers never inherit the Slice B block.
+        var sliceA = ModelFor(typeof(BuildingAppService));
+        new BuildingManagementAuthenticatedControllerConvention()
+            .Apply(AppWith(sliceA));
+        Assert.Single(sliceA.Filters.OfType<AuthorizeFilter>());
+    }
+
     private static ControllerModel ModelFor(Type serviceType)
         => new(serviceType.GetTypeInfo(), Array.Empty<object>());
 

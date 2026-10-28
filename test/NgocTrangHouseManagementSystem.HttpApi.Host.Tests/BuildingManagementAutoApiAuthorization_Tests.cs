@@ -422,6 +422,63 @@ public sealed class BuildingManagementAutoApiAuthorization_Tests
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
+    [Fact]
+    public async Task APIAUTO16_Authenticated_SliceB_Five_Service_Groups_Deny_Before_DI()
+    {
+        await using var app = await StartIsolatedAbpHostAsync();
+        using var client = AuthenticatedClient(app);
+        // Spoofed headers must not convert authentication into a per-building
+        // entitlement. The in-memory host has NO repositories or real DB.
+        client.DefaultRequestHeaders.Add("X-Is-Admin", "true");
+        client.DefaultRequestHeaders.Add("X-Building-Id",
+            Guid.NewGuid().ToString("D"));
+
+        var serviceTypes = new[]
+        {
+            typeof(BuildingManagement.Contracts.ContractAppService),
+            typeof(BuildingManagement.Contracts.ContractRenewalHoldAppService),
+            typeof(BuildingManagement.Tenants.TenantAppService),
+            typeof(BuildingManagement.RoomReservations.RoomReservationAppService),
+            typeof(BuildingManagement.MoveOuts.MoveOutRequestAppService)
+        };
+        var actions = GetGeneratedActions(app);
+        foreach (var service in serviceTypes)
+        {
+            var serviceActions = actions.Where(action =>
+                action.ControllerTypeInfo.AsType() == service).ToArray();
+            Assert.NotEmpty(serviceActions);
+            foreach (var action in serviceActions)
+            {
+                Assert.Contains(action.FilterDescriptors, descriptor =>
+                    descriptor.Filter is AuthorizeFilter filter &&
+                    filter.Policy is not null &&
+                    filter.Policy.Requirements.Any(requirement =>
+                        requirement is Microsoft.AspNetCore.Authorization.Infrastructure
+                            .AssertionRequirement));
+            }
+
+            // Authenticated GET/list calls must fail before resolving the
+            // underlying service, repository, tenant PII or contract state.
+            var list = Assert.Single(serviceActions, action =>
+                action.MethodInfo.Name == "GetListAsync");
+            var route = Assert.IsType<string>(list.AttributeRouteInfo?.Template);
+            using var response = await client.GetAsync("/" + route.TrimStart('/'));
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        }
+
+        // An arbitrary known tenant ID must not reveal personal details.
+        var tenantRead = Assert.Single(actions, action =>
+            action.ControllerTypeInfo.AsType() ==
+                typeof(BuildingManagement.Tenants.TenantAppService) &&
+            action.MethodInfo.Name == "GetAsync");
+        var tenantRoute = Assert.IsType<string>(
+            tenantRead.AttributeRouteInfo?.Template);
+        using var result = await client.GetAsync("/" + Regex.Replace(
+            tenantRoute, @"\{[^}]+\}", Guid.NewGuid().ToString("D"))
+            .TrimStart('/'));
+        Assert.Equal(HttpStatusCode.Forbidden, result.StatusCode);
+    }
+
     private static HttpClient AuthenticatedClient(WebApplication app)
     {
         var client = app.GetTestClient();

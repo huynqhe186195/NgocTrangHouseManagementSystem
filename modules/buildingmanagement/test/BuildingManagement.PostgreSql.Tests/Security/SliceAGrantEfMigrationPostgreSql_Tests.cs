@@ -593,6 +593,112 @@ public sealed class SliceAGrantEfMigrationPostgreSql_Tests
         });
     }
 
+    [Fact]
+    public async Task EFMEMBER12_First_Owner_Bootstrap_Respects_Outer_UoW_Rollback()
+    {
+        await InScratchAsync(async cs =>
+        {
+            var root = Guid.NewGuid();
+            Guid created;
+            await using (var setup = OpenGrantDb(cs))
+                await setup.Database.MigrateAsync();
+
+            await using (var scoped = OpenGrantDb(cs))
+            {
+                await using var uow = await scoped.Database
+                    .BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted);
+                var createdBuilding = await new EfBuildingOwnerBootstrapAtomicWriter(scoped)
+                    .CreateWithOwnerAtomicallyAsync(root, "Not committed", "PG", null);
+                created = createdBuilding.Id;
+                // Writer MUST leave the externally-owned transaction open.
+                Assert.NotNull(scoped.Database.CurrentTransaction);
+                await using (var outside = OpenGrantDb(cs))
+                {
+                    Assert.False(await outside.Buildings.AnyAsync(x => x.Id == created));
+                    Assert.False(await outside.Grants.AnyAsync(x => x.BuildingId == created));
+                }
+                await uow.RollbackAsync();
+            }
+
+            await using var verify = OpenGrantDb(cs);
+            Assert.False(await verify.Buildings.AnyAsync(x => x.Id == created));
+            Assert.False(await verify.Grants.AnyAsync(x => x.BuildingId == created));
+        });
+    }
+
+    [Fact]
+    public async Task EFMEMBER13_Grant_And_Revoke_Respect_External_UoW_Commit_And_Rollback()
+    {
+        await InScratchAsync(async cs =>
+        {
+            var owner = Guid.NewGuid();
+            var staff = Guid.NewGuid();
+            Guid building;
+            await using (var seed = OpenGrantDb(cs))
+            {
+                await seed.Database.MigrateAsync();
+                building = (await new EfBuildingOwnerBootstrapAtomicWriter(seed)
+                    .CreateWithOwnerAtomicallyAsync(owner, "A", "PG", null)).Id;
+            }
+
+            await using (var scoped = OpenGrantDb(cs))
+            {
+                await using var outer = await scoped.Database
+                    .BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted);
+                await new EfBuildingOperatorGrantAtomicMutationWriter(
+                    scoped, TimeProvider.System)
+                    .AssignAtomicallyAsync(owner, staff, building, null);
+                await using (var outside = OpenGrantDb(cs))
+                    Assert.False(await outside.Grants.AnyAsync(x =>
+                        x.OperatorUserId == staff));
+                await outer.RollbackAsync();
+            }
+            await using (var verify = OpenGrantDb(cs))
+                Assert.False(await verify.Grants.AnyAsync(x =>
+                    x.OperatorUserId == staff));
+
+            await using (var scoped = OpenGrantDb(cs))
+            {
+                await using var outer = await scoped.Database
+                    .BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted);
+                await new EfBuildingOperatorGrantAtomicMutationWriter(
+                    scoped, TimeProvider.System)
+                    .AssignAtomicallyAsync(owner, staff, building, null);
+                await outer.CommitAsync();
+            }
+            await using (var verify = OpenGrantDb(cs))
+                Assert.Equal(1, await verify.Grants.CountAsync(x =>
+                    x.OperatorUserId == staff && x.RevokedAtUtc == null));
+
+            await using (var scoped = OpenGrantDb(cs))
+            {
+                await using var outer = await scoped.Database
+                    .BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted);
+                await new EfBuildingOperatorGrantAtomicMutationWriter(
+                    scoped, TimeProvider.System)
+                    .RevokeAtomicallyAsync(owner, staff, building, 1);
+                await outer.RollbackAsync();
+            }
+            await using (var verify = OpenGrantDb(cs))
+                Assert.Equal(1, await verify.Grants.CountAsync(x =>
+                    x.OperatorUserId == staff && x.RevokedAtUtc == null));
+
+            await using (var scoped = OpenGrantDb(cs))
+            {
+                await using var outer = await scoped.Database
+                    .BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted);
+                await new EfBuildingOperatorGrantAtomicMutationWriter(
+                    scoped, TimeProvider.System)
+                    .RevokeAtomicallyAsync(owner, staff, building, 1);
+                await outer.CommitAsync();
+            }
+            await using var history = OpenGrantDb(cs);
+            Assert.Equal(1, await history.Grants.CountAsync(x =>
+                x.OperatorUserId == staff && x.RevokedAtUtc != null &&
+                x.RevokedByUserId == owner && x.RevisionNumber == 2));
+        });
+    }
+
     private static SliceAGrantScratchDb OpenGrantDb(string cs)
         => new(new DbContextOptionsBuilder<SliceAGrantScratchDb>()
             .UseNpgsql(cs, n => n.MigrationsAssembly(

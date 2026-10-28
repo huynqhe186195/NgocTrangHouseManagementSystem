@@ -109,6 +109,8 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             var buildingCs = buildingBuilder.ConnectionString;
             var root = Guid.NewGuid();
             var operatorB = Guid.NewGuid();
+            var cosigner = Guid.NewGuid();
+            var disabledFounder = Guid.NewGuid();
 
             // Actual ABP Identity/Permission EF model; actual runtime
             // BuildingManagement migration including the grant table.
@@ -130,6 +132,9 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     ["ConnectionStrings:BuildingManagement"] = buildingCs,
                     ["BuildingManagement:Bootstrap:RootUserIds:0"] =
                         root.ToString("D"),
+                    ["BuildingManagement:OwnerRecovery:Enabled"] = "true",
+                    ["BuildingManagement:OwnerRecovery:CoSignerUserIds:0"] =
+                        cosigner.ToString("D"),
                     ["BuildingManagement:SliceAStaging:Enabled"] = "true",
                     ["BuildingManagement:SliceAStaging:Activation"] =
                         "I_ACCEPT_ISOLATED_SLICE_A_STAGING_WRITES"
@@ -165,7 +170,11 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     new IdentityUser(root, "root-" + root.ToString("N"),
                         "root-" + root.ToString("N") + "@example.test"),
                     new IdentityUser(operatorB, "operator-" + operatorB.ToString("N"),
-                        "operator-" + operatorB.ToString("N") + "@example.test"));
+                        "operator-" + operatorB.ToString("N") + "@example.test"),
+                    new IdentityUser(cosigner, "cosigner-" + cosigner.ToString("N"),
+                        "cosigner-" + cosigner.ToString("N") + "@example.test"),
+                    new IdentityUser(disabledFounder, "founder-" + disabledFounder.ToString("N"),
+                        "founder-" + disabledFounder.ToString("N") + "@example.test"));
                 await db.SaveChangesAsync();
 
                 using var unit = services.GetRequiredService<IUnitOfWorkManager>()
@@ -182,6 +191,8 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     BuildingManagementPermissions.Buildings.Read, true);
                 await permissions.SetForUserAsync(operatorB,
                     BuildingManagementPermissions.Buildings.RevokeOperators, true);
+                await permissions.SetForUserAsync(cosigner,
+                    BuildingManagementPermissions.Buildings.CoSignOwnerRecovery, true);
                 foreach (var id in new[] { root, operatorB })
                 {
                     await permissions.SetForUserAsync(id,
@@ -555,6 +566,18 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             Configure<AbpDbContextOptions>(o => o.UseNpgsql());
             context.Services.Configure<BuildingOwnerBootstrapSecurityOptions>(
                 config.GetSection("BuildingManagement:Bootstrap"));
+            context.Services.Configure<BuildingOwnerRecoverySecurityOptions>(
+                o => o.CoSignerUserIds = new System.Collections.Generic.HashSet<Guid>(
+                    new[] { Guid.Parse(config["BuildingManagement:OwnerRecovery:CoSignerUserIds:0"]!) }));
+            context.Services.AddTransient<SliceAStagingOwnerRecoveryEvidenceStore>();
+            context.Services.Replace(ServiceDescriptor.Transient<
+                IBuildingOwnerRecoveryApprovalReader>(sp =>
+                    sp.GetRequiredService<SliceAStagingOwnerRecoveryEvidenceStore>()));
+            context.Services.Replace(ServiceDescriptor.Transient<
+                IBuildingOwnerRecoveryFounderReader>(sp =>
+                    sp.GetRequiredService<SliceAStagingOwnerRecoveryEvidenceStore>()));
+            context.Services.Replace(ServiceDescriptor.Transient<
+                IBuildingOwnerRecoveryWriter, SliceAStagingOwnerRecoveryWriter>());
 
             context.Services.AddAuthentication("IsolatedPgHttp")
                 .AddScheme<AuthenticationSchemeOptions, PgHttpAuthenticationHandler>(

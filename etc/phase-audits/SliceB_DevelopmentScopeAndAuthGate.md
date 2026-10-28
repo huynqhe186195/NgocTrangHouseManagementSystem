@@ -168,3 +168,7 @@ pending reservations, and hold Completed state in the same UoW.
 
 No direct unscoped hold/renewal endpoint is re-enabled; no production
 deployment. Other payment/reservation APIs remain denied until audited.
+
+## Reservation create (staging-only)
+
+A first scoped `POST /api/slice-b-staging/contracts/reservations` wraps the existing RoomReservationAppService.CreateAsync behind persisted `Contracts.Manage` Identity lock, current Building membership transaction lock, Room→Floor→Building revalidation, exclusive Room row lock, and a locked existing ContractTenant provenance path for the requested tenant in the SAME building. Unknown/global-only tenant IDs fail closed. No legacy unscoped reservation route is opened. Payment completion, refund and cancellation remain locked until separately assessed.

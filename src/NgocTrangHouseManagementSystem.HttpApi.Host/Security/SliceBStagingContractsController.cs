@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using BuildingManagement.Contracts;
+using BuildingManagement.RoomReservations;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
@@ -90,6 +91,15 @@ public sealed class SliceBStagingContractsController : ControllerBase
     {
         RequireIsolatedStaging();
         return (_mutation ?? throw Denied()).ActivateAsync(id);
+    }
+
+    [HttpPost("reservations")]
+    [UnitOfWork(true)]
+    public Task<RoomReservationDto> CreateRoomReservationAsync(
+        [FromBody] CreateRoomReservationDto input)
+    {
+        RequireIsolatedStaging();
+        return (_mutation ?? throw Denied()).CreateRoomReservationAsync(input);
     }
 
     [HttpPost("{id:guid}/renewal-holds")]

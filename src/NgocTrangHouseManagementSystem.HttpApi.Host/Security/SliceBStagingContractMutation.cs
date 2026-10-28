@@ -7,6 +7,7 @@ using BuildingManagement.EntityFrameworkCore;
 using BuildingManagement.EntityFrameworkCore.Security;
 using BuildingManagement.Security;
 using BuildingManagement.Tenants;
+using BuildingManagement.RoomReservations;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Volo.Abp;
@@ -34,6 +35,7 @@ public sealed class SliceBStagingContractMutation
     private readonly IContractAppService _contracts;
     private readonly ITenantAppService _tenants;
     private readonly IContractRenewalHoldAppService _holds;
+    private readonly IRoomReservationAppService _reservations;
 
     public SliceBStagingContractMutation(
         IDbContextProvider<BuildingManagementDbContext> provider,
@@ -42,7 +44,8 @@ public sealed class SliceBStagingContractMutation
         ICurrentUser user,
         SliceAStagingIdentityCommitLease identity,
         IContractAppService contracts, ITenantAppService tenants,
-        IContractRenewalHoldAppService holds)
+        IContractRenewalHoldAppService holds,
+        IRoomReservationAppService reservations)
     {
         _provider = provider;
         _policy = policy;
@@ -52,6 +55,39 @@ public sealed class SliceBStagingContractMutation
         _contracts = contracts;
         _tenants = tenants;
         _holds = holds;
+        _reservations = reservations;
+    }
+
+    /// <summary>
+    /// Reserve only a room from the operator's building for a person
+    /// already known in THAT building. Room UPDATE lock serializes
+    /// competing reservation and contract checks in the shared UoW.
+    /// No global Tenant ID existence disclosure or implicit onboarding.
+    /// </summary>
+    public async Task<RoomReservationDto> CreateRoomReservationAsync(
+        CreateRoomReservationDto input)
+    {
+        if (input is null || input.RoomId == Guid.Empty ||
+            input.TenantId == Guid.Empty)
+            throw Denied();
+        var actor = RequireActor();
+        var building = await ResolveAsync(
+            BuildingBusinessResourceKind.Room, input.RoomId);
+        await _policy.EnsureResourceAsync(
+            BuildingBusinessResourceKind.Room, input.RoomId,
+            BuildingBusinessCapability.ManageContract);
+        await _identity.AcquireContractManageAsync(actor);
+        var db = await _provider.GetDbContextAsync();
+        return await Fence(db).ExecuteAsync(actor, building, async () =>
+        {
+            await LockRoomExclusivelyAsync(db, input.RoomId);
+            if (await LockRoomBuildingAsync(db, input.RoomId) != building)
+                throw Denied();
+            await LockKnownTenantInBuildingAsync(db, input.TenantId, building);
+            return await _reservations.CreateAsync(input);
+        }, () => _policy.EnsureResourceAsync(
+            BuildingBusinessResourceKind.Room, input.RoomId,
+            BuildingBusinessCapability.ManageContract));
     }
 
     public async Task<ContractDto> CreateAsync(CreateContractDto input)

@@ -506,7 +506,7 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                             IDbContextProvider<BuildingManagementDbContext>>()
                             .GetDbContextAsync();
                         await pg.Database.ExecuteSqlInterpolatedAsync(
-                            $"UPDATE \"Buildings\" SET \"Name\" = {"Committed before disable"} WHERE \"Id\" = {b}");
+                            $"UPDATE \"Rooms\" SET \"Name\" = {"Committed before disable"} WHERE \"Id\" = {roomB}");
                         disableResult = Task.Run(async () =>
                         {
                             await using var identityConnection =
@@ -522,15 +522,15 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                         Assert.False(disableResult.IsCompleted,
                             "Identity disable must wait for Building UoW commit.");
                         return true;
-                    });
+                    }, BuildingScopedMutationKind.Room);
                     await uow.CompleteAsync();
                 }
             }
             Assert.NotNull(disableResult);
             Assert.Equal(1, await disableResult!.WaitAsync(TimeSpan.FromSeconds(15)));
-            using (var response = await clientB.GetAsync(GetAt(b)))
+            using (var response = await clientB.GetAsync(ChildId(roomGet, roomB)))
                 Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
-            using (var response = await clientRoot.GetAsync(GetAt(b)))
+            using (var response = await clientRoot.GetAsync(ChildId(roomGet, roomB)))
             {
                 Assert.Equal(HttpStatusCode.OK, response.StatusCode);
                 Assert.Contains("Committed before disable",

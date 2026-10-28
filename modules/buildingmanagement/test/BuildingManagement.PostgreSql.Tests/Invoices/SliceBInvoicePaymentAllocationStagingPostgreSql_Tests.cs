@@ -70,7 +70,7 @@ public sealed class SliceBInvoicePaymentAllocationStagingPostgreSql_Tests
             await ExpectFailureAsync(connection, tx,
                 JournalSql(Guid.NewGuid(), payment, invoice, contract, 150001m), "23514");
             await ExpectFailureAsync(connection, tx,
-                JournalSql(Guid.NewGuid(), Guid.NewGuid(), invoice, contract), "23503");
+                JournalSql(Guid.NewGuid(), Guid.NewGuid(), invoice, contract), "23514");
 
             await ExecuteAsync(connection, tx,
                 JournalSql(journal, payment, invoice, contract));

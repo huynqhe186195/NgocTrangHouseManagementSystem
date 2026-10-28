@@ -116,7 +116,6 @@ public sealed class SliceAStagingIdentityCommitLease
                        AND p."ProviderKey" = r."Name"
                        AND p."Name" = @permission
                      WHERE ur."UserId" = @actor
-                       AND r."IsDeleted" = FALSE
                      ORDER BY r."Id"
                      LIMIT 1
                      FOR SHARE OF ur, r, p

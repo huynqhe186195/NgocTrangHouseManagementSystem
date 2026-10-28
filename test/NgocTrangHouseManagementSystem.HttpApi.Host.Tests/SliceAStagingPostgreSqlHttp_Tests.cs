@@ -362,6 +362,63 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             using (var response = await clientRoot.DeleteAsync(ChildId(floorDelete, floorA)))
                 Assert.True(response.StatusCode is HttpStatusCode.OK or HttpStatusCode.NoContent);
 
+            // Race rehearsal across TWO distinct PostgreSQL databases.
+            // The Building UoW starts with B authorized, while an external
+            // Identity transaction disables B during its write callback.
+            // The staged postflight must reject and the outer UoW must
+            // roll the provisional Building UPDATE back.
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                var accessor = sp.GetRequiredService<ICurrentPrincipalAccessor>();
+                using (accessor.Change(new ClaimsPrincipal(new ClaimsIdentity(
+                    new[]
+                    {
+                        new Claim(AbpClaimTypes.UserId, operatorB.ToString("D")),
+                        new Claim(ClaimTypes.NameIdentifier, operatorB.ToString("D"))
+                    }, "IsolatedPgRacePrincipal"))))
+                {
+                    using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                        .Begin(requiresNew: true, isTransactional: true);
+                    var boundary = sp.GetRequiredService<IBuildingScopedWriteBoundary>();
+                    await Assert.ThrowsAsync<Volo.Abp.Authorization.AbpAuthorizationException>(
+                        () => boundary.ExecuteBuildingAsync(b, async () =>
+                        {
+                            var pg = await sp.GetRequiredService<
+                                IDbContextProvider<BuildingManagementDbContext>>()
+                                .GetDbContextAsync();
+                            await pg.Database.ExecuteSqlInterpolatedAsync(
+                                $"UPDATE \"Buildings\" SET \"Name\" = {"Must roll back"} WHERE \"Id\" = {b}");
+                            await using var identityConnection = new NpgsqlConnection(idCs);
+                            await identityConnection.OpenAsync();
+                            await using var revoke = new NpgsqlCommand(
+                                """UPDATE "AbpUsers" SET "IsActive" = FALSE WHERE "Id" = @id""",
+                                identityConnection);
+                            revoke.Parameters.AddWithValue("id", operatorB);
+                            Assert.Equal(1, await revoke.ExecuteNonQueryAsync());
+                            return true;
+                        }));
+                    // No CompleteAsync: ABP disposes/rolls back the
+                    // failed business transaction. Identity remains disabled.
+                }
+            }
+            await using (var identityRestore = new NpgsqlConnection(idCs))
+            {
+                await identityRestore.OpenAsync();
+                await using var restore = new NpgsqlCommand(
+                    """UPDATE "AbpUsers" SET "IsActive" = TRUE WHERE "Id" = @id""",
+                    identityRestore);
+                restore.Parameters.AddWithValue("id", operatorB);
+                Assert.Equal(1, await restore.ExecuteNonQueryAsync());
+            }
+            using (var response = await clientRoot.GetAsync(GetAt(b)))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                var payload = await response.Content.ReadAsStringAsync();
+                Assert.Contains("PG Building B", payload);
+                Assert.DoesNotContain("Must roll back", payload);
+            }
+
             // The PostgreSQL-backed HTTP path must also honor fresh ABP
             // Identity account state and durable user permission changes.
             // A still-valid membership is NEVER sufficient by itself.

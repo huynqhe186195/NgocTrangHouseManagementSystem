@@ -1185,6 +1185,102 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 Members(contractC) + "/" + tenantB.ToString("D")))
                 Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
+            // New tenant onboarding is the ONLY route that may create
+            // global PII: it requires the same Building contract Draft row,
+            // and the new Tenant + ContractTenant must commit atomically.
+            string NewTenantJson(string phone, string citizenId, int role) =>
+                JsonSerializer.Serialize(new
+                {
+                    tenant = new
+                    {
+                        fullName = "Slice B Onboarding",
+                        phoneNumber = phone,
+                        identityType = 1,
+                        identityNumber = citizenId,
+                        email = "scratch@example.test"
+                    },
+                    role
+                });
+            async Task<(HttpStatusCode Code, string Body)> RegisterAsync(
+                HttpClient caller, Guid contract, string phone,
+                string citizenId, int role)
+            {
+                using var payload = new StringContent(
+                    NewTenantJson(phone, citizenId, role), Encoding.UTF8,
+                    "application/json");
+                using var response = await caller.PostAsync(
+                    Members(contract) + "/new", payload);
+                return (response.StatusCode,
+                    await response.Content.ReadAsStringAsync());
+            }
+
+            // A B-only operator cannot create a tenant by targeting A.
+            var forbiddenRegistration = await RegisterAsync(clientB,
+                contractA, "0981234570", "001123456780", 2);
+            Assert.Equal(HttpStatusCode.Forbidden, forbiddenRegistration.Code);
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var db = await sp.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>()
+                    .GetDbContextAsync();
+                Assert.False(await db.Tenants.AnyAsync(t =>
+                    t.IdentityNumber == "001123456780"));
+                await uow.CompleteAsync();
+            }
+
+            // A conflict AFTER tenant creation must roll back that newly
+            // inserted profile, not strand global PII as an orphan.
+            Assert.Equal(HttpStatusCode.OK,
+                await PostMemberAsync(contractC, tenantB, 1));
+            var rollbackRegistration = await RegisterAsync(clientB,
+                contractC, "0981234571", "001123456781", 1);
+            Assert.NotEqual(HttpStatusCode.OK, rollbackRegistration.Code);
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var db = await sp.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>()
+                    .GetDbContextAsync();
+                Assert.False(await db.Tenants.AnyAsync(t =>
+                    t.IdentityNumber == "001123456781"));
+                await uow.CompleteAsync();
+            }
+            using (var response = await clientB.DeleteAsync(
+                Members(contractC) + "/" + tenantB.ToString("D")))
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+            var registered = await RegisterAsync(clientB, contractC,
+                "0981234572", "001123456782", 1);
+            Assert.Equal(HttpStatusCode.OK, registered.Code);
+            Assert.DoesNotContain("0981234572", registered.Body);
+            Assert.DoesNotContain("001123456782", registered.Body);
+            Assert.DoesNotContain("Slice B Onboarding", registered.Body);
+            Guid registeredTenant;
+            using (var json = JsonDocument.Parse(registered.Body))
+            {
+                registeredTenant = json.RootElement
+                    .GetProperty("tenantId").GetGuid();
+                Assert.NotEqual(Guid.Empty, registeredTenant);
+                Assert.Equal(1, json.RootElement.GetProperty("role").GetInt32());
+            }
+            using (var response = await clientB.GetAsync(Members(contractC)))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await response.Content.ReadAsStringAsync());
+                Assert.Contains(json.RootElement.EnumerateArray(),
+                    item => item.GetProperty("tenantId").GetGuid() ==
+                        registeredTenant);
+            }
+            using (var response = await clientB.DeleteAsync(
+                Members(contractC) + "/" + registeredTenant.ToString("D")))
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
             // Identity Contracts.Manage DELETE cannot pass a Building write
             // transaction's permission lease. After revocation commits,
             // a fresh POST fails even if ABP's cache still says granted.

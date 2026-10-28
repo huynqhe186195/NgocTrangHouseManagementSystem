@@ -21,6 +21,7 @@ public sealed class SliceAFullChainUpgradePostgreSql_Tests
     private const string OptIn = "BM_PG_SLICE_A_FULL_CHAIN_OPT_IN";
     private const string Accepted = "CREATE_AND_DROP_RANDOM_LOCAL_SLICE_A_DATABASE";
     private const string RuntimeMigration = "20261028121500_SliceAOperatorBuildingMembership";
+    private const string RecoveryMigration = "20261028190000_SliceAOwnerRecoveryApprovals";
 
     [Fact]
     public async Task PGCHAIN01_Existing_Buildings_Survive_Full_Chain_Grant_Upgrade_And_History_Guard()
@@ -70,13 +71,22 @@ public sealed class SliceAFullChainUpgradePostgreSql_Tests
             var runtimeOptions = new DbContextOptionsBuilder<BuildingManagementDbContext>()
                 .UseNpgsql(scoped).Options;
             string[] baselineMigrations;
+            string[] sliceAMigrations;
             await using (var existing = new BuildingManagementDbContext(runtimeOptions))
             {
                 baselineMigrations = existing.Database.GetMigrations().ToArray();
                 Assert.NotEmpty(baselineMigrations);
+                // Pin this Slice A rehearsal to its last reviewed migration.
+                // Later Slice B migrations must NOT change its expected history
+                // or silently become part of an owner/grant regression.
+                var recoveryIndex = Array.IndexOf(
+                    baselineMigrations, RecoveryMigration);
+                Assert.True(recoveryIndex > 0);
+                sliceAMigrations = baselineMigrations
+                    .Take(recoveryIndex + 1).ToArray();
                 Assert.Empty(await existing.Database.GetAppliedMigrationsAsync());
-                await existing.Database.MigrateAsync();
-                Assert.Equal(baselineMigrations,
+                await existing.Database.MigrateAsync(RecoveryMigration);
+                Assert.Equal(sliceAMigrations,
                     (await existing.Database.GetAppliedMigrationsAsync()).ToArray());
                 // Direct SQL seeds EXISTING rows. This manually created
                 // AbpDbContext has no ABP lazy services for SaveChanges
@@ -137,7 +147,7 @@ public sealed class SliceAFullChainUpgradePostgreSql_Tests
 
             await using (var intact = new BuildingManagementDbContext(runtimeOptions))
             {
-                Assert.Equal(baselineMigrations,
+                Assert.Equal(sliceAMigrations,
                     (await intact.Database.GetAppliedMigrationsAsync())
                         .ToArray());
                 Assert.Equal("Existing Building A",

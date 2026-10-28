@@ -506,7 +506,7 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                             IDbContextProvider<BuildingManagementDbContext>>()
                             .GetDbContextAsync();
                         await pg.Database.ExecuteSqlInterpolatedAsync(
-                            $"UPDATE \"Rooms\" SET \"Name\" = {"Committed before disable"} WHERE \"Id\" = {roomB}");
+                            $"UPDATE \"BuildingManagementRooms\" SET \"Name\" = {"Committed before disable"} WHERE \"Id\" = {roomB}");
                         disableResult = Task.Run(async () =>
                         {
                             await using var identityConnection =
@@ -570,7 +570,7 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                                 IDbContextProvider<BuildingManagementDbContext>>()
                                 .GetDbContextAsync();
                             await pg.Database.ExecuteSqlInterpolatedAsync(
-                                $"UPDATE \"Rooms\" SET \"Name\" = {"Committed before permission revoke"} WHERE \"Id\" = {roomB}");
+                                $"UPDATE \"BuildingManagementRooms\" SET \"Name\" = {"Committed before permission revoke"} WHERE \"Id\" = {roomB}");
                             removedPermission = Task.Run(async () =>
                             {
                                 await using var connection = new NpgsqlConnection(idCs);

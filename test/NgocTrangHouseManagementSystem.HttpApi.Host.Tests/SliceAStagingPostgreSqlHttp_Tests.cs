@@ -614,6 +614,140 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 await uow.CompleteAsync();
             }
 
+            // Role-only permission path: ABP Identity membership, role
+            // and role permission are real persisted rows. A stale role
+            // claim cannot bypass the commit-bound Identity lease after
+            // either the role permission OR the user-role row is revoked.
+            var delegatedRole = "slicea_role_" + Guid.NewGuid().ToString("N");
+            var delegatedRoleId = Guid.NewGuid();
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var roleManager = sp.GetRequiredService<IdentityRoleManager>();
+                var roleCreated = await roleManager.CreateAsync(
+                    new IdentityRole(delegatedRoleId, delegatedRole));
+                Assert.True(roleCreated.Succeeded,
+                    string.Join("; ", roleCreated.Errors.Select(x => x.Description)));
+                var users = sp.GetRequiredService<IdentityUserManager>();
+                var operatorAccount = await users.GetByIdAsync(operatorB);
+                var joined = await users.AddToRoleAsync(operatorAccount, delegatedRole);
+                Assert.True(joined.Succeeded,
+                    string.Join("; ", joined.Errors.Select(x => x.Description)));
+                var permissions = sp.GetRequiredService<IPermissionManager>();
+                await permissions.SetForRoleAsync(delegatedRole,
+                    BuildingManagementPermissions.Rooms.Manage, true);
+                await permissions.SetForUserAsync(operatorB,
+                    BuildingManagementPermissions.Rooms.Manage, false);
+                await uow.CompleteAsync();
+            }
+
+            async Task CheckRoleRevokeWaitsAsync(bool removeMembership)
+            {
+                Task<int>? revoke = null;
+                using (var scope = app.Services.CreateScope())
+                {
+                    var sp = scope.ServiceProvider;
+                    var accessor = sp.GetRequiredService<ICurrentPrincipalAccessor>();
+                    using (accessor.Change(new ClaimsPrincipal(new ClaimsIdentity(
+                        new[]
+                        {
+                            new Claim(AbpClaimTypes.UserId, operatorB.ToString("D")),
+                            new Claim(ClaimTypes.NameIdentifier, operatorB.ToString("D")),
+                            new Claim(AbpClaimTypes.Role, delegatedRole)
+                        }, "PersistedRoleOnlyActor"))))
+                    {
+                        using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                            .Begin(requiresNew: true, isTransactional: true);
+                        await sp.GetRequiredService<IBuildingScopedWriteBoundary>()
+                            .ExecuteBuildingAsync(b, async () =>
+                            {
+                                var pg = await sp.GetRequiredService<
+                                    IDbContextProvider<BuildingManagementDbContext>>()
+                                    .GetDbContextAsync();
+                                await pg.Database.ExecuteSqlInterpolatedAsync(
+                                    $"UPDATE \"BuildingManagementRooms\" SET \"Name\" = {"Role-only authorized write"} WHERE \"Id\" = {roomB}");
+                                revoke = Task.Run(async () =>
+                                {
+                                    await using var idConn = new NpgsqlConnection(idCs);
+                                    await idConn.OpenAsync();
+                                    await using var cmd = new NpgsqlCommand(
+                                        removeMembership
+                                            ? """DELETE FROM "AbpUserRoles" WHERE "UserId" = @actor AND "RoleId" = @role"""
+                                            : """DELETE FROM "AbpPermissionGrants" WHERE "ProviderName" = 'R' AND "ProviderKey" = @roleName AND "Name" = @permission""",
+                                        idConn);
+                                    if (removeMembership)
+                                    {
+                                        cmd.Parameters.AddWithValue("actor", operatorB);
+                                        cmd.Parameters.AddWithValue("role", delegatedRoleId);
+                                    }
+                                    else
+                                    {
+                                        cmd.Parameters.AddWithValue("roleName", delegatedRole);
+                                        cmd.Parameters.AddWithValue("permission",
+                                            BuildingManagementPermissions.Rooms.Manage);
+                                    }
+                                    return await cmd.ExecuteNonQueryAsync();
+                                });
+                                await Task.Delay(250);
+                                Assert.False(revoke.IsCompleted,
+                                    "ABP role revocation must await Building transaction commit.");
+                                return true;
+                            }, BuildingScopedMutationKind.Room);
+                        await uow.CompleteAsync();
+                    }
+                }
+                Assert.NotNull(revoke);
+                Assert.Equal(1, await revoke!.WaitAsync(TimeSpan.FromSeconds(15)));
+                using (var scope = app.Services.CreateScope())
+                {
+                    var sp = scope.ServiceProvider;
+                    var accessor = sp.GetRequiredService<ICurrentPrincipalAccessor>();
+                    using (accessor.Change(new ClaimsPrincipal(new ClaimsIdentity(
+                        new[]
+                        {
+                            new Claim(AbpClaimTypes.UserId, operatorB.ToString("D")),
+                            new Claim(ClaimTypes.NameIdentifier, operatorB.ToString("D")),
+                            new Claim(AbpClaimTypes.Role, delegatedRole)
+                        }, "StaleRoleClaim"))))
+                    {
+                        using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                            .Begin(requiresNew: true, isTransactional: true);
+                        var mutated = false;
+                        await Assert.ThrowsAsync<Volo.Abp.Authorization.AbpAuthorizationException>(
+                            () => sp.GetRequiredService<IBuildingScopedWriteBoundary>()
+                                .ExecuteBuildingAsync(b, () =>
+                                {
+                                    mutated = true;
+                                    return Task.FromResult(true);
+                                }, BuildingScopedMutationKind.Room));
+                        Assert.False(mutated);
+                    }
+                }
+            }
+
+            await CheckRoleRevokeWaitsAsync(removeMembership: false);
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                await sp.GetRequiredService<IPermissionManager>().SetForRoleAsync(
+                    delegatedRole, BuildingManagementPermissions.Rooms.Manage, true);
+                await uow.CompleteAsync();
+            }
+            await CheckRoleRevokeWaitsAsync(removeMembership: true);
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                await sp.GetRequiredService<IPermissionManager>().SetForUserAsync(
+                    operatorB, BuildingManagementPermissions.Rooms.Manage, true);
+                await uow.CompleteAsync();
+            }
+
             // The PostgreSQL-backed HTTP path must also honor fresh ABP
             // Identity account state and durable user permission changes.
             // A still-valid membership is NEVER sufficient by itself.

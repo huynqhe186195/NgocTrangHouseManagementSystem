@@ -1790,7 +1790,7 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             var allocationRoom = await CreateChildAsync(clientB, roomCreate,
                 new { floorId = floorB, roomNumber = "104",
                     name = "PG B104 allocation", area = 25.0,
-                    capacity = 2, status = 0 });
+                    capacity = 2, status = 1 });
             Guid allocationReservation;
             using (var body = new StringContent(ReservationJson(
                 allocationRoom, tenantB), Encoding.UTF8, "application/json"))
@@ -1902,7 +1902,7 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             var refundRoom = await CreateChildAsync(clientB, roomCreate,
                 new { floorId = floorB, roomNumber = "105",
                     name = "PG B105 full deposit refund", area = 25.0,
-                    capacity = 2, status = 0 });
+                    capacity = 2, status = 1 });
             Guid refundReservation;
             using (var body = new StringContent(ReservationJson(
                 refundRoom, tenantB), Encoding.UTF8, "application/json"))

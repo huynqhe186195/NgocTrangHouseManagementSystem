@@ -174,6 +174,11 @@ public sealed class AbpIdentityPermissionRealDi_Tests
                 Assert.Null(await issuer.GetAuthorizedIssuerAsync());
                 roots.RootUserIds.Add(actor);
                 Assert.Equal(actor, await issuer.GetAuthorizedIssuerAsync());
+                var unexpectedRoot = Guid.NewGuid();
+                roots.RootUserIds.Add(unexpectedRoot);
+                Assert.Null(await issuer.GetAuthorizedIssuerAsync());
+                roots.RootUserIds.Remove(unexpectedRoot);
+                Assert.Equal(actor, await issuer.GetAuthorizedIssuerAsync());
                 Assert.True(await accountReader.IsActiveAsync(actor));
 
                 // One COMPLETE positive/negative building authorization

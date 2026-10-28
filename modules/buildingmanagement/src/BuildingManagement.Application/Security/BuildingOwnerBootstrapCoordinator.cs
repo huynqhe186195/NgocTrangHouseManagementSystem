@@ -56,7 +56,10 @@ public sealed class AbpBuildingOwnerBootstrapPrincipalReader :
 
         // BOTH explicit root account membership AND dedicated permission:
         // there is no blanket administrator exception.
-        if (_roots.Value.RootUserIds?.Contains(_user.Id.Value) != true)
+        // Exactly ONE designated root. Invalid/multiple configured IDs
+        // fail closed even if more than one has a genuine ABP permission.
+        var roots = _roots.Value.RootUserIds;
+        if (roots is not { Count: 1 } || !roots.Contains(_user.Id.Value))
             return null;
 
         if (!await _permissions.IsGrantedAsync(

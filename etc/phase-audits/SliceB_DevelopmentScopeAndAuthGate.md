@@ -336,3 +336,17 @@ complete atomically. If actual readings are missing or ambiguous it refuses,
 and no other checklist task, invoice, deposit or contract state changes.
 PostgreSQL HTTP tests cover foreign IDs and no-evidence rejection with
 all checklist tasks still incomplete.
+
+
+## Scoped direct ContractDeposit collection (isolated staging)
+
+Staged \`POST /{contractId}/deposit-payments\` records a Pending direct
+contract deposit. \`POST /{contractId}/deposit-payments/{paymentId}/complete\`
+accepts only a persisted ContractDeposit receipt for the exact route
+ContractId, under Contract FOR UPDATE, active Contracts.Manage Identity
+permission and live building membership held to commit. The existing payment
+service validates primary tenant, deposit coverage, receipt method/reference
+and atomically posts a single completed allocation journal. A second confirm
+is refused. The global legacy Payment HTTP controller stays DENY. Tests
+cover unauthorized building, mismatched contract identifiers, successful
+500k cash confirmation, duplicate rejection, and one ledger row.

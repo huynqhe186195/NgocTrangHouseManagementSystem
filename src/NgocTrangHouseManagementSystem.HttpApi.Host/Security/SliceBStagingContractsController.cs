@@ -184,6 +184,29 @@ public sealed class SliceBStagingContractsController : ControllerBase
             .AllocateReservationDepositAsync(id, reservationId);
     }
 
+    // Staging scoped ContractDeposit receipt; the original payment service
+    // validates cash receipt and records an allocation in the same UoW.
+    [HttpPost("{id:guid}/deposit-payments")]
+    [UnitOfWork(true)]
+    public Task<PaymentDto> CreateContractDepositPaymentAsync(
+        [FromRoute] Guid id, [FromBody] CreateContractDepositPaymentDto input)
+    {
+        RequireIsolatedStaging();
+        return (_mutation ?? throw Denied())
+            .CreateContractDepositPaymentAsync(id, input);
+    }
+
+    [HttpPost("{id:guid}/deposit-payments/{paymentId:guid}/complete")]
+    [UnitOfWork(true)]
+    public Task<PaymentDto> CompleteContractDepositPaymentAsync(
+        [FromRoute] Guid id, [FromRoute] Guid paymentId,
+        [FromBody] CompletePaymentDto input)
+    {
+        RequireIsolatedStaging();
+        return (_mutation ?? throw Denied())
+            .CompleteContractDepositPaymentAsync(id, paymentId, input);
+    }
+
     // Move-out scheduling/approval only; never completes move-out, settles
     // deposits, ends a contract, or releases an occupied room.
     [HttpGet("{id:guid}/move-out-requests")]

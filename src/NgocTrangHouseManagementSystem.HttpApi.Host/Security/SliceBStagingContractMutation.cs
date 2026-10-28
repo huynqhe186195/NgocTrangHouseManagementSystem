@@ -294,6 +294,49 @@ public sealed class SliceBStagingContractMutation
     }
 
     /// <summary>
+    /// Record a Pending direct ContractDeposit payment for the route's own
+    /// locked Contract; a client-supplied ContractId cannot target another
+    /// room or building. Does not mark money as collected.
+    /// </summary>
+    public Task<PaymentDto> CreateContractDepositPaymentAsync(
+        Guid contractId, CreateContractDepositPaymentDto input)
+    {
+        if (input is null || contractId == Guid.Empty ||
+            input.ContractId != contractId)
+            throw Denied();
+        return MutateLinkAsync(contractId,
+            (_, _) => _payments.CreateContractDepositAsync(input));
+    }
+
+    /// <summary>
+    /// Confirm exactly one pending ContractDeposit receipt under the
+    /// persisted Contract->Room->Building authorization lease. The service
+    /// reuses the Contract FOR UPDATE lock, validates the primary tenant,
+    /// verifies remaining deposit capacity, and writes the receipt and
+    /// allocation ledger atomically.
+    /// </summary>
+    public Task<PaymentDto> CompleteContractDepositPaymentAsync(
+        Guid contractId, Guid paymentId, CompletePaymentDto input)
+    {
+        if (contractId == Guid.Empty || paymentId == Guid.Empty ||
+            input is null)
+            throw Denied();
+        return MutateLinkAsync(contractId, async (db, _) =>
+        {
+            if (!await db.Payments.AsNoTracking().AnyAsync(p =>
+                p.Id == paymentId && !p.IsDeleted &&
+                p.ContractId == contractId &&
+                p.Purpose == PaymentPurpose.ContractDeposit))
+                throw Denied();
+            var received = await _payments.CompleteAsync(paymentId, input);
+            if (received.ContractId != contractId ||
+                received.Purpose != PaymentPurpose.ContractDeposit)
+                throw Denied();
+            return received;
+        });
+    }
+
+    /// <summary>
     /// Create a notice only for the route's own authorized Active contract.
     /// The body cannot substitute a foreign ContractId. Existing domain
     /// notice-date, open-request and transaction rules remain authoritative.

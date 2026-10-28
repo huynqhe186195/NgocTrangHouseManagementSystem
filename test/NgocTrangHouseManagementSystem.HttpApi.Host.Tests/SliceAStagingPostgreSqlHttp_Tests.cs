@@ -1561,6 +1561,86 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 RenewalRoute(cancelContract), payload))
                 Assert.NotEqual(HttpStatusCode.OK, response.StatusCode);
 
+            // Direct ContractDeposit payment has its own contract-bound
+            // route. A cross-building ID and route/body substitution are
+            // forbidden, and duplicate cash confirmation cannot create
+            // a second allocation.
+            string DirectDepositRoute(Guid contractId) =>
+                scopedContracts + "/" + contractId.ToString("D") +
+                "/deposit-payments";
+            string DirectDepositJson(Guid contractId) => JsonSerializer.Serialize(new
+            {
+                contractId,
+                paymentNumber = "DIRECT-DEP-" + Guid.NewGuid().ToString("N"),
+                amount = 500000m,
+                method = 1,
+                channel = 1
+            });
+            using (var body = new StringContent(DirectDepositJson(contractA),
+                Encoding.UTF8, "application/json"))
+            using (var response = await clientB.PostAsync(
+                DirectDepositRoute(contractA), body))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var body = new StringContent(DirectDepositJson(contractA),
+                Encoding.UTF8, "application/json"))
+            using (var response = await clientB.PostAsync(
+                DirectDepositRoute(cancelContract), body))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+
+            Guid directPayment;
+            using (var body = new StringContent(DirectDepositJson(cancelContract),
+                Encoding.UTF8, "application/json"))
+            using (var response = await clientB.PostAsync(
+                DirectDepositRoute(cancelContract), body))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await response.Content.ReadAsStringAsync());
+                directPayment = json.RootElement.GetProperty("id").GetGuid();
+                Assert.Equal(1, json.RootElement.GetProperty("status").GetInt32());
+            }
+            string CompleteDirectRoute(Guid contractId) =>
+                DirectDepositRoute(contractId) + "/" +
+                directPayment.ToString("D") + "/complete";
+            using (var body = new StringContent("{}",
+                Encoding.UTF8, "application/json"))
+            using (var response = await clientB.PostAsync(
+                CompleteDirectRoute(contractA), body))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var body = new StringContent("{}",
+                Encoding.UTF8, "application/json"))
+            using (var response = await clientB.PostAsync(
+                CompleteDirectRoute(cancelContract), body))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await response.Content.ReadAsStringAsync());
+                Assert.Equal(2, json.RootElement.GetProperty("status").GetInt32());
+            }
+            using (var body = new StringContent("{}",
+                Encoding.UTF8, "application/json"))
+            using (var response = await clientB.PostAsync(
+                CompleteDirectRoute(cancelContract), body))
+                Assert.NotEqual(HttpStatusCode.OK, response.StatusCode);
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var db = await sp.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>()
+                    .GetDbContextAsync();
+                var postings = await db.DepositSettlements
+                    .Where(s => s.PaymentId == directPayment).ToListAsync();
+                Assert.Single(postings);
+                Assert.Equal(500000m, postings[0].Amount);
+                Assert.Equal(cancelContract, postings[0].TargetContractId);
+                Assert.Equal(
+                    BuildingManagement.DepositSettlements.DepositSettlementType.AllocateToContractDeposit,
+                    postings[0].Type);
+                await uow.CompleteAsync();
+            }
+
             // Reservation creation is scoped to existing tenant provenance:
             // operator B may reserve only a B room for a B-linked tenant.
             var reservationRoute = scopedContracts + "/reservations";

@@ -257,27 +257,7 @@ public sealed class SliceBStagingFinalInvoiceMutation
     private static FinalInvoiceIssuePreflight AnchorPreflight(
         FinalInvoiceIssuePreflight current,
         FinalInvoiceIssueEvidenceRecord archived)
-    {
-        if (current.KnownBaseChargeTotal != archived.KnownBaseChargeTotal ||
-            current.UtilityDraftId != archived.DraftInvoiceId ||
-            current.MoveOutRequestId != archived.MoveOutRequestId ||
-            current.ContractId != archived.ContractId ||
-            current.RoomId != archived.RoomId)
-            throw Denied();
-
-        var anchored = new FinalInvoiceIssuePreflight
-        {
-            MoveOutRequestId = current.MoveOutRequestId,
-            ContractId = current.ContractId,
-            RoomId = current.RoomId,
-            UtilityDraftId = current.UtilityDraftId,
-            KnownBaseChargeTotal = current.KnownBaseChargeTotal,
-            BaseCharges = current.BaseCharges,
-            EvidenceSha256 = archived.EvidenceSha256
-        };
-        anchored.Blockers.AddRange(current.Blockers);
-        return anchored;
-    }
+        => current.AnchorToVerifiedArchivedEvidence(archived);
 
     private static async Task<FinalInvoiceIssueEvidenceRecord> RequireArchiveAsync(
         BuildingManagementDbContext db, Guid contractId,

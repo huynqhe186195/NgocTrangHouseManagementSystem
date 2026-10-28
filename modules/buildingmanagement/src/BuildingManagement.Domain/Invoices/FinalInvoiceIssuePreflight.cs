@@ -28,6 +28,41 @@ public sealed class FinalInvoiceIssuePreflight
     public bool CanIssue => false;
     public bool IsReceivablePosted => false;
     public bool IsDebtCalculated => false;
+
+    /// <summary>
+    /// Rebind a freshly captured preflight to a VERIFIED historical evidence
+    /// digest. CapturedAtUtc changes with every fresh read; only the drift
+    /// and original-source auditors can establish the CURRENT draft still
+    /// matches that historical digest. This method does NOT approve money.
+    /// </summary>
+    public FinalInvoiceIssuePreflight AnchorToVerifiedArchivedEvidence(
+        FinalInvoiceIssueEvidenceRecord archived)
+    {
+        ArgumentNullException.ThrowIfNull(archived);
+        archived.VerifyStoredEvidence();
+        if (MoveOutRequestId != archived.MoveOutRequestId ||
+            ContractId != archived.ContractId ||
+            RoomId != archived.RoomId ||
+            UtilityDraftId != archived.DraftInvoiceId ||
+            KnownBaseChargeTotal != archived.KnownBaseChargeTotal ||
+            BaseCharges.Count != 3 ||
+            BaseCharges.Sum(x => x.Amount) != archived.KnownBaseChargeTotal)
+            throw new InvalidOperationException(
+                "The current invoice preflight does not match archived evidence scope or base amount.");
+
+        var anchor = new FinalInvoiceIssuePreflight
+        {
+            MoveOutRequestId = MoveOutRequestId,
+            ContractId = ContractId,
+            RoomId = RoomId,
+            UtilityDraftId = UtilityDraftId,
+            KnownBaseChargeTotal = KnownBaseChargeTotal,
+            BaseCharges = BaseCharges,
+            EvidenceSha256 = archived.EvidenceSha256
+        };
+        anchor.Blockers.AddRange(Blockers);
+        return anchor;
+    }
 }
 
 public enum FinalInvoiceBaseChargeType

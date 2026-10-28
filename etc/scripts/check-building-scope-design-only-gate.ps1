@@ -184,7 +184,8 @@ foreach ($check in @(
 $bootstrapCoordinator = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/Security/BuildingOwnerBootstrapCoordinator.cs'
 $atomicWriter = Read-Source 'modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Security/EfBuildingOwnerBootstrapAtomicWriter.cs'
 if ($buildingCrud -notmatch 'CreateWithCurrentOwnerAsync' -or
-    $bootstrapCoordinator -notmatch 'RootUserIds\?\.Contains' -or
+    $bootstrapCoordinator -notmatch 'roots\s+is\s+not\s+\{\s*Count:\s*1\s*\}' -or
+    $bootstrapCoordinator -notmatch 'roots\.Contains\(_user\.Id\.Value\)' -or
     $bootstrapCoordinator -notmatch 'BuildingOwnerBootstrapSecurityOptions' -or
     $bootstrapCoordinator -notmatch 'BootstrapOwner' -or
     $bootstrapCoordinator -notmatch 'DenyAllBuildingOwnerBootstrapWriter' -or

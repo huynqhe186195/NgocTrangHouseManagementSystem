@@ -47,3 +47,33 @@ CREATE UNIQUE INDEX "UX_BM_OperatorBuilding_Unrevoked"
 
 CREATE INDEX "IX_BM_OperatorBuilding_BuildingId"
     ON "BuildingManagementOperatorBuildingGrants" ("BuildingId");
+
+-- A limited UPDATE privilege must not permit re-activating or rewriting
+-- historical membership. One and only one null->revoked transition is valid.
+-- This guard is owned by the migration role, never the runtime login.
+CREATE FUNCTION "BM_GuardOperatorGrantHistory"()
+RETURNS trigger
+LANGUAGE plpgsql AS $grant_guard$
+BEGIN
+    IF OLD."RevokedAtUtc" IS NOT NULL
+       OR NEW."Id" IS DISTINCT FROM OLD."Id"
+       OR NEW."OperatorUserId" IS DISTINCT FROM OLD."OperatorUserId"
+       OR NEW."BuildingId" IS DISTINCT FROM OLD."BuildingId"
+       OR NEW."GrantedByUserId" IS DISTINCT FROM OLD."GrantedByUserId"
+       OR NEW."GrantedAtUtc" IS DISTINCT FROM OLD."GrantedAtUtc"
+       OR NEW."ExpiresAtUtc" IS DISTINCT FROM OLD."ExpiresAtUtc"
+       OR NEW."ExtraProperties" IS DISTINCT FROM OLD."ExtraProperties"
+       OR NEW."RevokedAtUtc" IS NULL
+       OR NEW."RevokedByUserId" IS NULL
+       OR NEW."RevisionNumber" <> OLD."RevisionNumber" + 1 THEN
+        RAISE EXCEPTION 'Operator-building membership history is immutable'
+            USING ERRCODE = '23514';
+    END IF;
+    RETURN NEW;
+END;
+$grant_guard$;
+
+CREATE TRIGGER "TR_BM_OperatorGrant_RevocationOnly"
+BEFORE UPDATE ON "BuildingManagementOperatorBuildingGrants"
+FOR EACH ROW EXECUTE FUNCTION "BM_GuardOperatorGrantHistory"();
+

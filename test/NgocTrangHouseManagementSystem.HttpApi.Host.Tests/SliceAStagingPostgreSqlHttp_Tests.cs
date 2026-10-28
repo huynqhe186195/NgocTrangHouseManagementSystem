@@ -1281,6 +1281,120 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 Members(contractC) + "/" + registeredTenant.ToString("D")))
                 Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
+            // An independent room is used for sign/activate so existing
+            // Slice A room-mutation and deletion probes stay unchanged.
+            var signingRoom = await CreateChildAsync(clientB, roomCreate,
+                new { floorId = floorB, roomNumber = "102",
+                    name = "PG B102 signing", area = 25.0,
+                    capacity = 2, status = 1 });
+            async Task<Guid> CreateSigningDraftAsync(string suffix)
+            {
+                using var body = new StringContent(CreateJson(signingRoom,
+                    "SIGN-B-" + suffix + "-" + Guid.NewGuid().ToString("N")),
+                    Encoding.UTF8, "application/json");
+                using var response = await clientB.PostAsync(scopedContracts, body);
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await response.Content.ReadAsStringAsync());
+                return json.RootElement.GetProperty("id").GetGuid();
+            }
+            var signCandidate1 = await CreateSigningDraftAsync("1");
+            var signCandidate2 = await CreateSigningDraftAsync("2");
+            Assert.Equal(HttpStatusCode.OK,
+                await PostMemberAsync(signCandidate1, tenantB, 1));
+            Assert.Equal(HttpStatusCode.OK,
+                await PostMemberAsync(signCandidate2, tenantB, 1));
+
+            using (var response = await clientB.PostAsync(
+                scopedContracts + "/" + contractA.ToString("D") + "/sign", null))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var response = await clientB.PostAsync(
+                scopedContracts + "/" + contractA.ToString("D") + "/activate", null))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+
+            // Hold the room EXCLUSIVELY using an independent DB connection.
+            // Neither candidate may pass through signing while the room is
+            // locked. After release only ONE can sign due to overlap checks
+            // re-evaluated under the acquired room lock.
+            await using (var lockConnection = new NpgsqlConnection(buildingCs))
+            {
+                await lockConnection.OpenAsync();
+                await using var lockTx = await lockConnection.BeginTransactionAsync();
+                await using (var cmd = new NpgsqlCommand(
+                    """
+                    SELECT "Id" FROM "BuildingManagementRooms"
+                     WHERE "Id" = @room FOR UPDATE
+                    """, lockConnection, lockTx))
+                {
+                    cmd.Parameters.AddWithValue("room", signingRoom);
+                    Assert.Equal(signingRoom, await cmd.ExecuteScalarAsync());
+                }
+                async Task<HttpStatusCode> SignWithClientAsync(Guid id)
+                {
+                    using var response = await clientB.PostAsync(
+                        scopedContracts + "/" + id.ToString("D") + "/sign", null);
+                    return response.StatusCode;
+                }
+                var signing1 = Task.Run(() => SignWithClientAsync(signCandidate1));
+                var signing2 = Task.Run(() => SignWithClientAsync(signCandidate2));
+                await Task.Delay(250);
+                Assert.False(signing1.IsCompleted,
+                    "First contract sign must wait for room row lock.");
+                Assert.False(signing2.IsCompleted,
+                    "Second contract sign must wait for room row lock.");
+                await lockTx.CommitAsync();
+                var results = await Task.WhenAll(signing1, signing2);
+                Assert.Equal(1, results.Count(x => x == HttpStatusCode.OK));
+                var signed = results[0] == HttpStatusCode.OK
+                    ? signCandidate1 : signCandidate2;
+                var rejected = signed == signCandidate1
+                    ? signCandidate2 : signCandidate1;
+                using (var response = await clientB.GetAsync(
+                    scopedContracts + "/" + signed.ToString("D")))
+                {
+                    Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                    using var json = JsonDocument.Parse(
+                        await response.Content.ReadAsStringAsync());
+                    Assert.Equal(5,
+                        json.RootElement.GetProperty("status").GetInt32());
+                }
+                using (var response = await clientB.GetAsync(
+                    scopedContracts + "/" + rejected.ToString("D")))
+                {
+                    Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                    using var json = JsonDocument.Parse(
+                        await response.Content.ReadAsStringAsync());
+                    Assert.Equal(1,
+                        json.RootElement.GetProperty("status").GetInt32());
+                }
+                using (var response = await clientB.PostAsync(
+                    scopedContracts + "/" + signed.ToString("D") + "/activate",
+                    null))
+                {
+                    Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                    using var json = JsonDocument.Parse(
+                        await response.Content.ReadAsStringAsync());
+                    Assert.Equal(2,
+                        json.RootElement.GetProperty("status").GetInt32());
+                }
+                using (var response = await clientB.GetAsync(
+                    ChildId(roomGet, signingRoom)))
+                {
+                    Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                    using var json = JsonDocument.Parse(
+                        await response.Content.ReadAsStringAsync());
+                    Assert.Equal(2,
+                        json.RootElement.GetProperty("status").GetInt32());
+                }
+                using (var response = await clientB.PostAsync(
+                    scopedContracts + "/" + rejected.ToString("D") +
+                        "/activate", null))
+                    Assert.NotEqual(HttpStatusCode.OK, response.StatusCode);
+                using (var response = await clientB.PostAsync(
+                    scopedContracts + "/" + signed.ToString("D") + "/sign", null))
+                    Assert.NotEqual(HttpStatusCode.OK, response.StatusCode);
+            }
+
             // Identity Contracts.Manage DELETE cannot pass a Building write
             // transaction's permission lease. After revocation commits,
             // a fresh POST fails even if ABP's cache still says granted.

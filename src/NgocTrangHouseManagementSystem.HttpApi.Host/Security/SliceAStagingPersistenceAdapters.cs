@@ -86,6 +86,28 @@ public sealed class SliceAStagingWriteBoundary : IBuildingScopedWriteBoundary
     }
 }
 
+/// <summary>
+/// Enabled ONLY by the reviewed isolated staging host composition.
+/// The durable evidence must be recorded by two independent principals.
+/// </summary>
+public sealed class SliceAStagingOwnerRecoveryWriter : IBuildingOwnerRecoveryWriter
+{
+    private readonly IDbContextProvider<BuildingManagementDbContext> _provider;
+    public SliceAStagingOwnerRecoveryWriter(
+        IDbContextProvider<BuildingManagementDbContext> provider)
+        => _provider = provider;
+
+    public async Task<Guid> RecoverAtomicallyAsync(
+        Guid buildingId, Guid originalOwnerId, Guid newOwnerId,
+        Guid firstApprovedRootId, Guid secondApprovedRootId,
+        Guid approvalEvidenceId)
+        => await new EfBuildingOwnerRecoveryAtomicWriter(
+            await _provider.GetDbContextAsync(), TimeProvider.System)
+            .RecoverAtomicallyAsync(buildingId, originalOwnerId,
+                newOwnerId, firstApprovedRootId, secondApprovedRootId,
+                approvalEvidenceId);
+}
+
 public sealed class SliceAStagingGrantMutationWriter : IBuildingOperatorGrantMutationWriter
 {
     private readonly IDbContextProvider<BuildingManagementDbContext> _provider;

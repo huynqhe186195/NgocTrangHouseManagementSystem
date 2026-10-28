@@ -903,6 +903,31 @@ public sealed class SliceAGrantEfMigrationPostgreSql_Tests
                 building = (await new EfBuildingOwnerBootstrapAtomicWriter(seed)
                     .CreateWithOwnerAtomicallyAsync(
                         founder, "Founding grant intact", "Scratch PG", null)).Id;
+                // Same-table shape as the additive runtime approval migration.
+                // The dedicated full-chain test exercises the real migration.
+                await seed.Database.ExecuteSqlRawAsync("""
+                    CREATE TABLE "BuildingManagementOwnerRecoverySignoffs" (
+                        "EvidenceId" uuid NOT NULL,
+                        "BuildingId" uuid NOT NULL,
+                        "FoundingOwnerId" uuid NOT NULL,
+                        "NewOwnerId" uuid NOT NULL,
+                        "ApprovedByUserId" uuid NOT NULL,
+                        "ApprovedAtUtc" timestamptz NOT NULL,
+                        "ExpiresAtUtc" timestamptz NOT NULL,
+                        "ConsumedAtUtc" timestamptz NULL,
+                        "RecoveryGrantId" uuid NULL,
+                        PRIMARY KEY ("EvidenceId", "ApprovedByUserId")
+                    );
+                    """);
+                foreach (var signer in new[] { first, second })
+                    await seed.Database.ExecuteSqlInterpolatedAsync($"""
+                        INSERT INTO "BuildingManagementOwnerRecoverySignoffs"
+                            ("EvidenceId","BuildingId","FoundingOwnerId",
+                             "NewOwnerId","ApprovedByUserId","ApprovedAtUtc","ExpiresAtUtc")
+                        VALUES ({evidence}, {building}, {founder},
+                                {recipient}, {signer}, {DateTime.UtcNow.AddMinutes(-1)},
+                                {DateTime.UtcNow.AddMinutes(20)})
+                        """);
             }
 
             await using (var operation = OpenGrantDb(cs))
@@ -918,7 +943,11 @@ public sealed class SliceAGrantEfMigrationPostgreSql_Tests
                 var created = await writer.RecoverAtomicallyAsync(
                     building, founder, recipient, first, second, evidence);
                 Assert.NotEqual(Guid.Empty, created);
-                await Assert.ThrowsAsync<DbUpdateException>(() =>
+                await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+                    writer.RecoverAtomicallyAsync(
+                        building, founder, recipient, first, second,
+                        evidence));
+                await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
                     writer.RecoverAtomicallyAsync(
                         building, founder, recipient, first, second,
                         Guid.NewGuid()));
@@ -931,6 +960,10 @@ public sealed class SliceAGrantEfMigrationPostgreSql_Tests
                 x.OperatorUserId == founder);
             Assert.Equal(founder, original.GrantedByUserId);
             Assert.Null(original.RevokedAtUtc);
+            var consumed = await verify.Database
+                .SqlQueryRaw<int>("SELECT COUNT(*) AS \"Value\" FROM \"BuildingManagementOwnerRecoverySignoffs\" WHERE \"EvidenceId\" = {0} AND \"ConsumedAtUtc\" IS NOT NULL", evidence)
+                .SingleAsync();
+            Assert.Equal(2, consumed);
             var recovered = await verify.Grants.SingleAsync(x =>
                 x.OperatorUserId == recipient);
             Assert.Equal(first, recovered.GrantedByUserId);

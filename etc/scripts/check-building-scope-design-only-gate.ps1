@@ -75,6 +75,18 @@ foreach ($name in @('IQueryable<Building>', 'IQueryable<Floor>',
     }
 }
 
+# BuildingAppService writes must never bypass a mandatory boundary.
+$buildingService = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/Buildings/BuildingAppService.cs'
+$boundary = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/Security/DenyAllBuildingScopedWriteBoundary.cs'
+$adapter = Read-Source 'modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Security/EfBuildingScopedWriteBoundaryCandidate.cs'
+if ($buildingService -notmatch 'IBuildingScopedWriteBoundary' -or
+    ([regex]::Matches($buildingService, 'ExecuteBuildingAsync')).Count -lt 2 -or
+    $boundary -notmatch 'class DenyAllBuildingScopedWriteBoundary' -or
+    $adapter -match ':\s*IBuildingScopedWriteBoundary\s*,\s*ITransientDependency' -or
+    $adapter -match '\[(ExposeServices|Dependency)\s*\(') {
+    throw 'Safety stop: Building write boundary bypassed or candidate registered.'
+}
+
 # Staged CRUD writes must remain locked to unrevoked membership, never auto DI.
 $fence = Read-Source 'modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Security/EfBuildingScopedWriteFenceCandidate.cs'
 if ($fence -notmatch 'FOR SHARE OF g' -or

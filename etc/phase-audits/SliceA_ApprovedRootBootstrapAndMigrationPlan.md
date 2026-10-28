@@ -90,3 +90,20 @@ not A; after A's membership is revoked, A is denied. This is a real
 positive/negative HTTP routing test, but NOT a production PostgreSQL
 host or a release of the privilege model. Grant/revoke API remains
 disabled and production DenyAll remains intact.
+
+## Building mutation boundary wired (still production DENY)
+
+`BuildingAppService.UpdateAsync` and `DeleteAsync` now execute INSIDE
+`IBuildingScopedWriteBoundary`, after ABP CRUD preflight. The production
+default `DenyAllBuildingScopedWriteBoundary` rejects every mutation,
+including a future mistakenly permissive preflight configuration.
+`EfBuildingScopedWriteBoundaryCandidate` is an unregistered adapter
+which resolves the trusted actor from `ICurrentUser` and delegates to
+the PostgreSQL grant-lock fence using the same EF DbContext transaction.
+It deliberately refuses unmapped grants and SQLite in production.
+
+The isolated SQLite HTTP fixture overrides only its test DI boundary to
+check permission + membership before Update; it does NOT claim to
+serialize concurrent PostgreSQL writes. PostgreSQL EF tests exercise the
+actual row lock and revocation ordering separately. **No production
+DB migration, mapping, DI registration or release change.**

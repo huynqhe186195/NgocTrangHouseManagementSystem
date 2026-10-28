@@ -287,6 +287,28 @@ public sealed class SliceAStagingHttpTwoBuildings_Tests
         }
     }
 
+    /// <summary>
+    /// SQLite-only boundary for the real HTTP staging fixture. Rechecks
+    /// server-side capability and active membership before the mutation;
+    /// it DOES NOT simulate PostgreSQL row locks. PG lock tests separately
+    /// exercise EfBuildingScopedWriteBoundaryCandidate.
+    /// </summary>
+    public sealed class StagingSqliteWriteBoundary : IBuildingScopedWriteBoundary
+    {
+        private readonly IBuildingCrudAccessPolicy _policy;
+        public StagingSqliteWriteBoundary(IBuildingCrudAccessPolicy policy)
+            => _policy = policy;
+
+        public async Task<T> ExecuteBuildingAsync<T>(
+            Guid serverResolvedBuildingId, Func<Task<T>> mutation)
+        {
+            await _policy.EnsureBuildingAsync(
+                serverResolvedBuildingId,
+                BuildingBusinessCapability.ManageBuilding);
+            return await mutation();
+        }
+    }
+
     public sealed class StagingMembershipReader : IBuildingOperatorGrantReader
     {
         private readonly string _connection;
@@ -355,6 +377,9 @@ public sealed class SliceAStagingHttpTwoBuildings_Tests
             context.Services.Replace(
                 ServiceDescriptor.Transient<IBuildingOperatorGrantReader,
                     StagingMembershipReader>());
+            context.Services.Replace(
+                ServiceDescriptor.Transient<IBuildingScopedWriteBoundary,
+                    StagingSqliteWriteBoundary>());
 
             Configure<AbpMvcLibsOptions>(o => o.CheckLibs = false);
             Configure<MvcOptions>(o => o.Conventions.Add(

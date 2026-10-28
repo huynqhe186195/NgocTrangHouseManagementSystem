@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using BuildingManagement.Buildings;
 using BuildingManagement.Security;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Volo.Abp.Authorization;
 
 namespace BuildingManagement.EntityFrameworkCore.Security;
@@ -123,6 +124,51 @@ public sealed class EfBuildingOperatorGrantAtomicMutationWriter :
     {
         if (_db.Model.FindEntityType(typeof(BuildingOperatorAccessGrant)) is null)
             throw Denied();
+
+        // PostgreSQL must lock the issuer row for the COMPLETE transaction
+        // to serialize delegation with issuer revocation. This is essential
+        // when joining an ABP READ COMMITTED UnitOfWork. SQLite uses the
+        // existing in-memory/isolated EF query in its test-only composition.
+        if (_db.Database.IsNpgsql())
+        {
+            var transaction = _db.Database.CurrentTransaction
+                ?? throw Denied();
+            var isolation = transaction.GetDbTransaction().IsolationLevel;
+            if (isolation != IsolationLevel.ReadCommitted &&
+                isolation != IsolationLevel.Serializable)
+                throw Denied();
+
+            var conn = _db.Database.GetDbConnection();
+            await using var command = conn.CreateCommand();
+            command.Transaction = transaction.GetDbTransaction();
+            command.CommandText = """
+                SELECT g."Id"
+                FROM "BuildingManagementOperatorBuildingGrants" AS g
+                INNER JOIN "Buildings" AS b ON b."Id" = g."BuildingId"
+                WHERE g."OperatorUserId" = @issuer
+                  AND g."BuildingId" = @building
+                  AND g."RevokedAtUtc" IS NULL
+                  AND g."GrantedAtUtc" <= @now
+                  AND (g."ExpiresAtUtc" IS NULL OR g."ExpiresAtUtc" > @now)
+                  AND b."IsDeleted" = FALSE
+                FOR SHARE OF g
+                """;
+            var issuer = command.CreateParameter();
+            issuer.ParameterName = "issuer";
+            issuer.Value = trustedIssuerId;
+            command.Parameters.Add(issuer);
+            var building = command.CreateParameter();
+            building.ParameterName = "building";
+            building.Value = buildingId;
+            command.Parameters.Add(building);
+            var at = command.CreateParameter();
+            at.ParameterName = "now";
+            at.Value = now;
+            command.Parameters.Add(at);
+            if (await command.ExecuteScalarAsync() is not Guid)
+                throw Denied();
+            return;
+        }
 
         // Do not infer ownership from a role or client claim; the issuer
         // must currently hold a live persisted membership on this building.

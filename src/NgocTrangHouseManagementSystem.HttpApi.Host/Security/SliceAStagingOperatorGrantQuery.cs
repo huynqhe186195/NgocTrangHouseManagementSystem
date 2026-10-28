@@ -8,6 +8,7 @@ using BuildingManagement.Security;
 using Microsoft.EntityFrameworkCore;
 using Volo.Abp.Authorization;
 using Volo.Abp.EntityFrameworkCore;
+using Volo.Abp.Users;
 
 namespace NgocTrangHouseManagementSystem.Security;
 
@@ -23,17 +24,20 @@ public sealed class SliceAStagingOperatorGrantQuery
     private readonly IBuildingOperatorChangeIssuerReader _issuers;
     private readonly IBuildingOperatorActiveAccountReader _accounts;
     private readonly IBuildingOperatorGrantReader _grants;
+    private readonly ICurrentUser _currentUser;
 
     public SliceAStagingOperatorGrantQuery(
         IDbContextProvider<BuildingManagementDbContext> provider,
         IBuildingOperatorChangeIssuerReader issuers,
         IBuildingOperatorActiveAccountReader accounts,
-        IBuildingOperatorGrantReader grants)
+        IBuildingOperatorGrantReader grants,
+        ICurrentUser currentUser)
     {
         _provider = provider;
         _issuers = issuers;
         _accounts = accounts;
         _grants = grants;
+        _currentUser = currentUser;
     }
 
     public async Task<IReadOnlyList<OperatorGrantListItem>> GetAsync(
@@ -47,10 +51,13 @@ public sealed class SliceAStagingOperatorGrantQuery
         // alone. Both abilities can legitimately inspect current revocations.
         var assign = await _issuers.ReadAsync(BuildingOperatorChangeKind.Assign);
         var revoke = await _issuers.ReadAsync(BuildingOperatorChangeKind.Revoke);
-        var actor = assign?.OperatorId ?? revoke?.OperatorId ?? Guid.Empty;
-        if (actor == Guid.Empty ||
-            !(assign?.PrivilegedPermissionGranted == true ||
-              revoke?.PrivilegedPermissionGranted == true) ||
+        // The caller identity must come from the authenticated ABP principal,
+        // never from an authority reader result. A non-privileged Assign
+        // result cannot borrow a privileged Revoke result for another user.
+        var actor = _currentUser.IsAuthenticated
+            ? _currentUser.Id ?? Guid.Empty
+            : Guid.Empty;
+        if (!HasDelegationPrivilege(actor, assign, revoke) ||
             !await _accounts.IsActiveAsync(actor) ||
             !(await _grants.GetActiveBuildingIdsAsync(actor)).Contains(buildingId))
             throw Denied();
@@ -79,6 +86,15 @@ public sealed class SliceAStagingOperatorGrantQuery
                 entry.RevisionNumber)
         ).Skip(skipCount).Take(maxResultCount).ToListAsync();
     }
+
+    private static bool HasDelegationPrivilege(
+        Guid actor, BuildingOperatorChangeIssuer? assign,
+        BuildingOperatorChangeIssuer? revoke)
+        => actor != Guid.Empty &&
+           ((assign?.OperatorId == actor &&
+             assign.PrivilegedPermissionGranted) ||
+            (revoke?.OperatorId == actor &&
+             revoke.PrivilegedPermissionGranted));
 
     private static AbpAuthorizationException Denied()
         => new("No active building-scoped permission to view operator grants.");

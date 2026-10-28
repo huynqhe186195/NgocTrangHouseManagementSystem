@@ -111,6 +111,41 @@ public sealed class SliceAStagingOperatorGrantsGuard_Tests
             identity));
     }
 
+    [Fact]
+    public void STAGEAPI04_Grant_History_Cannot_Borrow_Other_Principals_Permission()
+    {
+        var queryType = typeof(SliceAStagingOperatorGrantQuery);
+        Assert.Contains(queryType.GetConstructors().Single().GetParameters(),
+            parameter => parameter.ParameterType ==
+                typeof(Volo.Abp.Users.ICurrentUser));
+
+        var gate = queryType.GetMethod("HasDelegationPrivilege",
+            BindingFlags.Static | BindingFlags.NonPublic);
+        Assert.NotNull(gate);
+        bool Allowed(Guid current, BuildingOperatorChangeIssuer? assign,
+            BuildingOperatorChangeIssuer? revoke)
+            => Assert.IsType<bool>(gate!.Invoke(null,
+                new object?[] { current, assign, revoke }));
+
+        var current = Guid.NewGuid();
+        var other = Guid.NewGuid();
+        Assert.False(Allowed(Guid.Empty,
+            new BuildingOperatorChangeIssuer(Guid.Empty, true), null));
+        Assert.False(Allowed(current, null, null));
+        Assert.False(Allowed(current,
+            new BuildingOperatorChangeIssuer(current, false),
+            new BuildingOperatorChangeIssuer(other, true)));
+        Assert.False(Allowed(current,
+            new BuildingOperatorChangeIssuer(other, true),
+            new BuildingOperatorChangeIssuer(current, false)));
+        Assert.False(Allowed(current,
+            new BuildingOperatorChangeIssuer(other, true), null));
+        Assert.True(Allowed(current,
+            new BuildingOperatorChangeIssuer(current, true), null));
+        Assert.True(Allowed(current, null,
+            new BuildingOperatorChangeIssuer(current, true)));
+    }
+
     private sealed class StubHostEnvironment : IHostEnvironment
     {
         public string EnvironmentName { get; set; } = Environments.Production;

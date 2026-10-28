@@ -255,8 +255,11 @@ public sealed class SliceBIssuedInvoiceLedgerPostgreSql_Tests
         var operations = down ? migration.DownOperations : migration.UpOperations;
         var script = Assert.Single(operations.OfType<SqlOperation>());
         Assert.Single(operations);
-        Assert.Contains(down ? "refuse rollback" : "TR_BM_IssuedLedger_ImmutableRow",
-            script.Sql, StringComparison.Ordinal);
+        // The prerequisite evidence migration has different invariants.
+        // Assert the ledger-specific guard only for the ledger migration.
+        if (migration is SliceBIssuedInvoiceLedger)
+            Assert.Contains(down ? "refuse rollback" : "TR_BM_IssuedLedger_ImmutableRow",
+                script.Sql, StringComparison.Ordinal);
         return script.Sql;
     }
 

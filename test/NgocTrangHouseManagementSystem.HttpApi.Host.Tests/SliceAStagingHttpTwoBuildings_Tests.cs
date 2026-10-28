@@ -9,6 +9,9 @@ using System.Security.Claims;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.RegularExpressions;
+using System.Text.Json;
+using BuildingManagement.Floors;
+using BuildingManagement.Rooms;
 using System.Threading.Tasks;
 using BuildingManagement;
 using BuildingManagement.Buildings;
@@ -149,6 +152,12 @@ public sealed class SliceAStagingHttpTwoBuildings_Tests
                 await permissions.SetForUserAsync(actorA,
                     BuildingManagement.Permissions.BuildingManagementPermissions.Buildings.Manage,
                     true);
+                await permissions.SetForUserAsync(actorA,
+                    BuildingManagement.Permissions.BuildingManagementPermissions.Floors.Manage,
+                    true);
+                await permissions.SetForUserAsync(actorA,
+                    BuildingManagement.Permissions.BuildingManagementPermissions.Rooms.Manage,
+                    true);
                 await uow.CompleteAsync();
             }
 
@@ -227,6 +236,76 @@ public sealed class SliceAStagingHttpTwoBuildings_Tests
                 Assert.Equal(HttpStatusCode.OK, response.StatusCode);
                 Assert.Contains("A updated", payload);
             }
+
+            // All six Floor/Room mutations go through the real ABP
+            // generated HTTP controllers and the mandatory scoped boundary.
+            // No production-only provider is replaced outside this fixture.
+            string Route(Type service, string method) => "/" +
+                Assert.IsType<string>(Assert.Single(actions,
+                    x => x.ControllerTypeInfo.AsType() == service &&
+                         x.MethodInfo.Name == method)
+                    .AttributeRouteInfo?.Template).TrimStart('/');
+            string AtId(string route, Guid id) =>
+                Regex.Replace(route, @"\{[^}]+\}", id.ToString("D"));
+
+            var floorCreate = Route(typeof(FloorAppService), "CreateAsync");
+            var floorUpdate = Route(typeof(FloorAppService), "UpdateAsync");
+            var floorDelete = Route(typeof(FloorAppService), "DeleteAsync");
+            var roomCreate = Route(typeof(RoomAppService), "CreateAsync");
+            var roomUpdate = Route(typeof(RoomAppService), "UpdateAsync");
+            var roomDelete = Route(typeof(RoomAppService), "DeleteAsync");
+            async Task<Guid> PostId(HttpClient client, string route, string json)
+            {
+                using var body = new StringContent(json, Encoding.UTF8,
+                    "application/json");
+                using var response = await client.PostAsync(route, body);
+                var payload = await response.Content.ReadAsStringAsync();
+                Assert.True(response.StatusCode is HttpStatusCode.OK or HttpStatusCode.Created,
+                    $"Create {route}: {response.StatusCode}: {payload}");
+                using var doc = JsonDocument.Parse(payload);
+                return doc.RootElement.GetProperty("id").GetGuid();
+            }
+            async Task Update(HttpClient client, string route, Guid id,
+                string json, HttpStatusCode expected)
+            {
+                using var body = new StringContent(json, Encoding.UTF8,
+                    "application/json");
+                using var response = await client.PutAsync(AtId(route, id), body);
+                Assert.Equal(expected, response.StatusCode);
+            }
+
+            var floorA = await PostId(clientA, floorCreate,
+                JsonSerializer.Serialize(new {
+                    buildingId = a, floorNumber = 1, name = "Floor A1" }));
+            await Update(clientA, floorUpdate, floorA,
+                """{"floorNumber":1,"name":"Floor A1 updated"}""",
+                HttpStatusCode.OK);
+            await Update(clientB, floorUpdate, floorA,
+                """{"floorNumber":1,"name":"Cross-building"}""",
+                HttpStatusCode.Forbidden);
+            using (var denied = new StringContent(JsonSerializer.Serialize(new {
+                buildingId = b, floorNumber = 1, name = "Bad A->B" }),
+                Encoding.UTF8, "application/json"))
+            using (var response = await clientA.PostAsync(floorCreate, denied))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+
+            var roomA = await PostId(clientA, roomCreate,
+                JsonSerializer.Serialize(new {
+                    floorId = floorA, roomNumber = "101", name = "A101",
+                    area = 25.0, capacity = 2, status = 0 }));
+            await Update(clientA, roomUpdate, roomA,
+                """{"roomNumber":"101","name":"A101 updated","area":26,"capacity":2,"status":0}""",
+                HttpStatusCode.OK);
+            await Update(clientB, roomUpdate, roomA,
+                """{"roomNumber":"101","name":"Unauthorized","area":26,"capacity":2,"status":0}""",
+                HttpStatusCode.Forbidden);
+
+            using (var response = await clientA.DeleteAsync(AtId(roomDelete, roomA)))
+                Assert.True(response.StatusCode is HttpStatusCode.NoContent or
+                    HttpStatusCode.OK);
+            using (var response = await clientA.DeleteAsync(AtId(floorDelete, floorA)))
+                Assert.True(response.StatusCode is HttpStatusCode.NoContent or
+                    HttpStatusCode.OK);
 
             await using (var memberships = NewMembershipDb(memberCs))
             {

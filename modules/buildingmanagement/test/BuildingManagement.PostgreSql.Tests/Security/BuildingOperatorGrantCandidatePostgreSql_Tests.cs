@@ -128,6 +128,67 @@ public sealed class BuildingOperatorGrantCandidatePostgreSql_Tests
         });
     }
 
+    [Fact]
+    public async Task PGMEMBER07_Restricted_Grant_Writer_Role_Cannot_Delete_History_Or_Alter_Schema()
+    {
+        // Role, membership, grants and sample row exist ONLY in the
+        // transaction-local randomized schema; its unconditional rollback
+        // removes the role too. This probes a candidate permission set,
+        // NOT the credentials or grants of any running application.
+        await InScratchAsync(async (connection, tx) =>
+        {
+            var building = Guid.NewGuid();
+            var grantId = Guid.NewGuid();
+            var actor = Guid.NewGuid();
+            var schema = await ScalarStringAsync(
+                connection, tx, "SELECT current_schema()");
+            Assert.NotNull(schema);
+            Assert.Matches(@"^bm_grant_candidate_[0-9a-f]{32}$", schema!);
+            var role = "bm_grant_only_" + Guid.NewGuid().ToString("N");
+            Assert.Matches(@"^bm_grant_only_[0-9a-f]{32}$", role);
+
+            await ExecuteAsync(connection, tx,
+                $"""INSERT INTO "Buildings" ("Id") VALUES ('{building:D}')""");
+            await ExecuteAsync(connection, tx,
+                $"""CREATE ROLE "{role}" NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT""");
+            await ExecuteAsync(connection, tx,
+                $"""GRANT "{role}" TO CURRENT_USER""");
+            await ExecuteAsync(connection, tx,
+                $"""GRANT USAGE ON SCHEMA "{schema}" TO "{role}" """);
+            await ExecuteAsync(connection, tx,
+                $"""GRANT SELECT ON TABLE "{schema}"."Buildings" TO "{role}" """);
+            await ExecuteAsync(connection, tx,
+                $"""GRANT SELECT, INSERT, UPDATE ON TABLE "{schema}"."{Table}" TO "{role}" """);
+
+            // SET LOCAL cannot survive the outer rollback; the scratch
+            // role is incapable of dropping the membership history.
+            await ExecuteAsync(connection, tx, $"""SET LOCAL ROLE "{role}" """);
+            Assert.Equal(role, await ScalarStringAsync(
+                connection, tx, "SELECT current_user"));
+            await ExecuteAsync(connection, tx,
+                GrantInsert(grantId, actor, building, 1));
+            Assert.Equal(1L, await ScalarLongAsync(connection, tx,
+                $"""SELECT count(*) FROM "{Table}" WHERE "Id" = '{grantId:D}'"""));
+            await ExecuteAsync(connection, tx,
+                $"""
+                UPDATE "{Table}"
+                   SET "RevokedAtUtc" = '2026-10-28T00:00:00Z',
+                       "RevokedByUserId" = '{Guid.NewGuid():D}',
+                       "RevisionNumber" = 2
+                 WHERE "Id" = '{grantId:D}';
+                """);
+            await ExpectFailureAsync(connection, tx,
+                $"""DELETE FROM "{Table}" WHERE "Id" = '{grantId:D}'""",
+                PostgresErrorCodes.InsufficientPrivilege);
+            await ExpectFailureAsync(connection, tx,
+                $"""DROP TABLE "{Table}" """,
+                PostgresErrorCodes.InsufficientPrivilege);
+            Assert.Equal(1L, await ScalarLongAsync(connection, tx,
+                $"""SELECT count(*) FROM "{Table}" WHERE "Id" = '{grantId:D}' AND "RevokedAtUtc" IS NOT NULL"""));
+            await ExecuteAsync(connection, tx, "RESET ROLE");
+        });
+    }
+
     private static string GrantInsert(
         Guid id, Guid user, Guid building, int revision,
         string expiry = "NULL", string revocation = "NULL",

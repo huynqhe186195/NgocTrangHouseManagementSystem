@@ -1641,6 +1641,30 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 await uow.CompleteAsync();
             }
 
+            // Read only the authorized contract's deposit receipt status,
+            // with no global tenant, payment reference or private notes.
+            using (var response = await clientB.GetAsync(
+                DirectDepositRoute(contractA)))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var response = await clientB.GetAsync(
+                DirectDepositRoute(cancelContract)))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                var content = await response.Content.ReadAsStringAsync();
+                using var json = JsonDocument.Parse(content);
+                var rows = json.RootElement.EnumerateArray().ToArray();
+                Assert.Contains(rows, p =>
+                    p.GetProperty("id").GetGuid() == directPayment &&
+                    p.GetProperty("amount").GetDecimal() == 500000m &&
+                    p.GetProperty("status").GetInt32() == 2);
+                Assert.DoesNotContain("transactionReference", content,
+                    StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain("tenantId", content,
+                    StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain("notes", content,
+                    StringComparison.OrdinalIgnoreCase);
+            }
+
             // Reservation creation is scoped to existing tenant provenance:
             // operator B may reserve only a B room for a B-linked tenant.
             var reservationRoute = scopedContracts + "/reservations";
@@ -1836,6 +1860,30 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 Assert.Equal(BuildingManagement.RoomReservations.RoomReservationStatus.Reserved,
                     (await db.RoomReservations.SingleAsync(r => r.Id == paidCandidate)).Status);
                 await uow.CompleteAsync();
+            }
+
+            // Payment status read cannot disclose receipts from another
+            // building or the private bank/tenant evidence.
+            using (var response = await clientB.GetAsync(
+                reservationRoute + "/" + reservationA.ToString("D") +
+                "/deposit-payments"))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var response = await clientB.GetAsync(
+                reservationRoute + "/" + paidCandidate.ToString("D") +
+                "/deposit-payments"))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                var content = await response.Content.ReadAsStringAsync();
+                using var json = JsonDocument.Parse(content);
+                var rows = json.RootElement.EnumerateArray().ToArray();
+                Assert.Single(rows);
+                Assert.Equal(500000m,
+                    rows[0].GetProperty("amount").GetDecimal());
+                Assert.Equal(2, rows[0].GetProperty("status").GetInt32());
+                Assert.DoesNotContain("tenantId", content,
+                    StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain("transactionReference", content,
+                    StringComparison.OrdinalIgnoreCase);
             }
 
             // This is a real completed 500k cash hold: cancellation must

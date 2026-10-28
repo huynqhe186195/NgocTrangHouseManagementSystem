@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using BuildingManagement.EntityFrameworkCore;
 using BuildingManagement.RoomReservations;
+using BuildingManagement.Payments;
 using BuildingManagement.Security;
 using Microsoft.EntityFrameworkCore;
 using Volo.Abp.Authorization;
@@ -67,6 +68,45 @@ public sealed class SliceBStagingReservationQuery
         return await AuthorizedReservations(
             await _provider.GetDbContextAsync(), actor, reservationId)
             .SingleOrDefaultAsync() ?? throw Denied();
+    }
+
+    /// <summary>
+    /// Only a reservation's own deposit receipts. SQL membership filters
+    /// the same live Reservation->Room->Floor->Building graph.
+    /// </summary>
+    public async Task<IReadOnlyList<SliceBScopedDepositPaymentRead>>
+        GetReservationDepositPaymentsAsync(Guid reservationId)
+    {
+        if (reservationId == Guid.Empty) throw Denied();
+        await GetAsync(reservationId);
+        var actor = RequireActor();
+        var db = await _provider.GetDbContextAsync();
+        var now = DateTime.UtcNow;
+        return await (
+            from payment in db.Payments.AsNoTracking()
+            join reservation in db.RoomReservations.AsNoTracking()
+                on payment.RoomReservationId equals (Guid?)reservation.Id
+            join room in db.Rooms.AsNoTracking()
+                on reservation.RoomId equals room.Id
+            join floor in db.Floors.AsNoTracking()
+                on room.FloorId equals floor.Id
+            join building in db.Buildings.AsNoTracking()
+                on floor.BuildingId equals building.Id
+            where payment.RoomReservationId == reservationId &&
+                payment.Purpose == PaymentPurpose.ReservationDeposit &&
+                !payment.IsDeleted && !reservation.IsDeleted &&
+                !room.IsDeleted && !floor.IsDeleted && !building.IsDeleted &&
+                db.OperatorBuildingGrants.Any(grant =>
+                    grant.OperatorUserId == actor &&
+                    grant.BuildingId == building.Id &&
+                    grant.RevokedAtUtc == null &&
+                    grant.GrantedAtUtc <= now &&
+                    (grant.ExpiresAtUtc == null || grant.ExpiresAtUtc > now))
+            orderby payment.CreationTime descending, payment.Id
+            select new SliceBScopedDepositPaymentRead(
+                payment.Id, payment.Amount, payment.Status, payment.PaidAt,
+                payment.Purpose))
+            .Take(100).ToListAsync();
     }
 
     private Guid RequireActor()

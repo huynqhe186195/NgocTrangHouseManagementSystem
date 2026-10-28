@@ -150,6 +150,16 @@ public sealed class SliceBStagingContractsController : ControllerBase
     }
 
     // Records a pending deposit payment only; does NOT complete a transfer.
+    [HttpGet("reservations/{id:guid}/deposit-payments")]
+    [UnitOfWork(true)]
+    public Task<IReadOnlyList<SliceBScopedDepositPaymentRead>>
+        GetReservationDepositPaymentsAsync([FromRoute] Guid id)
+    {
+        RequireIsolatedStaging();
+        return (_reservationQuery ?? throw Denied())
+            .GetReservationDepositPaymentsAsync(id);
+    }
+
     [HttpPost("reservations/{id:guid}/deposit-payments")]
     [UnitOfWork(true)]
     public Task<PaymentDto> CreateReservationDepositPaymentAsync(
@@ -186,6 +196,15 @@ public sealed class SliceBStagingContractsController : ControllerBase
 
     // Staging scoped ContractDeposit receipt; the original payment service
     // validates cash receipt and records an allocation in the same UoW.
+    [HttpGet("{id:guid}/deposit-payments")]
+    [UnitOfWork(true)]
+    public Task<IReadOnlyList<SliceBScopedDepositPaymentRead>>
+        GetContractDepositPaymentsAsync([FromRoute] Guid id)
+    {
+        RequireIsolatedStaging();
+        return (_query ?? throw Denied()).GetContractDepositPaymentsAsync(id);
+    }
+
     [HttpPost("{id:guid}/deposit-payments")]
     [UnitOfWork(true)]
     public Task<PaymentDto> CreateContractDepositPaymentAsync(

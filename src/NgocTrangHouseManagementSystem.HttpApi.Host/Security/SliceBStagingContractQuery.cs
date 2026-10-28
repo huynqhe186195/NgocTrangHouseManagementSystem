@@ -6,6 +6,7 @@ using BuildingManagement.Contracts;
 using BuildingManagement.MoveOuts;
 using BuildingManagement.DepositSettlements;
 using BuildingManagement.Invoices;
+using BuildingManagement.Payments;
 using BuildingManagement.EntityFrameworkCore;
 using BuildingManagement.Security;
 using Microsoft.EntityFrameworkCore;
@@ -75,6 +76,45 @@ public sealed class SliceBStagingContractQuery
                 await _provider.GetDbContextAsync(), actor, contractId)
             .SingleOrDefaultAsync()
             ?? throw Denied();
+    }
+
+    /// <summary>
+    /// Live scoped ContractDeposit receipts only, without private evidence.
+    /// The payment and the membership must join to the SAME contract graph.
+    /// </summary>
+    public async Task<IReadOnlyList<SliceBScopedDepositPaymentRead>>
+        GetContractDepositPaymentsAsync(Guid contractId)
+    {
+        if (contractId == Guid.Empty) throw Denied();
+        await GetAsync(contractId);
+        var actor = RequireActor();
+        var db = await _provider.GetDbContextAsync();
+        var now = DateTime.UtcNow;
+        return await (
+            from payment in db.Payments.AsNoTracking()
+            join contract in db.Contracts.AsNoTracking()
+                on payment.ContractId equals (Guid?)contract.Id
+            join room in db.Rooms.AsNoTracking()
+                on contract.RoomId equals room.Id
+            join floor in db.Floors.AsNoTracking()
+                on room.FloorId equals floor.Id
+            join building in db.Buildings.AsNoTracking()
+                on floor.BuildingId equals building.Id
+            where payment.ContractId == contractId &&
+                payment.Purpose == PaymentPurpose.ContractDeposit &&
+                !payment.IsDeleted && !contract.IsDeleted &&
+                !room.IsDeleted && !floor.IsDeleted && !building.IsDeleted &&
+                db.OperatorBuildingGrants.Any(grant =>
+                    grant.OperatorUserId == actor &&
+                    grant.BuildingId == building.Id &&
+                    grant.RevokedAtUtc == null &&
+                    grant.GrantedAtUtc <= now &&
+                    (grant.ExpiresAtUtc == null || grant.ExpiresAtUtc > now))
+            orderby payment.CreationTime descending, payment.Id
+            select new SliceBScopedDepositPaymentRead(
+                payment.Id, payment.Amount, payment.Status, payment.PaidAt,
+                payment.Purpose))
+            .Take(100).ToListAsync();
     }
 
     /// <summary>
@@ -428,3 +468,11 @@ public sealed record SliceBScopedMoveOutFinancialRead(
     bool CanRecognizeDebt,
     bool CanSettleDeposit,
     bool CanCompleteMoveOut);
+
+
+/// <summary>
+/// Minimal deposit receipt status, no bank ref, payment number or tenant PII.
+/// </summary>
+public sealed record SliceBScopedDepositPaymentRead(
+    Guid Id, decimal Amount, PaymentStatus Status, DateTime? PaidAt,
+    PaymentPurpose Purpose);

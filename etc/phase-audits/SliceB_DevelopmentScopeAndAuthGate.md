@@ -355,3 +355,8 @@ cover unauthorized building, mismatched contract identifiers, successful
 ### Database truth for the closeout financial read
 
 The development PostgreSQL schema does **not** contain the design-only invoice evidence archive/reviewer/journal tables. The API intentionally reads the existing FinalInvoiceIssuePreflight (persisted draft and utility evidence) and ContractDepositLedgerReview (actual settlement journal) instead of querying un-migrated FinalInvoiceReleaseReadiness relations. It explicitly returns `StagedInvoiceEvidencePersistenceNotMigrated`, `IndependentInvoiceReviewPersistenceNotMigrated` and `FinalInvoiceIssuanceNotImplemented` blockers, and keeps all posting/closeout booleans false. No migration is fabricated or production financial state inferred.
+
+
+## Staging-scoped deposit receipt status queries
+
+The unscoped PaymentAppService HTTP controller remains DENY. GET /{contractId}/deposit-payments and GET /reservations/{reservationId}/deposit-payments return at most 100 recent records filtered by exact ContractDeposit or ReservationDeposit purpose. Every read proves persisted Contracts.Read Identity permission and current membership, and its SQL query joins Payment to Contract/Reservation → Room → Floor → Building before selecting. Only receipt ID, amount, status, time and purpose are exposed; no bank reference, payment number, global tenant identity or notes. PostgreSQL HTTP tests assert foreign-building denial and private-field exclusion. Reads are evidence, never refund or invoice posting authorization.

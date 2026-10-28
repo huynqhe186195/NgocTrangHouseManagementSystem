@@ -505,3 +505,14 @@ is additionally required for issuance, financial receipt and closeout.
 For database-level financial history, `20261029204000` adds the immutable
 approval table with source and completed disbursement constraints. No actual
 application or production migration has been applied.
+
+### Contract closeout SQL debt guard
+
+The source-only deposit approval trigger now acquires the persisted contract
+row FOR UPDATE and rejects any closeout whose held amount disagrees with the
+contract DepositAmount or whose **any issued contract invoice** has less/more
+journaled payments than its total. The settlement mutation trigger also
+acquires the same contract row to serialize unscoped SQL writes with a
+pending approval. Test probes cover unpaid, partially paid, fully allocated
+and spoofed contract-deposit cases. This does not verify manual bank transfers
+nor activate any production financial writer.

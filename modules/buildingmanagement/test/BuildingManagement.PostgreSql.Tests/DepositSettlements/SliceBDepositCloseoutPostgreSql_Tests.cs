@@ -80,6 +80,54 @@ public sealed class SliceBDepositCloseoutPostgreSql_Tests
     }
 
     [Fact]
+    public async Task SBDPDB04_Unpaid_Or_Partially_Paid_Invoice_Blocks_Closeout()
+    {
+        await ScratchAsync(async (db, tx, _) =>
+        {
+            var f = await SeedAsync(db, tx, completed: true);
+            await ExecAsync(db, tx, $"""
+                DELETE FROM "BuildingManagementInvoicePaymentAllocationJournal"
+                 WHERE "IssuedInvoiceId" = '{f.InvoiceId:D}';
+                """);
+            await DeniedAsync(db, tx, ApprovalSql(f), "23514");
+
+            // A partial receipt is also insufficient, even if every
+            // deposit Refund/Forfeit settlement is already completed.
+            await ExecAsync(db, tx, $"""
+                INSERT INTO "BuildingManagementInvoicePaymentAllocationJournal"
+                    ("Id","IssuedInvoiceId","Amount")
+                VALUES ('{Guid.NewGuid():D}','{f.InvoiceId:D}', 999999);
+                """);
+            await DeniedAsync(db, tx, ApprovalSql(f), "23514");
+
+            // Exact invoice total permits approval, subject to all other
+            // independent deposit and legal signoff checks.
+            await ExecAsync(db, tx, """
+                UPDATE "BuildingManagementInvoicePaymentAllocationJournal"
+                   SET "Amount" = 3000000
+                """);
+            await ExecAsync(db, tx, ApprovalSql(f));
+            Assert.Equal(1L, await ScalarAsync(db, tx,
+                "SELECT count(*) FROM \"BuildingManagementContractDepositCloseoutApprovals\""));
+        });
+    }
+
+    [Fact]
+    public async Task SBDPDB05_Contract_Deposit_Amount_Cannot_Be_Spoofed()
+    {
+        await ScratchAsync(async (db, tx, _) =>
+        {
+            var f = await SeedAsync(db, tx, completed: true);
+            await ExecAsync(db, tx, $"""
+                UPDATE "BuildingManagementContracts"
+                   SET "DepositAmount" = 2000000
+                 WHERE "Id" = '{f.ContractId:D}';
+                """);
+            await DeniedAsync(db, tx, ApprovalSql(f), "23514");
+        });
+    }
+
+    [Fact]
     public async Task SBDPDB03_Empty_Down_Removes_Only_Approval_Schema()
     {
         await ScratchAsync(async (db, tx, down) =>
@@ -114,8 +162,8 @@ public sealed class SliceBDepositCloseoutPostgreSql_Tests
             Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
             Guid.NewGuid(), Guid.NewGuid());
         await ExecAsync(db, tx, $"""
-            INSERT INTO "BuildingManagementContracts" ("Id")
-                VALUES ('{f.ContractId:D}');
+            INSERT INTO "BuildingManagementContracts" ("Id","DepositAmount")
+                VALUES ('{f.ContractId:D}',1000000);
             INSERT INTO "BuildingManagementMoveOutRequests"
                 ("Id","ContractId","RoomId","Status")
                 VALUES ('{f.RequestId:D}','{f.ContractId:D}','{f.RoomId:D}',1);
@@ -125,6 +173,9 @@ public sealed class SliceBDepositCloseoutPostgreSql_Tests
                 VALUES ('{f.InvoiceId:D}','{f.ContractId:D}','{f.RoomId:D}',
                         '{f.RequestId:D}','{f.BuildingId:D}',
                         '2026-10-29T01:00:00Z');
+            INSERT INTO "BuildingManagementInvoicePaymentAllocationJournal"
+                ("Id","IssuedInvoiceId","Amount")
+                VALUES ('{Guid.NewGuid():D}','{f.InvoiceId:D}',3000000);
             INSERT INTO "BuildingManagementDepositSettlements"
                 ("Id","Type","Status","SourceContractId","TargetContractId",
                  "Amount","CompletedAt","Notes")
@@ -196,7 +247,9 @@ public sealed class SliceBDepositCloseoutPostgreSql_Tests
                 await ExecAsync(db, tx, "SET LOCAL lock_timeout = '3s'");
                 await ExecAsync(db, tx, "SET LOCAL statement_timeout = '20s'");
                 await ExecAsync(db, tx, """
-                    CREATE TABLE "BuildingManagementContracts" ("Id" uuid PRIMARY KEY);
+                    CREATE TABLE "BuildingManagementContracts" (
+                        "Id" uuid PRIMARY KEY,
+                        "DepositAmount" numeric(18,0) NOT NULL);
                     CREATE TABLE "BuildingManagementMoveOutRequests" (
                         "Id" uuid PRIMARY KEY,
                         "ContractId" uuid NOT NULL,
@@ -208,7 +261,12 @@ public sealed class SliceBDepositCloseoutPostgreSql_Tests
                         "RoomId" uuid NOT NULL,
                         "MoveOutRequestId" uuid NOT NULL,
                         "BuildingId" uuid NOT NULL,
-                        "IssuedAtUtc" timestamptz NOT NULL);
+                        "IssuedAtUtc" timestamptz NOT NULL,
+                        "TotalAmount" numeric(18,0) NOT NULL DEFAULT 3000000);
+                    CREATE TABLE "BuildingManagementInvoicePaymentAllocationJournal" (
+                        "Id" uuid PRIMARY KEY,
+                        "IssuedInvoiceId" uuid NOT NULL,
+                        "Amount" numeric(18,0) NOT NULL);
                     CREATE TABLE "BuildingManagementDepositSettlements" (
                         "Id" uuid PRIMARY KEY,
                         "Type" integer NOT NULL,

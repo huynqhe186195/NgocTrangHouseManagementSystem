@@ -121,11 +121,23 @@ public sealed class SliceBContractDepositCloseoutApprovals : Migration
             DECLARE forfeiture record;
             DECLARE received numeric(18,0);
             DECLARE completed_outgoing numeric(18,0);
+            DECLARE contract_held numeric(18,0);
             BEGIN
                 IF TG_OP <> 'INSERT' THEN
                     RAISE EXCEPTION 'Approved deposit closeout history is immutable'
                         USING ERRCODE = '23514';
                 END IF;
+                -- Serialize approval with every in-scope deposit mutation.
+                -- The staging writer already takes this contract lock;
+                -- the database repeats it to defend direct SQL callers.
+                SELECT "DepositAmount" INTO contract_held
+                  FROM "BuildingManagementContracts"
+                 WHERE "Id" = NEW."ContractId" FOR UPDATE;
+                IF NOT FOUND OR contract_held IS DISTINCT FROM NEW."VerifiedHeldAmount" THEN
+                    RAISE EXCEPTION 'Approved closeout must equal contract held deposit'
+                        USING ERRCODE = '23514';
+                END IF;
+
                 SELECT * INTO request
                   FROM "BuildingManagementMoveOutRequests"
                  WHERE "Id" = NEW."MoveOutRequestId" FOR SHARE;
@@ -176,6 +188,28 @@ public sealed class SliceBContractDepositCloseoutApprovals : Migration
                     END IF;
                 END IF;
 
+                -- A closed contract must have EVERY issued invoice fully
+                -- matched, not only its final move-out invoice. Enforce the
+                -- hard debt-clearance boundary in SQL as well as the app.
+                -- No missing invoice, partially paid invoice, or unsupported
+                -- excess collection can be approved via direct SQL.
+                IF NOT EXISTS (
+                    SELECT 1 FROM "BuildingManagementIssuedInvoiceLedger"
+                     WHERE "Id" = NEW."IssuedInvoiceId"
+                       AND "ContractId" = NEW."ContractId"
+                ) OR EXISTS (
+                    SELECT 1 FROM "BuildingManagementIssuedInvoiceLedger" i
+                    LEFT JOIN "BuildingManagementInvoicePaymentAllocationJournal" a
+                      ON a."IssuedInvoiceId" = i."Id"
+                    WHERE i."ContractId" = NEW."ContractId"
+                    GROUP BY i."Id", i."TotalAmount"
+                    HAVING COALESCE(sum(a."Amount"),0) <>
+                           i."TotalAmount"
+                ) THEN
+                    RAISE EXCEPTION 'Every issued invoice requires complete audited allocation'
+                        USING ERRCODE = '23514';
+                END IF;
+
                 SELECT COALESCE(sum("Amount"),0) INTO received
                   FROM "BuildingManagementDepositSettlements"
                  WHERE "TargetContractId" = NEW."ContractId"
@@ -211,7 +245,16 @@ public sealed class SliceBContractDepositCloseoutApprovals : Migration
             -- replacement refund or mutation can rewrite an approved plan.
             CREATE FUNCTION "BM_GuardFinalizedDepositSettlements"()
             RETURNS trigger LANGUAGE plpgsql AS $settlement_guard$
+            DECLARE affected_contract uuid;
             BEGIN
+                affected_contract := CASE WHEN TG_OP = 'DELETE'
+                    THEN COALESCE(OLD."SourceContractId", OLD."TargetContractId")
+                    ELSE COALESCE(NEW."SourceContractId", NEW."TargetContractId")
+                END;
+                IF affected_contract IS NOT NULL THEN
+                    PERFORM 1 FROM "BuildingManagementContracts"
+                    WHERE "Id" = affected_contract FOR UPDATE;
+                END IF;
                 IF (TG_OP IN ('UPDATE','DELETE') AND EXISTS (
                     SELECT 1 FROM "BuildingManagementContractDepositCloseoutApprovals"
                      WHERE "ContractId" = OLD."SourceContractId"

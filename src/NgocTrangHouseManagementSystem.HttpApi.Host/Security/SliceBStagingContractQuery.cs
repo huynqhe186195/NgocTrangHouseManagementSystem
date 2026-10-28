@@ -194,7 +194,7 @@ public sealed class SliceBStagingContractQuery
                 on floor.BuildingId equals building.Id
             where request.Id == requestId && request.ContractId == contractId &&
                 request.RoomId == room.Id &&
-                !task.IsDeleted && !request.IsDeleted && !contract.IsDeleted &&
+                !request.IsDeleted && !contract.IsDeleted &&
                 !room.IsDeleted && !floor.IsDeleted && !building.IsDeleted &&
                 db.OperatorBuildingGrants.Any(grant =>
                     grant.OperatorUserId == actor &&

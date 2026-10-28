@@ -29,7 +29,7 @@ public sealed class EfBuildingScopedWriteFenceCandidate
 
     public async Task<T> ExecuteAsync<T>(
         Guid trustedActorId, Guid serverResolvedBuildingId,
-        Func<Task<T>> mutation)
+        Func<Task<T>> mutation, Func<Task>? revalidateBeforeSave = null)
     {
         ArgumentNullException.ThrowIfNull(mutation);
         if (trustedActorId == Guid.Empty ||
@@ -95,6 +95,14 @@ public sealed class EfBuildingScopedWriteFenceCandidate
             // Caller's actual EF mutation must use *this* DbContext/UoW.
             // No further permission/identity claim is trusted from DTO.
             var result = await mutation();
+            // Identity and ABP permissions live in a different PostgreSQL
+            // database. Their preflight can become stale while this row
+            // lock is held. Revalidate after the user mutation and before
+            // saving/committing whenever staging supplies a live probe.
+            // This narrows (does not eliminate) the cross-DB commit race;
+            // true atomic revocation requires a coordinated shared fence.
+            if (revalidateBeforeSave is not null)
+                await revalidateBeforeSave();
             await _db.SaveChangesAsync();
             // Never commit or rollback a transaction owned by ABP UoW.
             // The external caller remains responsible for final commit.

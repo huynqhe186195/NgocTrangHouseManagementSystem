@@ -15,7 +15,8 @@ public sealed class DenyAllBuildingScopedWriteBoundary
     : IBuildingScopedWriteBoundary, ITransientDependency
 {
     public Task<T> ExecuteBuildingAsync<T>(
-        Guid serverResolvedBuildingId, Func<Task<T>> mutation)
+        Guid serverResolvedBuildingId, Func<Task<T>> mutation,
+        BuildingScopedMutationKind kind = BuildingScopedMutationKind.Building)
         => throw new AbpAuthorizationException(
             "Building writes require an active transaction-scoped membership fence.");
 }

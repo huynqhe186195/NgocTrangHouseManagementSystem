@@ -300,11 +300,22 @@ public sealed class SliceAStagingHttpTwoBuildings_Tests
             => _policy = policy;
 
         public async Task<T> ExecuteBuildingAsync<T>(
-            Guid serverResolvedBuildingId, Func<Task<T>> mutation)
+            Guid serverResolvedBuildingId, Func<Task<T>> mutation,
+            BuildingScopedMutationKind kind = BuildingScopedMutationKind.Building)
         {
+            var capability = kind switch
+            {
+                BuildingScopedMutationKind.Building =>
+                    BuildingBusinessCapability.ManageBuilding,
+                BuildingScopedMutationKind.Floor =>
+                    BuildingBusinessCapability.ManageFloor,
+                BuildingScopedMutationKind.Room =>
+                    BuildingBusinessCapability.ManageRoom,
+                _ => throw new Volo.Abp.Authorization.AbpAuthorizationException(
+                    "Unsupported staging mutation kind.")
+            };
             await _policy.EnsureBuildingAsync(
-                serverResolvedBuildingId,
-                BuildingBusinessCapability.ManageBuilding);
+                serverResolvedBuildingId, capability);
             return await mutation();
         }
     }

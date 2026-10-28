@@ -30,9 +30,11 @@ public sealed class EfBuildingScopedWriteBoundaryCandidate
     }
 
     public Task<T> ExecuteBuildingAsync<T>(
-        Guid serverResolvedBuildingId, Func<Task<T>> mutation)
+        Guid serverResolvedBuildingId, Func<Task<T>> mutation,
+        BuildingScopedMutationKind kind = BuildingScopedMutationKind.Building)
     {
-        if (!_user.IsAuthenticated || !_user.Id.HasValue ||
+        if (!Enum.IsDefined(kind) ||
+            !_user.IsAuthenticated || !_user.Id.HasValue ||
             _user.Id.Value == Guid.Empty || serverResolvedBuildingId == Guid.Empty)
             throw new AbpAuthorizationException(
                 "Only the authenticated principal may mutate a building.");

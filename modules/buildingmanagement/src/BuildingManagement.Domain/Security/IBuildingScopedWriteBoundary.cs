@@ -10,8 +10,13 @@ namespace BuildingManagement.Security;
 /// the SAME database transaction as the mutation, or fail closed.
 /// This interface is never a grant/permission token.
 /// </summary>
+/// <summary>Explicit resource type; never elevate a Floor or Room privilege
+/// to Buildings.Manage.</summary>
+public enum BuildingScopedMutationKind { Building, Floor, Room }
+
 public interface IBuildingScopedWriteBoundary
 {
     Task<T> ExecuteBuildingAsync<T>(
-        Guid serverResolvedBuildingId, Func<Task<T>> mutation);
+        Guid serverResolvedBuildingId, Func<Task<T>> mutation,
+        BuildingScopedMutationKind kind = BuildingScopedMutationKind.Building);
 }

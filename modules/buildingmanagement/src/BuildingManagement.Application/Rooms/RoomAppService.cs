@@ -70,7 +70,7 @@ namespace BuildingManagement.Rooms
                     input.Status, input.Description);
                 await _roomRepository.InsertAsync(room, autoSave: true);
                 return ObjectMapper.Map<Room, RoomDto>(room);
-            });
+            }, BuildingScopedMutationKind.Room);
         }
 
         public async Task<RoomDto> GetAsync(Guid id)
@@ -132,7 +132,7 @@ namespace BuildingManagement.Rooms
                     input.Capacity, input.Status, input.Description);
                 await _roomRepository.UpdateAsync(room, autoSave: true);
                 return ObjectMapper.Map<Room, RoomDto>(room);
-            });
+            }, BuildingScopedMutationKind.Room);
         }
 
         public async Task DeleteAsync(Guid id)
@@ -170,7 +170,7 @@ namespace BuildingManagement.Rooms
                     await _roomRepository.DeleteAsync(room, autoSave: true);
                 }
                 return true;
-            });
+            }, BuildingScopedMutationKind.Room);
         }
 
         private async Task<Guid> ResolveBuildingAsync(

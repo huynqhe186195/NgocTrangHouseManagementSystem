@@ -57,7 +57,7 @@ namespace BuildingManagement.Floors
                     input.FloorNumber, input.Name, input.Description);
                 await _floorRepository.InsertAsync(created, autoSave: true);
                 return ObjectMapper.Map<Floor, FloorDto>(created);
-            });
+            }, BuildingScopedMutationKind.Floor);
         }
 
         public async Task<List<FloorDto>> GetListAsync()
@@ -114,7 +114,7 @@ namespace BuildingManagement.Floors
                 floor.Update(input.FloorNumber, input.Name, input.Description);
                 await _floorRepository.UpdateAsync(floor, autoSave: true);
                 return ObjectMapper.Map<Floor, FloorDto>(floor);
-            });
+            }, BuildingScopedMutationKind.Floor);
         }
 
         public async Task DeleteAsync(Guid id)
@@ -134,7 +134,7 @@ namespace BuildingManagement.Floors
                 await EnsureNoFloorRoomsAsync(id);
                 await _floorRepository.DeleteAsync(floor, autoSave: true);
                 return true;
-            });
+            }, BuildingScopedMutationKind.Floor);
         }
 
         private async Task<Guid> ResolveBuildingAsync(

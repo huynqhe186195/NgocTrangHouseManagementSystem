@@ -121,7 +121,8 @@ public sealed class BuildingCrudAccessPolicy
         (BuildingBusinessResourceKind.Building,
             BuildingBusinessCapability.ReadBuilding or
             BuildingBusinessCapability.ManageBuilding or
-            BuildingBusinessCapability.ManageFloor) => true,
+            BuildingBusinessCapability.ManageFloor or
+            BuildingBusinessCapability.ManageRoom) => true,
         (BuildingBusinessResourceKind.Floor,
             BuildingBusinessCapability.ReadFloor or
             BuildingBusinessCapability.ManageFloor or

@@ -98,13 +98,15 @@ public sealed class SliceAStagingOwnerRecoveryEvidenceStore :
         var db = await _provider.GetDbContextAsync();
         return await ScalarGuidAsync(db,
             """
-            SELECT g."OperatorUserId"
+            SELECT CASE WHEN COUNT(*) = 1
+                        THEN MIN(g."OperatorUserId")
+                        ELSE NULL END
               FROM "BuildingManagementOperatorBuildingGrants" g
               JOIN "Buildings" b ON b."Id" = g."BuildingId"
              WHERE g."BuildingId" = @building
                AND g."OperatorUserId" = g."GrantedByUserId"
-               AND g."RevokedAtUtc" IS NULL AND b."IsDeleted" = FALSE
-             LIMIT 1
+               AND g."RevokedAtUtc" IS NULL
+               AND b."IsDeleted" = FALSE
             """, buildingId);
     }
 

@@ -46,8 +46,7 @@ public sealed class SliceBStagingContractQuery
             BuildingBusinessCapability.ReadContract);
         await _identityLease.AcquireContractReadAsync(actor);
         var rows = AuthorizedContracts(await _provider.GetDbContextAsync(), actor);
-        return await rows.OrderBy(x => x.ContractNumber).ThenBy(x => x.Id)
-            .Skip(skipCount).Take(maxResultCount).ToListAsync();
+        return await rows.Skip(skipCount).Take(maxResultCount).ToListAsync();
     }
 
     public async Task<SliceBScopedContractRead> GetAsync(Guid contractId)
@@ -59,8 +58,9 @@ public sealed class SliceBStagingContractQuery
             BuildingBusinessResourceKind.Contract, contractId,
             BuildingBusinessCapability.ReadContract);
         await _identityLease.AcquireContractReadAsync(actor);
-        return await AuthorizedContracts(await _provider.GetDbContextAsync(), actor)
-            .SingleOrDefaultAsync(x => x.Id == contractId)
+        return await AuthorizedContracts(
+                await _provider.GetDbContextAsync(), actor, contractId)
+            .SingleOrDefaultAsync()
             ?? throw Denied();
     }
 
@@ -73,7 +73,8 @@ public sealed class SliceBStagingContractQuery
     }
 
     private static IQueryable<SliceBScopedContractRead> AuthorizedContracts(
-        BuildingManagementDbContext db, Guid actor)
+        BuildingManagementDbContext db, Guid actor,
+        Guid? onlyContractId = null)
     {
         var now = DateTime.UtcNow;
         return from contract in db.Contracts.AsNoTracking()
@@ -83,7 +84,9 @@ public sealed class SliceBStagingContractQuery
                    on room.FloorId equals floor.Id
                join building in db.Buildings.AsNoTracking()
                    on floor.BuildingId equals building.Id
-               where !contract.IsDeleted && !room.IsDeleted &&
+               where (!onlyContractId.HasValue ||
+                       contract.Id == onlyContractId.Value) &&
+                     !contract.IsDeleted && !room.IsDeleted &&
                      !floor.IsDeleted && !building.IsDeleted &&
                      db.OperatorBuildingGrants.Any(grant =>
                          grant.OperatorUserId == actor &&
@@ -91,6 +94,7 @@ public sealed class SliceBStagingContractQuery
                          grant.RevokedAtUtc == null &&
                          grant.GrantedAtUtc <= now &&
                          (grant.ExpiresAtUtc == null || grant.ExpiresAtUtc > now))
+               orderby contract.ContractNumber, contract.Id
                select new SliceBScopedContractRead(
                    contract.Id, contract.RoomId, building.Id,
                    contract.ContractNumber, contract.Status,

@@ -7,6 +7,7 @@ on:
     paths:
       - ".github/workflows/buildingmanagement-slice-a-postgres.yml"
       - "modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/**"
+      - "test/NgocTrangHouseManagementSystem.HttpApi.Host.Tests/SliceAStagingPostgreSqlHttp_Tests.cs"
       - "etc/phase-audits/SliceA_OperatorBuildingGrant_*.sql"
       - "modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Security/EfBuildingOwnerBootstrapAtomicWriter.cs"
       - "modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Security/EfBuildingOperatorGrantAtomicMutationWriter.cs"
@@ -24,6 +25,7 @@ on:
     paths:
       - ".github/workflows/buildingmanagement-slice-a-postgres.yml"
       - "modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/**"
+      - "test/NgocTrangHouseManagementSystem.HttpApi.Host.Tests/SliceAStagingPostgreSqlHttp_Tests.cs"
       - "etc/phase-audits/SliceA_OperatorBuildingGrant_*.sql"
       - "modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Security/EfBuildingOwnerBootstrapAtomicWriter.cs"
       - "modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Security/EfBuildingOperatorGrantAtomicMutationWriter.cs"
@@ -70,6 +72,7 @@ jobs:
       BM_PG_TEST_CONNECTION: "Host=127.0.0.1;Port=5432;Database=ngoctrang_integration_test;Username=slice_a_ci;Password=slice_a_ephemeral_ci_only"
       BM_PG_MEMBERSHIP_CONCURRENCY_OPT_IN: I_ACCEPT_EPHEMERAL_SCHEMA
       BM_PG_SLICE_A_FULL_CHAIN_OPT_IN: CREATE_AND_DROP_RANDOM_LOCAL_SLICE_A_DATABASE
+      BM_PG_SLICE_A_HTTP_OPT_IN: I_ACCEPT_DISPOSABLE_PG_STAGING_HTTP
 
     steps:
       - name: Checkout
@@ -84,6 +87,12 @@ jobs:
         run: |
           dotnet test modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/BuildingManagement.PostgreSql.Tests.csproj \
             --filter "FullyQualifiedName~BuildingOperatorGrantCandidatePostgreSql_Tests|FullyQualifiedName~BuildingOperatorGrantConcurrencyPostgreSql_Tests|FullyQualifiedName~SliceAGrantEfMigrationPostgreSql_Tests|FullyQualifiedName~SliceAFullChainUpgradePostgreSql_Tests" \
+            --logger "console;verbosity=normal"
+
+      - name: Isolated PostgreSQL ABP authenticated staging HTTP
+        run: |
+          dotnet test test/NgocTrangHouseManagementSystem.HttpApi.Host.Tests/NgocTrangHouseManagementSystem.HttpApi.Host.Tests.csproj \
+            --filter "FullyQualifiedName~SliceAStagingPostgreSqlHttp_Tests" \
             --logger "console;verbosity=normal"
 
 # Does not start the ABP app, use EF Migrate/DbMigrator, alter runtime

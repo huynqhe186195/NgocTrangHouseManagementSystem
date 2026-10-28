@@ -350,3 +350,8 @@ and atomically posts a single completed allocation journal. A second confirm
 is refused. The global legacy Payment HTTP controller stays DENY. Tests
 cover unauthorized building, mismatched contract identifiers, successful
 500k cash confirmation, duplicate rejection, and one ledger row.
+
+
+### Database truth for the closeout financial read
+
+The development PostgreSQL schema does **not** contain the design-only invoice evidence archive/reviewer/journal tables. The API intentionally reads the existing FinalInvoiceIssuePreflight (persisted draft and utility evidence) and ContractDepositLedgerReview (actual settlement journal) instead of querying un-migrated FinalInvoiceReleaseReadiness relations. It explicitly returns `StagedInvoiceEvidencePersistenceNotMigrated`, `IndependentInvoiceReviewPersistenceNotMigrated` and `FinalInvoiceIssuanceNotImplemented` blockers, and keeps all posting/closeout booleans false. No migration is fabricated or production financial state inferred.

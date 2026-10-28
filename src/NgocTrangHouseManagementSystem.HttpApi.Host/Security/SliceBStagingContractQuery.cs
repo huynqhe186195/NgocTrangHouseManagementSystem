@@ -28,7 +28,7 @@ public sealed class SliceBStagingContractQuery
     private readonly ICurrentUser _currentUser;
     private readonly SliceAStagingIdentityCommitLease _identityLease;
     private readonly MoveOutCompletionReadinessAppService _readiness;
-    private readonly FinalInvoiceReleaseReadinessAppService _invoiceRelease;
+    private readonly FinalInvoiceIssuePreflightAppService _invoicePreflight;
     private readonly ContractDepositLedgerReviewAppService _depositLedger;
 
     public SliceBStagingContractQuery(
@@ -37,7 +37,7 @@ public sealed class SliceBStagingContractQuery
         ICurrentUser currentUser,
         SliceAStagingIdentityCommitLease identityLease,
         MoveOutCompletionReadinessAppService readiness,
-        FinalInvoiceReleaseReadinessAppService invoiceRelease,
+        FinalInvoiceIssuePreflightAppService invoicePreflight,
         ContractDepositLedgerReviewAppService depositLedger)
     {
         _provider = provider;
@@ -45,7 +45,7 @@ public sealed class SliceBStagingContractQuery
         _currentUser = currentUser;
         _identityLease = identityLease;
         _readiness = readiness;
-        _invoiceRelease = invoiceRelease;
+        _invoicePreflight = invoicePreflight;
         _depositLedger = depositLedger;
     }
 
@@ -305,7 +305,11 @@ public sealed class SliceBStagingContractQuery
         Guid contractId, Guid requestId)
     {
         var closeout = await GetMoveOutReadinessAsync(contractId, requestId);
-        var invoice = await _invoiceRelease.GetAsync(requestId);
+        // Phase 2G.3's STAGED evidence/review tables have no live PG
+        // migration. Do NOT query FinalInvoiceReleaseReadinessAppService,
+        // which requires those absent relations. The persisted draft/utility
+        // preflight and deposit settlement journal ARE available for review.
+        var invoice = await _invoicePreflight.GetAsync(requestId);
         var deposit = await _depositLedger.GetAsync(requestId);
         if (invoice.ContractId != contractId ||
             invoice.MoveOutRequestId != requestId ||
@@ -315,23 +319,28 @@ public sealed class SliceBStagingContractQuery
             closeout.MoveOutRequestId != requestId ||
             closeout.CanCompleteMoveOut ||
             invoice.CanIssue ||
-            invoice.CanPostReceivable ||
-            invoice.CanSettleDeposit ||
+            invoice.IsReceivablePosted ||
+            invoice.IsDebtCalculated ||
             deposit.CanRefund ||
             deposit.CanOffsetDebt ||
             deposit.IsSettlementApproved)
             throw Denied();
 
+        var invoiceBlockers = invoice.Blockers.ToList();
+        invoiceBlockers.Add("StagedInvoiceEvidencePersistenceNotMigrated");
+        invoiceBlockers.Add("IndependentInvoiceReviewPersistenceNotMigrated");
+        invoiceBlockers.Add("FinalInvoiceIssuanceNotImplemented");
+
         return new SliceBScopedMoveOutFinancialRead(
-            requestId, contractId, invoice.DraftInvoiceId,
-            invoice.VerifiedBaseAmount,
+            requestId, contractId, invoice.UtilityDraftId,
+            invoice.KnownBaseChargeTotal,
             deposit.ObservedCompletedContractDepositReceiptsTotal,
             deposit.VerifiedIncomingAllocationTotal,
             deposit.RecordedCompletedOutgoingTotal,
-            invoice.StagedEvidenceMatchesCurrentDraft,
-            invoice.OriginalSourcesVerified,
-            invoice.IndependentReviewApplicableToCurrentDraft,
-            invoice.Blockers.ToArray(), deposit.Blockers.ToArray(),
+            StagedInvoiceEvidenceCurrent: false,
+            OriginalInvoiceSourcesVerified: false,
+            IndependentInvoiceReviewApplicable: false,
+            invoiceBlockers, deposit.Blockers.ToArray(),
             closeout.Blockers.ToArray(),
             CanIssueInvoice: false, CanRecognizeDebt: false,
             CanSettleDeposit: false, CanCompleteMoveOut: false);

@@ -150,8 +150,8 @@ public sealed class SliceBFinalInvoiceEvidenceMigrationPostgreSql_Tests
                 SELECT count(*) FROM pg_trigger
                 WHERE NOT tgisinternal AND
                     tgrelid IN (
-                    '\"BuildingManagementFinalInvoiceIssueEvidence\"'::regclass,
-                    '\"BuildingManagementInvoiceIssuanceReviews\"'::regclass)
+                    '"BuildingManagementFinalInvoiceIssueEvidence"'::regclass,
+                    '"BuildingManagementInvoiceIssuanceReviews"'::regclass)
                 """));
             await ExecuteAsync(db, tx, down);
             Assert.Equal(1L, await CountAsync(db, tx,
@@ -173,7 +173,7 @@ public sealed class SliceBFinalInvoiceEvidenceMigrationPostgreSql_Tests
         var operations = down ? migration.DownOperations : migration.UpOperations;
         var scripts = operations.OfType<SqlOperation>().ToArray();
         Assert.Single(scripts);
-        Assert.Equal(1, operations.Count);
+        Assert.Single(operations);
         Assert.Contains(down ? "refuse rollback" : "CK_BM_FinalIssueEvidence_Hash",
             scripts[0].Sql, StringComparison.Ordinal);
         Assert.DoesNotContain("DROP SCHEMA", scripts[0].Sql,

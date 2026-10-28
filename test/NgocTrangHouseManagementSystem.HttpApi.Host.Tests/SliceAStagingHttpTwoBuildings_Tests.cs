@@ -6,6 +6,7 @@ using System.Net;
 using System.Net.Http;
 using System.Reflection;
 using System.Security.Claims;
+using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
@@ -145,6 +146,9 @@ public sealed class SliceAStagingHttpTwoBuildings_Tests
                 await permissions.SetForUserAsync(actorB,
                     BuildingManagement.Permissions.BuildingManagementPermissions.Buildings.Read,
                     true);
+                await permissions.SetForUserAsync(actorA,
+                    BuildingManagement.Permissions.BuildingManagementPermissions.Buildings.Manage,
+                    true);
                 await uow.CompleteAsync();
             }
 
@@ -194,6 +198,35 @@ public sealed class SliceAStagingHttpTwoBuildings_Tests
                 Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
             using (var response = await clientB.GetAsync(Url(a)))
                 Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+
+            // Positive HTTP mutation is staging-only. The production CRUD
+            // write/revocation race remains separately gated.
+            using (var body = new StringContent(
+                "{\"name\":\"A updated\",\"address\":\"Staging updated\"}",
+                Encoding.UTF8, "application/json"))
+            using (var response = await clientA.PutAsync(Url(a), body))
+            {
+                var payload = await response.Content.ReadAsStringAsync();
+                Assert.True(response.StatusCode == HttpStatusCode.OK,
+                    $"A PUT {response.StatusCode}: {payload}");
+                Assert.Contains("A updated", payload);
+            }
+            using (var body = new StringContent(
+                "{\"name\":\"No access\",\"address\":\"Denied\"}",
+                Encoding.UTF8, "application/json"))
+            using (var response = await clientA.PutAsync(Url(b), body))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var body = new StringContent(
+                "{\"name\":\"No manage\",\"address\":\"Denied\"}",
+                Encoding.UTF8, "application/json"))
+            using (var response = await clientB.PutAsync(Url(b), body))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var response = await clientA.GetAsync(Url(a)))
+            {
+                var payload = await response.Content.ReadAsStringAsync();
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                Assert.Contains("A updated", payload);
+            }
 
             await using (var memberships = NewMembershipDb(memberCs))
             {

@@ -53,7 +53,7 @@ public sealed class AbpIdentityPermissionRealDi_Tests
                         o.ConnectionStrings.Default = cs;
                     });
                 });
-            await application.InitializeAsync();
+            application.Initialize();
 
             var services = application.ServiceProvider;
             var actor = Guid.NewGuid();
@@ -175,7 +175,7 @@ public sealed class AbpIdentityPermissionRealDi_Tests
         {
             if (application is not null)
             {
-                await application.ShutdownAsync();
+                application.Shutdown();
                 application.Dispose();
             }
             Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();

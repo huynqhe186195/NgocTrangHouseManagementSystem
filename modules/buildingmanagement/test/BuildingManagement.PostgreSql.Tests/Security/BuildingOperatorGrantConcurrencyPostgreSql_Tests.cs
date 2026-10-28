@@ -326,9 +326,9 @@ public sealed class BuildingOperatorGrantConcurrencyPostgreSql_Tests
                 // Only an explicit, single SELECT is allowed. No psql
                 // variables, scripts or mutable SQL in this audit artifact.
                 Assert.Equal(1, Regex.Matches(audit,
-                    @"(?im)^SELECT\\s+runtime_login").Count);
+                    @"(?im)^SELECT\s+runtime_login").Count);
                 Assert.False(Regex.IsMatch(audit,
-                    @"(?im)^\\s*(CREATE|ALTER|DROP|GRANT|REVOKE|UPDATE|DELETE|INSERT|TRUNCATE|SET|DO|CALL)\\b"));
+                    @"(?im)^\s*(CREATE|ALTER|DROP|GRANT|REVOKE|UPDATE|DELETE|INSERT|TRUNCATE|SET|DO|CALL)\b"));
 
                 var runtimeOptions = new NpgsqlConnectionStringBuilder(
                     adminSettings.ConnectionString)

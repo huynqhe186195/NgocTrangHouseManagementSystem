@@ -42,6 +42,20 @@ psql -X -v ON_ERROR_STOP=1 -f .\etc\phase-audits\SliceA_RuntimeDbRole_ReadOnlyAu
 
 Require `session_login = runtime_login` and all four flags `true`, confirm expected database + search_path and retain a signed audit record. The script performs **zero writes** and never provisions a role. Its negative-path CI test grants an unsafe immutable-column `UPDATE` to a disposable login and verifies the attestation flips to `FALSE`. Production approval additionally needs a separately approved audit of the **Identity database service-login role**, since Building-only permissions cannot attest Identity credentials.
 
+### Identity DB runtime login audit
+
+`etc/phase-audits/SliceA_IdentityRuntimeDbRole_ReadOnlyAudit.sql` is a **separate** read-only attestation against the actual four ABP tables (`AbpUsers`, `AbpRoles`, `AbpUserRoles`, `AbpPermissionGrants`). Run it as the **Identity service account**, never the migration/admin account, and independently of the Building audit. The result includes `identity_tables_present`, `role_pass`, `users_pass`, `roles_pass`, `membership_pass`, `permission_pass` and `slice_a_identity_role_pass`. Every result must be true and `runtime_login` must equal `session_login`. The SQL rejects schema or database `CREATE` privilege, effective table `TRUNCATE`/`TRIGGER` privilege, table ownership, inherited owner membership and PostgreSQL administrative role attributes. Do not assume revoking `CREATE` on the schema also revokes `CREATE` on the database.
+
+Example for an **approved, authenticated, isolated staging Identity DB connection only**:
+
+```powershell
+psql -X -v ON_ERROR_STOP=1 -f .\etc\phase-audits\SliceA_IdentityRuntimeDbRole_ReadOnlyAudit.sql
+```
+
+The isolated PostgreSQL HTTP fixture provisions a fresh nonowner login, executes the exact checked-in query against the **real ABP Identity EF schema**, verifies it passes with read-only table access and becomes FALSE if `TRUNCATE` or schema `CREATE` is temporarily granted. The role and privileges are revoked/dropped in the scratch fixture. This CI evidence is NOT evidence of permissions of a deployed production login; obtaining those credentials is outside this scope.
+
+**Release gate:** Both Identity and Building audits must have independently signed operational evidence from the **actual deployed service identities** in the intended databases, with no service/migration credential reuse. Evidence must include database name, `current_user`, `session_user`, schema, result flags, effective inherited roles and review date. No passwords or connection secrets should enter GitHub, CI logs or audit reports.
+
 ## 4. Safe validation
 
 - Push CI `buildingmanagement-slice-a-postgres.yml` on `wip/phase-2g2`, verify migration chain, rollback refusal, concurrency, non-owner role, and separate PG HTTP ABP Identity fixture.

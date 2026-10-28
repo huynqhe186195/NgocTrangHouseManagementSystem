@@ -80,7 +80,6 @@ namespace BuildingManagement.Buildings
                 Building,
                 BuildingDto
             >(building);
-            });
         }
 
         public async Task<List<BuildingDto>> GetListAsync()
@@ -124,6 +123,7 @@ namespace BuildingManagement.Buildings
                 Building,
                 BuildingDto
             >(building);
+            });
         }
 
         private async Task EnsureNoBuildingFloorsAsync(Guid buildingId)

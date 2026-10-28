@@ -110,7 +110,7 @@ public sealed class SliceAStagingHttpTwoBuildings_Tests
         try
         {
             var builder = WebApplication.CreateBuilder(
-                new WebApplicationOptions { EnvironmentName = Environments.Production });
+                new WebApplicationOptions { EnvironmentName = Environments.Staging });
             builder.WebHost.UseTestServer();
             builder.Host.UseAutofac();
             var config = new ConfigurationBuilder()
@@ -118,7 +118,10 @@ public sealed class SliceAStagingHttpTwoBuildings_Tests
                 {
                     ["ConnectionStrings:Default"] = idCs,
                     ["ConnectionStrings:BuildingManagement"] = buildingCs,
-                    ["ConnectionStrings:SliceAMembership"] = memberCs
+                    ["ConnectionStrings:SliceAMembership"] = memberCs,
+                    ["BuildingManagement:SliceAStaging:Enabled"] = "true",
+                    ["BuildingManagement:SliceAStaging:Activation"] =
+                        "I_ACCEPT_ISOLATED_SLICE_A_STAGING_WRITES"
                 }).Build();
             builder.Configuration.AddConfiguration(config);
             builder.Services.ReplaceConfiguration(config);
@@ -151,6 +154,12 @@ public sealed class SliceAStagingHttpTwoBuildings_Tests
                     true);
                 await permissions.SetForUserAsync(actorA,
                     BuildingManagement.Permissions.BuildingManagementPermissions.Buildings.Manage,
+                    true);
+                await permissions.SetForUserAsync(actorA,
+                    BuildingManagement.Permissions.BuildingManagementPermissions.Buildings.AssignOperators,
+                    true);
+                await permissions.SetForUserAsync(actorA,
+                    BuildingManagement.Permissions.BuildingManagementPermissions.Buildings.RevokeOperators,
                     true);
                 await permissions.SetForUserAsync(actorA,
                     BuildingManagement.Permissions.BuildingManagementPermissions.Floors.Manage,
@@ -307,6 +316,43 @@ public sealed class SliceAStagingHttpTwoBuildings_Tests
                 Assert.True(response.StatusCode is HttpStatusCode.NoContent or
                     HttpStatusCode.OK);
 
+            // Actual HTTP delegation: two accounts, real ABP Identity
+            // and permission manager, durable test membership history.
+            var delegationBase = "/api/slice-a-staging/operator-grants";
+            using (var body = new StringContent(JsonSerializer.Serialize(new
+                {
+                    buildingId = a, operatorUserId = actorB,
+                    expiresAtUtc = (DateTime?)null
+                }), Encoding.UTF8, "application/json"))
+            using (var response = await clientA.PostAsync(delegationBase, body))
+            {
+                var payload = await response.Content.ReadAsStringAsync();
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                Assert.Contains("grantId", payload, StringComparison.OrdinalIgnoreCase);
+            }
+            using (var response = await clientB.GetAsync(listPath))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                var payload = await response.Content.ReadAsStringAsync();
+                Assert.Contains(a.ToString("D"), payload, StringComparison.OrdinalIgnoreCase);
+                Assert.Contains(b.ToString("D"), payload, StringComparison.OrdinalIgnoreCase);
+            }
+            using (var body = new StringContent(JsonSerializer.Serialize(new
+                {
+                    buildingId = a, operatorUserId = actorB,
+                    expectedRevision = 1
+                }), Encoding.UTF8, "application/json"))
+            using (var response = await clientA.PostAsync(
+                delegationBase + "/revoke", body))
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            using (var response = await clientB.GetAsync(listPath))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                var payload = await response.Content.ReadAsStringAsync();
+                Assert.DoesNotContain(a.ToString("D"), payload, StringComparison.OrdinalIgnoreCase);
+                Assert.Contains(b.ToString("D"), payload, StringComparison.OrdinalIgnoreCase);
+            }
+
             await using (var memberships = NewMembershipDb(memberCs))
             {
                 var grant = await memberships.Grants.SingleAsync(x =>
@@ -399,6 +445,36 @@ public sealed class SliceAStagingHttpTwoBuildings_Tests
         }
     }
 
+    public sealed class StagingSqliteGrantMutationWriter : IBuildingOperatorGrantMutationWriter
+    {
+        private readonly string _connection;
+        public StagingSqliteGrantMutationWriter(IConfiguration config)
+        {
+            _connection = config["ConnectionStrings:SliceAMembership"]
+                ?? throw new InvalidOperationException("No disposable membership DB.");
+            if (!_connection.Contains("bm_http_", StringComparison.Ordinal))
+                throw new InvalidOperationException("No isolated SQLite grant DB.");
+        }
+
+        public async Task<Guid> AssignAtomicallyAsync(
+            Guid issuer, Guid recipient, Guid building, DateTime? expiresAt)
+        {
+            await using var db = NewMembershipDb(_connection);
+            return await new EfBuildingOperatorGrantAtomicMutationWriter(
+                db, TimeProvider.System).AssignAtomicallyAsync(
+                    issuer, recipient, building, expiresAt);
+        }
+
+        public async Task RevokeAtomicallyAsync(
+            Guid issuer, Guid recipient, Guid building, int revision)
+        {
+            await using var db = NewMembershipDb(_connection);
+            await new EfBuildingOperatorGrantAtomicMutationWriter(
+                db, TimeProvider.System).RevokeAtomicallyAsync(
+                    issuer, recipient, building, revision);
+        }
+    }
+
     public sealed class StagingMembershipReader : IBuildingOperatorGrantReader
     {
         private readonly string _connection;
@@ -428,6 +504,9 @@ public sealed class SliceAStagingHttpTwoBuildings_Tests
     {
         public override void PreConfigureServices(ServiceConfigurationContext context)
         {
+            PreConfigure<Microsoft.AspNetCore.Mvc.IMvcBuilder>(mvcBuilder =>
+                mvcBuilder.AddApplicationPartIfNotExists(
+                    typeof(SliceAStagingOperatorGrantsController).Assembly));
             PreConfigure<AbpAspNetCoreMvcOptions>(options =>
                 options.ConventionalControllers.Create(
                     typeof(BuildingManagementApplicationModule).Assembly,
@@ -470,6 +549,9 @@ public sealed class SliceAStagingHttpTwoBuildings_Tests
             context.Services.Replace(
                 ServiceDescriptor.Transient<IBuildingScopedWriteBoundary,
                     StagingSqliteWriteBoundary>());
+            context.Services.Replace(
+                ServiceDescriptor.Transient<IBuildingOperatorGrantMutationWriter,
+                    StagingSqliteGrantMutationWriter>());
 
             Configure<AbpMvcLibsOptions>(o => o.CheckLibs = false);
             Configure<MvcOptions>(o => o.Conventions.Add(

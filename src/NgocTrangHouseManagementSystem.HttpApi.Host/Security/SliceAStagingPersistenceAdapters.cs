@@ -119,22 +119,49 @@ public sealed class SliceAStagingOwnerRecoveryWriter : IBuildingOwnerRecoveryWri
 public sealed class SliceAStagingGrantMutationWriter : IBuildingOperatorGrantMutationWriter
 {
     private readonly IDbContextProvider<BuildingManagementDbContext> _provider;
+    private readonly ICurrentUser _actor;
+    private readonly SliceAStagingIdentityCommitLease _lease;
+
     public SliceAStagingGrantMutationWriter(
-        IDbContextProvider<BuildingManagementDbContext> provider) => _provider = provider;
+        IDbContextProvider<BuildingManagementDbContext> provider,
+        ICurrentUser actor, SliceAStagingIdentityCommitLease lease)
+    {
+        _provider = provider;
+        _actor = actor;
+        _lease = lease;
+    }
 
     public async Task<Guid> AssignAtomicallyAsync(
         Guid trustedIssuerId, Guid recipientUserId, Guid buildingId,
         DateTime? expiresAtUtc)
-        => await new EfBuildingOperatorGrantAtomicMutationWriter(
+    {
+        EnsureIssuer(trustedIssuerId);
+        await _lease.AcquireDelegationAsync(trustedIssuerId,
+            recipientUserId, BuildingOperatorChangeKind.Assign);
+        return await new EfBuildingOperatorGrantAtomicMutationWriter(
             await _provider.GetDbContextAsync(), TimeProvider.System)
             .AssignAtomicallyAsync(
                 trustedIssuerId, recipientUserId, buildingId, expiresAtUtc);
+    }
 
     public async Task RevokeAtomicallyAsync(
         Guid trustedIssuerId, Guid recipientUserId, Guid buildingId,
         int expectedRevision)
-        => await new EfBuildingOperatorGrantAtomicMutationWriter(
+    {
+        EnsureIssuer(trustedIssuerId);
+        await _lease.AcquireDelegationAsync(trustedIssuerId,
+            recipientUserId, BuildingOperatorChangeKind.Revoke);
+        await new EfBuildingOperatorGrantAtomicMutationWriter(
             await _provider.GetDbContextAsync(), TimeProvider.System)
             .RevokeAtomicallyAsync(
                 trustedIssuerId, recipientUserId, buildingId, expectedRevision);
+    }
+
+    private void EnsureIssuer(Guid issuer)
+    {
+        if (!_actor.IsAuthenticated || !_actor.Id.HasValue ||
+            _actor.Id.Value == Guid.Empty || _actor.Id.Value != issuer)
+            throw new Volo.Abp.Authorization.AbpAuthorizationException(
+                "The authenticated issuer must match the persisted grant issuer.");
+    }
 }

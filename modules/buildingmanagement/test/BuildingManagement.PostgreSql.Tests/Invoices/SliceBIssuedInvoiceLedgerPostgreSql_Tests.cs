@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
 using BuildingManagement.Migrations;
 using Microsoft.EntityFrameworkCore.Migrations;
@@ -161,7 +162,7 @@ public sealed class SliceBIssuedInvoiceLedgerPostgreSql_Tests
             VALUES ('{f.Evidence:D}','{f.Draft:D}','{f.Request:D}',
                     '{f.Contract:D}','{f.Room:D}',2026,10,
                     '{Guid.NewGuid():D}','2026-10-29T00:00:00Z',
-                    3000000,'{}','{f.SourceSha}');
+                    3000000,'[]','{f.SourceSha}');
             INSERT INTO "BuildingManagementInvoiceIssuanceReviews"
                 ("Id","StagedEvidenceId","DraftInvoiceId","MoveOutRequestId",
                  "ContractId","RoomId","BuildingId","EvidenceSha256",
@@ -185,9 +186,15 @@ public sealed class SliceBIssuedInvoiceLedgerPostgreSql_Tests
 
     private static string InsertSql(TestInvoice f, Guid id, string number)
     {
-        var terms = $"""
-            {{"DraftInvoiceId":"{f.Draft:D}","EvidenceSha256":"{f.SourceSha}","BaseAmount":3000000,"AuxiliaryAmount":0,"TotalAmount":3000000,"DueDate":"2026-11-05"}}
-            """;
+        var terms = JsonSerializer.Serialize(new
+        {
+            DraftInvoiceId = f.Draft,
+            EvidenceSha256 = f.SourceSha,
+            BaseAmount = 3000000m,
+            AuxiliaryAmount = 0m,
+            TotalAmount = 3000000m,
+            DueDate = "2026-11-05"
+        });
         var hash = Convert.ToHexString(SHA256.HashData(
             Encoding.UTF8.GetBytes(terms))).ToLowerInvariant();
         return $"""

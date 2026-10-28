@@ -734,6 +734,157 @@ public sealed class SliceAGrantEfMigrationPostgreSql_Tests
         });
     }
 
+    [Fact]
+    public async Task EFMEMBER15_Revocation_Committed_First_Blocks_Delegation_In_Ambient_ReadCommitted_Uow()
+    {
+        await InScratchAsync(async cs =>
+        {
+            var founder = Guid.NewGuid();
+            var manager = Guid.NewGuid();
+            var recipient = Guid.NewGuid();
+            Guid building;
+            await using (var seed = OpenGrantDb(cs))
+            {
+                await seed.Database.MigrateAsync();
+                building = (await new EfBuildingOwnerBootstrapAtomicWriter(seed)
+                    .CreateWithOwnerAtomicallyAsync(
+                        founder, "First revoke", "Scratch PG", null)).Id;
+                await new EfBuildingOperatorGrantAtomicMutationWriter(
+                    seed, TimeProvider.System)
+                    .AssignAtomicallyAsync(founder, manager, building, null);
+            }
+
+            await using var revokeDb = OpenGrantDb(cs);
+            await using var revokeUow = await revokeDb.Database
+                .BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted);
+            await new EfBuildingOperatorGrantAtomicMutationWriter(
+                revokeDb, TimeProvider.System)
+                .RevokeAtomicallyAsync(founder, manager, building, 1);
+
+            var started = new TaskCompletionSource<bool>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            var delegation = Task.Run(async () =>
+            {
+                await using var attempt = OpenGrantDb(cs);
+                await using var uow = await attempt.Database
+                    .BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted);
+                started.TrySetResult(true);
+                await new EfBuildingOperatorGrantAtomicMutationWriter(
+                    attempt, TimeProvider.System)
+                    .AssignAtomicallyAsync(manager, recipient, building, null);
+                await uow.CommitAsync();
+            });
+
+            try
+            {
+                await started.Task.WaitAsync(TimeSpan.FromSeconds(15));
+                await Task.Delay(250);
+                Assert.False(delegation.IsCompleted,
+                    "Delegation must wait on the issuer membership being revoked.");
+            }
+            finally
+            {
+                await revokeUow.CommitAsync();
+            }
+
+            await Assert.ThrowsAsync<AbpAuthorizationException>(
+                async () => await delegation.WaitAsync(TimeSpan.FromSeconds(15)));
+
+            await using var verify = OpenGrantDb(cs);
+            Assert.False(await verify.Grants.AnyAsync(g =>
+                g.OperatorUserId == recipient && g.BuildingId == building));
+            Assert.Equal(1, await verify.Grants.CountAsync(g =>
+                g.OperatorUserId == manager && g.BuildingId == building &&
+                g.RevokedAtUtc != null));
+        });
+    }
+
+    [Fact]
+    public async Task EFMEMBER16_Delegation_Locked_First_Must_Commit_Before_Issuer_Revocation()
+    {
+        await InScratchAsync(async cs =>
+        {
+            var founder = Guid.NewGuid();
+            var manager = Guid.NewGuid();
+            var recipient = Guid.NewGuid();
+            Guid building;
+            await using (var seed = OpenGrantDb(cs))
+            {
+                await seed.Database.MigrateAsync();
+                building = (await new EfBuildingOwnerBootstrapAtomicWriter(seed)
+                    .CreateWithOwnerAtomicallyAsync(
+                        founder, "First delegate", "Scratch PG", null)).Id;
+                await new EfBuildingOperatorGrantAtomicMutationWriter(
+                    seed, TimeProvider.System)
+                    .AssignAtomicallyAsync(founder, manager, building, null);
+            }
+
+            var delegated = new TaskCompletionSource<bool>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource<bool>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            var delegation = Task.Run(async () =>
+            {
+                await using var scope = OpenGrantDb(cs);
+                await using var uow = await scope.Database
+                    .BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted);
+                await new EfBuildingOperatorGrantAtomicMutationWriter(
+                    scope, TimeProvider.System)
+                    .AssignAtomicallyAsync(manager, recipient, building, null);
+                delegated.TrySetResult(true);
+                await release.Task.WaitAsync(TimeSpan.FromSeconds(15));
+                await uow.CommitAsync();
+            });
+
+            try
+            {
+                await delegated.Task.WaitAsync(TimeSpan.FromSeconds(15));
+                await using (var uncommitted = OpenGrantDb(cs))
+                    Assert.False(await uncommitted.Grants.AnyAsync(g =>
+                        g.OperatorUserId == recipient && g.BuildingId == building));
+
+                var started = new TaskCompletionSource<bool>(
+                    TaskCreationOptions.RunContinuationsAsynchronously);
+                var revocation = Task.Run(async () =>
+                {
+                    await using var scope = OpenGrantDb(cs);
+                    await using var uow = await scope.Database
+                        .BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted);
+                    started.TrySetResult(true);
+                    await new EfBuildingOperatorGrantAtomicMutationWriter(
+                        scope, TimeProvider.System)
+                        .RevokeAtomicallyAsync(founder, manager, building, 1);
+                    await uow.CommitAsync();
+                });
+                await started.Task.WaitAsync(TimeSpan.FromSeconds(15));
+                await Task.Delay(250);
+                Assert.False(revocation.IsCompleted,
+                    "Revocation must wait until delegated grant commits or rolls back.");
+                release.TrySetResult(true);
+                await delegation.WaitAsync(TimeSpan.FromSeconds(15));
+                await revocation.WaitAsync(TimeSpan.FromSeconds(15));
+            }
+            finally
+            {
+                release.TrySetResult(true);
+            }
+
+            await using var verify = OpenGrantDb(cs);
+            Assert.Equal(1, await verify.Grants.CountAsync(g =>
+                g.OperatorUserId == recipient && g.BuildingId == building &&
+                g.RevokedAtUtc == null));
+            Assert.Equal(1, await verify.Grants.CountAsync(g =>
+                g.OperatorUserId == manager && g.BuildingId == building &&
+                g.RevokedAtUtc != null));
+
+            var laterActor = Guid.NewGuid();
+            await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+                new EfBuildingOperatorGrantAtomicMutationWriter(
+                    verify, TimeProvider.System)
+                    .AssignAtomicallyAsync(manager, laterActor, building, null));
+        });
+    }
+
     private static SliceAGrantScratchDb OpenGrantDb(string cs)
         => new(new DbContextOptionsBuilder<SliceAGrantScratchDb>()
             .UseNpgsql(cs, n => n.MigrationsAssembly(

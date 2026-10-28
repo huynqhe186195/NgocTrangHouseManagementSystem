@@ -2,6 +2,7 @@
   "culture": "en",
   "texts": {
     "Permission:Buildings.BootstrapOwner": "Provision first building owner",
+    "Permission:Buildings.CoSignOwnerRecovery": "Co-sign building owner recovery",
     "Permission:BuildingManagement": "Building management",
     "Permission:Buildings.Read": "View buildings",
     "Permission:Buildings.Manage": "Manage buildings",

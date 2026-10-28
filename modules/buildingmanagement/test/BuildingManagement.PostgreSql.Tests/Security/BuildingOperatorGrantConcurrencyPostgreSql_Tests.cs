@@ -167,6 +167,128 @@ public sealed class BuildingOperatorGrantConcurrencyPostgreSql_Tests
         });
     }
 
+    [Fact]
+    public async Task PGMEMBER08_Independent_Login_Role_Cannot_Escalate_Grant_Or_Destroy_History()
+    {
+        // A separate LOGIN session, not SET ROLE on the table owner's
+        // connection. The role is created only against the guarded CI/local
+        // scratch PostgreSQL database and dropped in finally.
+        if (Environment.GetEnvironmentVariable("BM_PG_RUNTIME_ROLE_OPT_IN") !=
+            "I_ACCEPT_EPHEMERAL_NONOWNER_LOGIN")
+            return;
+
+        await InCommittedScratchAsync(async (cs, schema, building) =>
+        {
+            var role = "bm_slicea_runtime_" + Guid.NewGuid().ToString("N");
+            var password = Guid.NewGuid().ToString("N") +
+                           Guid.NewGuid().ToString("N");
+            Assert.Matches(@"^bm_slicea_runtime_[0-9a-f]{32}$", role);
+            var grantId = Guid.NewGuid();
+            var recipient = Guid.NewGuid();
+            await using var admin = await OpenAsync(cs);
+            var created = false;
+            try
+            {
+                await ExecuteAsync(admin, null,
+                    $"""CREATE ROLE "{role}" LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT PASSWORD '{password}'""");
+                created = true;
+                await ExecuteAsync(admin, null,
+                    $"""GRANT USAGE ON SCHEMA "{schema}" TO "{role}" """);
+                await ExecuteAsync(admin, null,
+                    $"""GRANT SELECT ON TABLE "{schema}"."Buildings" TO "{role}" """);
+                await ExecuteAsync(admin, null,
+                    $"""GRANT SELECT, INSERT ON TABLE "{schema}"."{Table}" TO "{role}" """);
+                await ExecuteAsync(admin, null,
+                    $"""GRANT UPDATE ("RevokedAtUtc", "RevokedByUserId", "RevisionNumber", "ConcurrencyStamp") ON TABLE "{schema}"."{Table}" TO "{role}" """);
+
+                var clientCs = new NpgsqlConnectionStringBuilder(cs.ConnectionString)
+                {
+                    Username = role,
+                    Password = password,
+                    SearchPath = schema,
+                    Pooling = false,
+                    CommandTimeout = 15
+                };
+                await using var runtime = new NpgsqlConnection(clientCs.ConnectionString);
+                await runtime.OpenAsync();
+                Assert.Equal(BuildingManagementPostgreSqlTestModule.DatabaseName,
+                    runtime.Database);
+                await using var tx = await runtime.BeginTransactionAsync();
+                await ExecuteAsync(runtime, tx, "SET LOCAL lock_timeout = '3s'");
+                Assert.Equal(schema, await ScalarStringAsync(
+                    runtime, tx, "SELECT current_schema()"));
+                Assert.Equal(role, await ScalarStringAsync(
+                    runtime, tx, "SELECT current_user"));
+                Assert.Equal(0L, await CountAsync(runtime, tx,
+                    "SELECT count(*) FROM pg_roles WHERE rolname = current_user AND (rolsuper OR rolcreatedb OR rolcreaterole)"));
+                Assert.Equal(0L, await CountAsync(runtime, tx,
+                    "SELECT count(*) FROM pg_namespace WHERE nspname = current_schema() AND pg_get_userbyid(nspowner) = current_user"));
+
+                await ExecuteAsync(runtime, tx,
+                    GrantInsert(grantId, recipient, building));
+                await ExecuteAsync(runtime, tx,
+                    $"""
+                    UPDATE "{Table}"
+                       SET "RevokedAtUtc" = '2026-10-28T00:00:00Z',
+                           "RevokedByUserId" = '{Guid.NewGuid():D}',
+                           "RevisionNumber" = 2
+                     WHERE "Id" = '{grantId:D}';
+                    """);
+                await ExpectPrivilegeDeniedAsync(runtime, tx,
+                    $"""UPDATE "{Table}" SET "OperatorUserId" = '{Guid.NewGuid():D}' WHERE "Id" = '{grantId:D}'""");
+                await ExpectPrivilegeDeniedAsync(runtime, tx,
+                    $"""UPDATE "{Table}" SET "GrantedByUserId" = '{Guid.NewGuid():D}' WHERE "Id" = '{grantId:D}'""");
+                await ExpectPrivilegeDeniedAsync(runtime, tx,
+                    $"""DELETE FROM "{Table}" WHERE "Id" = '{grantId:D}'""");
+                await ExpectPrivilegeDeniedAsync(runtime, tx,
+                    $"""TRUNCATE TABLE "{Table}" """);
+                await ExpectPrivilegeDeniedAsync(runtime, tx,
+                    $"""ALTER TABLE "{Table}" ADD COLUMN "Unreviewed" boolean""");
+                Assert.Equal(1L, await CountAsync(runtime, tx,
+                    $"""SELECT count(*) FROM "{Table}" WHERE "Id" = '{grantId:D}' AND "RevokedAtUtc" IS NOT NULL"""));
+                await tx.RollbackAsync();
+            }
+            finally
+            {
+                if (created)
+                {
+                    // Clear only privileges of this test-generated role,
+                    // then drop it. Role creation is not production policy.
+                    await ExecuteAsync(admin, null,
+                        $"""REVOKE ALL ON TABLE "{schema}"."{Table}" FROM "{role}" """);
+                    await ExecuteAsync(admin, null,
+                        $"""REVOKE ALL ON TABLE "{schema}"."Buildings" FROM "{role}" """);
+                    await ExecuteAsync(admin, null,
+                        $"""REVOKE ALL ON SCHEMA "{schema}" FROM "{role}" """);
+                    await ExecuteAsync(admin, null, $"""DROP ROLE "{role}" """);
+                }
+            }
+        });
+    }
+
+    private static async Task ExpectPrivilegeDeniedAsync(
+        NpgsqlConnection connection, NpgsqlTransaction tx, string sql)
+    {
+        await ExecuteAsync(connection, tx, "SAVEPOINT runtime_privilege_probe");
+        string? state = null;
+        try
+        {
+            await ExecuteAsync(connection, tx, sql);
+        }
+        catch (PostgresException error)
+        {
+            state = error.SqlState;
+        }
+        finally
+        {
+            await ExecuteAsync(connection, tx,
+                "ROLLBACK TO SAVEPOINT runtime_privilege_probe");
+            await ExecuteAsync(connection, tx,
+                "RELEASE SAVEPOINT runtime_privilege_probe");
+        }
+        Assert.Equal(PostgresErrorCodes.InsufficientPrivilege, state);
+    }
+
     private static string GrantInsert(Guid id, Guid user, Guid building)
         => $"""
            INSERT INTO "{Table}"

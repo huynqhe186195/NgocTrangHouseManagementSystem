@@ -23,6 +23,8 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
      */
     // The register entity Building into database
     public DbSet<Building> Buildings { get; set; } = default!;
+    // Schema-only rollout; runtime grant/account/writer DI remains DenyAll.
+    public DbSet<BuildingOperatorAccessGrant> OperatorBuildingGrants { get; set; } = default!;
     public DbSet<Floor> Floors { get; set; } = default!;
     public DbSet<Room> Rooms { get; set; } = default!;
     public DbSet<Tenant> Tenants { get; set; } = default!;
@@ -62,6 +64,10 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
         base.OnModelCreating(builder);
 
         builder.ConfigureBuildingManagement();
+        // Source-only Slice A membership model. Adding the mapping alone
+        // never authorizes a user; production providers stay DenyAll.
+        builder.ApplyConfiguration(
+            new BuildingManagement.EntityFrameworkCore.EntityConfigurations.BuildingOperatorAccessGrantDesignConfiguration());
         // Explicit mapping: survives differing module model-builder conventions.
         builder.ApplyConfiguration(
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.MeterReplacementConfiguration());

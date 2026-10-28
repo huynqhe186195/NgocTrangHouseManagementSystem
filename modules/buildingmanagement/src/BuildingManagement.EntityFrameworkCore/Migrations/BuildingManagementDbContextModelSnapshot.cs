@@ -90,6 +90,34 @@ namespace BuildingManagement.Migrations
                     b.ToTable("Buildings", (string)null);
                 });
 
+            modelBuilder.Entity("BuildingManagement.Buildings.BuildingOperatorAccessGrant", b =>
+                {
+                    b.Property<Guid>("Id").HasColumnType("uuid");
+                    b.Property<Guid>("OperatorUserId").HasColumnType("uuid");
+                    b.Property<Guid>("BuildingId").HasColumnType("uuid");
+                    b.Property<Guid>("GrantedByUserId").HasColumnType("uuid");
+                    b.Property<DateTime>("GrantedAtUtc").HasColumnType("timestamp with time zone");
+                    b.Property<DateTime?>("ExpiresAtUtc").HasColumnType("timestamp with time zone");
+                    b.Property<DateTime?>("RevokedAtUtc").HasColumnType("timestamp with time zone");
+                    b.Property<Guid?>("RevokedByUserId").HasColumnType("uuid");
+                    b.Property<int>("RevisionNumber")
+                        .IsConcurrencyToken().HasColumnType("integer");
+                    b.Property<string>("ConcurrencyStamp")
+                        .IsConcurrencyToken().IsRequired()
+                        .HasMaxLength(40).HasColumnType("character varying(40)")
+                        .HasColumnName("ConcurrencyStamp");
+                    b.Property<string>("ExtraProperties")
+                        .IsRequired().HasColumnType("text")
+                        .HasColumnName("ExtraProperties");
+                    b.HasKey("Id");
+                    b.HasIndex("BuildingId");
+                    b.HasIndex("OperatorUserId", "BuildingId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_BM_OperatorBuilding_Unrevoked")
+                        .HasFilter("\"RevokedAtUtc\" IS NULL");
+                    b.ToTable("BuildingManagementOperatorBuildingGrants", (string)null);
+                });
+
             modelBuilder.Entity("BuildingManagement.Contracts.Contract", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1826,6 +1854,15 @@ namespace BuildingManagement.Migrations
                 });
 
             modelBuilder.Entity("BuildingManagement.Utilities.UtilityRate", b =>
+                {
+                    b.HasOne("BuildingManagement.Buildings.Building", null)
+                        .WithMany()
+                        .HasForeignKey("BuildingId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("BuildingManagement.Buildings.BuildingOperatorAccessGrant", b =>
                 {
                     b.HasOne("BuildingManagement.Buildings.Building", null)
                         .WithMany()

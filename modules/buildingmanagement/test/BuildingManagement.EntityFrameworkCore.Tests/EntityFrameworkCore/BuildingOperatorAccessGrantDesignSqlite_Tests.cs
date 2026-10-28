@@ -191,7 +191,7 @@ public sealed class BuildingOperatorAccessGrantDesignSqlite_Tests
             new DbContextOptionsBuilder<BuildingManagementDbContext>()
                 .UseSqlite(connection).Options);
 
-        Assert.Null(db.Model.FindEntityType(typeof(BuildingOperatorAccessGrant)));
+        Assert.NotNull(db.Model.FindEntityType(typeof(BuildingOperatorAccessGrant)));
     }
 
     private static async Task SeedBuildingAsync(DesignStore store, Guid buildingId)

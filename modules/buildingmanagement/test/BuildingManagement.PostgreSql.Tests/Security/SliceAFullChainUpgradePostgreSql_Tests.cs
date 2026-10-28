@@ -20,7 +20,7 @@ public sealed class SliceAFullChainUpgradePostgreSql_Tests
 {
     private const string OptIn = "BM_PG_SLICE_A_FULL_CHAIN_OPT_IN";
     private const string Accepted = "CREATE_AND_DROP_RANDOM_LOCAL_SLICE_A_DATABASE";
-    private const string ScratchMigration = "202610280001_SliceAGrantScratch";
+    private const string RuntimeMigration = "20261028121500_SliceAOperatorBuildingMembership";
 
     [Fact]
     public async Task PGCHAIN01_Existing_Buildings_Survive_Full_Chain_Grant_Upgrade_And_History_Guard()
@@ -97,13 +97,12 @@ public sealed class SliceAFullChainUpgradePostgreSql_Tests
                     """);
             }
 
-            // The reviewed Slice A EF migration is in the TEST assembly,
-            // not in the production DbMigrator's assembly/model snapshot.
+            // The genuine source migration is now in the runtime EF chain.
+            // This disposable DB, never production, proves Up and guarded
+            // Down on the exact model and deployed migration class.
+            Assert.Contains(RuntimeMigration, baselineMigrations);
             await using (var grants = OpenGrantDb(scoped))
             {
-                await grants.Database.MigrateAsync();
-                Assert.Contains(ScratchMigration,
-                    await grants.Database.GetAppliedMigrationsAsync());
 
                 // Seed a historical owner grant on one PRE-EXISTING
                 // building. No new building or owner account is inferred.
@@ -114,17 +113,20 @@ public sealed class SliceAFullChainUpgradePostgreSql_Tests
 
                 Assert.Equal(2, await grants.Buildings.CountAsync());
                 Assert.Equal(1, await grants.Grants.CountAsync());
+                var previous = baselineMigrations[
+                    Array.IndexOf(baselineMigrations, RuntimeMigration) - 1];
+                await using var appDb = new BuildingManagementDbContext(runtimeOptions);
                 await Assert.ThrowsAsync<PostgresException>(() =>
-                    grants.Database.MigrateAsync("0"));
-                Assert.Contains(ScratchMigration,
-                    await grants.Database.GetAppliedMigrationsAsync());
+                    appDb.Database.MigrateAsync(previous));
+                Assert.Contains(RuntimeMigration,
+                    await appDb.Database.GetAppliedMigrationsAsync());
             }
 
             await using (var intact = new BuildingManagementDbContext(runtimeOptions))
             {
                 Assert.Equal(baselineMigrations,
                     (await intact.Database.GetAppliedMigrationsAsync())
-                        .Where(m => m != ScratchMigration).ToArray());
+                        .ToArray());
                 Assert.Equal("Existing Building A",
                     (await intact.Buildings.IgnoreQueryFilters().SingleAsync(x => x.Id == existingA)).Name);
                 Assert.Equal("Existing Building B",

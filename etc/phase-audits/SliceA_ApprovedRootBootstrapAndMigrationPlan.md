@@ -126,3 +126,18 @@ the runtime membership model/migration is reviewed and deployed,
 and role/account permission-revocation races and least-privilege
 DB rights are proven. A design-only adapter and separate PostgreSQL
 race tests are not proof of a deployed runtime path.
+
+## Source migration now in runtime EF chain (NOT deployed)
+
+A new native EF Core migration
+`20261028121500_SliceAOperatorBuildingMembership` and corresponding
+`BuildingManagementDbContext` mapping/snapshot are committed.
+`PGCHAIN01` applies the **actual** app migration chain to a disposable
+database containing two Building rows, then proves guarded Down refuses
+to delete historical membership. No permissions are seeded.
+
+This is **schema availability only**, not authorization activation:
+runtime Identity/account/grant/read/write providers still default
+to DenyAll; code does NOT run DbMigrator on startup in this batch.
+CI cannot establish a production backup, DBA-approved least-privilege
+role, operation windows or live database state.

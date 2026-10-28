@@ -42,12 +42,17 @@ if ($candidateReader -notmatch 'class EfBuildingOperatorGrantCandidateReader' -o
     throw 'Safety stop: candidate membership reader changed or was auto-registered.'
 }
 
-# The candidate grant schema MUST remain exclusive to disposable test DbContexts
-# until a reviewed migration, identity integration and complete CRUD guard exist.
-foreach ($source in @($db, $model)) {
-    if ($source -match 'BuildingOperatorAccessGrant|BuildingOperatorAccessGrantDesignConfiguration|BuildingManagementOperatorBuildingGrants') {
-        throw 'Safety stop: design-only grant entity was mapped into production EF.'
-    }
+# The migration/model is now present in source, but actual runtime access
+# MUST remain DenyAll. This gate does NOT apply migration or grant roles.
+$migration = Read-Source 'modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Migrations/20261028121500_SliceAOperatorBuildingMembership.cs'
+if ($db -notmatch 'BuildingOperatorAccessGrantDesignConfiguration' -or
+    $db -notmatch 'DbSet<BuildingOperatorAccessGrant>' -or
+    $migration -notmatch '20261028121500_SliceAOperatorBuildingMembership' -or
+    $migration -notmatch 'UX_BM_OperatorBuilding_Unrevoked' -or
+    $migration -notmatch 'ACCESS EXCLUSIVE MODE' -or
+    $migration -notmatch 'RAISE EXCEPTION' -or
+    $migration -match '(?im)^\s*(?:GRANT\b|CREATE\s+ROLE\b|ALTER\s+ROLE\b)' ) {
+    throw 'Safety stop: membership migration/model missing guards.'
 }
 
 # Match actual declaration/attributes, not comments documenting the absence
@@ -207,7 +212,7 @@ Write-Host 'PASS: all 15 Building/Floor/Room CRUD entry points retain fail-close
 Write-Host 'PASS: building creation routes through default-deny owner bootstrap with unregistered transaction writer.'
 
 Write-Host 'BUILDING SCOPE DESIGN-ONLY GATE PASS.'
-Write-Host 'PASS: experimental grant table is not mapped into the runtime DbContext.'
+Write-Host 'PASS: membership EF model and staged migration declared; production grant DI still DENY ALL.'
 Write-Host 'PASS: ABP Identity adapter is not auto-registered by class markers.'
 Write-Host 'PASS: current membership/account defaults are DENY ALL.'
 Write-Host 'READ-ONLY SOURCE CHECK: this does NOT prove effective DI, API authorization or database roles.'

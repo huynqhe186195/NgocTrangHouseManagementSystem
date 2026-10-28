@@ -752,6 +752,68 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 await uow.CompleteAsync();
             }
 
+            // Tenant-smuggling resistance for direct ABP grants: a
+            // user-scoped permission with a mismatched TenantId does not
+            // authorize any Building write, even if a previous permission
+            // check/claim is stale. No real tenant data is touched.
+            await using (var idConnection = new NpgsqlConnection(idCs))
+            {
+                await idConnection.OpenAsync();
+                var unrelatedTenant = Guid.NewGuid();
+                await using (var mismatch = new NpgsqlCommand(
+                    """
+                    UPDATE "AbpPermissionGrants"
+                       SET "TenantId" = @tenant
+                     WHERE "ProviderName" = 'U' AND "ProviderKey" = @actor
+                       AND "Name" = @permission AND "TenantId" IS NULL
+                    """, idConnection))
+                {
+                    mismatch.Parameters.AddWithValue("tenant", unrelatedTenant);
+                    mismatch.Parameters.AddWithValue("actor", operatorB.ToString("D"));
+                    mismatch.Parameters.AddWithValue("permission",
+                        BuildingManagementPermissions.Rooms.Manage);
+                    Assert.Equal(1, await mismatch.ExecuteNonQueryAsync());
+                }
+
+                using (var scope = app.Services.CreateScope())
+                {
+                    var sp = scope.ServiceProvider;
+                    var accessor = sp.GetRequiredService<ICurrentPrincipalAccessor>();
+                    using (accessor.Change(new ClaimsPrincipal(new ClaimsIdentity(
+                        new[]
+                        {
+                            new Claim(AbpClaimTypes.UserId, operatorB.ToString("D")),
+                            new Claim(ClaimTypes.NameIdentifier, operatorB.ToString("D"))
+                        }, "MismatchedTenantGrant"))))
+                    {
+                        using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                            .Begin(requiresNew: true, isTransactional: true);
+                        var mutated = false;
+                        await Assert.ThrowsAsync<Volo.Abp.Authorization.AbpAuthorizationException>(
+                            () => sp.GetRequiredService<IBuildingScopedWriteBoundary>()
+                                .ExecuteBuildingAsync(b, () =>
+                                {
+                                    mutated = true;
+                                    return Task.FromResult(true);
+                                }, BuildingScopedMutationKind.Room));
+                        Assert.False(mutated);
+                    }
+                }
+
+                await using var restore = new NpgsqlCommand(
+                    """
+                    UPDATE "AbpPermissionGrants"
+                       SET "TenantId" = NULL
+                     WHERE "ProviderName" = 'U' AND "ProviderKey" = @actor
+                       AND "Name" = @permission AND "TenantId" = @tenant
+                    """, idConnection);
+                restore.Parameters.AddWithValue("actor", operatorB.ToString("D"));
+                restore.Parameters.AddWithValue("permission",
+                    BuildingManagementPermissions.Rooms.Manage);
+                restore.Parameters.AddWithValue("tenant", unrelatedTenant);
+                Assert.Equal(1, await restore.ExecuteNonQueryAsync());
+            }
+
             // The PostgreSQL-backed HTTP path must also honor fresh ABP
             // Identity account state and durable user permission changes.
             // A still-valid membership is NEVER sufficient by itself.

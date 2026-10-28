@@ -255,6 +255,8 @@ public sealed class BuildingOperatorGrantConcurrencyPostgreSql_Tests
                     // Clear only privileges of this test-generated role,
                     // then drop it. Role creation is not production policy.
                     await ExecuteAsync(admin, null,
+                        $"""REVOKE UPDATE ("RevokedAtUtc", "RevokedByUserId", "RevisionNumber", "ConcurrencyStamp") ON TABLE "{schema}"."{Table}" FROM "{role}" """);
+                    await ExecuteAsync(admin, null,
                         $"""REVOKE ALL ON TABLE "{schema}"."{Table}" FROM "{role}" """);
                     await ExecuteAsync(admin, null,
                         $"""REVOKE ALL ON TABLE "{schema}"."Buildings" FROM "{role}" """);

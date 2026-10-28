@@ -546,6 +546,74 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 Assert.Equal(1, await restore.ExecuteNonQueryAsync());
             }
 
+            // Cross-database direct permission REVOKE must also wait for
+            // a Room write to commit. Lease pins the specific 'U' grant row
+            // against UPDATE/DELETE, even if ABP permission cache is warm.
+            Task<int>? removedPermission = null;
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                var accessor = sp.GetRequiredService<ICurrentPrincipalAccessor>();
+                using (accessor.Change(new ClaimsPrincipal(new ClaimsIdentity(
+                    new[]
+                    {
+                        new Claim(AbpClaimTypes.UserId, operatorB.ToString("D")),
+                        new Claim(ClaimTypes.NameIdentifier, operatorB.ToString("D"))
+                    }, "IsolatedPgPermissionRace"))))
+                {
+                    using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                        .Begin(requiresNew: true, isTransactional: true);
+                    await sp.GetRequiredService<IBuildingScopedWriteBoundary>()
+                        .ExecuteBuildingAsync(b, async () =>
+                        {
+                            var pg = await sp.GetRequiredService<
+                                IDbContextProvider<BuildingManagementDbContext>>()
+                                .GetDbContextAsync();
+                            await pg.Database.ExecuteSqlInterpolatedAsync(
+                                $"UPDATE \"Rooms\" SET \"Name\" = {"Committed before permission revoke"} WHERE \"Id\" = {roomB}");
+                            removedPermission = Task.Run(async () =>
+                            {
+                                await using var connection = new NpgsqlConnection(idCs);
+                                await connection.OpenAsync();
+                                await using var revoke = new NpgsqlCommand(
+                                    """
+                                    DELETE FROM "AbpPermissionGrants"
+                                     WHERE "ProviderName" = 'U'
+                                       AND "ProviderKey" = @actor
+                                       AND "Name" = @permission
+                                    """, connection);
+                                revoke.Parameters.AddWithValue("actor",
+                                    operatorB.ToString("D"));
+                                revoke.Parameters.AddWithValue("permission",
+                                    BuildingManagementPermissions.Rooms.Manage);
+                                return await revoke.ExecuteNonQueryAsync();
+                            });
+                            await Task.Delay(250);
+                            Assert.False(removedPermission.IsCompleted,
+                                "Direct ABP permission revoke must await Building commit.");
+                            return true;
+                        }, BuildingScopedMutationKind.Room);
+                    await uow.CompleteAsync();
+                }
+            }
+            Assert.NotNull(removedPermission);
+            Assert.Equal(1, await removedPermission!.WaitAsync(TimeSpan.FromSeconds(15)));
+            using (var payload = new StringContent(
+                """{"roomNumber":"101","name":"Must deny","area":26,"capacity":2,"status":0}""",
+                Encoding.UTF8, "application/json"))
+            using (var response = await clientB.PutAsync(
+                ChildId(roomUpdate, roomB), payload))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                await sp.GetRequiredService<IPermissionManager>().SetForUserAsync(
+                    operatorB, BuildingManagementPermissions.Rooms.Manage, true);
+                await uow.CompleteAsync();
+            }
+
             // The PostgreSQL-backed HTTP path must also honor fresh ABP
             // Identity account state and durable user permission changes.
             // A still-valid membership is NEVER sufficient by itself.

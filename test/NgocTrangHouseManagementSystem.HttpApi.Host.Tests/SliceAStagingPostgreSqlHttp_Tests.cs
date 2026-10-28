@@ -1699,8 +1699,8 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 paymentNumber = "STAGE-PAY-" + Guid.NewGuid().ToString("N"),
                 roomReservationId,
                 amount = 500000m,
-                method = 0,
-                channel = 0
+                method = 1,
+                channel = 1
             });
             async Task<(HttpStatusCode Status, string Body)> TryCreateDepositAsync(
                 Guid routeId, Guid bodyId)

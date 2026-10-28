@@ -268,6 +268,128 @@ public sealed class BuildingOperatorGrantConcurrencyPostgreSql_Tests
         });
     }
 
+    [Fact]
+    public async Task PGMEMBER09_ReadOnly_Role_Audit_Passes_LeastPrivilege_And_Rejects_Escalation()
+    {
+        if (Environment.GetEnvironmentVariable("BM_PG_RUNTIME_ROLE_OPT_IN") !=
+            "I_ACCEPT_EPHEMERAL_NONOWNER_LOGIN")
+            return;
+
+        // Exercise the EXACT additive EF migration SQL in a disposable
+        // committed schema. All global test roles are revoked/dropped in
+        // finally; there is NO user-selected or application database.
+        await InCommittedScratchAsync(async (adminBuilder, schema, _) =>
+        {
+            var role = "bm_role_audit_" + Guid.NewGuid().ToString("N");
+            var password = Guid.NewGuid().ToString("N") +
+                           Guid.NewGuid().ToString("N");
+            Assert.Matches(@"^bm_role_audit_[0-9a-f]{32}$", role);
+            var adminSettings = new NpgsqlConnectionStringBuilder(
+                adminBuilder.ConnectionString) { SearchPath = schema };
+            await using var admin = await OpenAsync(adminSettings);
+            var created = false;
+            try
+            {
+                // Migration is not approved/deployed: source SQL runs
+                // exclusively in the randomized scratch schema.
+                await using (var tx = await admin.BeginTransactionAsync())
+                {
+                    var migration = new BuildingManagement.Migrations
+                        .SliceAOwnerRecoveryApprovals();
+                    foreach (var operation in migration.UpOperations.OfType<
+                        Microsoft.EntityFrameworkCore.Migrations.Operations.SqlOperation>())
+                        await ExecuteAsync(admin, tx, operation.Sql);
+                    await tx.CommitAsync();
+                }
+
+                await ExecuteAsync(admin, null,
+                    $"""CREATE ROLE "{role}" LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT PASSWORD '{password}'""");
+                created = true;
+                await ExecuteAsync(admin, null,
+                    $"""GRANT USAGE ON SCHEMA "{schema}" TO "{role}" """);
+                await ExecuteAsync(admin, null,
+                    $"""GRANT SELECT, INSERT ON TABLE "{schema}"."{Table}" TO "{role}" """);
+                await ExecuteAsync(admin, null,
+                    $"""GRANT UPDATE ("RevokedAtUtc", "RevokedByUserId", "RevisionNumber", "ConcurrencyStamp") ON TABLE "{schema}"."{Table}" TO "{role}" """);
+                await ExecuteAsync(admin, null,
+                    $"""GRANT SELECT, INSERT ON TABLE "{schema}"."BuildingManagementOwnerRecoverySignoffs" TO "{role}" """);
+                await ExecuteAsync(admin, null,
+                    $"""GRANT UPDATE ("ConsumedAtUtc", "RecoveryGrantId") ON TABLE "{schema}"."BuildingManagementOwnerRecoverySignoffs" TO "{role}" """);
+
+                using var stream = typeof(BuildingOperatorGrantConcurrencyPostgreSql_Tests)
+                    .Assembly.GetManifestResourceStream(
+                        "SliceA_RuntimeDbRole_ReadOnlyAudit.sql")
+                    ?? throw new InvalidOperationException(
+                        "Missing version-controlled read-only audit SQL.");
+                using var reader = new StreamReader(stream);
+                var audit = reader.ReadToEnd().TrimStart('\uFEFF');
+                // Only an explicit, single SELECT is allowed. No psql
+                // variables, scripts or mutable SQL in this audit artifact.
+                Assert.Equal(1, Regex.Matches(audit,
+                    @"(?im)^SELECT\\s+runtime_login").Count);
+                Assert.False(Regex.IsMatch(audit,
+                    @"(?im)^\\s*(CREATE|ALTER|DROP|GRANT|REVOKE|UPDATE|DELETE|INSERT|TRUNCATE|SET|DO|CALL)\\b"));
+
+                var runtimeOptions = new NpgsqlConnectionStringBuilder(
+                    adminSettings.ConnectionString)
+                {
+                    Username = role, Password = password,
+                    Pooling = false, CommandTimeout = 15
+                };
+                await using var runtime = await OpenAsync(runtimeOptions);
+
+                async Task<(bool Role, bool Grant, bool Recovery, bool All)> AuditAsync(
+                    NpgsqlConnection connection)
+                {
+                    await using var command = new NpgsqlCommand(audit, connection);
+                    await using var results = await command.ExecuteReaderAsync();
+                    Assert.True(await results.ReadAsync());
+                    Assert.Equal(role, results.GetString(0));
+                    Assert.Equal(role, results.GetString(1));
+                    Assert.Equal(schema, results.GetString(2));
+                    Assert.True(results.GetBoolean(3));
+                    Assert.True(results.GetBoolean(4));
+                    return (results.GetBoolean(5), results.GetBoolean(6),
+                        results.GetBoolean(7), results.GetBoolean(8));
+                }
+
+                var clean = await AuditAsync(runtime);
+                Assert.True(clean.Role);
+                Assert.True(clean.Grant);
+                Assert.True(clean.Recovery);
+                Assert.True(clean.All);
+
+                // Prove the audit detects effective overprivilege without
+                // performing an unsafe UPDATE through that role.
+                await ExecuteAsync(admin, null,
+                    $"""GRANT UPDATE ("OperatorUserId") ON TABLE "{schema}"."{Table}" TO "{role}" """);
+                var unsafeResult = await AuditAsync(runtime);
+                Assert.True(unsafeResult.Role);
+                Assert.False(unsafeResult.Grant);
+                Assert.True(unsafeResult.Recovery);
+                Assert.False(unsafeResult.All);
+            }
+            finally
+            {
+                if (created)
+                {
+                    await ExecuteAsync(admin, null,
+                        $"""REVOKE UPDATE ("OperatorUserId", "RevokedAtUtc", "RevokedByUserId", "RevisionNumber", "ConcurrencyStamp") ON TABLE "{schema}"."{Table}" FROM "{role}" """);
+                    await ExecuteAsync(admin, null,
+                        $"""REVOKE ALL ON TABLE "{schema}"."{Table}" FROM "{role}" """);
+                    await ExecuteAsync(admin, null,
+                        $"""REVOKE UPDATE ("ConsumedAtUtc", "RecoveryGrantId") ON TABLE "{schema}"."BuildingManagementOwnerRecoverySignoffs" FROM "{role}" """);
+                    await ExecuteAsync(admin, null,
+                        $"""REVOKE ALL ON TABLE "{schema}"."BuildingManagementOwnerRecoverySignoffs" FROM "{role}" """);
+                    await ExecuteAsync(admin, null,
+                        $"""REVOKE ALL ON SCHEMA "{schema}" FROM "{role}" """);
+                    await ExecuteAsync(admin, null,
+                        $"""DROP ROLE "{role}" """);
+                }
+            }
+        });
+    }
+
     private static async Task ExpectPrivilegeDeniedAsync(
         NpgsqlConnection connection, NpgsqlTransaction tx, string sql)
     {

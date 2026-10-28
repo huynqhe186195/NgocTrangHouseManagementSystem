@@ -344,7 +344,7 @@ public sealed class SliceAStagingHttpTwoBuildings_Tests
                 }), Encoding.UTF8, "application/json"))
             using (var response = await clientA.PostAsync(
                 delegationBase + "/revoke", body))
-                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
             using (var response = await clientB.GetAsync(listPath))
             {
                 Assert.Equal(HttpStatusCode.OK, response.StatusCode);

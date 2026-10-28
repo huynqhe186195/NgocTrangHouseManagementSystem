@@ -161,6 +161,32 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule // syst
                 IBuildingOperatorGrantMutationWriter, SliceAStagingGrantMutationWriter>());
             context.Services.Replace(ServiceDescriptor.Transient<
                 IBuildingScopedWriteBoundary, SliceAStagingWriteBoundary>());
+
+            // Recovery is a SECOND, independent opt-in. A co-signer NEVER
+            // joins the BootstrapOwner allowlist and cannot create buildings.
+            // No remote recovery endpoints are registered.
+            if (configuration.GetValue<bool>(
+                    "BuildingManagement:OwnerRecovery:Enabled"))
+            {
+                var signers = configuration.GetSection(
+                    "BuildingManagement:OwnerRecovery:CoSignerUserIds")
+                    .Get<Guid[]>() ?? Array.Empty<Guid>();
+                if (signers.Length != 1 || signers[0] == Guid.Empty ||
+                    signers[0] == roots[0])
+                    throw new InvalidOperationException(
+                        "Owner recovery requires one separate designated co-signer.");
+                Configure<BuildingOwnerRecoverySecurityOptions>(options =>
+                    options.CoSignerUserIds = new HashSet<Guid>(signers));
+                context.Services.AddTransient<SliceAStagingOwnerRecoveryEvidenceStore>();
+                context.Services.Replace(ServiceDescriptor.Transient<
+                    IBuildingOwnerRecoveryApprovalReader>(sp =>
+                        sp.GetRequiredService<SliceAStagingOwnerRecoveryEvidenceStore>()));
+                context.Services.Replace(ServiceDescriptor.Transient<
+                    IBuildingOwnerRecoveryFounderReader>(sp =>
+                        sp.GetRequiredService<SliceAStagingOwnerRecoveryEvidenceStore>()));
+                context.Services.Replace(ServiceDescriptor.Transient<
+                    IBuildingOwnerRecoveryWriter, SliceAStagingOwnerRecoveryWriter>());
+            }
         }
 
         Configure<AbpMvcLibsOptions>(options =>

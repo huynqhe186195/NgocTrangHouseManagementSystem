@@ -1,0 +1,125 @@
+using System;
+using System.Data;
+using System.Linq;
+using System.Threading.Tasks;
+using BuildingManagement.Buildings;
+using BuildingManagement.Security;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
+using Volo.Abp.Authorization;
+using Volo.Abp.Data;
+
+namespace BuildingManagement.EntityFrameworkCore.Security;
+
+/// <summary>
+/// UNREGISTERED PostgreSQL staging candidate; not a remotely exposed
+/// recovery command. The two server-authenticated approvals are checked in
+/// BuildingOwnerRecoveryCoordinator before invoking this writer. This
+/// transaction independently verifies the historic founding membership,
+/// preserves it, writes a NEW grant with evidence IDs and never replaces
+/// existing owner/recipient grants.
+/// </summary>
+public sealed class EfBuildingOwnerRecoveryAtomicWriter :
+    IBuildingOwnerRecoveryWriter
+{
+    private readonly DbContext _db;
+    private readonly TimeProvider _clock;
+
+    public EfBuildingOwnerRecoveryAtomicWriter(
+        DbContext db, TimeProvider clock)
+    {
+        _db = db ?? throw new ArgumentNullException(nameof(db));
+        _clock = clock ?? throw new ArgumentNullException(nameof(clock));
+    }
+
+    public async Task<Guid> RecoverAtomicallyAsync(
+        Guid buildingId, Guid originalOwnerId, Guid newOwnerId,
+        Guid firstApprovedRootId, Guid secondApprovedRootId,
+        Guid approvalEvidenceId)
+    {
+        if (buildingId == Guid.Empty || originalOwnerId == Guid.Empty ||
+            newOwnerId == Guid.Empty || firstApprovedRootId == Guid.Empty ||
+            secondApprovedRootId == Guid.Empty || approvalEvidenceId == Guid.Empty ||
+            firstApprovedRootId == secondApprovedRootId ||
+            originalOwnerId == newOwnerId ||
+            newOwnerId == firstApprovedRootId ||
+            newOwnerId == secondApprovedRootId ||
+            !_db.Database.IsNpgsql())
+            throw Denied();
+
+        var owned = _db.Database.CurrentTransaction is null
+            ? await _db.Database.BeginTransactionAsync(IsolationLevel.Serializable)
+            : null;
+        try
+        {
+            var transaction = _db.Database.CurrentTransaction
+                ?? throw Denied();
+            var isolation = transaction.GetDbTransaction().IsolationLevel;
+            if (isolation != IsolationLevel.ReadCommitted &&
+                isolation != IsolationLevel.Serializable)
+                throw Denied();
+
+            // Founding row is locked until the same transaction commits.
+            // This root-issued record is never updated or revoked here.
+            var conn = _db.Database.GetDbConnection();
+            await using (var command = conn.CreateCommand())
+            {
+                command.Transaction = transaction.GetDbTransaction();
+                command.CommandText = """
+                    SELECT g."Id"
+                    FROM "BuildingManagementOperatorBuildingGrants" AS g
+                    JOIN "Buildings" AS b ON b."Id" = g."BuildingId"
+                    WHERE g."BuildingId" = @building
+                      AND g."OperatorUserId" = @founder
+                      AND g."GrantedByUserId" = @founder
+                      AND g."RevokedAtUtc" IS NULL
+                      AND b."IsDeleted" = FALSE
+                    FOR SHARE OF g
+                    """;
+                var building = command.CreateParameter();
+                building.ParameterName = "building";
+                building.Value = buildingId;
+                command.Parameters.Add(building);
+                var founder = command.CreateParameter();
+                founder.ParameterName = "founder";
+                founder.Value = originalOwnerId;
+                command.Parameters.Add(founder);
+                if (await command.ExecuteScalarAsync() is not Guid)
+                    throw Denied();
+            }
+
+            var now = _clock.GetUtcNow().UtcDateTime;
+            var grant = BuildingOperatorAccessGrant.Issue(
+                Guid.NewGuid(), newOwnerId, buildingId,
+                firstApprovedRootId, now, null);
+            // Persist independent sign-off identifiers in the same grant
+            // INSERT/transaction. Never use user-provided free-form audit
+            // text, and never overwrite a founding membership.
+            grant.SetProperty("OwnerRecoveryEvidenceId",
+                approvalEvidenceId.ToString("D"));
+            grant.SetProperty("OwnerRecoverySecondRootId",
+                secondApprovedRootId.ToString("D"));
+            grant.SetProperty("OwnerRecoveryFoundingUserId",
+                originalOwnerId.ToString("D"));
+            _db.Set<BuildingOperatorAccessGrant>().Add(grant);
+            await _db.SaveChangesAsync();
+            if (owned is not null)
+                await owned.CommitAsync();
+            return grant.Id;
+        }
+        catch
+        {
+            if (owned is not null)
+                await owned.RollbackAsync();
+            throw;
+        }
+        finally
+        {
+            if (owned is not null)
+                await owned.DisposeAsync();
+        }
+    }
+
+    private static AbpAuthorizationException Denied()
+        => new("Invalid dual-root owner recovery or missing original grant.");
+}

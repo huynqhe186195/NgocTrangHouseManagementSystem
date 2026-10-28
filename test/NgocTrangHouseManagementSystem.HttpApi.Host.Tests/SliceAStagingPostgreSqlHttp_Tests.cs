@@ -2165,6 +2165,37 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 await uow.CompleteAsync();
             }
 
+            // Cross-module invoice/deposit readiness is read-only and
+            // cannot use another building's request/contract. It reports
+            // known evidence gaps, not a refundable balance or payable bill.
+            using (var response = await clientB.GetAsync(
+                MoveOutRoute(contractA) + "/" +
+                moveOutRequest.ToString("D") + "/financial-readiness"))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var response = await clientB.GetAsync(
+                MoveOutRoute(cancelContract) + "/" +
+                Guid.NewGuid().ToString("D") + "/financial-readiness"))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var response = await clientB.GetAsync(
+                MoveOutRoute(cancelContract) + "/" +
+                moveOutRequest.ToString("D") + "/financial-readiness"))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                var body = await response.Content.ReadAsStringAsync();
+                using var json = JsonDocument.Parse(body);
+                var view = json.RootElement;
+                Assert.False(view.GetProperty("canIssueInvoice").GetBoolean());
+                Assert.False(view.GetProperty("canRecognizeDebt").GetBoolean());
+                Assert.False(view.GetProperty("canSettleDeposit").GetBoolean());
+                Assert.False(view.GetProperty("canCompleteMoveOut").GetBoolean());
+                Assert.NotEmpty(view.GetProperty("invoiceBlockers").EnumerateArray());
+                Assert.NotEmpty(view.GetProperty("depositBlockers").EnumerateArray());
+                Assert.DoesNotContain("phoneNumber", body,
+                    StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain("identityNumber", body,
+                    StringComparison.OrdinalIgnoreCase);
+            }
+
             // Identity Contracts.Manage DELETE cannot pass a Building write
             // transaction's permission lease. After revocation commits,
             // a fresh POST fails even if ABP's cache still says granted.

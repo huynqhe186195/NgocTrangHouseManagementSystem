@@ -309,3 +309,16 @@ The PostgreSQL HTTP fixture now also exercises the supported 3,000,000 VND compl
 ## Scoped move-out final readiness preflight — STILL BLOCKED
 
 Added isolated staging read-only GET on an exact contract/request relation. PostgreSQL transaction holds a shared lock on the request, contract/room/building graph and operator membership through the readiness service call, and Identity Contracts.Read is locked to commit. The original internal MoveOutCompletionReadiness evaluator remains authoritative and **CanCompleteMoveOut is always false** until final invoice issue, actual debt clearance and verified deposit disposition exist. No contract termination, room release or cash payout API is exposed. HTTP tests prove foreign request denial and the explicit blockers.
+
+
+## Scoped read-only final financial closeout review
+
+GET \`/api/slice-b-staging/contracts/{contractId}/move-out-requests/{requestId}/financial-readiness\`
+requires the existing locked Contracts.Read Identity lease and a matching live
+request→contract→room→floor→building→membership SHARE-locked PostgreSQL path.
+Inside the SAME UoW it combines persisted final-invoice release readiness
+and contract-deposit ledger reviews, including historical allocation anomalies.
+Its DTO contains no tenant PII or free-form notes; monetary totals are labeled
+OBSERVED evidence and all issue/debt/refund/closeout permissions remain false.
+Foreign/missing request IDs return 403, and final issuance, receipt allocation,
+bank transfers, room release and direct contract termination stay DENY.

@@ -45,21 +45,45 @@ public sealed class SliceAStagingWriteBoundary : IBuildingScopedWriteBoundary
 {
     private readonly IDbContextProvider<BuildingManagementDbContext> _provider;
     private readonly ICurrentUser _user;
+    private readonly IBuildingCrudAccessPolicy _policy;
 
     public SliceAStagingWriteBoundary(
         IDbContextProvider<BuildingManagementDbContext> provider,
-        ICurrentUser user)
+        ICurrentUser user,
+        IBuildingCrudAccessPolicy policy)
     {
         _provider = provider;
         _user = user;
+        _policy = policy;
     }
 
     public async Task<T> ExecuteBuildingAsync<T>(
         Guid serverResolvedBuildingId, Func<Task<T>> mutation,
         BuildingScopedMutationKind kind = BuildingScopedMutationKind.Building)
-        => await new EfBuildingScopedWriteBoundaryCandidate(
-            await _provider.GetDbContextAsync(), _user, TimeProvider.System)
-            .ExecuteBuildingAsync(serverResolvedBuildingId, mutation, kind);
+    {
+        if (!_user.IsAuthenticated || !_user.Id.HasValue ||
+            _user.Id.Value == Guid.Empty || serverResolvedBuildingId == Guid.Empty)
+            throw new Volo.Abp.Authorization.AbpAuthorizationException(
+                "Missing authenticated operator for staging write.");
+
+        var permission = kind switch
+        {
+            BuildingScopedMutationKind.Building => BuildingBusinessCapability.ManageBuilding,
+            BuildingScopedMutationKind.Floor => BuildingBusinessCapability.ManageFloor,
+            BuildingScopedMutationKind.Room => BuildingBusinessCapability.ManageRoom,
+            _ => throw new Volo.Abp.Authorization.AbpAuthorizationException(
+                "Unknown building write capability.")
+        };
+
+        // Re-evaluate CURRENT ABP Identity account + operation permission +
+        // scoped membership after mutation, while the Building PostgreSQL
+        // transaction still holds the membership lock. This cannot provide
+        // atomic revocation with a separate Identity database by itself.
+        return await new EfBuildingScopedWriteFenceCandidate(
+            await _provider.GetDbContextAsync(), TimeProvider.System)
+            .ExecuteAsync(_user.Id.Value, serverResolvedBuildingId, mutation,
+                () => _policy.EnsureBuildingAsync(serverResolvedBuildingId, permission));
+    }
 }
 
 public sealed class SliceAStagingGrantMutationWriter : IBuildingOperatorGrantMutationWriter

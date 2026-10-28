@@ -604,6 +604,92 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 await uow.CompleteAsync();
             }
 
+            // A history reader cannot leak membership metadata after
+            // Identity grants are revoked. Even read-only history must
+            // hold a durable Identity permission through Building UoW end.
+            Task<int>? revokeHistoryAssign = null;
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                var accessor = sp.GetRequiredService<ICurrentPrincipalAccessor>();
+                using (accessor.Change(new ClaimsPrincipal(new ClaimsIdentity(
+                    new[]
+                    {
+                        new Claim(AbpClaimTypes.UserId, root.ToString("D")),
+                        new Claim(ClaimTypes.NameIdentifier, root.ToString("D"))
+                    }, "CommitBoundGrantHistory"))))
+                {
+                    using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                        .Begin(requiresNew: true, isTransactional: true);
+                    var records = await sp.GetRequiredService<SliceAStagingOperatorGrantQuery>()
+                        .GetAsync(b, 0, 10);
+                    Assert.Contains(records, item => item.OperatorUserId == operatorB);
+                    revokeHistoryAssign = Task.Run(async () =>
+                    {
+                        await using var connection = new NpgsqlConnection(idCs);
+                        await connection.OpenAsync();
+                        await using var command = new NpgsqlCommand(
+                            """
+                            DELETE FROM "AbpPermissionGrants"
+                             WHERE "ProviderName" = 'U'
+                               AND "ProviderKey" = @root
+                               AND "Name" = @permission
+                            """, connection);
+                        command.Parameters.AddWithValue("root", root.ToString("D"));
+                        command.Parameters.AddWithValue("permission",
+                            BuildingManagementPermissions.Buildings.AssignOperators);
+                        return await command.ExecuteNonQueryAsync();
+                    });
+                    await Task.Delay(250);
+                    Assert.False(revokeHistoryAssign.IsCompleted,
+                        "Identity permission revocation must wait for grant-history UoW.");
+                    await uow.CompleteAsync();
+                }
+            }
+            Assert.NotNull(revokeHistoryAssign);
+            Assert.Equal(1, await revokeHistoryAssign!
+                .WaitAsync(TimeSpan.FromSeconds(15)));
+
+            // RevokeOperators alone is sufficient, but neither permission
+            // means DENY even if ABP caches a stale privileged result.
+            using (var response = await clientRoot.GetAsync(
+                grants + "/" + b.ToString("D")))
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+            await using (var connection = new NpgsqlConnection(idCs))
+            {
+                await connection.OpenAsync();
+                await using var command = new NpgsqlCommand(
+                    """
+                    DELETE FROM "AbpPermissionGrants"
+                     WHERE "ProviderName" = 'U'
+                       AND "ProviderKey" = @root
+                       AND "Name" = @permission
+                    """, connection);
+                command.Parameters.AddWithValue("root", root.ToString("D"));
+                command.Parameters.AddWithValue("permission",
+                    BuildingManagementPermissions.Buildings.RevokeOperators);
+                Assert.Equal(1, await command.ExecuteNonQueryAsync());
+            }
+            using (var response = await clientRoot.GetAsync(
+                grants + "/" + b.ToString("D")))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+
+            // Restore ephemeral fixture grants for subsequent delegation and
+            // CRUD tests; no deployed Identity permissions are touched.
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var permissions = sp.GetRequiredService<IPermissionManager>();
+                await permissions.SetForUserAsync(root,
+                    BuildingManagementPermissions.Buildings.AssignOperators, true);
+                await permissions.SetForUserAsync(root,
+                    BuildingManagementPermissions.Buildings.RevokeOperators, true);
+                await uow.CompleteAsync();
+            }
+
             // HTTP grant history is per-building and uses a separate
             // AssignOperators/RevokeOperators privilege, not Buildings.Read.
             using (var response = await clientRoot.GetAsync(

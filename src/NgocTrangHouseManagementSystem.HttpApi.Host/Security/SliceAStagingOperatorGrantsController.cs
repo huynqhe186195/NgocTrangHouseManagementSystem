@@ -62,7 +62,7 @@ public sealed class SliceAStagingOperatorGrantsController : ControllerBase
     }
 
     [HttpGet("{buildingId:guid}")]
-    [UnitOfWork]
+    [UnitOfWork(IsTransactional = true)]
     public async Task<IReadOnlyList<OperatorGrantListItem>> GetAsync(
         [FromRoute] Guid buildingId,
         [FromQuery] int skipCount = 0,

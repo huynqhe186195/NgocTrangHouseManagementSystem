@@ -73,7 +73,11 @@ public sealed class SliceAStagingOperatorGrantsGuard_Tests
                 Assert.NotNull(method.GetCustomAttribute<HttpGetAttribute>());
             else
                 Assert.NotNull(method.GetCustomAttribute<HttpPostAttribute>());
-            Assert.NotNull(method.GetCustomAttribute<UnitOfWorkAttribute>());
+            var unitOfWork = method.GetCustomAttribute<UnitOfWorkAttribute>();
+            Assert.NotNull(unitOfWork);
+            if (method.Name == "GetAsync")
+                Assert.True(unitOfWork!.IsTransactional,
+                    "Grant history must run in a transactional UoW for the Identity read lease.");
             Assert.Null(method.GetCustomAttribute<AllowAnonymousAttribute>());
         }
     }

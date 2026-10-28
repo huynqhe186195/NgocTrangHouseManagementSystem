@@ -94,6 +94,27 @@ public sealed class SliceAStagingIdentityCommitLease
             null, originalFounderId);
     }
 
+    /// <summary>
+    /// Grant-history reads require a durable AssignOperators OR
+    /// RevokeOperators grant, not a stale ABP permission cache. The chosen
+    /// persisted grant and active Identity user remain locked until the
+    /// Building read UoW completes, so revocation cannot overtake disclosure.
+    /// A failure to prove either permission is DENY, never a role-claim grant.
+    /// </summary>
+    public async Task AcquireGrantHistoryReadAsync(Guid authenticatedActorId)
+    {
+        try
+        {
+            await AcquirePermissionAsync(authenticatedActorId,
+                BuildingManagementPermissions.Buildings.AssignOperators, null);
+        }
+        catch (AbpAuthorizationException)
+        {
+            await AcquirePermissionAsync(authenticatedActorId,
+                BuildingManagementPermissions.Buildings.RevokeOperators, null);
+        }
+    }
+
     public Task AcquireAsync(
         Guid trustedUserId, BuildingBusinessCapability capability)
         => AcquirePermissionAsync(trustedUserId, capability switch

@@ -25,19 +25,22 @@ public sealed class SliceAStagingOperatorGrantQuery
     private readonly IBuildingOperatorActiveAccountReader _accounts;
     private readonly IBuildingOperatorGrantReader _grants;
     private readonly ICurrentUser _currentUser;
+    private readonly SliceAStagingIdentityCommitLease _lease;
 
     public SliceAStagingOperatorGrantQuery(
         IDbContextProvider<BuildingManagementDbContext> provider,
         IBuildingOperatorChangeIssuerReader issuers,
         IBuildingOperatorActiveAccountReader accounts,
         IBuildingOperatorGrantReader grants,
-        ICurrentUser currentUser)
+        ICurrentUser currentUser,
+        SliceAStagingIdentityCommitLease lease)
     {
         _provider = provider;
         _issuers = issuers;
         _accounts = accounts;
         _grants = grants;
         _currentUser = currentUser;
+        _lease = lease;
     }
 
     public async Task<IReadOnlyList<OperatorGrantListItem>> GetAsync(
@@ -61,6 +64,11 @@ public sealed class SliceAStagingOperatorGrantQuery
             !await _accounts.IsActiveAsync(actor) ||
             !(await _grants.GetActiveBuildingIdsAsync(actor)).Contains(buildingId))
             throw Denied();
+
+        // ABP permissions may be cached. Prove a persisted Identity grant
+        // and hold its lock through the transactional Building read, so
+        // revocation and history disclosure have a defined commit order.
+        await _lease.AcquireGrantHistoryReadAsync(actor);
 
         var db = await _provider.GetDbContextAsync();
         // Grant membership checked above is fresh but not a mutation fence.

@@ -40,7 +40,7 @@ jobs:
       - name: Run only isolated Identity composition tests
         run: |
           dotnet test test/NgocTrangHouseManagementSystem.HttpApi.Host.Tests/NgocTrangHouseManagementSystem.HttpApi.Host.Tests.csproj \
-            --filter "FullyQualifiedName~BuildingIdentityMembershipComposition_Tests" \
+            --filter "FullyQualifiedName~BuildingIdentityMembershipComposition_Tests|FullyQualifiedName~AbpIdentityPermissionRealDi_Tests" \
             --logger "console;verbosity=normal"
 
 # No PostgreSQL or production Identity database, credentials, EF migrations,

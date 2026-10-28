@@ -132,7 +132,7 @@ public sealed class SliceBStagingContractMutation
         BuildingManagementDbContext db, Guid contractId)
     {
         await using var cmd = Command(db, """
-            SELECT c."RoomId" FROM "Contracts" AS c
+            SELECT c."RoomId" FROM "BuildingManagementContracts" AS c
              WHERE c."Id" = @id AND c."IsDeleted" = FALSE
              FOR UPDATE OF c
             """);
@@ -146,8 +146,8 @@ public sealed class SliceBStagingContractMutation
     {
         await using var cmd = Command(db, """
             SELECT f."BuildingId"
-              FROM "Rooms" AS r
-              JOIN "Floors" AS f ON f."Id" = r."FloorId"
+              FROM "BuildingManagementRooms" AS r
+              JOIN "BuildingManagementFloors" AS f ON f."Id" = r."FloorId"
               JOIN "Buildings" AS b ON b."Id" = f."BuildingId"
              WHERE r."Id" = @id AND r."IsDeleted" = FALSE
                AND f."IsDeleted" = FALSE AND b."IsDeleted" = FALSE

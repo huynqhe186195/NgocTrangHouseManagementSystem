@@ -158,7 +158,9 @@ public sealed class BuildingOperatorGrantCandidatePostgreSql_Tests
             await ExecuteAsync(connection, tx,
                 $"""GRANT SELECT ON TABLE "{schema}"."Buildings" TO "{role}" """);
             await ExecuteAsync(connection, tx,
-                $"""GRANT SELECT, INSERT, UPDATE ON TABLE "{schema}"."{Table}" TO "{role}" """);
+                $"""GRANT SELECT, INSERT ON TABLE "{schema}"."{Table}" TO "{role}" """);
+            await ExecuteAsync(connection, tx,
+                $"""GRANT UPDATE ("RevokedAtUtc", "RevokedByUserId", "RevisionNumber", "ConcurrencyStamp") ON TABLE "{schema}"."{Table}" TO "{role}" """);
 
             // SET LOCAL cannot survive the outer rollback; the scratch
             // role is incapable of dropping the membership history.
@@ -177,6 +179,25 @@ public sealed class BuildingOperatorGrantCandidatePostgreSql_Tests
                        "RevisionNumber" = 2
                  WHERE "Id" = '{grantId:D}';
                 """);
+            // A running grant writer must NOT rewrite the immutable
+            // issuer, recipient, building or effective issuance timestamp.
+            // Column-level SQL privileges are enforced by PostgreSQL,
+            // independent of the service's application authorization.
+            await ExpectFailureAsync(connection, tx,
+                $"""UPDATE "{Table}" SET "OperatorUserId" = '{Guid.NewGuid():D}' WHERE "Id" = '{grantId:D}'""",
+                PostgresErrorCodes.InsufficientPrivilege);
+            await ExpectFailureAsync(connection, tx,
+                $"""UPDATE "{Table}" SET "GrantedByUserId" = '{Guid.NewGuid():D}' WHERE "Id" = '{grantId:D}'""",
+                PostgresErrorCodes.InsufficientPrivilege);
+            await ExpectFailureAsync(connection, tx,
+                $"""UPDATE "{Table}" SET "BuildingId" = '{Guid.NewGuid():D}' WHERE "Id" = '{grantId:D}'""",
+                PostgresErrorCodes.InsufficientPrivilege);
+            await ExpectFailureAsync(connection, tx,
+                $"""UPDATE "{Table}" SET "GrantedAtUtc" = CURRENT_TIMESTAMP WHERE "Id" = '{grantId:D}'""",
+                PostgresErrorCodes.InsufficientPrivilege);
+            await ExpectFailureAsync(connection, tx,
+                $"""UPDATE "{Table}" SET "ExpiresAtUtc" = CURRENT_TIMESTAMP WHERE "Id" = '{grantId:D}'""",
+                PostgresErrorCodes.InsufficientPrivilege);
             await ExpectFailureAsync(connection, tx,
                 $"""DELETE FROM "{Table}" WHERE "Id" = '{grantId:D}'""",
                 PostgresErrorCodes.InsufficientPrivilege);

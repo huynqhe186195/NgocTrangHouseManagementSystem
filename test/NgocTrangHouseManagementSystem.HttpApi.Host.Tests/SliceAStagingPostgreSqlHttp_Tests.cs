@@ -1316,6 +1316,7 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             // Neither candidate may pass through signing while the room is
             // locked. After release only ONE can sign due to overlap checks
             // re-evaluated under the acquired room lock.
+            Guid activeSigningContract = Guid.Empty;
             await using (var lockConnection = new NpgsqlConnection(buildingCs))
             {
                 await lockConnection.OpenAsync();
@@ -1347,6 +1348,7 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 Assert.Equal(1, results.Count(x => x == HttpStatusCode.OK));
                 var signed = results[0] == HttpStatusCode.OK
                     ? signCandidate1 : signCandidate2;
+                activeSigningContract = signed;
                 var rejected = signed == signCandidate1
                     ? signCandidate2 : signCandidate1;
                 using (var response = await clientB.GetAsync(
@@ -1394,6 +1396,170 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     scopedContracts + "/" + signed.ToString("D") + "/sign", null))
                     Assert.NotEqual(HttpStatusCode.OK, response.StatusCode);
             }
+
+            // A live Active contract can reserve renewal only for its own
+            // building. One active hold must be consumed in the same UoW as
+            // the new signed contract, copied tenants and date checks.
+            string RenewalRoute(Guid contract) => scopedContracts + "/" +
+                contract.ToString("D") + "/renew";
+            string HoldRoute(Guid contract) => scopedContracts + "/" +
+                contract.ToString("D") + "/renewal-holds";
+            string RenewalJson(string suffix) => JsonSerializer.Serialize(new
+            {
+                contractNumber = "RENEW-" + suffix + "-" +
+                    Guid.NewGuid().ToString("N"),
+                startDate = "2027-11-01T00:00:00Z",
+                endDate = "2028-10-31T00:00:00Z",
+                monthlyRent = 2850000m,
+                notes = "Isolated renewal audit"
+            });
+
+            using (var payload = new StringContent("""{"notes":"denied"}""",
+                Encoding.UTF8, "application/json"))
+            using (var response = await clientB.PostAsync(
+                HoldRoute(contractA), payload))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var payload = new StringContent(RenewalJson("A"),
+                Encoding.UTF8, "application/json"))
+            using (var response = await clientB.PostAsync(
+                RenewalRoute(contractA), payload))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+
+            using (var payload = new StringContent(RenewalJson("NO-HOLD"),
+                Encoding.UTF8, "application/json"))
+            using (var response = await clientB.PostAsync(
+                RenewalRoute(activeSigningContract), payload))
+                Assert.NotEqual(HttpStatusCode.OK, response.StatusCode);
+
+            Guid renewalHold;
+            using (var payload = new StringContent("""{"notes":"renewal scope"}""",
+                Encoding.UTF8, "application/json"))
+            using (var response = await clientB.PostAsync(
+                HoldRoute(activeSigningContract), payload))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await response.Content.ReadAsStringAsync());
+                renewalHold = json.RootElement.GetProperty("id").GetGuid();
+                Assert.NotEqual(Guid.Empty, renewalHold);
+                Assert.Equal(1, json.RootElement.GetProperty("status").GetInt32());
+            }
+            // The global hold primary key cannot be cancelled by someone
+            // outside the contract's building, nor used by a stranger.
+            // A second hold is rejected by unique history / active gate.
+            using (var payload = new StringContent("""{"notes":"duplicate"}""",
+                Encoding.UTF8, "application/json"))
+            using (var response = await clientB.PostAsync(
+                HoldRoute(activeSigningContract), payload))
+                Assert.NotEqual(HttpStatusCode.OK, response.StatusCode);
+
+            Guid renewedContract;
+            using (var payload = new StringContent(RenewalJson("SUCCESS"),
+                Encoding.UTF8, "application/json"))
+            using (var response = await clientB.PostAsync(
+                RenewalRoute(activeSigningContract), payload))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await response.Content.ReadAsStringAsync());
+                renewedContract = json.RootElement.GetProperty("id").GetGuid();
+                Assert.NotEqual(activeSigningContract, renewedContract);
+            }
+            using (var response = await clientB.GetAsync(
+                scopedContracts + "/" + renewedContract.ToString("D")))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await response.Content.ReadAsStringAsync());
+                Assert.Equal(5, json.RootElement.GetProperty("status").GetInt32());
+                Assert.Equal(signingRoom,
+                    json.RootElement.GetProperty("roomId").GetGuid());
+            }
+            using (var response = await clientB.GetAsync(Members(renewedContract)))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await response.Content.ReadAsStringAsync());
+                Assert.Contains(json.RootElement.EnumerateArray(),
+                    member => member.GetProperty("tenantId").GetGuid() == tenantB &&
+                        member.GetProperty("role").GetInt32() == 1);
+            }
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var db = await sp.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>()
+                    .GetDbContextAsync();
+                var hold = await db.ContractRenewalHolds
+                    .SingleAsync(h => h.Id == renewalHold);
+                Assert.Equal(BuildingManagement.Contracts.ContractRenewalHoldStatus.Completed,
+                    hold.Status);
+                Assert.Equal(renewedContract, hold.CompletedContractId);
+                await uow.CompleteAsync();
+            }
+            using (var payload = new StringContent(RenewalJson("AGAIN"),
+                Encoding.UTF8, "application/json"))
+            using (var response = await clientB.PostAsync(
+                RenewalRoute(activeSigningContract), payload))
+                Assert.NotEqual(HttpStatusCode.OK, response.StatusCode);
+            using (var response = await clientB.PostAsync(
+                scopedContracts + "/renewal-holds/" +
+                renewalHold.ToString("D") + "/cancel", null))
+                Assert.NotEqual(HttpStatusCode.OK, response.StatusCode);
+
+            // Standalone cancel path: new room, new Active contract, hold
+            // cancelled before renewal. It must block renewal and leave
+            // contract/room occupancy unchanged.
+            var cancelRoom = await CreateChildAsync(clientB, roomCreate,
+                new { floorId = floorB, roomNumber = "103",
+                    name = "PG B103 cancel hold", area = 25.0,
+                    capacity = 2, status = 1 });
+            Guid cancelContract;
+            using (var payload = new StringContent(CreateJson(cancelRoom,
+                "CANCEL-HOLD-" + Guid.NewGuid().ToString("N")),
+                Encoding.UTF8, "application/json"))
+            using (var response = await clientB.PostAsync(scopedContracts, payload))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await response.Content.ReadAsStringAsync());
+                cancelContract = json.RootElement.GetProperty("id").GetGuid();
+            }
+            Assert.Equal(HttpStatusCode.OK,
+                await PostMemberAsync(cancelContract, tenantB, 1));
+            using (var response = await clientB.PostAsync(
+                scopedContracts + "/" + cancelContract.ToString("D") + "/sign", null))
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            using (var response = await clientB.PostAsync(
+                scopedContracts + "/" + cancelContract.ToString("D") + "/activate", null))
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Guid cancelledHold;
+            using (var payload = new StringContent("""{"notes":"cancel it"}""",
+                Encoding.UTF8, "application/json"))
+            using (var response = await clientB.PostAsync(
+                HoldRoute(cancelContract), payload))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await response.Content.ReadAsStringAsync());
+                cancelledHold = json.RootElement.GetProperty("id").GetGuid();
+            }
+            using (var response = await clientB.PostAsync(
+                scopedContracts + "/renewal-holds/" +
+                cancelledHold.ToString("D") + "/cancel", null))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await response.Content.ReadAsStringAsync());
+                Assert.Equal(4, json.RootElement.GetProperty("status").GetInt32());
+            }
+            using (var payload = new StringContent(RenewalJson("CANCELLED"),
+                Encoding.UTF8, "application/json"))
+            using (var response = await clientB.PostAsync(
+                RenewalRoute(cancelContract), payload))
+                Assert.NotEqual(HttpStatusCode.OK, response.StatusCode);
 
             // Identity Contracts.Manage DELETE cannot pass a Building write
             // transaction's permission lease. After revocation commits,

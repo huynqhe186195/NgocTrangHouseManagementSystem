@@ -113,6 +113,19 @@ public sealed class SliceAFullChainUpgradePostgreSql_Tests
 
                 Assert.Equal(2, await grants.Buildings.CountAsync());
                 Assert.Equal(1, await grants.Grants.CountAsync());
+                // The NEW additive recovery approval migration contains
+                // immutable evidence too. Seed a disposable signoff so
+                // attempting to downgrade across either migration refuses
+                // to destroy the approval chain or existing owner grants.
+                await grants.Database.ExecuteSqlInterpolatedAsync($"""
+                    INSERT INTO "BuildingManagementOwnerRecoverySignoffs"
+                        ("EvidenceId","BuildingId","FoundingOwnerId",
+                         "NewOwnerId","ApprovedByUserId","ApprovedAtUtc","ExpiresAtUtc")
+                    VALUES ({Guid.NewGuid()}, {existingA}, {owner},
+                            {Guid.NewGuid()}, {Guid.NewGuid()},
+                            {DateTime.UtcNow.AddMinutes(-1)},
+                            {DateTime.UtcNow.AddHours(1)})
+                    """);
                 var previous = baselineMigrations[
                     Array.IndexOf(baselineMigrations, RuntimeMigration) - 1];
                 await using var appDb = new BuildingManagementDbContext(runtimeOptions);

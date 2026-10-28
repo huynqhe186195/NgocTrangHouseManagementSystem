@@ -103,6 +103,14 @@ public sealed class EfBuildingOperatorGrantAtomicMutationWriter :
                 throw new DbUpdateConcurrencyException(
                     "Stale, unknown or already revoked operator membership.");
 
+            // The root's first-owner grant is the only legitimate
+            // self-issued membership (ordinary self-grants are prohibited).
+            // Never allow an operator delegation action to orphan a building
+            // by revoking that founding grant. Recovery requires a separate,
+            // explicitly approved administrative workflow.
+            if (grant.OperatorUserId == grant.GrantedByUserId)
+                throw Denied();
+
             grant.Revoke(trustedIssuerId, now);
             await _db.SaveChangesAsync();
             if (owned is not null)

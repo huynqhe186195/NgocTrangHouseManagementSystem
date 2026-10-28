@@ -699,6 +699,41 @@ public sealed class SliceAGrantEfMigrationPostgreSql_Tests
         });
     }
 
+    [Fact]
+    public async Task EFMEMBER14_Delegated_Manager_Cannot_Revoke_First_Owner_Grant()
+    {
+        await InScratchAsync(async cs =>
+        {
+            var founder = Guid.NewGuid();
+            var manager = Guid.NewGuid();
+            Guid building;
+            await using (var seed = OpenGrantDb(cs))
+            {
+                await seed.Database.MigrateAsync();
+                building = (await new EfBuildingOwnerBootstrapAtomicWriter(seed)
+                    .CreateWithOwnerAtomicallyAsync(
+                        founder, "Cannot orphan", "Scratch PG", null)).Id;
+                await new EfBuildingOperatorGrantAtomicMutationWriter(
+                    seed, TimeProvider.System)
+                    .AssignAtomicallyAsync(founder, manager, building, null);
+            }
+            await using (var attempted = OpenGrantDb(cs))
+            {
+                await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+                    new EfBuildingOperatorGrantAtomicMutationWriter(
+                        attempted, TimeProvider.System)
+                        .RevokeAtomicallyAsync(manager, founder, building, 1));
+            }
+            await using var verify = OpenGrantDb(cs);
+            Assert.Equal(1, await verify.Grants.CountAsync(g =>
+                g.OperatorUserId == founder && g.BuildingId == building &&
+                g.RevokedAtUtc == null));
+            Assert.Equal(1, await verify.Grants.CountAsync(g =>
+                g.OperatorUserId == manager && g.BuildingId == building &&
+                g.RevokedAtUtc == null));
+        });
+    }
+
     private static SliceAGrantScratchDb OpenGrantDb(string cs)
         => new(new DbContextOptionsBuilder<SliceAGrantScratchDb>()
             .UseNpgsql(cs, n => n.MigrationsAssembly(

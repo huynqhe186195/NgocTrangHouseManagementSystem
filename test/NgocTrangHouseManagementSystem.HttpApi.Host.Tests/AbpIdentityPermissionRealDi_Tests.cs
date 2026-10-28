@@ -7,6 +7,7 @@ using BuildingManagement;
 using BuildingManagement.Permissions;
 using BuildingManagement.Security;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Volo.Abp;
 using Volo.Abp.Authorization.Permissions;
@@ -61,10 +62,12 @@ public sealed class AbpIdentityPermissionRealDi_Tests
                 {
                     options.UseAutofac();
                     options.Services.AddLogging();
-                    options.Services.Configure<AbpDbConnectionOptions>(o =>
-                    {
-                        o.ConnectionStrings.Default = cs;
-                    });
+                    options.Services.ReplaceConfiguration(
+                        new ConfigurationBuilder()
+                            .AddInMemoryCollection(new Dictionary<string, string?>
+                            {
+                                ["ConnectionStrings:Default"] = cs
+                            }).Build());
                 });
             ((IAbpApplicationWithInternalServiceProvider)application).Initialize();
 
@@ -76,6 +79,8 @@ public sealed class AbpIdentityPermissionRealDi_Tests
                     .GetRequiredService<NgocTrangHouseManagementSystemDbContext>();
                 await db.Database.EnsureCreatedAsync();
                 var source = db.Database.GetDbConnection().DataSource;
+                Assert.True(!string.IsNullOrWhiteSpace(source),
+                    "ABP runtime SQLite connection string was empty.");
                 Assert.True(string.Equals(Path.GetFullPath(source),
                     Path.GetFullPath(filename), StringComparison.Ordinal),
                     "ABP Identity DbContext is using unexpected SQLite file: " +
@@ -213,6 +218,15 @@ public sealed class AbpIdentityPermissionRealDi_Tests
     {
         public override void ConfigureServices(ServiceConfigurationContext context)
         {
+            // Configure the named ABP database AFTER dependent modules have
+            // run. Do not rely solely on pre-module IServiceCollection
+            // Configure<T>, which can be overwritten by ABP configuration.
+            var cs = context.Services.GetConfiguration()["ConnectionStrings:Default"];
+            if (string.IsNullOrWhiteSpace(cs) ||
+                !cs.Contains("bm_idreal_", StringComparison.Ordinal) ||
+                !cs.EndsWith(".db", StringComparison.Ordinal))
+                throw new InvalidOperationException("Unsafe Identity test connection.");
+            Configure<AbpDbConnectionOptions>(o => o.ConnectionStrings.Default = cs);
             Configure<AbpDbContextOptions>(options => options.UseSqlite());
             Configure<AbpUnitOfWorkDefaultOptions>(options =>
                 options.TransactionBehavior = UnitOfWorkTransactionBehavior.Enabled);

@@ -65,6 +65,35 @@ public sealed class SliceAStagingIdentityCommitLease
             recipientId, originalFounderId);
     }
 
+    /// <summary>
+    /// Recovery commit requires BOTH persisted Identity permissions and
+    /// currently active independent signers. The recipient must be active
+    /// and the historical founder inactive. All relevant Identity rows
+    /// stay locked through Building grant + sign-off consumption commit.
+    /// This is a coordinated lease, NOT XA/2PC.
+    /// </summary>
+    public async Task AcquireOwnerRecoveryCommitAsync(
+        Guid authenticatedRootId, Guid coSignerId,
+        Guid originalFounderId, Guid recipientId)
+    {
+        if (authenticatedRootId == Guid.Empty || coSignerId == Guid.Empty ||
+            recipientId == Guid.Empty || originalFounderId == Guid.Empty ||
+            authenticatedRootId == coSignerId ||
+            authenticatedRootId == recipientId ||
+            coSignerId == recipientId ||
+            originalFounderId == authenticatedRootId ||
+            originalFounderId == coSignerId ||
+            originalFounderId == recipientId)
+            throw Denied();
+
+        await AcquirePermissionAsync(authenticatedRootId,
+            BuildingManagementPermissions.Buildings.BootstrapOwner,
+            recipientId, originalFounderId);
+        await AcquirePermissionAsync(coSignerId,
+            BuildingManagementPermissions.Buildings.CoSignOwnerRecovery,
+            null, originalFounderId);
+    }
+
     public Task AcquireAsync(
         Guid trustedUserId, BuildingBusinessCapability capability)
         => AcquirePermissionAsync(trustedUserId, capability switch

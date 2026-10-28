@@ -130,19 +130,50 @@ public sealed class SliceAStagingWriteBoundary : IBuildingScopedWriteBoundary
 public sealed class SliceAStagingOwnerRecoveryWriter : IBuildingOwnerRecoveryWriter
 {
     private readonly IDbContextProvider<BuildingManagementDbContext> _provider;
+    private readonly ICurrentUser _actor;
+    private readonly IOptions<BuildingOwnerBootstrapSecurityOptions> _roots;
+    private readonly IOptions<BuildingOwnerRecoverySecurityOptions> _signers;
+    private readonly SliceAStagingIdentityCommitLease _lease;
+
     public SliceAStagingOwnerRecoveryWriter(
-        IDbContextProvider<BuildingManagementDbContext> provider)
-        => _provider = provider;
+        IDbContextProvider<BuildingManagementDbContext> provider,
+        ICurrentUser actor,
+        IOptions<BuildingOwnerBootstrapSecurityOptions> roots,
+        IOptions<BuildingOwnerRecoverySecurityOptions> signers,
+        SliceAStagingIdentityCommitLease lease)
+    {
+        _provider = provider;
+        _actor = actor;
+        _roots = roots;
+        _signers = signers;
+        _lease = lease;
+    }
 
     public async Task<Guid> RecoverAtomicallyAsync(
         Guid buildingId, Guid originalOwnerId, Guid newOwnerId,
         Guid firstApprovedRootId, Guid secondApprovedRootId,
         Guid approvalEvidenceId)
-        => await new EfBuildingOwnerRecoveryAtomicWriter(
+    {
+        // A direct in-process call cannot impersonate either signer.
+        // Recovery authority must not grant the co-signer BootstrapOwner.
+        if (!_actor.IsAuthenticated || _actor.Id != firstApprovedRootId ||
+            firstApprovedRootId == Guid.Empty ||
+            _roots.Value.RootUserIds is not { Count: 1 } roots ||
+            !roots.Contains(firstApprovedRootId) ||
+            _signers.Value.CoSignerUserIds is not { Count: 1 } signers ||
+            !signers.Contains(secondApprovedRootId) ||
+            firstApprovedRootId == secondApprovedRootId)
+            throw new Volo.Abp.Authorization.AbpAuthorizationException(
+                "Recovery writer requires two distinct designated authorities.");
+
+        await _lease.AcquireOwnerRecoveryCommitAsync(firstApprovedRootId,
+            secondApprovedRootId, originalOwnerId, newOwnerId);
+        return await new EfBuildingOwnerRecoveryAtomicWriter(
             await _provider.GetDbContextAsync(), TimeProvider.System)
             .RecoverAtomicallyAsync(buildingId, originalOwnerId,
                 newOwnerId, firstApprovedRootId, secondApprovedRootId,
                 approvalEvidenceId);
+    }
 }
 
 public sealed class SliceAStagingGrantMutationWriter : IBuildingOperatorGrantMutationWriter

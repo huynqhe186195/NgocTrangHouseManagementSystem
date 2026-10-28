@@ -121,6 +121,24 @@ public sealed class BuildingOwnerRecoveryCoordinator_Tests
         Assert.Equal(0, f.Writer.Calls);
     }
 
+    [Fact]
+    public async Task RECOVERY08_Sole_BootstrapFounder_Cannot_Approve_Own_Disabled_Recovery()
+    {
+        // Real bootstrap always writes a self-issued grant for the ONE root.
+        // If the root/founder is disabled, nobody with BootstrapOwner may
+        // authorize recovery; enabling the root makes the founder active.
+        // This documents a policy blocker, not an alternative bypass.
+        var f = Valid();
+        f.Founder.Id = f.First;
+        f.Accounts.Disabled.Add(f.First);
+        await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+            f.Coordinator.RecoverAsync(f.Building, f.Recipient));
+        f.Accounts.Disabled.Remove(f.First);
+        await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+            f.Coordinator.RecoverAsync(f.Building, f.Recipient));
+        Assert.Equal(0, f.Writer.Calls);
+    }
+
     private static Fixture Valid()
     {
         var first = Guid.NewGuid();

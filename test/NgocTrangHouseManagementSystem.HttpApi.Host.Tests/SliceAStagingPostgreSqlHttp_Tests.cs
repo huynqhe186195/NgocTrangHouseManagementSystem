@@ -464,6 +464,7 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     true);
                 await uow.CompleteAsync();
             }
+            Task<int>? revokeRecoveryCoSign = null;
             using (var scope = app.Services.CreateScope())
             {
                 var sp = scope.ServiceProvider;
@@ -481,9 +482,34 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     Assert.Equal(evidence, approval.EvidenceId);
                     await sp.GetRequiredService<BuildingOwnerRecoveryCoordinator>()
                         .RecoverAsync(recoveryBuilding, operatorB);
+
+                    // The recovery grant and approval consumption must be
+                    // committed BEFORE a co-signer permission revocation.
+                    revokeRecoveryCoSign = Task.Run(async () =>
+                    {
+                        await using var connection = new NpgsqlConnection(idCs);
+                        await connection.OpenAsync();
+                        await using var cmd = new NpgsqlCommand(
+                            """
+                            DELETE FROM "AbpPermissionGrants"
+                             WHERE "ProviderName" = 'U'
+                               AND "ProviderKey" = @signer
+                               AND "Name" = @permission
+                            """, connection);
+                        cmd.Parameters.AddWithValue("signer", cosigner.ToString("D"));
+                        cmd.Parameters.AddWithValue("permission",
+                            BuildingManagementPermissions.Buildings.CoSignOwnerRecovery);
+                        return await cmd.ExecuteNonQueryAsync();
+                    });
+                    await Task.Delay(250);
+                    Assert.False(revokeRecoveryCoSign.IsCompleted,
+                        "Co-signer permission revocation must wait for recovery commit.");
                     await uow.CompleteAsync();
                 }
             }
+            Assert.NotNull(revokeRecoveryCoSign);
+            Assert.Equal(1, await revokeRecoveryCoSign!
+                .WaitAsync(TimeSpan.FromSeconds(15)));
             // Durable proof was consumed, not reused; founder untouched.
             using (var scope = app.Services.CreateScope())
             {

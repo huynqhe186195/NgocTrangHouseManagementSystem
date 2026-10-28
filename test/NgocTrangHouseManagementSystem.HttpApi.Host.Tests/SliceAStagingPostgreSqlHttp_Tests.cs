@@ -1567,7 +1567,7 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             string ReservationJson(Guid roomId, Guid tenantId) =>
                 JsonSerializer.Serialize(new {
                     reservationNumber = "RES-STAGE-" + Guid.NewGuid().ToString("N"),
-                    roomId, tenantId, expectedMoveInDate = "2027-11-01T00:00:00Z",
+                    roomId, tenantId, expectedMoveInDate = "2026-10-29T00:00:00Z",
                     quotedMonthlyRent = 2800000m,
                     requiredDepositAmount = 3000000m,
                     minimumReservationDepositAmount = 500000m

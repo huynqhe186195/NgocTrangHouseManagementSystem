@@ -1572,12 +1572,19 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     requiredDepositAmount = 3000000m,
                     minimumReservationDepositAmount = 500000m
                 });
+            var reservationB = Guid.Empty;
             async Task<HttpStatusCode> TryReserveAsync(Guid roomId, Guid tenantId)
             {
                 using var payload = new StringContent(
                     ReservationJson(roomId, tenantId), Encoding.UTF8,
                     "application/json");
                 using var response = await clientB.PostAsync(reservationRoute, payload);
+                if (response.IsSuccessStatusCode)
+                {
+                    using var json = JsonDocument.Parse(
+                        await response.Content.ReadAsStringAsync());
+                    reservationB = json.RootElement.GetProperty("id").GetGuid();
+                }
                 return response.StatusCode;
             }
             Assert.Equal(HttpStatusCode.Forbidden,
@@ -1588,6 +1595,60 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 await TryReserveAsync(roomB, Guid.NewGuid()));
             Assert.Equal(HttpStatusCode.OK,
                 await TryReserveAsync(roomB, tenantB));
+            Assert.NotEqual(Guid.Empty, reservationB);
+
+            // A matching room in a different building never becomes visible
+            // through the reservation list, direct ID, or tenant GUID.
+            var reservationA = Guid.NewGuid();
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var db = await sp.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>()
+                    .GetDbContextAsync();
+                db.RoomReservations.Add(new BuildingManagement.RoomReservations.RoomReservation(
+                    reservationA, "RES-STAGE-A-" + reservationA.ToString("N"),
+                    roomA, tenantA,
+                    new DateTime(2026, 11, 1, 0, 0, 0, DateTimeKind.Utc),
+                    2700000m, 3000000m, 500000m));
+                await db.SaveChangesAsync();
+                await uow.CompleteAsync();
+            }
+
+            using (var response = await clientB.GetAsync(reservationRoute))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                var body = await response.Content.ReadAsStringAsync();
+                using var json = JsonDocument.Parse(body);
+                var rows = json.RootElement.EnumerateArray().ToArray();
+                Assert.Contains(rows, row => row.GetProperty("id").GetGuid() == reservationB);
+                Assert.DoesNotContain(rows, row => row.GetProperty("id").GetGuid() == reservationA);
+                Assert.DoesNotContain("phoneNumber", body, StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain("identityNumber", body, StringComparison.OrdinalIgnoreCase);
+            }
+            using (var response = await clientRoot.GetAsync(reservationRoute))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await response.Content.ReadAsStringAsync());
+                var rows = json.RootElement.EnumerateArray().ToArray();
+                Assert.Contains(rows, row => row.GetProperty("id").GetGuid() == reservationA);
+                Assert.Contains(rows, row => row.GetProperty("id").GetGuid() == reservationB);
+            }
+            using (var response = await clientB.GetAsync(
+                reservationRoute + "/" + reservationB.ToString("D")))
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            using (var response = await clientB.GetAsync(
+                reservationRoute + "/" + reservationA.ToString("D")))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var response = await clientB.GetAsync(
+                reservationRoute + "/" + Guid.NewGuid().ToString("D")))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var response = await clientB.GetAsync(
+                reservationRoute + "?maxResultCount=101"))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
 
             // Identity Contracts.Manage DELETE cannot pass a Building write
             // transaction's permission lease. After revocation commits,
@@ -2379,6 +2440,7 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             context.Services.AddTransient<SliceAStagingIdentityCommitLease>();
             context.Services.AddTransient<SliceAStagingOperatorGrantQuery>();
             context.Services.AddTransient<SliceBStagingContractQuery>();
+            context.Services.AddTransient<SliceBStagingReservationQuery>();
             context.Services.AddTransient<SliceBStagingContractMutation>();
             context.Services.Replace(
                 ServiceDescriptor.Transient<IBuildingScopedWriteBoundary,

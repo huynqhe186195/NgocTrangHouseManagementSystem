@@ -27,16 +27,19 @@ public sealed class SliceBStagingContractsController : ControllerBase
     private readonly IConfiguration _configuration;
     private readonly SliceBStagingContractQuery? _query;
     private readonly SliceBStagingContractMutation? _mutation;
+    private readonly SliceBStagingReservationQuery? _reservationQuery;
 
     public SliceBStagingContractsController(
         IHostEnvironment environment, IConfiguration configuration,
         SliceBStagingContractQuery? query = null,
-        SliceBStagingContractMutation? mutation = null)
+        SliceBStagingContractMutation? mutation = null,
+        SliceBStagingReservationQuery? reservationQuery = null)
     {
         _environment = environment;
         _configuration = configuration;
         _query = query;
         _mutation = mutation;
+        _reservationQuery = reservationQuery;
     }
 
     [HttpGet]
@@ -91,6 +94,27 @@ public sealed class SliceBStagingContractsController : ControllerBase
     {
         RequireIsolatedStaging();
         return (_mutation ?? throw Denied()).ActivateAsync(id);
+    }
+
+    // Reservation read is intentionally separate from the legacy unscoped
+    // RoomReservationAppService and projects no global Tenant profile PII.
+    [HttpGet("reservations")]
+    [UnitOfWork(true)]
+    public Task<IReadOnlyList<SliceBScopedReservationRead>> GetRoomReservationsAsync(
+        [FromQuery] int skipCount = 0, [FromQuery] int maxResultCount = 50)
+    {
+        RequireIsolatedStaging();
+        return (_reservationQuery ?? throw Denied())
+            .GetListAsync(skipCount, maxResultCount);
+    }
+
+    [HttpGet("reservations/{id:guid}")]
+    [UnitOfWork(true)]
+    public Task<SliceBScopedReservationRead> GetRoomReservationAsync(
+        [FromRoute] Guid id)
+    {
+        RequireIsolatedStaging();
+        return (_reservationQuery ?? throw Denied()).GetAsync(id);
     }
 
     [HttpPost("reservations")]

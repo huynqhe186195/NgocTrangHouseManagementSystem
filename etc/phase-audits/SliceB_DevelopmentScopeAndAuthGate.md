@@ -172,3 +172,21 @@ deployment. Other payment/reservation APIs remain denied until audited.
 ## Reservation create (staging-only)
 
 A first scoped `POST /api/slice-b-staging/contracts/reservations` wraps the existing RoomReservationAppService.CreateAsync behind persisted `Contracts.Manage` Identity lock, current Building membership transaction lock, Room→Floor→Building revalidation, exclusive Room row lock, and a locked existing ContractTenant provenance path for the requested tenant in the SAME building. Unknown/global-only tenant IDs fail closed. No legacy unscoped reservation route is opened. Payment completion, refund and cancellation remain locked until separately assessed.
+
+
+## Scoped reservation read/list (isolated staging only)
+
+The explicit staging controller now exposes \`GET /api/slice-b-staging/contracts/reservations\`
+(with bounded pagination) and \`GET /api/slice-b-staging/contracts/reservations/{id}\`.
+Both require an authenticated operator, a current Contracts.Read ABP permission,
+a persisted Identity account/permission SHARE lease held through the transactional
+Building read UnitOfWork, and current non-revoked per-building membership. A
+single SQL query joins Reservation → Room → Floor → Building and filters the
+operator's live grant before pagination or returning any row. Direct ID access
+to another building, unknown IDs and invalid pagination fail closed.
+
+The read DTO projects reservation financial terms, status, room/building and
+tenant GUID only. It never projects global tenant PII, free-form notes, or
+payment evidence. Legacy reservation CRUD, cancellation and deposit settlement
+endpoints remain DENY. Disposable PostgreSQL authenticated HTTP tests cover
+two-building list/get visibility and missing/foreign IDs. No production rollout.

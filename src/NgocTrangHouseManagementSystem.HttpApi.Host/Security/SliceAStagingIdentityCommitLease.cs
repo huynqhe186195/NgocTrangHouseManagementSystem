@@ -33,15 +33,9 @@ public sealed class SliceAStagingIdentityCommitLease
         _uowManager = uowManager;
     }
 
-    public async Task AcquireAsync(
+    public Task AcquireAsync(
         Guid trustedUserId, BuildingBusinessCapability capability)
-    {
-        if (trustedUserId == Guid.Empty ||
-            !_config.GetValue<bool>("BuildingManagement:SliceAStaging:Enabled") ||
-            _config["BuildingManagement:SliceAStaging:Activation"] !=
-                "I_ACCEPT_ISOLATED_SLICE_A_STAGING_WRITES")
-            throw Denied();
-        var permission = capability switch
+        => AcquirePermissionAsync(trustedUserId, capability switch
         {
             BuildingBusinessCapability.ManageBuilding =>
                 BuildingManagementPermissions.Buildings.Manage,
@@ -50,7 +44,37 @@ public sealed class SliceAStagingIdentityCommitLease
             BuildingBusinessCapability.ManageRoom =>
                 BuildingManagementPermissions.Rooms.Manage,
             _ => throw Denied()
-        };
+        }, null);
+
+    /// <summary>
+    /// Delegation requires its OWN ABP permission, not Buildings.Manage.
+    /// Assign also holds the target account row until the Building grant
+    /// insert commits. Revocation deliberately allows disabled recipients.
+    /// </summary>
+    public Task AcquireDelegationAsync(
+        Guid trustedIssuerId, Guid recipientUserId, BuildingOperatorChangeKind change)
+    {
+        if (recipientUserId == Guid.Empty ||
+            recipientUserId == trustedIssuerId)
+            throw Denied();
+        return AcquirePermissionAsync(trustedIssuerId, change switch
+        {
+            BuildingOperatorChangeKind.Assign =>
+                BuildingManagementPermissions.Buildings.AssignOperators,
+            BuildingOperatorChangeKind.Revoke =>
+                BuildingManagementPermissions.Buildings.RevokeOperators,
+            _ => throw Denied()
+        }, change == BuildingOperatorChangeKind.Assign ? recipientUserId : null);
+    }
+
+    private async Task AcquirePermissionAsync(
+        Guid trustedUserId, string permission, Guid? activeRecipientId)
+    {
+        if (trustedUserId == Guid.Empty ||
+            !_config.GetValue<bool>("BuildingManagement:SliceAStaging:Enabled") ||
+            _config["BuildingManagement:SliceAStaging:Activation"] !=
+                "I_ACCEPT_ISOLATED_SLICE_A_STAGING_WRITES")
+            throw Denied();
         var cs = _config.GetConnectionString("Default");
         var db = new NpgsqlConnectionStringBuilder(cs);
         if (!db.Database.StartsWith(
@@ -83,6 +107,23 @@ public sealed class SliceAStagingIdentityCommitLease
             {
                 account.Parameters.AddWithValue("id", trustedUserId);
                 if (await account.ExecuteScalarAsync() is not Guid)
+                    throw Denied();
+            }
+            if (activeRecipientId.HasValue)
+            {
+                // Lock recipient account through grant issuance so a user
+                // cannot be disabled between assignment preflight/INSERT.
+                await using var recipient = new NpgsqlCommand(
+                    """
+                    SELECT "Id" FROM "AbpUsers"
+                     WHERE "Id" = @id AND "IsDeleted" = FALSE
+                       AND "IsActive" = TRUE
+                       AND ("LockoutEnabled" = FALSE OR "LockoutEnd" IS NULL
+                            OR "LockoutEnd" <= NOW())
+                     FOR SHARE
+                    """, connection, transaction);
+                recipient.Parameters.AddWithValue("id", activeRecipientId.Value);
+                if (await recipient.ExecuteScalarAsync() is not Guid)
                     throw Denied();
             }
             // Prefer a persisted direct user grant. If absent, verify

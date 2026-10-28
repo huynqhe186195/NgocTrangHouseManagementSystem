@@ -516,3 +516,10 @@ acquires the same contract row to serialize unscoped SQL writes with a
 pending approval. Test probes cover unpaid, partially paid, fully allocated
 and spoofed contract-deposit cases. This does not verify manual bank transfers
 nor activate any production financial writer.
+
+The immutable deposit closeout domain verifier now compares **every** archive
+proof index against the JSON plus SHA-256, including times, refund and forfeit
+IDs, bank reference, damage, inspection, signed handover and policy reference.
+Unit tests force a mismatch in each individual index, proving it is rejected
+without trusting a previously stored hash alone. Staging writer and controller
+changes also trigger the PostgreSQL regression workflow going forward.

@@ -221,13 +221,40 @@ public sealed class ContractDepositCloseoutApprovalRecord : Entity<Guid>
         if (Id == Guid.Empty || ContractId == Guid.Empty ||
             MoveOutRequestId == Guid.Empty || IssuedInvoiceId == Guid.Empty ||
             BuildingId == Guid.Empty || ApprovedByUserId == Guid.Empty ||
-            ApprovedAtUtc == default || VerifiedHeldAmount <= 0m ||
+            ApprovedAtUtc == default || ApprovedAtUtc.Kind != DateTimeKind.Utc ||
+            VerifiedHeldAmount <= 0m ||
+            decimal.Truncate(VerifiedHeldAmount) != VerifiedHeldAmount ||
             ApprovedRefundAmount < 0m || ApprovedForfeitAmount < 0m ||
+            decimal.Truncate(ApprovedRefundAmount) != ApprovedRefundAmount ||
+            decimal.Truncate(ApprovedForfeitAmount) != ApprovedForfeitAmount ||
             ApprovedRefundAmount + ApprovedForfeitAmount != VerifiedHeldAmount ||
             !HasReference(InspectionEvidenceReference, 8, 500) ||
             !HasReference(HandoverEvidenceReference, 8, 500) ||
             !HasReference(ExplicitDepositPolicyReference, 8, 200) ||
+            (ApprovedRefundAmount > 0m &&
+             (!RefundSettlementId.HasValue ||
+              RefundSettlementId == Guid.Empty ||
+              !HasReference(RefundTransactionReference, 8, 128) ||
+              !RefundPaidAtUtc.HasValue ||
+              RefundPaidAtUtc.Value.Kind != DateTimeKind.Utc ||
+              RefundPaidAtUtc.Value > ApprovedAtUtc)) ||
+            (ApprovedRefundAmount == 0m &&
+             (RefundSettlementId.HasValue ||
+              RefundPaidAtUtc.HasValue ||
+              !string.IsNullOrEmpty(RefundTransactionReference))) ||
+            (ApprovedForfeitAmount > 0m &&
+             (!ForfeitSettlementId.HasValue ||
+              ForfeitSettlementId == Guid.Empty ||
+              !HasReference(DamageReason, 8, 500) ||
+              !HasReference(DamageEvidenceReference, 8, 500))) ||
+            (ApprovedForfeitAmount == 0m &&
+             (ForfeitSettlementId.HasValue ||
+              !string.IsNullOrEmpty(DamageReason) ||
+              !string.IsNullOrEmpty(DamageEvidenceReference))) ||
+            (RefundSettlementId.HasValue &&
+             RefundSettlementId == ForfeitSettlementId) ||
             string.IsNullOrWhiteSpace(ApprovalJson) ||
+            ApprovalJson.Length > 1000000 ||
             !StringComparer.Ordinal.Equals(ApprovalSha256,
                 Convert.ToHexString(SHA256.HashData(
                     Encoding.UTF8.GetBytes(ApprovalJson))).ToLowerInvariant()))
@@ -242,9 +269,22 @@ public sealed class ContractDepositCloseoutApprovalRecord : Entity<Guid>
                 root.GetProperty("IssuedInvoiceId").GetGuid() != IssuedInvoiceId ||
                 root.GetProperty("BuildingId").GetGuid() != BuildingId ||
                 root.GetProperty("ApprovedByUserId").GetGuid() != ApprovedByUserId ||
+                root.GetProperty("ApprovedAtUtc").GetDateTime() != ApprovedAtUtc ||
                 root.GetProperty("VerifiedHeldAmount").GetDecimal() != VerifiedHeldAmount ||
                 root.GetProperty("ApprovedForfeitAmount").GetDecimal() != ApprovedForfeitAmount ||
-                root.GetProperty("ApprovedRefundAmount").GetDecimal() != ApprovedRefundAmount)
+                root.GetProperty("ApprovedRefundAmount").GetDecimal() != ApprovedRefundAmount ||
+                ReadGuidOrNull(root, "RefundSettlementId") != RefundSettlementId ||
+                ReadGuidOrNull(root, "ForfeitSettlementId") != ForfeitSettlementId ||
+                ReadTextOrNull(root, "RefundTransactionReference") != RefundTransactionReference ||
+                ReadDateTimeOrNull(root, "RefundPaidAtUtc") != RefundPaidAtUtc ||
+                ReadTextOrNull(root, "DamageReason") != DamageReason ||
+                ReadTextOrNull(root, "DamageEvidenceReference") != DamageEvidenceReference ||
+                root.GetProperty("InspectionEvidenceReference").GetString() !=
+                    InspectionEvidenceReference ||
+                root.GetProperty("HandoverEvidenceReference").GetString() !=
+                    HandoverEvidenceReference ||
+                root.GetProperty("ExplicitDepositPolicyReference").GetString() !=
+                    ExplicitDepositPolicyReference)
                 throw new InvalidDataException("Deposit closeout approval JSON does not match indexed fields.");
         }
         catch (Exception ex) when (ex is JsonException or
@@ -252,6 +292,24 @@ public sealed class ContractDepositCloseoutApprovalRecord : Entity<Guid>
         {
             throw new InvalidDataException("Deposit approval JSON is invalid.", ex);
         }
+    }
+
+    private static Guid? ReadGuidOrNull(JsonElement json, string key)
+    {
+        var value = json.GetProperty(key);
+        return value.ValueKind == JsonValueKind.Null ? null : value.GetGuid();
+    }
+
+    private static DateTime? ReadDateTimeOrNull(JsonElement json, string key)
+    {
+        var value = json.GetProperty(key);
+        return value.ValueKind == JsonValueKind.Null ? null : value.GetDateTime();
+    }
+
+    private static string? ReadTextOrNull(JsonElement json, string key)
+    {
+        var value = json.GetProperty(key);
+        return value.ValueKind == JsonValueKind.Null ? null : value.GetString();
     }
 
     private static bool HasReference(string? value, int min, int max)

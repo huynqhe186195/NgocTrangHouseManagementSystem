@@ -16,3 +16,4 @@ END;
 $grant_rollback$;
 
 DROP TABLE "BuildingManagementOperatorBuildingGrants";
+DROP FUNCTION "BM_GuardOperatorGrantHistory"();

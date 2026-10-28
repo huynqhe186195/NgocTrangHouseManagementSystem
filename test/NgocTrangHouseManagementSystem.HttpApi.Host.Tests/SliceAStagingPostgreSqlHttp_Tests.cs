@@ -1023,7 +1023,9 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     VALUES (@id,@other,@building,@other,@at,1,'{}',@stamp)
                     """, conn);
                 forge.Parameters.AddWithValue("id", Guid.NewGuid());
-                forge.Parameters.AddWithValue("other", cosigner);
+                // Cosigner now has a legitimate delegated grant on A from
+                // the commit-lease test; use a separate historical identity.
+                forge.Parameters.AddWithValue("other", disabledFounder);
                 forge.Parameters.AddWithValue("building", a);
                 forge.Parameters.AddWithValue("at", DateTime.UtcNow.AddMinutes(-1));
                 forge.Parameters.AddWithValue("stamp", Guid.NewGuid().ToString("N"));

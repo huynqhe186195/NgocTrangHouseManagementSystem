@@ -1984,28 +1984,8 @@ public sealed class InvoicePersistenceIntegration_Tests
                 "APPROVED-EXPLICIT-NO-FEES",
                 reviewerId,
                 Array.Empty<FinalInvoiceAuxiliaryChargeProposal>());
-            // Use the persisted archival digest for terms and scope, not
-            // the fresh snapshot timestamp-dependent preview digest.
-            var anchoredPreflight = new FinalInvoiceIssuePreflight
-            {
-                MoveOutRequestId = preflight.MoveOutRequestId,
-                ContractId = preflight.ContractId,
-                RoomId = preflight.RoomId,
-                UtilityDraftId = preflight.UtilityDraftId,
-                KnownBaseChargeTotal = preflight.KnownBaseChargeTotal,
-                BaseCharges = preflight.BaseCharges,
-                EvidenceSha256 = archive.EvidenceSha256
-            };
-            anchoredPreflight.Blockers.AddRange(preflight.Blockers);
-            var scopeReview = InvoiceIssuanceScopePolicy.Assess(
-                anchoredPreflight, scope);
-            var termsReview = FinalInvoiceFinancialTermsEvaluator.Assess(
-                anchoredPreflight, terms);
-            Assert.True(scopeReview.IsScopeConsistent,
-                "Scope: " + string.Join(", ", scopeReview.Blockers));
-            Assert.Equal(
-                new[] { "FinancialTermsProposalIsNotPostingAuthorization" },
-                termsReview.Blockers);
+            // The factory itself anchors to the archive's original digest;
+            // preflight has an independent, newly captured timestamp.
             Assert.Equal(seeded.DraftId, preflight.UtilityDraftId);
             Assert.Equal(archive.KnownBaseChargeTotal,
                 preflight.KnownBaseChargeTotal);

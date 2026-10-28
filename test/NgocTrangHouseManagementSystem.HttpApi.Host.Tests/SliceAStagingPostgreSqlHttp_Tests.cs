@@ -567,6 +567,7 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             context.Services.Replace(
                 ServiceDescriptor.Transient<IBuildingOperatorGrantMutationWriter,
                     SliceAStagingGrantMutationWriter>());
+            context.Services.AddTransient<SliceAStagingIdentityCommitLease>();
             context.Services.Replace(
                 ServiceDescriptor.Transient<IBuildingScopedWriteBoundary,
                     SliceAStagingWriteBoundary>());

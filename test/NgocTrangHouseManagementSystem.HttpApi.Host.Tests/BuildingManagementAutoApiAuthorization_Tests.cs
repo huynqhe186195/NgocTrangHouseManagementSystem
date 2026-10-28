@@ -459,10 +459,14 @@ public sealed class BuildingManagementAutoApiAuthorization_Tests
 
             // Authenticated GET/list calls must fail before resolving the
             // underlying service, repository, tenant PII or contract state.
+            var method = service == typeof(BuildingManagement.MoveOuts.MoveOutRequestAppService)
+                ? "GetByContractAsync" : "GetListAsync";
             var list = Assert.Single(serviceActions, action =>
-                action.MethodInfo.Name == "GetListAsync");
+                action.MethodInfo.Name == method);
             var route = Assert.IsType<string>(list.AttributeRouteInfo?.Template);
-            using var response = await client.GetAsync("/" + route.TrimStart('/'));
+            var url = "/" + Regex.Replace(route, @"\{[^}]+\}",
+                Guid.NewGuid().ToString("D")).TrimStart('/');
+            using var response = await client.GetAsync(url);
             Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         }
 

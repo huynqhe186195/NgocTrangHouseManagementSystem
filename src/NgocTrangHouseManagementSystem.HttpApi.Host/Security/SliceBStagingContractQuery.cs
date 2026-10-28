@@ -337,13 +337,10 @@ public sealed class SliceBStagingContractQuery
             deposit.ObservedCompletedContractDepositReceiptsTotal,
             deposit.VerifiedIncomingAllocationTotal,
             deposit.RecordedCompletedOutgoingTotal,
-            StagedInvoiceEvidenceCurrent: false,
-            OriginalInvoiceSourcesVerified: false,
-            IndependentInvoiceReviewApplicable: false,
+            false, false, false,
             invoiceBlockers, deposit.Blockers.ToArray(),
             closeout.Blockers.ToArray(),
-            CanIssueInvoice: false, CanRecognizeDebt: false,
-            CanSettleDeposit: false, CanCompleteMoveOut: false);
+            false, false, false, false);
     }
 
     private Guid RequireActor()

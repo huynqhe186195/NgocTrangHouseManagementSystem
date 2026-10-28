@@ -2296,6 +2296,12 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 Assert.False(view.GetProperty("canSettleDeposit").GetBoolean());
                 Assert.False(view.GetProperty("canCompleteMoveOut").GetBoolean());
                 Assert.NotEmpty(view.GetProperty("invoiceBlockers").EnumerateArray());
+                Assert.Contains(view.GetProperty("invoiceBlockers")
+                    .EnumerateArray().Select(x => x.GetString()),
+                    blocker => blocker == "StagedInvoiceEvidencePersistenceNotMigrated");
+                Assert.Contains(view.GetProperty("invoiceBlockers")
+                    .EnumerateArray().Select(x => x.GetString()),
+                    blocker => blocker == "FinalInvoiceIssuanceNotImplemented");
                 Assert.NotEmpty(view.GetProperty("depositBlockers").EnumerateArray());
                 Assert.DoesNotContain("phoneNumber", body,
                     StringComparison.OrdinalIgnoreCase);

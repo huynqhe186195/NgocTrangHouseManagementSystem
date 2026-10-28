@@ -8,6 +8,10 @@ using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using NgocTrangHouseManagementSystem.Security;
+using BuildingManagement.Security;
+using Npgsql;
 using Microsoft.Extensions.Hosting;
 using Microsoft.OpenApi;
 using NgocTrangHouseManagementSystem.EntityFrameworkCore;
@@ -121,6 +125,45 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule // syst
         context.Services.Configure<BuildingManagement.Security.BuildingOwnerBootstrapSecurityOptions>(
             configuration.GetSection("BuildingManagement:Bootstrap"));
 
+        // STAGING OPT-IN ONLY. Both the environment and the isolated PG
+        // DATABASE NAMES are checked independently of the activation token.
+        // No production instance can enable this with a flag or role.
+        if (configuration.GetValue<bool>("BuildingManagement:SliceAStaging:Enabled"))
+        {
+            if (!hostingEnvironment.IsStaging() ||
+                configuration["BuildingManagement:SliceAStaging:Activation"] !=
+                    "I_ACCEPT_ISOLATED_SLICE_A_STAGING_WRITES")
+                throw new InvalidOperationException(
+                    "Slice A cannot be enabled outside reviewed isolated staging.");
+
+            var buildingCs = configuration.GetConnectionString("BuildingManagement");
+            var identityCs = configuration.GetConnectionString("Default");
+            if (!IsIsolatedSliceADatabase(buildingCs) ||
+                !IsIsolatedSliceADatabase(identityCs))
+                throw new InvalidOperationException(
+                    "Slice A requires isolated PostgreSQL Identity and Building databases.");
+
+            var roots = configuration.GetSection(
+                "BuildingManagement:Bootstrap:RootUserIds").Get<Guid[]>() ?? Array.Empty<Guid>();
+            if (roots.Length != 1 || roots[0] == Guid.Empty)
+                throw new InvalidOperationException(
+                    "One explicitly designated root account is required for staging bootstrap.");
+
+            context.Services.Replace(ServiceDescriptor.Transient<
+                IBuildingOperatorActiveAccountReader>(sp =>
+                    new AbpIdentityBuildingOperatorAccountProbe(
+                        sp.GetRequiredService<Volo.Abp.Identity.IIdentityUserRepository>(),
+                        sp.GetRequiredService<Volo.Abp.Identity.IdentityUserManager>())));
+            context.Services.Replace(ServiceDescriptor.Transient<
+                IBuildingOperatorGrantReader, SliceAStagingGrantReader>());
+            context.Services.Replace(ServiceDescriptor.Transient<
+                IBuildingOwnerBootstrapWriter, SliceAStagingFirstOwnerWriter>());
+            context.Services.Replace(ServiceDescriptor.Transient<
+                IBuildingOperatorGrantMutationWriter, SliceAStagingGrantMutationWriter>());
+            context.Services.Replace(ServiceDescriptor.Transient<
+                IBuildingScopedWriteBoundary, SliceAStagingWriteBoundary>());
+        }
+
         Configure<AbpMvcLibsOptions>(options =>
         {
             options.CheckLibs = false;
@@ -173,6 +216,25 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule // syst
         ConfigureVirtualFileSystem(context);
         ConfigureCors(context, configuration);
         ConfigureErrorHttpStatusCodeMappings();
+    }
+
+    private static bool IsIsolatedSliceADatabase(string? connectionString)
+    {
+        if (string.IsNullOrWhiteSpace(connectionString))
+            return false;
+        try
+        {
+            var parsed = new NpgsqlConnectionStringBuilder(connectionString);
+            return parsed.Database?.StartsWith(
+                       "bm_slicea_staging_", StringComparison.OrdinalIgnoreCase) == true &&
+                   parsed.Database.Length > "bm_slicea_staging_".Length &&
+                   !string.IsNullOrWhiteSpace(parsed.Host) &&
+                   !string.IsNullOrWhiteSpace(parsed.Username);
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
     }
 
     private void ConfigureStudio(IHostEnvironment hostingEnvironment)

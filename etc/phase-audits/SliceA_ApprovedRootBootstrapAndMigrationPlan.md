@@ -59,3 +59,21 @@ active account, operation permission, and server-resolved Building resource.
 revoke/write ordering and cross-Building denial. No production CRUD
 app-service is yet wired into this fence; ABP permission/account
 revocation races on other storage are still explicit release blockers.
+
+## Full application EF chain rehearsal (isolated, never deployment)
+
+`PGCHAIN01` creates a random disposable PostgreSQL database named
+`bm_slicea_rehearsal_<32 lowercase hex>`, runs the **actual current
+BuildingManagementDbContext EF migration chain** into that database,
+inserts two EXISTING Buildings, then applies only the quarantined
+test-assembly Slice A EF migration. It verifies Building rows are intact,
+writes a membership on an existing Building, rejects destructive Down
+when historical data is present, and confirms scoped member reads.
+It requires explicit `BM_PG_SLICE_A_FULL_CHAIN_OPT_IN` and a local,
+dedicated PostgreSQL role with CREATEDB. The CI workflow uses a fresh
+PostgreSQL 16 service with no production credentials. The exact generated
+database is dropped in finally. No runtime migration/snapshot is changed.
+
+This rehearses an upgrade mechanism; it is NOT a production migration
+approval. The last-review production migration, DB privileges, backups
+and deploy/rollback review remain required.

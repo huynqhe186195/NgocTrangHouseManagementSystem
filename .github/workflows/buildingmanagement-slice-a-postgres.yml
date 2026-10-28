@@ -55,6 +55,7 @@ jobs:
     env:
       BM_PG_TEST_CONNECTION: "Host=127.0.0.1;Port=5432;Database=ngoctrang_integration_test;Username=slice_a_ci;Password=slice_a_ephemeral_ci_only"
       BM_PG_MEMBERSHIP_CONCURRENCY_OPT_IN: I_ACCEPT_EPHEMERAL_SCHEMA
+      BM_PG_SLICE_A_FULL_CHAIN_OPT_IN: CREATE_AND_DROP_RANDOM_LOCAL_SLICE_A_DATABASE
 
     steps:
       - name: Checkout
@@ -68,7 +69,7 @@ jobs:
       - name: Membership SQL rollback and concurrent transaction probes
         run: |
           dotnet test modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/BuildingManagement.PostgreSql.Tests.csproj \
-            --filter "FullyQualifiedName~BuildingOperatorGrantCandidatePostgreSql_Tests|FullyQualifiedName~BuildingOperatorGrantConcurrencyPostgreSql_Tests|FullyQualifiedName~SliceAGrantEfMigrationPostgreSql_Tests" \
+            --filter "FullyQualifiedName~BuildingOperatorGrantCandidatePostgreSql_Tests|FullyQualifiedName~BuildingOperatorGrantConcurrencyPostgreSql_Tests|FullyQualifiedName~SliceAGrantEfMigrationPostgreSql_Tests|FullyQualifiedName~SliceAFullChainUpgradePostgreSql_Tests" \
             --logger "console;verbosity=normal"
 
 # Does not start the ABP app, use EF Migrate/DbMigrator, alter runtime

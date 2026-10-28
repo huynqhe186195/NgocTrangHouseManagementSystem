@@ -177,11 +177,33 @@ public sealed class SliceBStagingContractQuery
         if (!authorizedRequest)
             throw Denied();
 
-        return await db.MoveOutChecklistTasks.AsNoTracking()
-            .Where(task => task.MoveOutRequestId == requestId &&
-                           !task.IsDeleted)
-            .OrderBy(task => task.Type)
-            .Select(task => new SliceBScopedMoveOutChecklistRead(
+        // Check the grant again in the SAME SELECT that reads checklist
+        // data. A membership revoke between preflight and this query must
+        // never turn a stale preflight into disclosure.
+        return await (
+            from task in db.MoveOutChecklistTasks.AsNoTracking()
+            join request in db.MoveOutRequests.AsNoTracking()
+                on task.MoveOutRequestId equals request.Id
+            join contract in db.Contracts.AsNoTracking()
+                on request.ContractId equals contract.Id
+            join room in db.Rooms.AsNoTracking()
+                on contract.RoomId equals room.Id
+            join floor in db.Floors.AsNoTracking()
+                on room.FloorId equals floor.Id
+            join building in db.Buildings.AsNoTracking()
+                on floor.BuildingId equals building.Id
+            where request.Id == requestId && request.ContractId == contractId &&
+                request.RoomId == room.Id &&
+                !task.IsDeleted && !request.IsDeleted && !contract.IsDeleted &&
+                !room.IsDeleted && !floor.IsDeleted && !building.IsDeleted &&
+                db.OperatorBuildingGrants.Any(grant =>
+                    grant.OperatorUserId == actor &&
+                    grant.BuildingId == building.Id &&
+                    grant.RevokedAtUtc == null &&
+                    grant.GrantedAtUtc <= now &&
+                    (grant.ExpiresAtUtc == null || grant.ExpiresAtUtc > now))
+            orderby task.Type
+            select new SliceBScopedMoveOutChecklistRead(
                 task.Id, task.MoveOutRequestId, task.Type,
                 task.IsCompleted, task.CompletedAt))
             .ToListAsync();

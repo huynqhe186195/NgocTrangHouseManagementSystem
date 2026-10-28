@@ -107,6 +107,114 @@ public sealed class SliceBStagingContractMutation
         });
     }
 
+    /// <summary>
+    /// A tenant ID is a GLOBAL person record, not a building-owned record.
+    /// Add only when the existing, live relationship proves provenance
+    /// inside the SAME building. First-time tenant onboarding is separate.
+    /// </summary>
+    public Task<ContractTenantDto> AddTenantAsync(Guid contractId, AddContractTenantDto input)
+    {
+        if (input is null || input.TenantId == Guid.Empty)
+            throw Denied();
+        return MutateLinkAsync(contractId, async (db, buildingId) =>
+        {
+            await LockKnownTenantInBuildingAsync(db, input.TenantId, buildingId);
+            return await _contracts.AddTenantAsync(contractId, input);
+        });
+    }
+
+    public Task<ContractTenantDto> UpdateTenantRoleAsync(
+        Guid contractId, Guid tenantId, UpdateContractTenantRoleDto input)
+    {
+        if (input is null || tenantId == Guid.Empty)
+            throw Denied();
+        return MutateLinkAsync(contractId, async (db, _) =>
+        {
+            await LockCurrentTenantLinkAsync(db, contractId, tenantId);
+            return await _contracts.UpdateTenantRoleAsync(contractId, tenantId, input);
+        });
+    }
+
+    public Task<bool> RemoveTenantAsync(Guid contractId, Guid tenantId)
+    {
+        if (tenantId == Guid.Empty)
+            throw Denied();
+        return MutateLinkAsync(contractId, async (db, _) =>
+        {
+            await LockCurrentTenantLinkAsync(db, contractId, tenantId);
+            await _contracts.RemoveTenantAsync(contractId, tenantId);
+            return true;
+        });
+    }
+
+    private async Task<T> MutateLinkAsync<T>(
+        Guid contractId, Func<BuildingManagementDbContext, Guid, Task<T>> mutation)
+    {
+        if (contractId == Guid.Empty)
+            throw Denied();
+        var actor = RequireActor();
+        var buildingId = await ResolveAsync(
+            BuildingBusinessResourceKind.Contract, contractId);
+        await _policy.EnsureResourceAsync(
+            BuildingBusinessResourceKind.Contract, contractId,
+            BuildingBusinessCapability.ManageContract);
+        await _identity.AcquireContractManageAsync(actor);
+        var db = await _provider.GetDbContextAsync();
+        return await Fence(db).ExecuteAsync(actor, buildingId, async () =>
+        {
+            // Lock the contract first. If a room transfer or state change
+            // committed before this lock, reject rather than using a stale
+            // resource-to-building check.
+            var currentRoom = await LockContractRoomAsync(db, contractId);
+            if (await LockRoomBuildingAsync(db, currentRoom) != buildingId)
+                throw Denied();
+            return await mutation(db, buildingId);
+        }, () => _policy.EnsureResourceAsync(
+            BuildingBusinessResourceKind.Contract, contractId,
+            BuildingBusinessCapability.ManageContract));
+    }
+
+    private static async Task LockCurrentTenantLinkAsync(
+        BuildingManagementDbContext db, Guid contractId, Guid tenantId)
+    {
+        await using var command = Command(db, """
+            SELECT ct."Id"
+              FROM "BuildingManagementContractTenants" AS ct
+             WHERE ct."ContractId" = @contract AND ct."TenantId" = @tenant
+               AND ct."IsDeleted" = FALSE
+             FOR UPDATE OF ct
+            """);
+        AddGuid(command, "contract", contractId);
+        AddGuid(command, "tenant", tenantId);
+        if (await command.ExecuteScalarAsync() is not Guid)
+            throw Denied();
+    }
+
+    private static async Task LockKnownTenantInBuildingAsync(
+        BuildingManagementDbContext db, Guid tenantId, Guid buildingId)
+    {
+        await using var command = Command(db, """
+            SELECT ct."Id"
+              FROM "BuildingManagementContractTenants" AS ct
+              JOIN "BuildingManagementContracts" AS c
+                ON c."Id" = ct."ContractId"
+              JOIN "BuildingManagementRooms" AS r ON r."Id" = c."RoomId"
+              JOIN "BuildingManagementFloors" AS f ON f."Id" = r."FloorId"
+              JOIN "Buildings" AS b ON b."Id" = f."BuildingId"
+              JOIN "BuildingManagementTenants" AS t ON t."Id" = ct."TenantId"
+             WHERE ct."TenantId" = @tenant AND f."BuildingId" = @building
+               AND ct."IsDeleted" = FALSE AND c."IsDeleted" = FALSE
+               AND r."IsDeleted" = FALSE AND f."IsDeleted" = FALSE
+               AND b."IsDeleted" = FALSE AND t."IsDeleted" = FALSE
+             ORDER BY ct."Id"
+             LIMIT 1 FOR SHARE OF ct, c, r, f, b, t
+            """);
+        AddGuid(command, "tenant", tenantId);
+        AddGuid(command, "building", buildingId);
+        if (await command.ExecuteScalarAsync() is not Guid)
+            throw Denied();
+    }
+
     private EfBuildingScopedWriteFenceCandidate Fence(BuildingManagementDbContext db)
         => new(db, TimeProvider.System);
 
@@ -171,9 +279,12 @@ public sealed class SliceBStagingContractMutation
     }
 
     private static void AddId(DbCommand command, Guid id)
+        => AddGuid(command, "id", id);
+
+    private static void AddGuid(DbCommand command, string name, Guid id)
     {
         var parameter = command.CreateParameter();
-        parameter.ParameterName = "id";
+        parameter.ParameterName = name;
         parameter.Value = id;
         command.Parameters.Add(parameter);
     }

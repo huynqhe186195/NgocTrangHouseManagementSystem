@@ -76,6 +76,43 @@ public sealed class SliceBStagingContractsController : ControllerBase
         return _mutation.UpdateAsync(id, input);
     }
 
+    [HttpGet("{id:guid}/tenants")]
+    [UnitOfWork(true)]
+    public Task<IReadOnlyList<SliceBScopedContractTenantLink>> GetTenantsAsync(
+        [FromRoute] Guid id)
+    {
+        RequireIsolatedStaging();
+        return _query!.GetTenantsAsync(id);
+    }
+
+    [HttpPost("{id:guid}/tenants")]
+    [UnitOfWork(true)]
+    public Task<ContractTenantDto> AddTenantAsync(
+        [FromRoute] Guid id, [FromBody] AddContractTenantDto input)
+    {
+        RequireIsolatedStaging();
+        return (_mutation ?? throw Denied()).AddTenantAsync(id, input);
+    }
+
+    [HttpPut("{id:guid}/tenants/{tenantId:guid}")]
+    [UnitOfWork(true)]
+    public Task<ContractTenantDto> UpdateTenantRoleAsync(
+        [FromRoute] Guid id, [FromRoute] Guid tenantId,
+        [FromBody] UpdateContractTenantRoleDto input)
+    {
+        RequireIsolatedStaging();
+        return (_mutation ?? throw Denied()).UpdateTenantRoleAsync(id, tenantId, input);
+    }
+
+    [HttpDelete("{id:guid}/tenants/{tenantId:guid}")]
+    [UnitOfWork(true)]
+    public Task<bool> RemoveTenantAsync(
+        [FromRoute] Guid id, [FromRoute] Guid tenantId)
+    {
+        RequireIsolatedStaging();
+        return (_mutation ?? throw Denied()).RemoveTenantAsync(id, tenantId);
+    }
+
     private void RequireIsolatedStaging()
     {
         if (!_environment.IsStaging() ||

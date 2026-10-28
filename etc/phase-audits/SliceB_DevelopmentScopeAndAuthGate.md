@@ -94,3 +94,21 @@ through `SliceBStagingContractMutation`; the legacy unscoped
 
 This does not unlock signing, renewal, activation, tenant linkage or
 reservation/deposit side effects.
+
+## Existing tenant link/role scoped vertical
+
+Because `Tenant` is a global PII entity with no own `BuildingId`,
+an arbitrary `TenantId` is NOT evidence of authority. The isolated
+staging API now permits adding an existing tenant to a Draft contract only
+when an active `ContractTenant` relationship in the **same building** is
+proven and locked (`FOR SHARE` across tenant, source contract, room, floor,
+building and relationship rows). First-time tenant registration remains
+DENY until a dedicated, building-bound onboarding design is accepted.
+
+Read `GET /contracts/{id}/tenants` returns only `TenantId` and `Role`,
+never name/phone/identity/address. It requires `Contracts.Read`, a persisted
+Identity lease, a server-resolved contract building and SQL-side live grant.
+Existing-link role change and removal require a draft, `Contracts.Manage`,
+the persisted Identity commit lease, a locked current contract row, room/floor
+graph, member grant and exact link row; original domain validation remains
+authoritative. Source/target inter-building operations remain DENY.

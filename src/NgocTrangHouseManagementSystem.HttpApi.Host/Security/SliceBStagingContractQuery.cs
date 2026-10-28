@@ -64,6 +64,32 @@ public sealed class SliceBStagingContractQuery
             ?? throw Denied();
     }
 
+    /// <summary>
+    /// Return only relation metadata, never global Tenant PII. The contract
+    /// scope is checked before the query, and membership is revalidated
+    /// within the SQL relation query itself.
+    /// </summary>
+    public async Task<IReadOnlyList<SliceBScopedContractTenantLink>> GetTenantsAsync(
+        Guid contractId)
+    {
+        var scoped = await GetAsync(contractId);
+        var actor = RequireActor();
+        var db = await _provider.GetDbContextAsync();
+        return await (
+            from link in db.ContractTenants.AsNoTracking()
+            where link.ContractId == contractId && !link.IsDeleted &&
+                db.OperatorBuildingGrants.Any(grant =>
+                    grant.OperatorUserId == actor &&
+                    grant.BuildingId == scoped.BuildingId &&
+                    grant.RevokedAtUtc == null &&
+                    grant.GrantedAtUtc <= DateTime.UtcNow &&
+                    (grant.ExpiresAtUtc == null ||
+                     grant.ExpiresAtUtc > DateTime.UtcNow))
+            orderby link.TenantId
+            select new SliceBScopedContractTenantLink(link.TenantId, link.Role))
+            .ToListAsync();
+    }
+
     private Guid RequireActor()
     {
         if (!_currentUser.IsAuthenticated || _currentUser.Id is not Guid id ||
@@ -109,3 +135,6 @@ public sealed record SliceBScopedContractRead(
     Guid Id, Guid RoomId, Guid BuildingId, string ContractNumber,
     ContractStatus Status, decimal MonthlyRent, DateTime StartDate,
     DateTime? EndDate);
+
+public sealed record SliceBScopedContractTenantLink(
+    Guid TenantId, ContractTenantRole Role);

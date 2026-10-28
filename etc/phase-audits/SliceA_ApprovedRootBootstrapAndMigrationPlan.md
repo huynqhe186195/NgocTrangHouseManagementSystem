@@ -77,3 +77,16 @@ database is dropped in finally. No runtime migration/snapshot is changed.
 This rehearses an upgrade mechanism; it is NOT a production migration
 approval. The last-review production migration, DB privileges, backups
 and deploy/rollback review remain required.
+
+## Isolated real HTTP A/B staging proof
+
+`STAGEHTTP01` uses the **actual ABP conventional BuildingAppService HTTP
+controller**, real IdentityUser EF repository and permission checker,
+Building EF repository and SQLite-persisted candidate membership reader.
+The test's separate ABP module overrides production DenyAll providers
+ONLY inside the isolated TestServer, and all three DB files are generated
+and deleted by the test. A may list/get A but not B; B may list/get B but
+not A; after A's membership is revoked, A is denied. This is a real
+positive/negative HTTP routing test, but NOT a production PostgreSQL
+host or a release of the privilege model. Grant/revoke API remains
+disabled and production DenyAll remains intact.

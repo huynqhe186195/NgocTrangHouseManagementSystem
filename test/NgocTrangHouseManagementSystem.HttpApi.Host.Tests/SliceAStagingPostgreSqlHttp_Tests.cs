@@ -1004,6 +1004,151 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 await uow.CompleteAsync();
             }
 
+            // Genuine PostgreSQL draft creation/update via fenced POST/PUT,
+            // not the unscoped legacy ContractAppService public route.
+            var contractC = Guid.Empty;
+            var contractRace = Guid.Empty;
+            string CreateJson(Guid room, string number) => JsonSerializer.Serialize(
+                new { contractNumber = number, roomId = room,
+                    startDate = "2026-11-01T00:00:00Z",
+                    endDate = "2027-10-31T00:00:00Z",
+                    monthlyRent = 2700000m, notes = "Isolated slice B" });
+            var createNumber = "STAGE-B-" + Guid.NewGuid().ToString("N");
+            using (var body = new StringContent(CreateJson(roomA,
+                "DENIED-" + Guid.NewGuid().ToString("N")), Encoding.UTF8,
+                "application/json"))
+            using (var response = await clientB.PostAsync(scopedContracts, body))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var body = new StringContent(CreateJson(roomB, createNumber),
+                Encoding.UTF8, "application/json"))
+            using (var response = await clientB.PostAsync(scopedContracts, body))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await response.Content.ReadAsStringAsync());
+                contractC = json.RootElement.GetProperty("id").GetGuid();
+                Assert.NotEqual(Guid.Empty, contractC);
+            }
+            string UpdateJson(Guid room, decimal rent) => JsonSerializer.Serialize(
+                new { contractNumber = createNumber, roomId = room,
+                    startDate = "2026-11-01T00:00:00Z",
+                    endDate = "2027-10-31T00:00:00Z",
+                    monthlyRent = rent, notes = "Updated under scope fence" });
+            using (var body = new StringContent(UpdateJson(roomB, 2800000m),
+                Encoding.UTF8, "application/json"))
+            using (var response = await clientB.PutAsync(
+                scopedContracts + "/" + contractA.ToString("D"), body))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var body = new StringContent(UpdateJson(roomB, 2800000m),
+                Encoding.UTF8, "application/json"))
+            using (var response = await clientRoot.PutAsync(
+                scopedContracts + "/" + contractA.ToString("D"), body))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var body = new StringContent(UpdateJson(roomA, 2800000m),
+                Encoding.UTF8, "application/json"))
+            using (var response = await clientB.PutAsync(
+                scopedContracts + "/" + contractC.ToString("D"), body))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var body = new StringContent(UpdateJson(roomB, 2800000m),
+                Encoding.UTF8, "application/json"))
+            using (var response = await clientB.PutAsync(
+                scopedContracts + "/" + contractC.ToString("D"), body))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await response.Content.ReadAsStringAsync());
+                Assert.Equal(2800000m, json.RootElement
+                    .GetProperty("monthlyRent").GetDecimal());
+            }
+            using (var response = await clientB.GetAsync(
+                scopedContracts + "/" + contractC.ToString("D")))
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+            // Identity Contracts.Manage DELETE cannot pass a Building write
+            // transaction's permission lease. After revocation commits,
+            // a fresh POST fails even if ABP's cache still says granted.
+            Task<int>? revokeContractManage = null;
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                var principal = sp.GetRequiredService<ICurrentPrincipalAccessor>();
+                using (principal.Change(new ClaimsPrincipal(new ClaimsIdentity(
+                    new[]
+                    {
+                        new Claim(AbpClaimTypes.UserId, operatorB.ToString("D")),
+                        new Claim(ClaimTypes.NameIdentifier, operatorB.ToString("D"))
+                    }, "CommitBoundContractWrite"))))
+                {
+                    using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                        .Begin(requiresNew: true, isTransactional: true);
+                    var draft = await sp.GetRequiredService<SliceBStagingContractMutation>()
+                        .CreateAsync(new BuildingManagement.Contracts.CreateContractDto
+                        {
+                            ContractNumber = "STAGE-RACE-" + Guid.NewGuid().ToString("N"),
+                            RoomId = roomB,
+                            StartDate = new DateTime(2026, 11, 1, 0, 0, 0, DateTimeKind.Utc),
+                            EndDate = new DateTime(2027, 10, 31, 0, 0, 0, DateTimeKind.Utc),
+                            MonthlyRent = 2700000m
+                        });
+                    contractRace = draft.Id;
+                    Assert.NotEqual(Guid.Empty, contractRace);
+                    revokeContractManage = Task.Run(async () =>
+                    {
+                        await using var connection = new NpgsqlConnection(idCs);
+                        await connection.OpenAsync();
+                        await using var cmd = new NpgsqlCommand(
+                            """
+                            DELETE FROM "AbpPermissionGrants"
+                             WHERE "ProviderName" = 'U' AND "ProviderKey" = @actor
+                               AND "Name" = @permission
+                            """, connection);
+                        cmd.Parameters.AddWithValue("actor", operatorB.ToString("D"));
+                        cmd.Parameters.AddWithValue("permission",
+                            BuildingManagementPermissions.Contracts.Manage);
+                        return await cmd.ExecuteNonQueryAsync();
+                    });
+                    await Task.Delay(250);
+                    Assert.False(revokeContractManage.IsCompleted,
+                        "Contracts.Manage revoke must await the Building contract commit.");
+                    await uow.CompleteAsync();
+                }
+            }
+            Assert.NotNull(revokeContractManage);
+            Assert.Equal(1, await revokeContractManage!
+                .WaitAsync(TimeSpan.FromSeconds(15)));
+            using (var body = new StringContent(CreateJson(roomB,
+                "REVOKED-" + Guid.NewGuid().ToString("N")), Encoding.UTF8,
+                "application/json"))
+            using (var response = await clientB.PostAsync(scopedContracts, body))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                await sp.GetRequiredService<IPermissionManager>().SetForUserAsync(
+                    operatorB, BuildingManagementPermissions.Contracts.Manage, true);
+                await uow.CompleteAsync();
+            }
+
+            // Remove ONLY newly inserted disposable contract fixtures before
+            // the pre-existing Room/Floor tests exercise deletion semantics.
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var db = await sp.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>()
+                    .GetDbContextAsync();
+                var disposableContracts = await db.Contracts.Where(x =>
+                    x.Id == contractC || x.Id == contractRace).ToListAsync();
+                Assert.Equal(2, disposableContracts.Count);
+                db.Contracts.RemoveRange(disposableContracts);
+                await db.SaveChangesAsync();
+                await uow.CompleteAsync();
+            }
+
             // Contract A was created solely to prove cross-building
             // isolation. Remove that SCRATCH contract before existing
             // Slice A room/floor deletion checks. Otherwise the room

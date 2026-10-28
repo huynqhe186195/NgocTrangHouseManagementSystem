@@ -470,6 +470,19 @@ public sealed class BuildingManagementAutoApiAuthorization_Tests
             Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         }
 
+        // Existing legacy contract create/update remain denied even for
+        // authenticated callers. Only the isolated staging controller has
+        // reviewed POST/PUT endpoints.
+        var legacyCreate = Assert.Single(actions, action =>
+            action.ControllerTypeInfo.AsType() ==
+                typeof(BuildingManagement.Contracts.ContractAppService) &&
+            action.MethodInfo.Name == "CreateAsync");
+        using (var body = new StringContent("{}", Encoding.UTF8, "application/json"))
+        using (var response = await client.PostAsync(
+            "/" + Assert.IsType<string>(legacyCreate.AttributeRouteInfo?.Template)
+                .TrimStart('/'), body))
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+
         // An arbitrary known tenant ID must not reveal personal details.
         var tenantRead = Assert.Single(actions, action =>
             action.ControllerTypeInfo.AsType() ==

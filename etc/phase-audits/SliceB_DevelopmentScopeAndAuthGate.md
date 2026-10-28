@@ -299,3 +299,8 @@ Added contract-bound POST allocation for a completed reservation deposit on the 
 ## Scoped Draft/Signed contract cancellation
 
 Staging-only POST contract cancel uses the same commit-bound Contracts.Manage and building fence; original ContractAppService.CancelAsync only accepts Draft/Signed. Active tenancy termination and room/deposit settlement remain blocked. PostgreSQL HTTP checks foreign contract denial, Active rejection and idempotent terminal rejection.
+
+
+## Paid reservation cancellation full refund coverage
+
+The PostgreSQL HTTP fixture now also exercises the supported 3,000,000 VND completed full deposit refund path, verifies a single completed refund accounting journal on cancellation and rejects a repeated cancellation. Cash refunds are ledger disposition records here; they are not evidence of an external bank transfer. The separate 500,000 VND forfeit case remains covered.

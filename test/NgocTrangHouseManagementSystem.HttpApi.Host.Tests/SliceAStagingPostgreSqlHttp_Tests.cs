@@ -1897,6 +1897,74 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 await uow.CompleteAsync();
             }
 
+            // Full 3m completed hold must refund (not forfeit) on customer
+            // cancellation; no duplicate payout journal on retry.
+            var refundRoom = await CreateChildAsync(clientB, roomCreate,
+                new { floorId = floorB, roomNumber = "105",
+                    name = "PG B105 full deposit refund", area = 25.0,
+                    capacity = 2, status = 0 });
+            Guid refundReservation;
+            using (var body = new StringContent(ReservationJson(
+                refundRoom, tenantB), Encoding.UTF8, "application/json"))
+            using (var response = await clientB.PostAsync(reservationRoute, body))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await response.Content.ReadAsStringAsync());
+                refundReservation = json.RootElement.GetProperty("id").GetGuid();
+            }
+            Guid refundPayment;
+            using (var body = new StringContent(JsonSerializer.Serialize(new
+            {
+                paymentNumber = "STAGE-FULL-" + Guid.NewGuid().ToString("N"),
+                roomReservationId = refundReservation,
+                amount = 3000000m,
+                method = 1,
+                channel = 1
+            }), Encoding.UTF8, "application/json"))
+            using (var response = await clientB.PostAsync(
+                reservationRoute + "/" + refundReservation.ToString("D") +
+                "/deposit-payments", body))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await response.Content.ReadAsStringAsync());
+                refundPayment = json.RootElement.GetProperty("id").GetGuid();
+            }
+            using (var body = new StringContent("{}",
+                Encoding.UTF8, "application/json"))
+            using (var response = await clientB.PostAsync(
+                reservationRoute + "/" + refundReservation.ToString("D") +
+                "/deposit-payments/" + refundPayment.ToString("D") +
+                "/complete", body))
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal(HttpStatusCode.OK,
+                await TryCancelReservationAsync(refundReservation));
+            Assert.NotEqual(HttpStatusCode.OK,
+                await TryCancelReservationAsync(refundReservation));
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var db = await sp.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>()
+                    .GetDbContextAsync();
+                var refundJournal = await db.DepositSettlements
+                    .Where(s => s.SourceRoomReservationId == refundReservation)
+                    .ToListAsync();
+                Assert.Single(refundJournal);
+                Assert.Equal(
+                    BuildingManagement.DepositSettlements.DepositSettlementType.Refund,
+                    refundJournal[0].Type);
+                Assert.Equal(3000000m, refundJournal[0].Amount);
+                Assert.Equal(
+                    BuildingManagement.RoomReservations.RoomReservationStatus.Cancelled,
+                    (await db.RoomReservations.SingleAsync(r =>
+                        r.Id == refundReservation)).Status);
+                await uow.CompleteAsync();
+            }
+
             // Record the real room state rather than assuming occupancy:
             // other independent contract tests may have changed it earlier.
             BuildingManagement.Rooms.RoomStatus originalRoomStatus;

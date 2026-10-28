@@ -126,9 +126,9 @@ public sealed class SliceAFullChainUpgradePostgreSql_Tests
                     (await intact.Database.GetAppliedMigrationsAsync())
                         .Where(m => m != ScratchMigration).ToArray());
                 Assert.Equal("Existing Building A",
-                    (await intact.Buildings.SingleAsync(x => x.Id == existingA)).Name);
+                    (await intact.Buildings.IgnoreQueryFilters().SingleAsync(x => x.Id == existingA)).Name);
                 Assert.Equal("Existing Building B",
-                    (await intact.Buildings.SingleAsync(x => x.Id == existingB)).Name);
+                    (await intact.Buildings.IgnoreQueryFilters().SingleAsync(x => x.Id == existingB)).Name);
             }
 
             await using var verify = OpenGrantDb(scoped);

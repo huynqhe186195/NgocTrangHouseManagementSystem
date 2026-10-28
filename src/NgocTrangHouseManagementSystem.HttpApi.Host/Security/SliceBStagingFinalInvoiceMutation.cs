@@ -3,6 +3,8 @@ using System.Data.Common;
 using System.Linq;
 using System.Threading.Tasks;
 using BuildingManagement.Contracts;
+using BuildingManagement.DepositSettlements;
+using BuildingManagement.RoomReservations;
 using BuildingManagement.EntityFrameworkCore;
 using BuildingManagement.EntityFrameworkCore.Security;
 using BuildingManagement.Invoices;
@@ -35,6 +37,7 @@ public sealed class SliceBStagingFinalInvoiceMutation
     private readonly FinalInvoiceIssuePreflightAppService _preflight;
     private readonly FinalInvoiceIssueEvidenceDriftAppService _drift;
     private readonly FinalInvoiceSourceProvenanceAppService _provenance;
+    private readonly ContractDepositLedgerReviewAppService _depositAudit;
 
     public SliceBStagingFinalInvoiceMutation(
         IDbContextProvider<BuildingManagementDbContext> provider,
@@ -44,7 +47,8 @@ public sealed class SliceBStagingFinalInvoiceMutation
         SliceAStagingIdentityCommitLease identity,
         FinalInvoiceIssuePreflightAppService preflight,
         FinalInvoiceIssueEvidenceDriftAppService drift,
-        FinalInvoiceSourceProvenanceAppService provenance)
+        FinalInvoiceSourceProvenanceAppService provenance,
+        ContractDepositLedgerReviewAppService depositAudit)
     {
         _provider = provider;
         _policy = policy;
@@ -54,6 +58,7 @@ public sealed class SliceBStagingFinalInvoiceMutation
         _preflight = preflight;
         _drift = drift;
         _provenance = provenance;
+        _depositAudit = depositAudit;
     }
 
     /// <summary>
@@ -301,6 +306,248 @@ public sealed class SliceBStagingFinalInvoiceMutation
                 return new SliceBStagedInvoiceReceiptRead(
                     receipt.Id, journal.Id, ledger.Id, receipt.Amount);
             });
+
+    /// <summary>
+    /// Explicit root-only, isolated staging final handover. A MANUAL refund
+    /// bank reference is a human attestation, not automatic bank verification.
+    /// Never deduct deposit from invoice debt: every issued invoice MUST be
+    /// fully matched to already-completed invoice receipts first.
+    ///
+    /// All money dispositions, immutable approval, 4 non-meter checklists,
+    /// Contract.End, MoveOut.Complete and Room release commit in ONE Building
+    /// UoW. Any failure rolls back ALL changes.
+    /// </summary>
+    public Task<SliceBStagedMoveOutCloseoutRead> CompleteMoveOutAsync(
+        Guid contractId, Guid requestId,
+        SliceBFinalMoveOutCloseoutInput input)
+        => ExecuteScopedAsync(contractId, requireBootstrapOwner: true,
+            async (db, actor, building, roomId) =>
+            {
+                if (input is null ||
+                    requestId == Guid.Empty ||
+                    !input.ConfirmManualRefundPaid ||
+                    input.ForfeitAmount < 0m ||
+                    decimal.Truncate(input.ForfeitAmount) != input.ForfeitAmount ||
+                    !ValidProof(input.InspectionEvidenceReference) ||
+                    !ValidProof(input.HandoverEvidenceReference) ||
+                    !ValidProof(input.DepositPolicyReference) ||
+                    input.RefundPaidAtUtc.HasValue &&
+                        (input.RefundPaidAtUtc.Value.Kind != DateTimeKind.Utc ||
+                         input.RefundPaidAtUtc.Value > DateTime.UtcNow))
+                    throw Denied();
+
+                var requestSource = await LockRequestAsync(
+                    db, requestId, contractId, roomId);
+                var contract = await db.Contracts
+                    .SingleOrDefaultAsync(x => x.Id == contractId && !x.IsDeleted);
+                var request = await db.MoveOutRequests
+                    .SingleOrDefaultAsync(x => x.Id == requestId && !x.IsDeleted);
+                var room = await db.Rooms
+                    .SingleOrDefaultAsync(x => x.Id == roomId && !x.IsDeleted);
+                if (contract is null || request is null || room is null ||
+                    contract.Status != ContractStatus.Active ||
+                    contract.RoomId != roomId ||
+                    request.ContractId != contract.Id ||
+                    request.RoomId != room.Id ||
+                    request.Status != MoveOutRequestStatus.Approved ||
+                    request.ApprovedMoveOutDate is not DateOnly approvedDate ||
+                    room.Status != RoomStatus.Occupied ||
+                    approvedDate > DateOnly.FromDateTime(
+                        TimeZoneInfo.ConvertTimeFromUtc(
+                            DateTime.UtcNow,
+                            TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh"))))
+                    throw Denied();
+
+                // Lock the room row FOR UPDATE and block concurrent new
+                // reservations or active contracts while we close it.
+                await using (var cmd = Command(db, """
+                    SELECT "Id" FROM "BuildingManagementRooms"
+                     WHERE "Id" = @id AND "IsDeleted" = FALSE FOR UPDATE
+                    """))
+                {
+                    Add(cmd, "id", roomId);
+                    if (await cmd.ExecuteScalarAsync() is not Guid)
+                        throw Denied();
+                }
+
+                if (await db.Contracts.AsNoTracking().AnyAsync(x =>
+                        x.Id != contractId && x.RoomId == roomId &&
+                        !x.IsDeleted && x.Status == ContractStatus.Active) ||
+                    await db.RoomReservations.AsNoTracking().AnyAsync(x =>
+                        x.RoomId == roomId && !x.IsDeleted &&
+                        (x.Status == RoomReservationStatus.PendingPayment ||
+                         x.Status == RoomReservationStatus.Reserved)))
+                    throw Denied();
+
+                // Exclusive signoff is tied to the pre-existing, verified
+                // final meter checklist; this method NEVER signs the meter.
+                var tasks = await db.MoveOutChecklistTasks
+                    .Where(x => x.MoveOutRequestId == requestId)
+                    .ToArrayAsync();
+                if (tasks.Length != 5 ||
+                    tasks.Select(x => x.Type).Distinct().Count() != 5 ||
+                    !Enum.GetValues<MoveOutChecklistTaskType>()
+                        .All(t => tasks.Any(x => x.Type == t)) ||
+                    !tasks.Single(x =>
+                        x.Type == MoveOutChecklistTaskType.FinalMeterReading).IsCompleted ||
+                    tasks.Any(x => x.Type != MoveOutChecklistTaskType.FinalMeterReading &&
+                                   x.IsCompleted))
+                    throw Denied();
+
+                // Every invoice in the contract must have a completed
+                // source receipt journal, not merely an aggregate paid sum.
+                await using (var cmd = Command(db, """
+                    SELECT "Id" FROM "BuildingManagementIssuedInvoiceLedger"
+                     WHERE "ContractId" = @contract ORDER BY "Id" FOR UPDATE
+                    """))
+                {
+                    Add(cmd, "contract", contractId);
+                    await using var reader = await cmd.ExecuteReaderAsync();
+                    while (await reader.ReadAsync()) { }
+                }
+
+                var invoices = await db.IssuedInvoiceLedger.AsNoTracking()
+                    .Where(x => x.ContractId == contractId).ToArrayAsync();
+                var final = invoices.SingleOrDefault(x =>
+                    x.MoveOutRequestId == requestId && x.RoomId == roomId);
+                if (final is null || invoices.Length == 0 ||
+                    await db.DepositCloseoutApprovals.AsNoTracking()
+                        .AnyAsync(x => x.ContractId == contractId ||
+                                       x.MoveOutRequestId == requestId))
+                    throw Denied();
+
+                foreach (var invoice in invoices)
+                {
+                    var evidence = await db.FinalInvoiceIssueEvidence
+                        .AsNoTracking().SingleOrDefaultAsync(x =>
+                            x.Id == invoice.StagedEvidenceId);
+                    var review = await db.InvoiceIssuanceReviews
+                        .AsNoTracking().SingleOrDefaultAsync(x =>
+                            x.Id == invoice.ReviewTicketId);
+                    if (evidence is null || review is null)
+                        throw Denied();
+                    invoice.VerifyStoredTerms(evidence, review);
+                }
+
+                var journals = await db.InvoicePaymentAllocationJournal
+                    .AsNoTracking().Where(x => x.ContractId == contractId)
+                    .ToArrayAsync();
+                var payments = await db.Payments.IgnoreQueryFilters()
+                    .AsNoTracking().Where(x =>
+                        x.ContractId == contractId &&
+                        x.Purpose == PaymentPurpose.InvoicePayment)
+                    .ToArrayAsync();
+                var allocationAudit = InvoicePaymentAllocationJournalAuditor
+                    .Assess(journals, payments, contractId);
+
+                // The contract lock and same-transaction deposit table
+                // audit prevent other scoped writers from settling while
+                // this explicit root owner closeout is in progress.
+                var depositAudit = await _depositAudit.GetAsync(requestId);
+                if (depositAudit.VerifiedIncomingAllocationTotal is not decimal held ||
+                    held <= 0m || held != contract.DepositAmount ||
+                    input.ForfeitAmount > held)
+                    throw Denied();
+
+                decimal refundAmount = held - input.ForfeitAmount;
+                if (refundAmount > 0m &&
+                    (!ValidProof(input.RefundTransactionReference) ||
+                     !ValidProof(input.RefundBankEvidenceReference) ||
+                     input.RefundPaidAtUtc is null ||
+                     input.RefundPaidAtUtc > DateTime.UtcNow))
+                    throw Denied();
+                if (refundAmount == 0m &&
+                    (input.RefundPaidAtUtc.HasValue ||
+                     !string.IsNullOrWhiteSpace(input.RefundTransactionReference) ||
+                     !string.IsNullOrWhiteSpace(input.RefundBankEvidenceReference)))
+                    throw Denied();
+
+                var refundId = refundAmount > 0m ? Guid.NewGuid() : (Guid?)null;
+                var forfeitId = input.ForfeitAmount > 0m
+                    ? Guid.NewGuid() : (Guid?)null;
+                var now = DateTime.UtcNow;
+
+                var approval = ContractDepositCloseoutApprovalRecord
+                    .ApproveCandidate(
+                        Guid.NewGuid(), actor, now,
+                        request, contract, final, invoices, journals,
+                        allocationAudit, depositAudit, input.ForfeitAmount,
+                        input.DamageReason, input.DamageEvidenceReference,
+                        input.InspectionEvidenceReference,
+                        input.HandoverEvidenceReference,
+                        input.DepositPolicyReference,
+                        refundId, forfeitId,
+                        input.RefundTransactionReference,
+                        input.RefundPaidAtUtc);
+
+                if (refundId.HasValue)
+                {
+                    var refund = new DepositSettlement(
+                        refundId.Value, DepositSettlementType.Refund,
+                        refundAmount, sourceContractId: contractId,
+                        notes: "MANUAL BANK REF " +
+                            input.RefundTransactionReference!.Trim() +
+                            " / " + input.RefundBankEvidenceReference!.Trim());
+                    refund.Complete(input.RefundPaidAtUtc!.Value);
+                    db.DepositSettlements.Add(refund);
+                }
+                if (forfeitId.HasValue)
+                {
+                    var forfeit = new DepositSettlement(
+                        forfeitId.Value, DepositSettlementType.Forfeit,
+                        input.ForfeitAmount, sourceContractId: contractId,
+                        notes: input.DamageReason!.Trim() +
+                            " / " + input.DamageEvidenceReference!.Trim());
+                    forfeit.Complete(now);
+                    db.DepositSettlements.Add(forfeit);
+                }
+
+                // The DB approval trigger references completed settlement
+                // rows and approved MoveOut, so insert in this exact order.
+                // This SaveChanges does not commit the enclosing UoW.
+                await db.SaveChangesAsync();
+                db.DepositCloseoutApprovals.Add(approval);
+                await db.SaveChangesAsync();
+
+                foreach (var task in tasks.Where(x =>
+                    x.Type != MoveOutChecklistTaskType.FinalMeterReading))
+                {
+                    var proof = task.Type switch
+                    {
+                        MoveOutChecklistTaskType.RoomInspection =>
+                            input.InspectionEvidenceReference,
+                        MoveOutChecklistTaskType.Handover =>
+                            input.HandoverEvidenceReference,
+                        MoveOutChecklistTaskType.FinalInvoice =>
+                            final.InvoiceNumber,
+                        MoveOutChecklistTaskType.DepositSettlement =>
+                            approval.ApprovalSha256,
+                        _ => throw Denied()
+                    };
+                    task.MarkCloseoutEvidenceVerified(task.Type, actor, proof, now);
+                }
+
+                // All irreversible state changes must happen only after
+                // settlement/approval persistence succeeds in same UoW.
+                request.Complete(now);
+                var reason = contract.EndDate.HasValue &&
+                    approvedDate < DateOnly.FromDateTime(contract.EndDate.Value)
+                    ? ContractEndReason.EarlyTermination
+                    : ContractEndReason.Normal;
+                contract.End(now, reason);
+                room.ChangeStatus(input.ForfeitAmount > 0m
+                    ? RoomStatus.Maintenance : RoomStatus.Available);
+
+                return new SliceBStagedMoveOutCloseoutRead(
+                    request.Id, contract.Id, room.Id, approval.Id,
+                    final.Id, held, refundAmount, input.ForfeitAmount,
+                    room.Status);
+            });
+
+    private static bool ValidProof(string? text)
+        => !string.IsNullOrWhiteSpace(text) &&
+           text.Trim().Length >= 8 &&
+           text.Trim().Length <= 500;
 
     private async Task<T> ExecuteScopedAsync<T>(
         Guid contractId, bool requireBootstrapOwner,
@@ -551,3 +798,25 @@ public sealed class SliceBFinalInvoiceManualReceiptInput
 public sealed record SliceBStagedInvoiceReceiptRead(
     Guid PaymentId, Guid AllocationJournalId,
     Guid IssuedInvoiceId, decimal StagedAmount);
+
+public sealed class SliceBFinalMoveOutCloseoutInput
+{
+    public decimal ForfeitAmount { get; set; }
+    public string? DamageReason { get; set; }
+    public string? DamageEvidenceReference { get; set; }
+    public string InspectionEvidenceReference { get; set; } = string.Empty;
+    public string HandoverEvidenceReference { get; set; } = string.Empty;
+    public string DepositPolicyReference { get; set; } = string.Empty;
+    // This is an explicit statement that the owner has ALREADY made the
+    // external bank transfer. It is NOT a payment instruction to the app.
+    public bool ConfirmManualRefundPaid { get; set; }
+    public DateTime? RefundPaidAtUtc { get; set; }
+    public string? RefundTransactionReference { get; set; }
+    public string? RefundBankEvidenceReference { get; set; }
+}
+
+public sealed record SliceBStagedMoveOutCloseoutRead(
+    Guid MoveOutRequestId, Guid ContractId, Guid RoomId,
+    Guid CloseoutApprovalId, Guid IssuedInvoiceId,
+    decimal VerifiedHeldDeposit, decimal RefundAmount,
+    decimal ForfeitAmount, RoomStatus RoomStatus);

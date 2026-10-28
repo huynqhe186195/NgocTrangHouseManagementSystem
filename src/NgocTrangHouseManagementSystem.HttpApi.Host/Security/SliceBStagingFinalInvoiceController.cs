@@ -97,6 +97,19 @@ public sealed class SliceBStagingFinalInvoiceController : ControllerBase
             .RecordManualReceiptAsync(contractId, issuedId, input);
     }
 
+    [HttpPost("contracts/{contractId:guid}/move-outs/{requestId:guid}/complete")]
+    [UnitOfWork(true)]
+    public Task<SliceBStagedMoveOutCloseoutRead> CompleteMoveOutAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid requestId,
+        [FromBody] SliceBFinalMoveOutCloseoutInput input)
+    {
+        RequireIsolatedStaging();
+        if (input is null)
+            throw Denied();
+        return (_mutation ?? throw Denied())
+            .CompleteMoveOutAsync(contractId, requestId, input);
+    }
+
     private void RequireIsolatedStaging()
     {
         if (!_environment.IsStaging() ||

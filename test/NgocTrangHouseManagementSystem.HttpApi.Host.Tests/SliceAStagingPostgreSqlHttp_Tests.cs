@@ -334,6 +334,59 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             using (var response = await clientB.GetAsync(listPath))
                 Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
 
+            // Concurrent disabling of the sole root account must wait for
+            // the first-owner self-issued grant's Building commit.
+            Task<int>? disableRoot = null;
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                var accessor = sp.GetRequiredService<ICurrentPrincipalAccessor>();
+                using (accessor.Change(new ClaimsPrincipal(new ClaimsIdentity(
+                    new[]
+                    {
+                        new Claim(AbpClaimTypes.UserId, root.ToString("D")),
+                        new Claim(ClaimTypes.NameIdentifier, root.ToString("D"))
+                    }, "RootAccountCommitRace"))))
+                {
+                    using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                        .Begin(requiresNew: true, isTransactional: true);
+                    var created = await sp.GetRequiredService<IBuildingOwnerBootstrapWriter>()
+                        .CreateWithOwnerAtomicallyAsync(
+                            root, "Account lock before founder commit", "Scratch", null);
+                    Assert.NotEqual(Guid.Empty, created.Id);
+                    disableRoot = Task.Run(async () =>
+                    {
+                        await using var connection = new NpgsqlConnection(idCs);
+                        await connection.OpenAsync();
+                        await using var command = new NpgsqlCommand(
+                            """UPDATE "AbpUsers" SET "IsActive" = FALSE WHERE "Id" = @id""",
+                            connection);
+                        command.Parameters.AddWithValue("id", root);
+                        return await command.ExecuteNonQueryAsync();
+                    });
+                    await Task.Delay(250);
+                    Assert.False(disableRoot.IsCompleted,
+                        "Root account disable must wait for founder commit.");
+                    await uow.CompleteAsync();
+                }
+            }
+            Assert.NotNull(disableRoot);
+            Assert.Equal(1, await disableRoot!.WaitAsync(TimeSpan.FromSeconds(15)));
+            using (var payload = new StringContent(
+                """{"name":"Disabled root cannot create","address":"Scratch"}""",
+                Encoding.UTF8, "application/json"))
+            using (var response = await clientRoot.PostAsync(createPath, payload))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            await using (var conn = new NpgsqlConnection(idCs))
+            {
+                await conn.OpenAsync();
+                await using var restore = new NpgsqlCommand(
+                    """UPDATE "AbpUsers" SET "IsActive" = TRUE WHERE "Id" = @id""",
+                    conn);
+                restore.Parameters.AddWithValue("id", root);
+                Assert.Equal(1, await restore.ExecuteNonQueryAsync());
+            }
+
             // Real durable two-principal signoff against the extra,
             // completely isolated recovery building. No HTTP recovery route.
             var recoveryBuilding = Guid.NewGuid();
@@ -525,6 +578,16 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
 
             const string grants = "/api/slice-a-staging/operator-grants";
+
+            // The owner may delegate, but cannot revoke their self-issued
+            // founding grant or accidentally orphan the building.
+            using (var payload = new StringContent(JsonSerializer.Serialize(
+                new { buildingId = a, operatorUserId = root, expectedRevision = 1 }),
+                Encoding.UTF8, "application/json"))
+            using (var response = await clientRoot.PostAsync(grants + "/revoke", payload))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var response = await clientRoot.GetAsync(GetAt(a)))
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             using (var payload = new StringContent(JsonSerializer.Serialize(
                 new { buildingId = b, operatorUserId = operatorB }),
                 Encoding.UTF8, "application/json"))
@@ -687,6 +750,34 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     BuildingManagementPermissions.Buildings.AssignOperators, true);
                 await permissions.SetForUserAsync(root,
                     BuildingManagementPermissions.Buildings.RevokeOperators, true);
+                await uow.CompleteAsync();
+            }
+
+            // Membership in B plus a valid, separate AssignOperators
+            // permission does NOT authorize delegating access to A.
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                await sp.GetRequiredService<IPermissionManager>().SetForUserAsync(
+                    operatorB, BuildingManagementPermissions.Buildings.AssignOperators,
+                    true);
+                await uow.CompleteAsync();
+            }
+            using (var payload = new StringContent(JsonSerializer.Serialize(
+                new { buildingId = a, operatorUserId = cosigner }),
+                Encoding.UTF8, "application/json"))
+            using (var response = await clientB.PostAsync(grants, payload))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                await sp.GetRequiredService<IPermissionManager>().SetForUserAsync(
+                    operatorB, BuildingManagementPermissions.Buildings.AssignOperators,
+                    false);
                 await uow.CompleteAsync();
             }
 

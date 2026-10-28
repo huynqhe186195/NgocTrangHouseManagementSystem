@@ -6,9 +6,9 @@ using Microsoft.EntityFrameworkCore.Metadata.Builders;
 namespace BuildingManagement.EntityFrameworkCore.EntityConfigurations;
 
 /// <summary>
-/// STAGED model: SQLite tests only until a reviewed PostgreSQL migration,
-/// audited posting transaction, write privileges and UPDATE/DELETE
-/// protection exist. A unique preparation row is NOT proof of issuance.
+/// STAGED model: SQLite tests and source-only guarded PostgreSQL migration.
+/// No database rollout, posting transaction or runtime invoice writer exists.
+/// A unique preparation row is NOT proof of invoice issuance.
 /// </summary>
 public sealed class FinalInvoiceIssueEvidenceRecordConfiguration
     : IEntityTypeConfiguration<FinalInvoiceIssueEvidenceRecord>

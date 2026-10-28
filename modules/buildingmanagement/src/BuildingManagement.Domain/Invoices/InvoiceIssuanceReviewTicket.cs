@@ -8,8 +8,8 @@ namespace BuildingManagement.Invoices;
 /// <summary>
 /// STAGED two-person review of a prepared invoice evidence snapshot.
 /// A reviewed ticket is NEVER an issued invoice or an authorization to post
-/// a receivable. No public writer, PostgreSQL migration or live posting
-/// transaction currently exists.
+/// a receivable. A source-only PostgreSQL migration exists, but no deployed
+/// migration, public writer or live posting transaction currently exists.
 /// </summary>
 public sealed class InvoiceIssuanceReviewTicket : Entity<Guid>
 {

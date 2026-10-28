@@ -5,9 +5,9 @@ using Microsoft.EntityFrameworkCore.Metadata.Builders;
 namespace BuildingManagement.EntityFrameworkCore.EntityConfigurations;
 
 /// <summary>
-/// STAGED review model (SQLite tests only). No PostgreSQL migration, online
-/// submit/review service or audited invoice-posting transaction exists.
-/// Stronger append-only DB role/trigger enforcement is required before use.
+/// STAGED review model with source-only guarded PostgreSQL migration.
+/// No live schema rollout, online submit/review service or invoice posting.
+/// Restricted runtime DB privileges remain mandatory before any activation.
 /// </summary>
 public sealed class InvoiceIssuanceReviewTicketConfiguration
     : IEntityTypeConfiguration<InvoiceIssuanceReviewTicket>

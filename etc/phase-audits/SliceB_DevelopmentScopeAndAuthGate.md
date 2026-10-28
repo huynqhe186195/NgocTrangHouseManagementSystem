@@ -365,3 +365,29 @@ The unscoped PaymentAppService HTTP controller remains DENY. GET /{contractId}/d
 ## Scoped cancellation of Pending deposit receipts
 
 Both reservation and contract payment cancellation are isolated-staging POST operations. The calling scope first locks the authorized Contract or active Contract→Reservation and live building membership, then an exact-purpose, exact-owner Pending Payment row FOR UPDATE. Only after this ownership+state proof does the original PaymentAppService.CancelAsync run in the same transaction. Completed receipts are never cancelled, duplicate cancellation is denied, and cancellation cannot create a DepositSettlement or cancel the underlying Reservation/Contract. PostgreSQL HTTP tests cover foreign resources, duplicates, completed-receipt rejection, and zero settlement for a cancelled pending receipt. Global PaymentAppService remains DENY.
+
+## Source-only Slice B final-invoice evidence/reviewer PostgreSQL migration
+
+`20261029200000_SliceBFinalInvoiceEvidencePersistence` adds only the
+`BuildingManagementFinalInvoiceIssueEvidence` and
+`BuildingManagementInvoiceIssuanceReviews` staging tables. It has **not**
+been applied to a real development/application/production database.
+The disposable CI PostgreSQL test invokes the migration's own Up/Down SQL
+inside a random schema and ALWAYS rolls back its enclosing transaction.
+
+The archive rejects UPDATE, DELETE and TRUNCATE. Its invoice/contract/room
+period uniqueness and source FKs prevent duplicated or orphaned staging
+records; a database hash-format check does not substitute for application
+evidence checksum/provenance verification. The reviewer table accepts only
+initial Submitted records, validates archived scope/hash and chronology on
+INSERT, and permits exactly one independent reviewer decision under a
+database trigger. A second decision, self-review, historical re-assignment,
+deletion or TRUNCATE is refused. The Down migration refuses populated
+archives/reviews after obtaining both ACCESS EXCLUSIVE locks.
+
+**Still blocked:** operator authorization for any stage writer, independent
+review workflow, issued-invoice ledger, receipt allocation, debt posting,
+deposit refund, room release and MoveOut completion. Existing staging
+financial-readiness explicitly continues to report the source tables as
+not migrated because this change creates migration *source only*.
+No HTTP route, migration startup hook or production enablement is added.

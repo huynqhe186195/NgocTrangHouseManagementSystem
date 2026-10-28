@@ -163,6 +163,17 @@ public sealed class SliceBStagingContractsController : ControllerBase
             .CompleteReservationDepositPaymentAsync(reservationId, paymentId, input);
     }
 
+    // Accounting allocation only; no new payment or refund.
+    [HttpPost("{id:guid}/allocate-reservation/{reservationId:guid}")]
+    [UnitOfWork(true)]
+    public Task<ContractDepositAllocationDto> AllocateReservationDepositAsync(
+        [FromRoute] Guid id, [FromRoute] Guid reservationId)
+    {
+        RequireIsolatedStaging();
+        return (_mutation ?? throw Denied())
+            .AllocateReservationDepositAsync(id, reservationId);
+    }
+
     // Move-out scheduling/approval only; never completes move-out, settles
     // deposits, ends a contract, or releases an occupied room.
     [HttpGet("{id:guid}/move-out-requests")]

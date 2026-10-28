@@ -289,3 +289,8 @@ The MVC policy test adds PaymentAppService to the denied service set.
 This is mandatory for privacy and avoiding a bypass around staged
 Contracts.Manage enforcement. No changes to internal PaymentAppService
 transaction logic or production rollout.
+
+
+## Isolated staged reservation deposit allocation
+
+Added contract-bound POST allocation for a completed reservation deposit on the **same exact room** as the Active contract. The flow locks Contract before Reservation, verifies Contracts.Manage and building membership to commit, then calls the existing payment allocation service for amount/primary-tenant/duplicate validation and accounting. Generic legacy payment HTTP remains DENY; no production rollout.

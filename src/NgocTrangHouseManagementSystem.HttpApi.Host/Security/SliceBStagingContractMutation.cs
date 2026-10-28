@@ -231,6 +231,53 @@ public sealed class SliceBStagingContractMutation
     }
 
     /// <summary>
+    /// The contract is locked before the reservation, as in the underlying
+    /// payment allocation service. Check BOTH resources resolve to the
+    /// exact same Room, not merely a building shared by the operator.
+    /// Identity permission and building grant are held through commit.
+    /// </summary>
+    public Task<ContractDepositAllocationDto> AllocateReservationDepositAsync(
+        Guid contractId, Guid reservationId)
+    {
+        if (contractId == Guid.Empty || reservationId == Guid.Empty)
+            throw Denied();
+        return MutateLinkAsync(contractId, async (db, buildingId) =>
+        {
+            // The contract row is already FOR UPDATE locked by MutateLink.
+            var contractRoom = await db.Contracts.AsNoTracking()
+                .Where(c => c.Id == contractId && !c.IsDeleted)
+                .Select(c => c.RoomId).SingleOrDefaultAsync();
+            if (contractRoom == Guid.Empty)
+                throw Denied();
+
+            // Match the original Contract -> Reservation lock order.
+            await using var command = Command(db, """
+                SELECT r."RoomId" FROM "BuildingManagementRoomReservations" AS r
+                 WHERE r."Id" = @id AND r."IsDeleted" = FALSE
+                 FOR UPDATE OF r
+                """);
+            AddId(command, reservationId);
+            if (await command.ExecuteScalarAsync() is not Guid reservationRoom ||
+                reservationRoom != contractRoom ||
+                await LockRoomBuildingAsync(db, reservationRoom) != buildingId)
+                throw Denied();
+
+            var allocated = await _payments.AllocateReservationDepositToContractAsync(
+                reservationId, contractId);
+            if (allocated.ContractId != contractId ||
+                allocated.RoomReservationId != reservationId ||
+                !await db.RoomReservations.AnyAsync(r =>
+                    r.Id == reservationId && !r.IsDeleted &&
+                    r.RoomId == contractRoom) ||
+                !await db.Contracts.AnyAsync(c =>
+                    c.Id == contractId && !c.IsDeleted &&
+                    c.RoomId == contractRoom))
+                throw Denied();
+            return allocated;
+        });
+    }
+
+    /// <summary>
     /// Create a notice only for the route's own authorized Active contract.
     /// The body cannot substitute a foreign ContractId. Existing domain
     /// notice-date, open-request and transaction rules remain authoritative.

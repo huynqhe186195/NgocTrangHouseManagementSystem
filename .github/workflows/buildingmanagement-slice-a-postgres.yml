@@ -11,6 +11,10 @@ on:
       - "modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Security/EfBuildingOwnerBootstrapAtomicWriter.cs"
       - "modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Security/EfBuildingOperatorGrantAtomicMutationWriter.cs"
       - "modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Security/EfBuildingScopedWriteFenceCandidate.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Security/EfBuildingScopedWriteBoundaryCandidate.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.Application/Buildings/BuildingAppService.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.Application/Security/DenyAllBuildingScopedWriteBoundary.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.Domain/Security/IBuildingScopedWriteBoundary.cs"
   pull_request:
     branches:
       - wip/phase-2g2
@@ -21,6 +25,10 @@ on:
       - "modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Security/EfBuildingOwnerBootstrapAtomicWriter.cs"
       - "modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Security/EfBuildingOperatorGrantAtomicMutationWriter.cs"
       - "modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Security/EfBuildingScopedWriteFenceCandidate.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Security/EfBuildingScopedWriteBoundaryCandidate.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.Application/Buildings/BuildingAppService.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.Application/Security/DenyAllBuildingScopedWriteBoundary.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.Domain/Security/IBuildingScopedWriteBoundary.cs"
 
 permissions:
   contents: read

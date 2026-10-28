@@ -222,6 +222,21 @@ public sealed class BuildingManagementAutoApiAuthorization_Tests
         await Assert.ThrowsAsync<Volo.Abp.Authorization.AbpAuthorizationException>(() =>
             writer.AssignAtomicallyAsync(
                 Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), null));
+        // No producer may accidentally register the staged PostgreSQL
+        // boundary as a permissive public write executor.
+        var writeBoundary = app.Services.GetRequiredService<
+            BuildingManagement.Security.IBuildingScopedWriteBoundary>();
+        Assert.IsType<
+            BuildingManagement.Security.DenyAllBuildingScopedWriteBoundary>(
+            writeBoundary);
+        var enteredMutation = false;
+        await Assert.ThrowsAsync<Volo.Abp.Authorization.AbpAuthorizationException>(() =>
+            writeBoundary.ExecuteBuildingAsync(Guid.NewGuid(), () =>
+            {
+                enteredMutation = true;
+                return Task.FromResult(true);
+            }));
+        Assert.False(enteredMutation);
     }
 
     [Fact]

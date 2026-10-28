@@ -107,3 +107,22 @@ check permission + membership before Update; it does NOT claim to
 serialize concurrent PostgreSQL writes. PostgreSQL EF tests exercise the
 actual row lock and revocation ordering separately. **No production
 DB migration, mapping, DI registration or release change.**
+
+## 2026-10-28 — Building mutation boundary integration checkpoint
+
+The live `BuildingAppService` now passes both `UpdateAsync` and
+`DeleteAsync` through a mandatory `IBuildingScopedWriteBoundary`
+after preliminary ABP user/permission/resource checks. Isolated A/B
+HTTP staging tests override the boundary only within a disposable
+test host. The default runtime DI resolves
+`DenyAllBuildingScopedWriteBoundary`; a dedicated host assertion
+verifies its callback NEVER executes. The unregistered Npgsql
+adapter resolves identity only from ABP `ICurrentUser` and invokes
+the exact SQL fence.
+
+Production activation is NOT approved until app services share the
+same PostgreSQL EF DbContext/UoW with the locked membership row,
+the runtime membership model/migration is reviewed and deployed,
+and role/account permission-revocation races and least-privilege
+DB rights are proven. A design-only adapter and separate PostgreSQL
+race tests are not proof of a deployed runtime path.

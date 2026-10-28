@@ -7,6 +7,9 @@ on:
     paths:
       - "test/NgocTrangHouseManagementSystem.HttpApi.Host.Tests/**"
       - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/AbpIdentityBuildingOperatorAccountProbe.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceAStagingPersistenceAdapters.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceAStagingOperatorGrantsController.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/NgocTrangHouseManagementSystemHttpApiHostModule.cs"
       - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Properties/AssemblyInfo.cs"
       - ".github/workflows/buildingmanagement-slice-a-identity.yml"
   pull_request:
@@ -15,6 +18,9 @@ on:
     paths:
       - "test/NgocTrangHouseManagementSystem.HttpApi.Host.Tests/**"
       - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/AbpIdentityBuildingOperatorAccountProbe.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceAStagingPersistenceAdapters.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceAStagingOperatorGrantsController.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/NgocTrangHouseManagementSystemHttpApiHostModule.cs"
       - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Properties/AssemblyInfo.cs"
       - ".github/workflows/buildingmanagement-slice-a-identity.yml"
 
@@ -40,7 +46,7 @@ jobs:
       - name: Run only isolated Identity composition tests
         run: |
           dotnet test test/NgocTrangHouseManagementSystem.HttpApi.Host.Tests/NgocTrangHouseManagementSystem.HttpApi.Host.Tests.csproj \
-            --filter "FullyQualifiedName~BuildingIdentityMembershipComposition_Tests|FullyQualifiedName~AbpIdentityPermissionRealDi_Tests|FullyQualifiedName~SliceAStagingHttpTwoBuildings_Tests" \
+            --filter "FullyQualifiedName~BuildingIdentityMembershipComposition_Tests|FullyQualifiedName~AbpIdentityPermissionRealDi_Tests|FullyQualifiedName~SliceAStagingHttpTwoBuildings_Tests|FullyQualifiedName~SliceAStagingOperatorGrantsGuard_Tests" \
             --logger "console;verbosity=normal"
 
 # No PostgreSQL or production Identity database, credentials, EF migrations,

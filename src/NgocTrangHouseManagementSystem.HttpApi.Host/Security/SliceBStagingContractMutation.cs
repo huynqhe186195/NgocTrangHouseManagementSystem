@@ -170,6 +170,64 @@ public sealed class SliceBStagingContractMutation
     }
 
     /// <summary>
+    /// The enclosing scope owns the Contract or Reservation UPDATE lock
+    /// BEFORE this Pending Payment UPDATE lock. Confirms cannot run ahead
+    /// of a cancellation, nor can a wrong receipt be cancelled by GUID.
+    /// Never exposes the unscoped legacy payment CancelAsync HTTP route.
+    /// </summary>
+    private static async Task LockPendingDepositPaymentAsync(
+        BuildingManagementDbContext db, Guid ownerId, Guid paymentId,
+        bool reservation)
+    {
+        await using var command = Command(db, reservation
+            ? """
+              SELECT p."Id" FROM "BuildingManagementPayments" AS p
+               WHERE p."Id" = @payment AND p."RoomReservationId" = @owner
+                 AND p."Purpose" = 1 AND p."Status" = 1
+                 AND p."IsDeleted" = FALSE
+               FOR UPDATE OF p
+              """
+            : """
+              SELECT p."Id" FROM "BuildingManagementPayments" AS p
+               WHERE p."Id" = @payment AND p."ContractId" = @owner
+                 AND p."Purpose" = 2 AND p."Status" = 1
+                 AND p."IsDeleted" = FALSE
+               FOR UPDATE OF p
+              """);
+        AddGuid(command, "owner", ownerId);
+        AddGuid(command, "payment", paymentId);
+        if (await command.ExecuteScalarAsync() is not Guid)
+            throw Denied();
+    }
+
+    public Task<PaymentDto> CancelReservationDepositPaymentAsync(
+        Guid reservationId, Guid paymentId)
+    {
+        if (reservationId == Guid.Empty || paymentId == Guid.Empty)
+            throw Denied();
+        return MutateReservationAsync(reservationId, async () =>
+        {
+            var db = await _provider.GetDbContextAsync();
+            await LockPendingDepositPaymentAsync(
+                db, reservationId, paymentId, reservation: true);
+            return await _payments.CancelAsync(paymentId);
+        });
+    }
+
+    public Task<PaymentDto> CancelContractDepositPaymentAsync(
+        Guid contractId, Guid paymentId)
+    {
+        if (contractId == Guid.Empty || paymentId == Guid.Empty)
+            throw Denied();
+        return MutateLinkAsync(contractId, async (db, _) =>
+        {
+            await LockPendingDepositPaymentAsync(
+                db, contractId, paymentId, reservation: false);
+            return await _payments.CancelAsync(paymentId);
+        });
+    }
+
+    /// <summary>
     /// A new payment is only a Pending record. Bind the caller-supplied
     /// reservation ID to the route and hold its live building authorization
     /// until commit. Never permit a global payment-create API to bypass

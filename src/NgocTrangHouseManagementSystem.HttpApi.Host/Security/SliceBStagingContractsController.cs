@@ -170,6 +170,16 @@ public sealed class SliceBStagingContractsController : ControllerBase
             .CreateReservationDepositPaymentAsync(id, input);
     }
 
+    [HttpPost("reservations/{id:guid}/deposit-payments/{paymentId:guid}/cancel")]
+    [UnitOfWork(true)]
+    public Task<PaymentDto> CancelReservationDepositPaymentAsync(
+        [FromRoute] Guid id, [FromRoute] Guid paymentId)
+    {
+        RequireIsolatedStaging();
+        return (_mutation ?? throw Denied())
+            .CancelReservationDepositPaymentAsync(id, paymentId);
+    }
+
     // Completion is a manually confirmed deposit receipt under the
     // original payment service's Contract→Reservation→Payment lock order.
     [HttpPost("reservations/{reservationId:guid}/deposit-payments/{paymentId:guid}/complete")]
@@ -224,6 +234,16 @@ public sealed class SliceBStagingContractsController : ControllerBase
         RequireIsolatedStaging();
         return (_mutation ?? throw Denied())
             .CompleteContractDepositPaymentAsync(id, paymentId, input);
+    }
+
+    [HttpPost("{id:guid}/deposit-payments/{paymentId:guid}/cancel")]
+    [UnitOfWork(true)]
+    public Task<PaymentDto> CancelContractDepositPaymentAsync(
+        [FromRoute] Guid id, [FromRoute] Guid paymentId)
+    {
+        RequireIsolatedStaging();
+        return (_mutation ?? throw Denied())
+            .CancelContractDepositPaymentAsync(id, paymentId);
     }
 
     // Move-out scheduling/approval only; never completes move-out, settles

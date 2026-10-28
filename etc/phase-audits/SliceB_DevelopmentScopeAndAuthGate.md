@@ -360,3 +360,8 @@ The development PostgreSQL schema does **not** contain the design-only invoice e
 ## Staging-scoped deposit receipt status queries
 
 The unscoped PaymentAppService HTTP controller remains DENY. GET /{contractId}/deposit-payments and GET /reservations/{reservationId}/deposit-payments return at most 100 recent records filtered by exact ContractDeposit or ReservationDeposit purpose. Every read proves persisted Contracts.Read Identity permission and current membership, and its SQL query joins Payment to Contract/Reservation → Room → Floor → Building before selecting. Only receipt ID, amount, status, time and purpose are exposed; no bank reference, payment number, global tenant identity or notes. PostgreSQL HTTP tests assert foreign-building denial and private-field exclusion. Reads are evidence, never refund or invoice posting authorization.
+
+
+## Scoped cancellation of Pending deposit receipts
+
+Both reservation and contract payment cancellation are isolated-staging POST operations. The calling scope first locks the authorized Contract or active Contract→Reservation and live building membership, then an exact-purpose, exact-owner Pending Payment row FOR UPDATE. Only after this ownership+state proof does the original PaymentAppService.CancelAsync run in the same transaction. Completed receipts are never cancelled, duplicate cancellation is denied, and cancellation cannot create a DepositSettlement or cancel the underlying Reservation/Contract. PostgreSQL HTTP tests cover foreign resources, duplicates, completed-receipt rejection, and zero settlement for a cancelled pending receipt. Global PaymentAppService remains DENY.

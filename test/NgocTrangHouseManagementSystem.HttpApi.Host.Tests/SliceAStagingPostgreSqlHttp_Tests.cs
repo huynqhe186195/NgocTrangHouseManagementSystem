@@ -1641,6 +1641,36 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 await uow.CompleteAsync();
             }
 
+            // A second Pending direct deposit can be cancelled only
+            // through this contract. The completed receipt is immutable.
+            Guid cancellableContractPayment;
+            using (var body = new StringContent(DirectDepositJson(cancelContract),
+                Encoding.UTF8, "application/json"))
+            using (var response = await clientB.PostAsync(
+                DirectDepositRoute(cancelContract), body))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await response.Content.ReadAsStringAsync());
+                cancellableContractPayment = json.RootElement
+                    .GetProperty("id").GetGuid();
+            }
+            string CancelContractPayment(Guid id, Guid paymentId) =>
+                DirectDepositRoute(id) + "/" + paymentId.ToString("D") +
+                "/cancel";
+            using (var response = await clientB.PostAsync(
+                CancelContractPayment(contractA, cancellableContractPayment), null))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var response = await clientB.PostAsync(
+                CancelContractPayment(cancelContract, cancellableContractPayment), null))
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            using (var response = await clientB.PostAsync(
+                CancelContractPayment(cancelContract, cancellableContractPayment), null))
+                Assert.NotEqual(HttpStatusCode.OK, response.StatusCode);
+            using (var response = await clientB.PostAsync(
+                CancelContractPayment(cancelContract, directPayment), null))
+                Assert.NotEqual(HttpStatusCode.OK, response.StatusCode);
+
             // Read only the authorized contract's deposit receipt status,
             // with no global tenant, payment reference or private notes.
             using (var response = await clientB.GetAsync(
@@ -1831,6 +1861,27 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 Assert.NotEqual(Guid.Empty, pendingPaymentId);
                 Assert.Equal(1, json.RootElement.GetProperty("status").GetInt32());
             }
+            // Two Pending receipts may exist, but cancelling a pending
+            // alternate must not cancel the reservation or completed money.
+            var alternate = await TryCreateDepositAsync(
+                paidCandidate, paidCandidate);
+            Assert.Equal(HttpStatusCode.OK, alternate.Status);
+            Guid alternatePayment;
+            using (var json = JsonDocument.Parse(alternate.Body))
+                alternatePayment = json.RootElement.GetProperty("id").GetGuid();
+            string CancelReservationPayment(Guid reservationId, Guid paymentId) =>
+                reservationRoute + "/" + reservationId.ToString("D") +
+                "/deposit-payments/" + paymentId.ToString("D") + "/cancel";
+            using (var response = await clientB.PostAsync(
+                CancelReservationPayment(reservationA, alternatePayment), null))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var response = await clientB.PostAsync(
+                CancelReservationPayment(paidCandidate, alternatePayment), null))
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            using (var response = await clientB.PostAsync(
+                CancelReservationPayment(paidCandidate, alternatePayment), null))
+                Assert.NotEqual(HttpStatusCode.OK, response.StatusCode);
+
             async Task<HttpStatusCode> TryCompleteDepositAsync(Guid routeReservation)
             {
                 using var payload = new StringContent("{}",
@@ -1859,6 +1910,26 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     (await db.Payments.SingleAsync(p => p.Id == pendingPaymentId)).Status);
                 Assert.Equal(BuildingManagement.RoomReservations.RoomReservationStatus.Reserved,
                     (await db.RoomReservations.SingleAsync(r => r.Id == paidCandidate)).Status);
+                await uow.CompleteAsync();
+            }
+
+            using (var response = await clientB.PostAsync(
+                CancelReservationPayment(paidCandidate, pendingPaymentId), null))
+                Assert.NotEqual(HttpStatusCode.OK, response.StatusCode);
+            using (var scope = app.Services.CreateScope())
+            {
+                using var uow = scope.ServiceProvider
+                    .GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var db = await scope.ServiceProvider.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>()
+                    .GetDbContextAsync();
+                Assert.Equal(BuildingManagement.Payments.PaymentStatus.Cancelled,
+                    (await db.Payments.SingleAsync(p => p.Id == alternatePayment)).Status);
+                Assert.Equal(BuildingManagement.Payments.PaymentStatus.Completed,
+                    (await db.Payments.SingleAsync(p => p.Id == pendingPaymentId)).Status);
+                Assert.False(await db.DepositSettlements.AnyAsync(s =>
+                    s.PaymentId == alternatePayment));
                 await uow.CompleteAsync();
             }
 

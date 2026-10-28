@@ -113,6 +113,31 @@ public sealed class SliceBDepositCloseoutPostgreSql_Tests
     }
 
     [Fact]
+    public async Task SBDPDB06_Drifted_Or_Unjournaled_Receipt_Blocks_Closeout()
+    {
+        await ScratchAsync(async (db, tx, _) =>
+        {
+            var f = await SeedAsync(db, tx, completed: true);
+            await ExecAsync(db, tx, $"""
+                UPDATE "BuildingManagementPayments" SET "Status" = 1
+                WHERE "Id" = '{f.PaymentId:D}';
+                """);
+            await DeniedAsync(db, tx, ApprovalSql(f), "23514");
+            await ExecAsync(db, tx, $"""
+                UPDATE "BuildingManagementPayments" SET "Status" = 2
+                WHERE "Id" = '{f.PaymentId:D}';
+                """);
+            await ExecAsync(db, tx, $"""
+                INSERT INTO "BuildingManagementPayments"
+                    ("Id","InvoiceId","ContractId","Purpose","Status","Amount","IsDeleted")
+                VALUES ('{Guid.NewGuid():D}','{f.InvoiceId:D}',
+                        '{f.ContractId:D}',3,2,100000,FALSE);
+                """);
+            await DeniedAsync(db, tx, ApprovalSql(f), "23514");
+        });
+    }
+
+    [Fact]
     public async Task SBDPDB05_Contract_Deposit_Amount_Cannot_Be_Spoofed()
     {
         await ScratchAsync(async (db, tx, _) =>
@@ -153,14 +178,14 @@ public sealed class SliceBDepositCloseoutPostgreSql_Tests
     private sealed record Fixture(
         Guid ApprovalId, Guid ContractId, Guid RequestId,
         Guid InvoiceId, Guid RoomId, Guid BuildingId,
-        Guid RefundId, Guid ForfeitId);
+        Guid RefundId, Guid ForfeitId, Guid PaymentId);
 
     private static async Task<Fixture> SeedAsync(
         NpgsqlConnection db, NpgsqlTransaction tx, bool completed)
     {
         var f = new Fixture(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
             Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
-            Guid.NewGuid(), Guid.NewGuid());
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
         await ExecAsync(db, tx, $"""
             INSERT INTO "BuildingManagementContracts" ("Id","DepositAmount")
                 VALUES ('{f.ContractId:D}',1000000);
@@ -173,9 +198,14 @@ public sealed class SliceBDepositCloseoutPostgreSql_Tests
                 VALUES ('{f.InvoiceId:D}','{f.ContractId:D}','{f.RoomId:D}',
                         '{f.RequestId:D}','{f.BuildingId:D}',
                         '2026-10-29T01:00:00Z');
+            INSERT INTO "BuildingManagementPayments"
+                ("Id","InvoiceId","ContractId","Purpose","Status","Amount","IsDeleted")
+                VALUES ('{f.PaymentId:D}','{f.InvoiceId:D}','{f.ContractId:D}',
+                        3,2,3000000,FALSE);
             INSERT INTO "BuildingManagementInvoicePaymentAllocationJournal"
-                ("Id","IssuedInvoiceId","Amount")
-                VALUES ('{Guid.NewGuid():D}','{f.InvoiceId:D}',3000000);
+                ("Id","PaymentId","IssuedInvoiceId","ContractId","Amount")
+                VALUES ('{Guid.NewGuid():D}','{f.PaymentId:D}',
+                        '{f.InvoiceId:D}','{f.ContractId:D}',3000000);
             INSERT INTO "BuildingManagementDepositSettlements"
                 ("Id","Type","Status","SourceContractId","TargetContractId",
                  "Amount","CompletedAt","Notes")
@@ -263,9 +293,19 @@ public sealed class SliceBDepositCloseoutPostgreSql_Tests
                         "BuildingId" uuid NOT NULL,
                         "IssuedAtUtc" timestamptz NOT NULL,
                         "TotalAmount" numeric(18,0) NOT NULL DEFAULT 3000000);
+                    CREATE TABLE "BuildingManagementPayments" (
+                        "Id" uuid PRIMARY KEY,
+                        "InvoiceId" uuid NULL,
+                        "ContractId" uuid NULL,
+                        "Purpose" integer NOT NULL,
+                        "Status" integer NOT NULL,
+                        "Amount" numeric(18,0) NOT NULL,
+                        "IsDeleted" boolean NOT NULL);
                     CREATE TABLE "BuildingManagementInvoicePaymentAllocationJournal" (
                         "Id" uuid PRIMARY KEY,
+                        "PaymentId" uuid NOT NULL,
                         "IssuedInvoiceId" uuid NOT NULL,
+                        "ContractId" uuid NOT NULL,
                         "Amount" numeric(18,0) NOT NULL);
                     CREATE TABLE "BuildingManagementDepositSettlements" (
                         "Id" uuid PRIMARY KEY,

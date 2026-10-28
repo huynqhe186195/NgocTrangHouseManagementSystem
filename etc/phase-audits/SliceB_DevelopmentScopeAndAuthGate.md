@@ -523,3 +523,10 @@ IDs, bank reference, damage, inspection, signed handover and policy reference.
 Unit tests force a mismatch in each individual index, proving it is rejected
 without trusting a previously stored hash alone. Staging writer and controller
 changes also trigger the PostgreSQL regression workflow going forward.
+
+The SQL closeout gate additionally rechecks each journaled receipt against
+its current `BuildingManagementPayments` row (completed invoice purpose,
+non-deleted, amount, issued invoice and contract attribution) and refuses
+unjournaled completed invoice payments in the same contract. This closes the
+gap where a valid staged journal could outlive modified source payment data.
+Scratch PostgreSQL tests cover later status drift and orphan receipts.

@@ -210,6 +210,37 @@ public sealed class SliceBContractDepositCloseoutApprovals : Migration
                         USING ERRCODE = '23514';
                 END IF;
 
+                -- Allocation arithmetic alone is insufficient: a previously
+                -- completed receipt could have been directly altered or
+                -- deleted after its staging journal was created. Re-attest
+                -- every paid invoice journal against its current source.
+                IF EXISTS (
+                    SELECT 1
+                    FROM "BuildingManagementInvoicePaymentAllocationJournal" a
+                    LEFT JOIN "BuildingManagementPayments" p
+                      ON p."Id" = a."PaymentId"
+                    WHERE a."ContractId" = NEW."ContractId"
+                      AND (p."Id" IS NULL
+                           OR p."Purpose" IS DISTINCT FROM 3
+                           OR p."Status" IS DISTINCT FROM 2
+                           OR p."IsDeleted" IS DISTINCT FROM FALSE
+                           OR p."InvoiceId" IS DISTINCT FROM a."IssuedInvoiceId"
+                           OR p."ContractId" IS DISTINCT FROM a."ContractId"
+                           OR p."Amount" IS DISTINCT FROM a."Amount")
+                ) OR EXISTS (
+                    SELECT 1 FROM "BuildingManagementPayments" p
+                    WHERE p."ContractId" = NEW."ContractId"
+                      AND p."Purpose" = 3 AND p."Status" = 2
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM "BuildingManagementInvoicePaymentAllocationJournal" a
+                          WHERE a."PaymentId" = p."Id"
+                      )
+                ) THEN
+                    RAISE EXCEPTION 'Invoice receipt source drift or unjournaled completed payment'
+                        USING ERRCODE = '23514';
+                END IF;
+
                 SELECT COALESCE(sum("Amount"),0) INTO received
                   FROM "BuildingManagementDepositSettlements"
                  WHERE "TargetContractId" = NEW."ContractId"

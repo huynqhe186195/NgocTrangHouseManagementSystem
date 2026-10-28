@@ -182,7 +182,12 @@ public sealed class SliceBReconciliationBoundaryPostgreSql_Tests
             BaseAmount = 1_000_000m,
             AuxiliaryAmount = 0m,
             TotalAmount = 1_000_000m,
-            DueDate = "2026-11-05"
+            DueDate = "2026-11-05",
+            DueDatePolicyReference = "DOCUMENTED-DUE-DATE-POLICY",
+            AuxiliaryFeeDecision = 1,
+            AuxiliaryFeePolicyReference = "EXPLICIT-NO-SERVICE-FEES",
+            AuxiliaryFeeReviewerId = Guid.NewGuid(),
+            AuxiliaryCharges = Array.Empty<object>()
         });
         await ExecuteAsync(db, tx, $"""
             INSERT INTO "BuildingManagementInvoices"

@@ -78,10 +78,23 @@ public sealed class SliceAFullChainUpgradePostgreSql_Tests
                 await existing.Database.MigrateAsync();
                 Assert.Equal(baselineMigrations,
                     (await existing.Database.GetAppliedMigrationsAsync()).ToArray());
-                existing.Buildings.AddRange(
-                    new Building(existingA, "Existing Building A", "Old address A"),
-                    new Building(existingB, "Existing Building B", "Old address B"));
-                await existing.SaveChangesAsync();
+                // Direct SQL seeds EXISTING rows. This manually created
+                // AbpDbContext has no ABP lazy services for SaveChanges
+                // audit interception; MigrateAsync itself is still REAL.
+                await existing.Database.ExecuteSqlInterpolatedAsync($"""
+                    INSERT INTO "Buildings"
+                    ("Id","Name","Address","ExtraProperties","ConcurrencyStamp",
+                     "CreationTime","IsDeleted")
+                    VALUES ({existingA}, {"Existing Building A"}, {"Old address A"},
+                            '{{}}', {Guid.NewGuid().ToString("N")}, CURRENT_TIMESTAMP, FALSE)
+                    """);
+                await existing.Database.ExecuteSqlInterpolatedAsync($"""
+                    INSERT INTO "Buildings"
+                    ("Id","Name","Address","ExtraProperties","ConcurrencyStamp",
+                     "CreationTime","IsDeleted")
+                    VALUES ({existingB}, {"Existing Building B"}, {"Old address B"},
+                            '{{}}', {Guid.NewGuid().ToString("N")}, CURRENT_TIMESTAMP, FALSE)
+                    """);
             }
 
             // The reviewed Slice A EF migration is in the TEST assembly,

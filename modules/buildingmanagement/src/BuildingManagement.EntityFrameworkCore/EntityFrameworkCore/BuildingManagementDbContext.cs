@@ -51,6 +51,8 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
     public DbSet<InvoicePaymentAllocationJournalEntry> InvoicePaymentAllocationJournal { get; set; } = default!;
     // Staged two-person review record; no production issue/approval writer.
     public DbSet<InvoiceIssuanceReviewTicket> InvoiceIssuanceReviews { get; set; } = default!;
+    // SOURCE-ONLY: immutable issuance ledger is not writable by any current API.
+    public DbSet<IssuedInvoiceLedgerRecord> IssuedInvoiceLedger { get; set; } = default!;
 
     public BuildingManagementDbContext(DbContextOptions<BuildingManagementDbContext> options)
         : base(options)
@@ -86,5 +88,7 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.InvoicePaymentAllocationJournalEntryConfiguration());
         builder.ApplyConfiguration(
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.InvoiceIssuanceReviewTicketConfiguration());
+        builder.ApplyConfiguration(
+            new BuildingManagement.EntityFrameworkCore.EntityConfigurations.IssuedInvoiceLedgerRecordConfiguration());
     }
 }

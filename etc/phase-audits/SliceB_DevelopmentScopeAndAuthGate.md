@@ -413,3 +413,26 @@ invoice, transaction-scoped authorization, monetary terms and source-locking
 allocation writer exist, all issue, debt, refund and closeout gates remain
 false. PostgreSQL tests execute this actual Up/Down in a transaction-local
 random schema and always roll back, including after unsuccessful operations.
+
+## Source-only immutable issued-invoice ledger (Slice B)
+
+`20261029202000_SliceBIssuedInvoiceLedger` adds an issued-invoice ledger model
+and PostgreSQL migration **source only**. It is not applied to any application
+or production database. Tests run the actual migration SQL in a random schema
+inside a rollback-only local PostgreSQL transaction.
+
+Ledger rows reference the existing Draft, immutable archived evidence and
+independent design-review ticket. Unique keys protect the invoice number,
+draft, evidence, review, contract-period and room-period. Trigger validation
+checks the exact stored graph, approved-for-design review chronology and
+base amount while locking the source Draft through commit. Existing issued
+history cannot be UPDATEd, DELETEd, TRUNCATEd or downgraded; draft headers
+linked to it cannot subsequently be rewritten.
+
+**Not yet allowed:** a review marked `ReviewedForDesign` is *not* legal
+issuance authority. There is no exposed constructor, authenticated posting
+service, approved fee/due-date writer, transactional source-provenance check,
+registered DB posting role or payment/deposit settlement. The presence of
+migration source or a matching evidence hash cannot turn staged money into a
+recognized receivable. Do not turn on an issuance endpoint until those
+conditions and their concurrency/rollback tests have been implemented.

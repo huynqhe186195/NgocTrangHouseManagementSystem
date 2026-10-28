@@ -1033,6 +1033,84 @@ public sealed class SliceAGrantEfMigrationPostgreSql_Tests
         });
     }
 
+    [Fact]
+    public async Task EFMEMBER20_Concurrent_Second_Founder_Insert_Fences_Recovery_Then_Denies()
+    {
+        await InScratchAsync(async cs =>
+        {
+            var founder = Guid.NewGuid();
+            var otherSelfIssued = Guid.NewGuid();
+            var recipient = Guid.NewGuid();
+            var firstSigner = Guid.NewGuid();
+            var secondSigner = Guid.NewGuid();
+            var evidence = Guid.NewGuid();
+            Guid building;
+            await using (var seed = OpenGrantDb(cs))
+            {
+                await seed.Database.MigrateAsync();
+                building = (await new EfBuildingOwnerBootstrapAtomicWriter(seed)
+                    .CreateWithOwnerAtomicallyAsync(
+                        founder, "Concurrent founders", "Scratch PG", null)).Id;
+            }
+
+            // The other self-issued grant is not visible yet, but its
+            // referencing FK INSERT holds KEY SHARE on the parent Building.
+            await using var competingDb = OpenGrantDb(cs);
+            await using var competingTx = await competingDb.Database
+                .BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted);
+            await competingDb.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO "BuildingManagementOperatorBuildingGrants"
+                    ("Id","OperatorUserId","BuildingId","GrantedByUserId",
+                     "GrantedAtUtc","RevisionNumber","ExtraProperties",
+                     "ConcurrencyStamp")
+                VALUES ({Guid.NewGuid()}, {otherSelfIssued}, {building},
+                        {otherSelfIssued}, {DateTime.UtcNow.AddMinutes(-1)},
+                        {1}, {"{}"}, {Guid.NewGuid().ToString("N")})
+                """);
+
+            var started = new TaskCompletionSource<bool>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            var recovery = Task.Run(async () =>
+            {
+                await using var db = OpenGrantDb(cs);
+                // Same supported isolation as the real ABP Building UoW.
+                await using var uow = await db.Database
+                    .BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted);
+                started.TrySetResult(true);
+                var id = await new EfBuildingOwnerRecoveryAtomicWriter(
+                    db, TimeProvider.System).RecoverAtomicallyAsync(
+                        building, founder, recipient, firstSigner,
+                        secondSigner, evidence);
+                await uow.CommitAsync();
+                return id;
+            });
+            try
+            {
+                await started.Task.WaitAsync(TimeSpan.FromSeconds(15));
+                await Task.Delay(250);
+                Assert.False(recovery.IsCompleted,
+                    "Recovery must wait for FK-enforced concurrent grant INSERT.");
+            }
+            finally
+            {
+                await competingTx.CommitAsync();
+            }
+
+            // Once the competing grant becomes visible, both self-issued
+            // identities are detected. Recovery must reject both, without
+            // issuing a grant, even though the initial lookup began earlier.
+            await Assert.ThrowsAsync<AbpAuthorizationException>(
+                async () => await recovery.WaitAsync(TimeSpan.FromSeconds(15)));
+            await using var verify = OpenGrantDb(cs);
+            Assert.Equal(2, await verify.Grants.CountAsync(x =>
+                x.BuildingId == building &&
+                x.OperatorUserId == x.GrantedByUserId &&
+                x.RevokedAtUtc == null));
+            Assert.False(await verify.Grants.AnyAsync(x =>
+                x.BuildingId == building && x.OperatorUserId == recipient));
+        });
+    }
+
     private static SliceAGrantScratchDb OpenGrantDb(string cs)
         => new(new DbContextOptionsBuilder<SliceAGrantScratchDb>()
             .UseNpgsql(cs, n => n.MigrationsAssembly(

@@ -373,6 +373,79 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             using (var response = await clientRoot.PostAsync(grants, payload))
                 Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
+            // Delegation itself (not only Room/Floor CRUD) now holds the
+            // real ABP AssignOperators grant lock through Building commit.
+            // Revoking permission from the independent Identity DB must wait.
+            Task<int>? revokeAssign = null;
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                var accessor = sp.GetRequiredService<ICurrentPrincipalAccessor>();
+                using (accessor.Change(new ClaimsPrincipal(new ClaimsIdentity(
+                    new[]
+                    {
+                        new Claim(AbpClaimTypes.UserId, root.ToString("D")),
+                        new Claim(ClaimTypes.NameIdentifier, root.ToString("D"))
+                    }, "CommitBoundAssign"))))
+                {
+                    using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                        .Begin(requiresNew: true, isTransactional: true);
+                    var writer = sp.GetRequiredService<
+                        IBuildingOperatorGrantMutationWriter>();
+                    var newGrant = await writer.AssignAtomicallyAsync(
+                        root, cosigner, a, null);
+                    Assert.NotEqual(Guid.Empty, newGrant);
+                    revokeAssign = Task.Run(async () =>
+                    {
+                        await using var connection = new NpgsqlConnection(idCs);
+                        await connection.OpenAsync();
+                        await using var cmd = new NpgsqlCommand(
+                            """
+                            DELETE FROM "AbpPermissionGrants"
+                             WHERE "ProviderName" = 'U'
+                               AND "ProviderKey" = @root
+                               AND "Name" = @permission
+                            """, connection);
+                        cmd.Parameters.AddWithValue("root", root.ToString("D"));
+                        cmd.Parameters.AddWithValue("permission",
+                            BuildingManagementPermissions.Buildings.AssignOperators);
+                        return await cmd.ExecuteNonQueryAsync();
+                    });
+                    await Task.Delay(250);
+                    Assert.False(revokeAssign.IsCompleted,
+                        "AssignOperators revocation must wait for grant commit.");
+                    await uow.CompleteAsync();
+                }
+            }
+            Assert.NotNull(revokeAssign);
+            Assert.Equal(1, await revokeAssign!.WaitAsync(TimeSpan.FromSeconds(15)));
+            // Stale ABP authorization cannot bypass a missing persisted
+            // AssignOperators grant even through the internal writer.
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                var accessor = sp.GetRequiredService<ICurrentPrincipalAccessor>();
+                using (accessor.Change(new ClaimsPrincipal(new ClaimsIdentity(
+                    new[] { new Claim(AbpClaimTypes.UserId, root.ToString("D")) },
+                    "StaleAssignGrant"))))
+                {
+                    using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                        .Begin(requiresNew: true, isTransactional: true);
+                    await Assert.ThrowsAsync<Volo.Abp.Authorization.AbpAuthorizationException>(
+                        () => sp.GetRequiredService<IBuildingOperatorGrantMutationWriter>()
+                            .AssignAtomicallyAsync(root, cosigner, b, null));
+                }
+            }
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                await sp.GetRequiredService<IPermissionManager>().SetForUserAsync(
+                    root, BuildingManagementPermissions.Buildings.AssignOperators, true);
+                await uow.CompleteAsync();
+            }
+
             // HTTP grant history is per-building and uses a separate
             // AssignOperators/RevokeOperators privilege, not Buildings.Read.
             using (var response = await clientRoot.GetAsync(

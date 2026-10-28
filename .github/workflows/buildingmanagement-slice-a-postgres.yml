@@ -136,6 +136,12 @@ jobs:
             --filter "FullyQualifiedName~SliceBFinalInvoiceEvidenceMigrationPostgreSql_Tests" \
             --logger "console;verbosity=normal"
 
+      - name: Slice B staged payment allocation journal PostgreSQL probes
+        run: |
+          dotnet test modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/BuildingManagement.PostgreSql.Tests.csproj \
+            --filter "FullyQualifiedName~SliceBInvoicePaymentAllocationStagingPostgreSql_Tests" \
+            --logger "console;verbosity=normal"
+
       - name: Isolated PostgreSQL ABP authenticated staging HTTP
         run: |
           dotnet test test/NgocTrangHouseManagementSystem.HttpApi.Host.Tests/NgocTrangHouseManagementSystem.HttpApi.Host.Tests.csproj \

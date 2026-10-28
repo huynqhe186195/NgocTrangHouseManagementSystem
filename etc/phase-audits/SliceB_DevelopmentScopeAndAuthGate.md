@@ -391,3 +391,25 @@ deposit refund, room release and MoveOut completion. Existing staging
 financial-readiness explicitly continues to report the source tables as
 not migrated because this change creates migration *source only*.
 No HTTP route, migration startup hook or production enablement is added.
+
+## Source-only staged invoice payment allocation journal
+
+`20261029201000_SliceBInvoicePaymentAllocationStaging` adds the previously
+modeled `BuildingManagementInvoicePaymentAllocationJournal` table as an
+**offline migration source only**, with a strict unique `PaymentId`, FK to
+`BuildingManagementPayments`, numeric/identity constraints, an immutable
+UPDATE/DELETE/TRUNCATE trigger and a populated-history rollback refusal.
+
+An INSERT trigger locks and compares the source receipt against its persisted
+purpose (`InvoicePayment`), completed status, non-deleted flag, invoice and
+contract attribution, amount, payment number, UTC paid date and transaction
+reference. If a receipt later changes, the existing read-only journal auditor
+must detect drift; the presence of this row **does not** post a financial
+allocation. No live authorized writer or database deployment is provided.
+
+There is still no issued-invoice ledger and therefore deliberately **no FK to
+a draft Invoice as though it were issued**. Until an immutable actual issued
+invoice, transaction-scoped authorization, monetary terms and source-locking
+allocation writer exist, all issue, debt, refund and closeout gates remain
+false. PostgreSQL tests execute this actual Up/Down in a transaction-local
+random schema and always roll back, including after unsuccessful operations.

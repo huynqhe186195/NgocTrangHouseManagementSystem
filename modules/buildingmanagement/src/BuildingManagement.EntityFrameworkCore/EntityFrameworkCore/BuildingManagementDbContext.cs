@@ -45,9 +45,9 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
     public DbSet<InvoiceItemMeterSource> InvoiceItemMeterSources { get; set; } = default!;
     // Phase 2G.3A.7 — staged history model; migration not generated/applied.
     public DbSet<InvoiceDraftRevisionRecord> InvoiceDraftRevisions { get; set; } = default!;
-    // STAGED evidence only: NOT issued, NOT a receivable, migration absent.
+    // STAGED evidence only: NOT issued or receivable; migration source only.
     public DbSet<FinalInvoiceIssueEvidenceRecord> FinalInvoiceIssueEvidence { get; set; } = default!;
-    // STAGED only: not a posted receivable or payment. Production migration absent.
+    // STAGED only: journal migration source exists, no financial posting.
     public DbSet<InvoicePaymentAllocationJournalEntry> InvoicePaymentAllocationJournal { get; set; } = default!;
     // Staged two-person review record; no production issue/approval writer.
     public DbSet<InvoiceIssuanceReviewTicket> InvoiceIssuanceReviews { get; set; } = default!;

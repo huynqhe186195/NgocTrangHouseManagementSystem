@@ -6,11 +6,11 @@ using Microsoft.EntityFrameworkCore.Metadata.Builders;
 namespace BuildingManagement.EntityFrameworkCore.EntityConfigurations;
 
 /// <summary>
-/// STAGED allocation journal for the isolated EF test model only.
+/// STAGED allocation journal with SOURCE-ONLY PostgreSQL migration.
 /// Invoice is intentionally NOT FK-linked: the current Invoice table
-/// contains Draft records, NEVER issued invoices. A reviewed PostgreSQL
-/// migration must introduce a real issued-invoice FK, append-only rules,
-/// idempotent writes, authorization and transactional allocation checks.
+/// contains Draft records, NEVER issued invoices. The staged DB guards
+/// source receipt consistency/uniqueness, but legal issuance, writer
+/// authorization and posted receivable accounting remain unimplemented.
 /// </summary>
 public sealed class InvoicePaymentAllocationJournalEntryConfiguration
     : IEntityTypeConfiguration<InvoicePaymentAllocationJournalEntry>

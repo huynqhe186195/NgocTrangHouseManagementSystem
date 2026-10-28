@@ -281,9 +281,28 @@ public sealed class SliceAGrantEfMigrationPostgreSql_Tests
                             issuer, recipient, building, null);
                     return true;
                 }
-                catch (DbUpdateException) { return false; }
-                catch (PostgresException ex) when (ex.SqlState is "40001" or "23505")
-                { return false; }
+                catch (DbUpdateException ex) when (
+                    ex.InnerException is PostgresException pg &&
+                    pg.SqlState is "40001" or "23505")
+                {
+                    return false;
+                }
+                catch (InvalidOperationException ex) when (
+                    ex.InnerException is DbUpdateException inner &&
+                    inner.InnerException is PostgresException pg &&
+                    pg.SqlState == "40001")
+                {
+                    // Npgsql EF execution strategy wraps serialization
+                    // failures as transient errors. Caller must rerun a
+                    // fresh authorization+transaction, never auto-retry
+                    // without checking account and permission again.
+                    return false;
+                }
+                catch (PostgresException ex) when (
+                    ex.SqlState is "40001" or "23505")
+                {
+                    return false;
+                }
             }
             var results = await Task.WhenAll(TryAssignAsync(), TryAssignAsync());
             Assert.Equal(1, results.Count(x => x));

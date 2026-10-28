@@ -373,6 +373,31 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             using (var response = await clientRoot.PostAsync(grants, payload))
                 Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
+            // HTTP grant history is per-building and uses a separate
+            // AssignOperators/RevokeOperators privilege, not Buildings.Read.
+            using (var response = await clientRoot.GetAsync(
+                grants + "/" + b.ToString("D") + "?skipCount=0&maxResultCount=20"))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                using var items = JsonDocument.Parse(
+                    await response.Content.ReadAsStringAsync());
+                var granted = items.RootElement.EnumerateArray().ToArray();
+                Assert.Contains(granted, x =>
+                    x.GetProperty("operatorUserId").GetGuid() == operatorB &&
+                    x.GetProperty("revisionNumber").GetInt32() == 1);
+                Assert.DoesNotContain(granted, x =>
+                    x.GetProperty("buildingId").GetGuid() != b);
+            }
+            using (var response = await clientB.GetAsync(
+                grants + "/" + a.ToString("D")))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var response = await clientB.GetAsync(
+                grants + "/" + b.ToString("D")))
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            using (var response = await clientRoot.GetAsync(
+                grants + "/" + b.ToString("D") + "?maxResultCount=101"))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+
             using (var response = await clientB.GetAsync(GetAt(b)))
                 Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             using (var response = await clientB.GetAsync(GetAt(a)))
@@ -877,6 +902,20 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 Encoding.UTF8, "application/json"))
             using (var response = await clientRoot.PostAsync(grants + "/revoke", payload))
                 Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+            using (var response = await clientB.GetAsync(
+                grants + "/" + b.ToString("D")))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var response = await clientRoot.GetAsync(
+                grants + "/" + b.ToString("D")))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                using var items = JsonDocument.Parse(
+                    await response.Content.ReadAsStringAsync());
+                Assert.Contains(items.RootElement.EnumerateArray(), x =>
+                    x.GetProperty("operatorUserId").GetGuid() == operatorB &&
+                    x.GetProperty("revisionNumber").GetInt32() == 2 &&
+                    x.GetProperty("revokedAtUtc").ValueKind != JsonValueKind.Null);
+            }
             using (var response = await clientB.GetAsync(GetAt(b)))
                 Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
             using (var response = await clientB.GetAsync(ChildId(floorGet, floorB)))

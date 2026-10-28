@@ -1910,6 +1910,108 @@ public sealed class InvoicePersistenceIntegration_Tests
         });
     }
 
+    [Fact]
+    public async Task ISSUERELEASEDB01_Candidate_Needs_Approved_Terms_Current_Source_And_Actor_Scope()
+    {
+        var seeded = await SeedIssuanceReviewAsync();
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var archives = GetRequiredService<
+                IRepository<FinalInvoiceIssueEvidenceRecord, Guid>>();
+            var reviews = GetRequiredService<
+                IRepository<InvoiceIssuanceReviewTicket, Guid>>();
+            var archive = await archives.GetAsync(seeded.ArchiveId);
+            var review = await reviews.GetAsync(seeded.ReviewId);
+            var room = await _rooms.GetAsync(archive.RoomId);
+            var floor = await _floors.GetAsync(room.FloorId);
+            var building = floor.BuildingId;
+            var reviewerId = Guid.NewGuid();
+            var issuerId = Guid.NewGuid();
+
+            // This is a disposable EF fixture. A real issuer must derive
+            // these exact graph facts under Identity + Building row locks.
+            typeof(InvoiceIssuanceReviewTicket)
+                .GetProperty(nameof(InvoiceIssuanceReviewTicket.BuildingId))!
+                .SetValue(review, building);
+            typeof(InvoiceIssuanceReviewTicket)
+                .GetProperty(nameof(InvoiceIssuanceReviewTicket.Status))!
+                .SetValue(review, InvoiceIssuanceReviewStatus.ReviewedForDesign);
+            typeof(InvoiceIssuanceReviewTicket)
+                .GetProperty(nameof(InvoiceIssuanceReviewTicket.ReviewedByUserId))!
+                .SetValue(review, reviewerId);
+            typeof(InvoiceIssuanceReviewTicket)
+                .GetProperty(nameof(InvoiceIssuanceReviewTicket.ReviewedAtUtc))!
+                .SetValue(review, review.SubmittedAtUtc.AddMinutes(1));
+            typeof(InvoiceIssuanceReviewTicket)
+                .GetProperty(nameof(InvoiceIssuanceReviewTicket.ReviewReason))!
+                .SetValue(review, "Independent review of the archived billing sources");
+
+            var preflight = await MakeIssuePreflightService().GetAsync(
+                seeded.RequestId);
+            var provenance = await MakeSourceProvenanceService().GetAsync(
+                seeded.ArchiveId);
+            Assert.True(provenance.MatchesPersistedSources);
+            var scope = new InvoiceIssuanceScopeFacts(
+                AuthenticatedIssuerId: issuerId,
+                IssuerPermissionGranted: true,
+                RequestedMoveOutId: seeded.RequestId,
+                PersistedMoveOutId: seeded.RequestId,
+                RequestedDraftInvoiceId: seeded.DraftId,
+                PersistedDraftInvoiceId: seeded.DraftId,
+                InvoiceContractId: seeded.ContractId,
+                InvoiceRoomId: archive.RoomId,
+                ContractId: seeded.ContractId,
+                ContractRoomId: archive.RoomId,
+                RoomId: archive.RoomId,
+                RoomFloorId: room.FloorId,
+                FloorId: room.FloorId,
+                FloorBuildingId: building,
+                BuildingId: building,
+                IssuerBuildingMemberships: new[] { building },
+                PersistedInvoiceStatus: InvoiceStatus.Draft,
+                PersistedEvidenceSha256: archive.EvidenceSha256,
+                ExistingIssuedInvoiceForPeriod: false);
+            var terms = new FinalInvoiceFinancialTermsProposal(
+                seeded.DraftId, seeded.ContractId, archive.RoomId,
+                archive.EvidenceSha256,
+                new DateOnly(2026, 11, 5),
+                "APPROVED-DUE-DATE-POLICY",
+                AuxiliaryFeeAssessmentDecision.ExplicitlyNoCharges,
+                "APPROVED-EXPLICIT-NO-FEES",
+                reviewerId,
+                Array.Empty<FinalInvoiceAuxiliaryChargeProposal>());
+            var candidateId = Guid.NewGuid();
+            var issueTime = DateTime.UtcNow.AddMinutes(10);
+            var candidate = IssuedInvoiceLedgerRecord.BuildVerifiedCandidate(
+                candidateId, "NT-FINAL-" + candidateId.ToString("N"),
+                issuerId, issueTime, archive, review, preflight,
+                scope, terms, provenance);
+            candidate.VerifyStoredTerms(archive, review);
+            Assert.Equal(3_110_000m, candidate.BaseAmount);
+            Assert.Equal(0m, candidate.AuxiliaryAmount);
+            Assert.Equal(3_110_000m, candidate.TotalAmount);
+            Assert.Equal(seeded.DraftId, candidate.DraftInvoiceId);
+            Assert.Equal(building, candidate.BuildingId);
+            Assert.Equal(64, candidate.FinancialTermsSha256.Length);
+
+            Assert.Throws<InvalidOperationException>(() =>
+                IssuedInvoiceLedgerRecord.BuildVerifiedCandidate(
+                    Guid.NewGuid(), "SCOPE-DENIED", issuerId, issueTime,
+                    archive, review, preflight,
+                    scope with { IssuerPermissionGranted = false },
+                    terms, provenance));
+            Assert.Throws<InvalidOperationException>(() =>
+                IssuedInvoiceLedgerRecord.BuildVerifiedCandidate(
+                    Guid.NewGuid(), "FEE-DENIED", issuerId, issueTime,
+                    archive, review, preflight, scope,
+                    terms with { AuxiliaryFeeDecision =
+                        AuxiliaryFeeAssessmentDecision.NotReviewed },
+                    provenance));
+            Assert.Equal(InvoiceStatus.Draft,
+                (await _invoices.GetAsync(seeded.DraftId)).Status);
+        });
+    }
+
     private async Task<(Guid DraftId, Guid ArchiveId, Guid ReviewId, Guid SubmittedBy,
         Guid RequestId, Guid ContractId)> SeedIssuanceReviewAsync()
     {

@@ -138,10 +138,9 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule // syst
 
             var buildingCs = configuration.GetConnectionString("BuildingManagement");
             var identityCs = configuration.GetConnectionString("Default");
-            if (!IsIsolatedSliceADatabase(buildingCs) ||
-                !IsIsolatedSliceADatabase(identityCs))
+            if (!HaveTwoIsolatedSliceADatabases(buildingCs, identityCs))
                 throw new InvalidOperationException(
-                    "Slice A requires isolated PostgreSQL Identity and Building databases.");
+                    "Slice A requires TWO distinct isolated PostgreSQL Identity and Building databases.");
 
             var roots = configuration.GetSection(
                 "BuildingManagement:Bootstrap:RootUserIds").Get<Guid[]>() ?? Array.Empty<Guid>();
@@ -216,6 +215,22 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule // syst
         ConfigureVirtualFileSystem(context);
         ConfigureCors(context, configuration);
         ConfigureErrorHttpStatusCodeMappings();
+    }
+
+    private static bool HaveTwoIsolatedSliceADatabases(
+        string? buildingConnection, string? identityConnection)
+    {
+        if (!IsIsolatedSliceADatabase(buildingConnection) ||
+            !IsIsolatedSliceADatabase(identityConnection))
+            return false;
+
+        // Sharing one staging database violates the isolation runbook:
+        // Identity and BuildingManagement must not share one schema/owner
+        // merely because both connection strings have a safe-looking prefix.
+        var building = new NpgsqlConnectionStringBuilder(buildingConnection);
+        var identity = new NpgsqlConnectionStringBuilder(identityConnection);
+        return !string.Equals(building.Database, identity.Database,
+            StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsIsolatedSliceADatabase(string? connectionString)

@@ -248,20 +248,20 @@ public sealed class SliceBStagingContractQuery
                     ON floor."Id" = room."FloorId"
                   JOIN "Buildings" AS building
                     ON building."Id" = floor."BuildingId"
-                  JOIN "BuildingManagementOperatorBuildingGrants" AS grant
-                    ON grant."BuildingId" = building."Id"
+                  JOIN "BuildingManagementOperatorBuildingGrants" AS membership
+                    ON membership."BuildingId" = building."Id"
                  WHERE req."Id" = @request
                    AND req."ContractId" = @contract
                    AND req."RoomId" = contract."RoomId"
-                   AND grant."OperatorUserId" = @actor
-                   AND grant."RevokedAtUtc" IS NULL
-                   AND grant."GrantedAtUtc" <= NOW()
-                   AND (grant."ExpiresAtUtc" IS NULL OR
-                        grant."ExpiresAtUtc" > NOW())
+                   AND membership."OperatorUserId" = @actor
+                   AND membership."RevokedAtUtc" IS NULL
+                   AND membership."GrantedAtUtc" <= NOW()
+                   AND (membership."ExpiresAtUtc" IS NULL OR
+                        membership."ExpiresAtUtc" > NOW())
                    AND NOT req."IsDeleted" AND NOT contract."IsDeleted"
                    AND NOT room."IsDeleted" AND NOT floor."IsDeleted"
                    AND NOT building."IsDeleted"
-                 FOR SHARE OF req, contract, room, floor, building, grant
+                 FOR SHARE OF req, contract, room, floor, building, membership
                 """;
             foreach (var (key, value) in new[]
                 { ("request", requestId), ("contract", contractId),

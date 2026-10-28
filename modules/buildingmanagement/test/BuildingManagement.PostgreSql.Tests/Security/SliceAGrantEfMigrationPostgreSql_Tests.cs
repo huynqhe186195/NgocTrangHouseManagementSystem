@@ -976,6 +976,63 @@ public sealed class SliceAGrantEfMigrationPostgreSql_Tests
         });
     }
 
+    [Fact]
+    public async Task EFMEMBER19_Recovery_Rejects_Ambiguous_SelfIssued_Founders()
+    {
+        await InScratchAsync(async cs =>
+        {
+            var founding = Guid.NewGuid();
+            var forgedFounder = Guid.NewGuid();
+            var recipient = Guid.NewGuid();
+            var first = Guid.NewGuid();
+            var second = Guid.NewGuid();
+            var evidence = Guid.NewGuid();
+            Guid building;
+            await using (var seed = OpenGrantDb(cs))
+            {
+                await seed.Database.MigrateAsync();
+                building = (await new EfBuildingOwnerBootstrapAtomicWriter(seed)
+                    .CreateWithOwnerAtomicallyAsync(
+                        founding, "Ambiguous founders", "Scratch PG", null)).Id;
+
+                // A privileged, out-of-band INSERT can supply another
+                // self-issued historical grant; unique membership indexes
+                // alone do NOT prove there is only one founding identity.
+                await seed.Database.ExecuteSqlInterpolatedAsync($"""
+                    INSERT INTO "BuildingManagementOperatorBuildingGrants"
+                        ("Id","OperatorUserId","BuildingId","GrantedByUserId",
+                         "GrantedAtUtc","RevisionNumber","ExtraProperties",
+                         "ConcurrencyStamp")
+                    VALUES ({Guid.NewGuid()}, {forgedFounder}, {building},
+                            {forgedFounder}, {DateTime.UtcNow.AddMinutes(-2)},
+                            {1}, {"{}"}, {Guid.NewGuid().ToString("N")})
+                    """);
+            }
+            await using (var operation = OpenGrantDb(cs))
+            {
+                await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+                    new EfBuildingOwnerRecoveryAtomicWriter(
+                        operation, TimeProvider.System)
+                        .RecoverAtomicallyAsync(building, founding,
+                            recipient, first, second, evidence));
+                // Even presenting the second self-issued user as founder
+                // does not let the caller select the winning record.
+                await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+                    new EfBuildingOwnerRecoveryAtomicWriter(
+                        operation, TimeProvider.System)
+                        .RecoverAtomicallyAsync(building, forgedFounder,
+                            recipient, first, second, evidence));
+            }
+            await using var check = OpenGrantDb(cs);
+            Assert.Equal(2, await check.Grants.CountAsync(g =>
+                g.BuildingId == building &&
+                g.GrantedByUserId == g.OperatorUserId &&
+                g.RevokedAtUtc == null));
+            Assert.False(await check.Grants.AnyAsync(g =>
+                g.BuildingId == building && g.OperatorUserId == recipient));
+        });
+    }
+
     private static SliceAGrantScratchDb OpenGrantDb(string cs)
         => new(new DbContextOptionsBuilder<SliceAGrantScratchDb>()
             .UseNpgsql(cs, n => n.MigrationsAssembly(

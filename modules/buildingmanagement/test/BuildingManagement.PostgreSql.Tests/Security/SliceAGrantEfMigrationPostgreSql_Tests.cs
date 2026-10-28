@@ -1,6 +1,9 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Security.Claims;
+using Volo.Abp.Security.Claims;
+using Volo.Abp.Users;
 using System.Threading.Tasks;
 using BuildingManagement.Buildings;
 using BuildingManagement.Security;
@@ -421,6 +424,77 @@ public sealed class SliceAGrantEfMigrationPostgreSql_Tests
                 fence.ExecuteAsync(Guid.NewGuid(), buildingA, Update));
             Assert.Equal(0, touched);
             Assert.Equal(1, await fence.ExecuteAsync(a, buildingA, Update));
+        });
+    }
+
+    [Fact]
+    public async Task EFMEMBER09_Actual_Building_Write_Boundary_Uses_Authenticated_Server_Identity()
+    {
+        await InScratchAsync(async cs =>
+        {
+            var issuer = Guid.NewGuid();
+            var other = Guid.NewGuid();
+            Guid buildingA, buildingB;
+            await using (var seed = OpenGrantDb(cs))
+            {
+                await seed.Database.MigrateAsync();
+                var firstOwner = new EfBuildingOwnerBootstrapAtomicWriter(seed);
+                buildingA = (await firstOwner.CreateWithOwnerAtomicallyAsync(
+                    issuer, "Before", "Staging-only", null)).Id;
+                buildingB = (await firstOwner.CreateWithOwnerAtomicallyAsync(
+                    other, "Not allowed", "Staging-only", null)).Id;
+            }
+
+            var accessor = new ThreadCurrentPrincipalAccessor();
+            await using var db = OpenGrantDb(cs);
+            var principal = new CurrentUser(accessor);
+            var adapter = new EfBuildingScopedWriteBoundaryCandidate(
+                db, principal, TimeProvider.System);
+            var touched = 0;
+            Task<int> Mutate() => Task.FromResult(++touched);
+
+            // Anonymous callers never enter the callback.
+            await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+                adapter.ExecuteBuildingAsync(buildingA, Mutate));
+            Assert.Equal(0, touched);
+
+            using (accessor.Change(new ClaimsPrincipal(new ClaimsIdentity(
+                new[] { new Claim(AbpClaimTypes.UserId, issuer.ToString("D")) },
+                "IsolatedPGPrincipal"))))
+            {
+                await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+                    adapter.ExecuteBuildingAsync(buildingB, Mutate));
+                Assert.Equal(0, touched);
+                var result = await adapter.ExecuteBuildingAsync(buildingA, async () =>
+                {
+                    await db.Database.ExecuteSqlInterpolatedAsync(
+                        $"UPDATE \"Buildings\" SET \"Name\" = {"Committed via boundary"} WHERE \"Id\" = {buildingA}");
+                    return 7;
+                });
+                Assert.Equal(7, result);
+            }
+
+            await using var verify = OpenGrantDb(cs);
+            Assert.Equal("Committed via boundary",
+                (await verify.Buildings.SingleAsync(x => x.Id == buildingA)).Name);
+
+            // After the owner membership is revoked, the same server
+            // principal can no longer enter its Building mutation.
+            await using (var revoke = OpenGrantDb(cs))
+            {
+                // No self-revocation via public delegation API. This direct
+                // scratch-only SQL simulates a trusted recovery action.
+                await revoke.Database.ExecuteSqlInterpolatedAsync(
+                    $"UPDATE \"BuildingManagementOperatorBuildingGrants\" SET \"RevokedByUserId\" = {other}, \"RevokedAtUtc\" = {DateTime.UtcNow}, \"RevisionNumber\" = {2} WHERE \"BuildingId\" = {buildingA} AND \"OperatorUserId\" = {issuer}");
+            }
+            using (accessor.Change(new ClaimsPrincipal(new ClaimsIdentity(
+                new[] { new Claim(AbpClaimTypes.UserId, issuer.ToString("D")) },
+                "IsolatedPGPrincipal"))))
+            {
+                await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+                    adapter.ExecuteBuildingAsync(buildingA, Mutate));
+                Assert.Equal(0, touched);
+            }
         });
     }
 

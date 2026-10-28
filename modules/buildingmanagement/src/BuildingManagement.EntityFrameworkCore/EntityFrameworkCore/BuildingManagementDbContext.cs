@@ -53,6 +53,8 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
     public DbSet<InvoiceIssuanceReviewTicket> InvoiceIssuanceReviews { get; set; } = default!;
     // SOURCE-ONLY: immutable issuance ledger is not writable by any current API.
     public DbSet<IssuedInvoiceLedgerRecord> IssuedInvoiceLedger { get; set; } = default!;
+    // Source-only explicit root deposit disposition approval; no automatic refund.
+    public DbSet<ContractDepositCloseoutApprovalRecord> DepositCloseoutApprovals { get; set; } = default!;
 
     public BuildingManagementDbContext(DbContextOptions<BuildingManagementDbContext> options)
         : base(options)
@@ -90,5 +92,7 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.InvoiceIssuanceReviewTicketConfiguration());
         builder.ApplyConfiguration(
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.IssuedInvoiceLedgerRecordConfiguration());
+        builder.ApplyConfiguration(
+            new BuildingManagement.EntityFrameworkCore.EntityConfigurations.ContractDepositCloseoutApprovalRecordConfiguration());
     }
 }

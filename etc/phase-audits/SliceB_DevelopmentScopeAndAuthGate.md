@@ -147,3 +147,24 @@ The original domain service still validates Draft/Signed lifecycle,
 exactly one primary tenant, committed occupancy overlap, Available/Reserved
 room status, and changes room status to Occupied on activation. No new
 method for direct ending, financial settlement or cross-building transfer.
+
+## Scoped contract renewal and hold consumption (staging only)
+
+The isolated staging controller now offers:
+- POST `/{id}/renewal-holds` (contract-bound hold creation)
+- POST `/renewal-holds/{holdId}/cancel` (hold → contract server lookup,
+  reject foreign building; contract and hold locked)
+- POST `/{id}/renew` (renew Active contract with existing valid hold)
+
+All paths lock persisted `Contracts.Manage` Identity permission through the
+Building commit and the operator's live membership row. Contract row is locked
+`FOR UPDATE` BEFORE hold mutation, matching shared payment/reservation
+deposit settlement order. For renew, the room is also locked exclusively so
+concurrent sign/activate cannot invalidate overlap checks. The legacy
+`IContractAppService.RenewAsync` still enforces exact period, tenant,
+unique renewal, active 24-hour hold, no conflicting reserved reservation,
+copy of valid tenant memberships, cancellation of intersecting unpaid
+pending reservations, and hold Completed state in the same UoW.
+
+No direct unscoped hold/renewal endpoint is re-enabled; no production
+deployment. Other payment/reservation APIs remain denied until audited.

@@ -92,6 +92,34 @@ public sealed class SliceBStagingContractsController : ControllerBase
         return (_mutation ?? throw Denied()).ActivateAsync(id);
     }
 
+    [HttpPost("{id:guid}/renewal-holds")]
+    [UnitOfWork(true)]
+    public Task<ContractRenewalHoldDto> CreateRenewalHoldAsync(
+        [FromRoute] Guid id, [FromBody] SliceBCreateRenewalHoldInput input)
+    {
+        RequireIsolatedStaging();
+        return (_mutation ?? throw Denied()).CreateRenewalHoldAsync(
+            id, input?.Notes);
+    }
+
+    [HttpPost("renewal-holds/{holdId:guid}/cancel")]
+    [UnitOfWork(true)]
+    public Task<ContractRenewalHoldDto> CancelRenewalHoldAsync(
+        [FromRoute] Guid holdId)
+    {
+        RequireIsolatedStaging();
+        return (_mutation ?? throw Denied()).CancelRenewalHoldAsync(holdId);
+    }
+
+    [HttpPost("{id:guid}/renew")]
+    [UnitOfWork(true)]
+    public Task<ContractDto> RenewAsync(
+        [FromRoute] Guid id, [FromBody] RenewContractDto input)
+    {
+        RequireIsolatedStaging();
+        return (_mutation ?? throw Denied()).RenewAsync(id, input);
+    }
+
     [HttpPost("{id:guid}/tenants/new")]
     [UnitOfWork(true)]
     public Task<SliceBScopedContractTenantLink> RegisterTenantAsync(
@@ -163,4 +191,9 @@ public sealed class SliceBStagingContractsController : ControllerBase
 
     private static AbpAuthorizationException Denied()
         => new("Slice B contract reads require isolated staging authorization.");
+}
+
+public sealed class SliceBCreateRenewalHoldInput
+{
+    public string? Notes { get; set; }
 }

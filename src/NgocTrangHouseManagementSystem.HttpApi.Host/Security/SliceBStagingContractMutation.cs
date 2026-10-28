@@ -32,6 +32,7 @@ public sealed class SliceBStagingContractMutation
     private readonly SliceAStagingIdentityCommitLease _identity;
     private readonly IContractAppService _contracts;
     private readonly ITenantAppService _tenants;
+    private readonly IContractRenewalHoldAppService _holds;
 
     public SliceBStagingContractMutation(
         IDbContextProvider<BuildingManagementDbContext> provider,
@@ -39,7 +40,8 @@ public sealed class SliceBStagingContractMutation
         IBuildingBusinessResourceScopeReader resources,
         ICurrentUser user,
         SliceAStagingIdentityCommitLease identity,
-        IContractAppService contracts, ITenantAppService tenants)
+        IContractAppService contracts, ITenantAppService tenants,
+        IContractRenewalHoldAppService holds)
     {
         _provider = provider;
         _policy = policy;
@@ -48,6 +50,7 @@ public sealed class SliceBStagingContractMutation
         _identity = identity;
         _contracts = contracts;
         _tenants = tenants;
+        _holds = holds;
     }
 
     public async Task<ContractDto> CreateAsync(CreateContractDto input)
@@ -166,6 +169,77 @@ public sealed class SliceBStagingContractMutation
         AddId(cmd, roomId);
         if (await cmd.ExecuteScalarAsync() is not Guid)
             throw Denied();
+    }
+
+    /// <summary>
+    /// A renewal hold MUST use the same contract-row UPDATE gate as
+    /// reservation deposit settlement and Contract.Renew. A caller-supplied
+    /// CurrentContractId alone is not authority; scope it via the graph.
+    /// </summary>
+    public Task<ContractRenewalHoldDto> CreateRenewalHoldAsync(
+        Guid currentContractId, string? notes)
+        => MutateLinkAsync(currentContractId, async (db, _) =>
+        {
+            return await _holds.CreateAsync(new CreateContractRenewalHoldDto
+            {
+                CurrentContractId = currentContractId,
+                Notes = notes
+            });
+        });
+
+    /// <summary>
+    /// Cancel an existing hold ONLY through its current contract's scope.
+    /// The hold's current contract ID is resolved server-side, then both
+    /// the contract and the matching hold are locked in the same UoW.
+    /// </summary>
+    public async Task<ContractRenewalHoldDto> CancelRenewalHoldAsync(Guid holdId)
+    {
+        if (holdId == Guid.Empty)
+            throw Denied();
+        var db = await _provider.GetDbContextAsync();
+        var current = await db.ContractRenewalHolds.AsNoTracking()
+            .Where(h => h.Id == holdId && !h.IsDeleted)
+            .Select(h => h.CurrentContractId).SingleOrDefaultAsync();
+        if (current == Guid.Empty)
+            throw Denied();
+        return await MutateLinkAsync(current, async (lockedDb, _) =>
+        {
+            await using var command = Command(lockedDb, """
+                SELECT h."Id"
+                  FROM "BuildingManagementContractRenewalHolds" AS h
+                 WHERE h."Id" = @hold AND h."CurrentContractId" = @contract
+                   AND h."IsDeleted" = FALSE
+                 FOR UPDATE OF h
+                """);
+            AddGuid(command, "hold", holdId);
+            AddGuid(command, "contract", current);
+            if (await command.ExecuteScalarAsync() is not Guid)
+                throw Denied();
+            return await _holds.CancelAsync(holdId);
+        });
+    }
+
+    /// <summary>
+    /// Renew must serialize against both the existing Active Contract and
+    /// any conflicting signed-contract or reservation status for its room.
+    /// Original domain service owns hold consumption, reservation deposit
+    /// checks, tenant copying and atomic pending-reservation cancellation.
+    /// </summary>
+    public Task<ContractDto> RenewAsync(Guid currentContractId, RenewContractDto input)
+    {
+        if (input is null)
+            throw Denied();
+        return MutateLinkAsync(currentContractId, async (db, _) =>
+        {
+            // The contract is already locked by MutateLinkAsync. Lock the
+            // room before checking renew date overlaps and reservations so
+            // another contract sign/activate cannot overtake the checks.
+            var roomId = await db.Contracts.AsNoTracking()
+                .Where(x => x.Id == currentContractId && !x.IsDeleted)
+                .Select(x => x.RoomId).SingleAsync();
+            await LockRoomExclusivelyAsync(db, roomId);
+            return await _contracts.RenewAsync(currentContractId, input);
+        });
     }
 
     /// <summary>

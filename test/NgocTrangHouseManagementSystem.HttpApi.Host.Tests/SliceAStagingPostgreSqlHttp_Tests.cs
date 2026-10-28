@@ -1688,6 +1688,41 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 await uow.CompleteAsync();
             }
 
+            // Only a fresh reservation in building B can accept a pending
+            // deposit payment. A foreign reservation ID and mismatched route
+            // identifier must fail before any globally addressed payment.
+            Assert.Equal(HttpStatusCode.OK,
+                await TryReserveAsync(roomB, tenantB));
+            var paidCandidate = reservationB;
+            string PaymentJson(Guid roomReservationId) => JsonSerializer.Serialize(new
+            {
+                paymentNumber = "STAGE-PAY-" + Guid.NewGuid().ToString("N"),
+                roomReservationId,
+                amount = 500000m,
+                method = 0,
+                channel = 0
+            });
+            async Task<(HttpStatusCode Status, string Body)> TryCreateDepositAsync(
+                Guid routeId, Guid bodyId)
+            {
+                using var payload = new StringContent(
+                    PaymentJson(bodyId), Encoding.UTF8, "application/json");
+                using var response = await clientB.PostAsync(
+                    reservationRoute + "/" + routeId.ToString("D") +
+                    "/deposit-payments", payload);
+                return (response.StatusCode,
+                    await response.Content.ReadAsStringAsync());
+            }
+            Assert.Equal(HttpStatusCode.Forbidden,
+                (await TryCreateDepositAsync(reservationA, reservationA)).Status);
+            Assert.Equal(HttpStatusCode.Forbidden,
+                (await TryCreateDepositAsync(paidCandidate, reservationA)).Status);
+            var pendingDeposit = await TryCreateDepositAsync(
+                paidCandidate, paidCandidate);
+            Assert.Equal(HttpStatusCode.OK, pendingDeposit.Status);
+            using (var json = JsonDocument.Parse(pendingDeposit.Body))
+                Assert.NotEqual(Guid.Empty, json.RootElement.GetProperty("id").GetGuid());
+
             // Record the real room state rather than assuming occupancy:
             // other independent contract tests may have changed it earlier.
             BuildingManagement.Rooms.RoomStatus originalRoomStatus;

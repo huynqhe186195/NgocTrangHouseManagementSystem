@@ -8,6 +8,7 @@ using BuildingManagement.EntityFrameworkCore.Security;
 using BuildingManagement.Security;
 using BuildingManagement.Tenants;
 using BuildingManagement.RoomReservations;
+using BuildingManagement.Payments;
 using BuildingManagement.MoveOuts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
@@ -38,6 +39,7 @@ public sealed class SliceBStagingContractMutation
     private readonly IContractRenewalHoldAppService _holds;
     private readonly IRoomReservationAppService _reservations;
     private readonly IMoveOutRequestAppService _moveOuts;
+    private readonly IPaymentAppService _payments;
 
     public SliceBStagingContractMutation(
         IDbContextProvider<BuildingManagementDbContext> provider,
@@ -48,7 +50,8 @@ public sealed class SliceBStagingContractMutation
         IContractAppService contracts, ITenantAppService tenants,
         IContractRenewalHoldAppService holds,
         IRoomReservationAppService reservations,
-        IMoveOutRequestAppService moveOuts)
+        IMoveOutRequestAppService moveOuts,
+        IPaymentAppService payments)
     {
         _provider = provider;
         _policy = policy;
@@ -60,6 +63,7 @@ public sealed class SliceBStagingContractMutation
         _holds = holds;
         _reservations = reservations;
         _moveOuts = moveOuts;
+        _payments = payments;
     }
 
     /// <summary>
@@ -100,11 +104,18 @@ public sealed class SliceBStagingContractMutation
     /// settlement lock order. No client-supplied room/building authority.
     /// No second transaction or direct manual settlement endpoint.
     /// </summary>
-    public async Task<RoomReservationDto> CancelRoomReservationAsync(
+    public Task<RoomReservationDto> CancelRoomReservationAsync(
         Guid reservationId, CancelRoomReservationDto input)
     {
         if (reservationId == Guid.Empty || input is null)
             throw Denied();
+        return MutateReservationAsync(reservationId,
+            () => _reservations.CancelAsync(reservationId, input));
+    }
+
+    private async Task<T> MutateReservationAsync<T>(
+        Guid reservationId, Func<Task<T>> operation)
+    {
         var db = await _provider.GetDbContextAsync();
         var roomId = await db.RoomReservations.AsNoTracking()
             .Where(r => r.Id == reservationId && !r.IsDeleted)
@@ -136,10 +147,27 @@ public sealed class SliceBStagingContractMutation
                 await LockRoomBuildingAsync(db, lockedRoom) != buildingId)
                 throw Denied();
 
-            return await _reservations.CancelAsync(reservationId, input);
+            return await operation();
         }, () => _policy.EnsureResourceAsync(
             BuildingBusinessResourceKind.Room, roomId,
             BuildingBusinessCapability.ManageContract));
+    }
+
+    /// <summary>
+    /// A new payment is only a Pending record. Bind the caller-supplied
+    /// reservation ID to the route and hold its live building authorization
+    /// until commit. Never permit a global payment-create API to bypass
+    /// contract/room membership.
+    /// </summary>
+    public Task<PaymentDto> CreateReservationDepositPaymentAsync(
+        Guid reservationId, CreateReservationDepositPaymentDto input)
+    {
+        if (input is null || reservationId == Guid.Empty ||
+            input.RoomReservationId != reservationId)
+            throw Denied();
+
+        return MutateReservationAsync(reservationId,
+            () => _payments.CreateReservationDepositAsync(input));
     }
 
     /// <summary>

@@ -244,3 +244,17 @@ missing reservations fail closed. The PostgreSQL HTTP fixture checks
 cross-building denial, successful pending cancellation, duplicate denial,
 and no invented settlement for an unpaid reservation. The existing PG01–04
 transaction tests remain responsible for actual paid refund/forfeit rollback.
+
+
+## Scoped pending reservation deposit record (isolated staging only)
+
+\`POST /api/slice-b-staging/contracts/reservations/{id}/deposit-payments\`
+permits recording a **Pending** deposit only for an authorized reservation.
+Body RoomReservationId must equal the route ID, never a foreign ID. The
+same reservation row lock, current Room→Floor→Building membership fence,
+persisted Contracts.Manage Identity lease through commit, and original
+PaymentAppService.CreateReservationDepositAsync amount/method/reference
+validation all apply. No payment completion, bank integration, refund
+transfer, or global payment API is enabled by this stage. The disposable
+PostgreSQL HTTP test covers route/body mismatch, foreign reservation denial
+and success for a B-scoped pending payment.

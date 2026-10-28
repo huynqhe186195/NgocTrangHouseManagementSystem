@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using BuildingManagement.Contracts;
 using BuildingManagement.RoomReservations;
+using BuildingManagement.Payments;
 using BuildingManagement.MoveOuts;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -136,6 +137,17 @@ public sealed class SliceBStagingContractsController : ControllerBase
     {
         RequireIsolatedStaging();
         return (_mutation ?? throw Denied()).CancelRoomReservationAsync(id, input);
+    }
+
+    // Records a pending deposit payment only; does NOT complete a transfer.
+    [HttpPost("reservations/{id:guid}/deposit-payments")]
+    [UnitOfWork(true)]
+    public Task<PaymentDto> CreateReservationDepositPaymentAsync(
+        [FromRoute] Guid id, [FromBody] CreateReservationDepositPaymentDto input)
+    {
+        RequireIsolatedStaging();
+        return (_mutation ?? throw Denied())
+            .CreateReservationDepositPaymentAsync(id, input);
     }
 
     // Move-out scheduling/approval only; never completes move-out, settles

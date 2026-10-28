@@ -71,6 +71,39 @@ public sealed class SliceAStagingOperatorGrantsGuard_Tests
         }
     }
 
+    [Fact]
+    public void STAGEAPI03_Staging_Activation_Requires_Two_Distinct_Isolated_Postgres_Databases()
+    {
+        // Test the exact startup guard by reflection: no actual database
+        // connection, schema mutation, credentials or production activation.
+        var gate = typeof(global::NgocTrangHouseManagementSystem
+            .NgocTrangHouseManagementSystemHttpApiHostModule).GetMethod(
+                "HaveTwoIsolatedSliceADatabases",
+                BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.NotNull(gate);
+        bool Allowed(string? buildings, string? identity)
+            => Assert.IsType<bool>(gate!.Invoke(null, new object?[] {
+                buildings, identity
+            }));
+
+        const string buildings =
+            "Host=127.0.0.1;Port=5432;Database=bm_slicea_staging_buildings;Username=ephemeral";
+        const string identity =
+            "Host=127.0.0.1;Port=5432;Database=bm_slicea_staging_identity;Username=ephemeral";
+        Assert.True(Allowed(buildings, identity));
+        Assert.False(Allowed(buildings, buildings));
+        Assert.False(Allowed(buildings, ""));
+        Assert.False(Allowed(buildings, null));
+        Assert.False(Allowed(buildings,
+            "Host=127.0.0.1;Database=production_identity;Username=ephemeral"));
+        Assert.False(Allowed(
+            "Host=127.0.0.1;Database=bm_slicea_staging_;Username=ephemeral",
+            identity));
+        Assert.False(Allowed(
+            "Host=127.0.0.1;Database=bm_slicea_staging_buildings",
+            identity));
+    }
+
     private sealed class StubHostEnvironment : IHostEnvironment
     {
         public string EnvironmentName { get; set; } = Environments.Production;

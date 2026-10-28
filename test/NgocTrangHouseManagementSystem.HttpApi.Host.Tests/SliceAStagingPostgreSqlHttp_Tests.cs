@@ -1758,6 +1758,33 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 await uow.CompleteAsync();
             }
 
+            // This is a real completed 500k cash hold: cancellation must
+            // atomically forfeit exactly 500k once, not refund it twice
+            // or silently mark only the reservation cancelled.
+            Assert.Equal(HttpStatusCode.OK,
+                await TryCancelReservationAsync(paidCandidate));
+            Assert.NotEqual(HttpStatusCode.OK,
+                await TryCancelReservationAsync(paidCandidate));
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var db = await sp.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>()
+                    .GetDbContextAsync();
+                Assert.Equal(BuildingManagement.RoomReservations.RoomReservationStatus.Cancelled,
+                    (await db.RoomReservations.SingleAsync(r => r.Id == paidCandidate)).Status);
+                var dispositions = await db.DepositSettlements
+                    .Where(s => s.SourceRoomReservationId == paidCandidate)
+                    .ToListAsync();
+                Assert.Single(dispositions);
+                Assert.Equal(BuildingManagement.DepositSettlements.DepositSettlementType.Forfeit,
+                    dispositions[0].Type);
+                Assert.Equal(500000m, dispositions[0].Amount);
+                await uow.CompleteAsync();
+            }
+
             // Record the real room state rather than assuming occupancy:
             // other independent contract tests may have changed it earlier.
             BuildingManagement.Rooms.RoomStatus originalRoomStatus;

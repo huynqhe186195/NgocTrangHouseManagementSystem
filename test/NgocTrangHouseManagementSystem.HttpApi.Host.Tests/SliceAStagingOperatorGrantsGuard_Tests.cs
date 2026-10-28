@@ -39,19 +39,23 @@ public sealed class SliceAStagingOperatorGrantsGuard_Tests
         // must reject without side effects or privileges.
         var production = new SliceAStagingOperatorGrantsController(
             new StubHostEnvironment { EnvironmentName = Environments.Production },
-            enabled, null!);
+            enabled, null!, null!);
         await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
             production.AssignAsync(request));
         await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
             production.RevokeAsync(revoke));
+        await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+            production.GetAsync(Guid.NewGuid()));
 
         var stagingDisabled = new SliceAStagingOperatorGrantsController(
             new StubHostEnvironment { EnvironmentName = Environments.Staging },
-            disabled, null!);
+            disabled, null!, null!);
         await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
             stagingDisabled.AssignAsync(request));
         await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
             stagingDisabled.RevokeAsync(revoke));
+        await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+            stagingDisabled.GetAsync(Guid.NewGuid()));
     }
 
     [Fact]
@@ -62,10 +66,13 @@ public sealed class SliceAStagingOperatorGrantsGuard_Tests
         Assert.NotNull(t.GetCustomAttribute<ApiControllerAttribute>());
         var methods = t.GetMethods(BindingFlags.Public | BindingFlags.Instance)
             .Where(x => x.DeclaringType == t).ToArray();
-        Assert.Equal(2, methods.Length);
+        Assert.Equal(3, methods.Length);
         foreach (var method in methods)
         {
-            Assert.NotNull(method.GetCustomAttribute<HttpPostAttribute>());
+            if (method.Name == "GetAsync")
+                Assert.NotNull(method.GetCustomAttribute<HttpGetAttribute>());
+            else
+                Assert.NotNull(method.GetCustomAttribute<HttpPostAttribute>());
             Assert.NotNull(method.GetCustomAttribute<UnitOfWorkAttribute>());
             Assert.Null(method.GetCustomAttribute<AllowAnonymousAttribute>());
         }

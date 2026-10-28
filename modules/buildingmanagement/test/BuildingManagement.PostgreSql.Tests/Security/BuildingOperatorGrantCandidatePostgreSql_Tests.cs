@@ -198,6 +198,14 @@ public sealed class BuildingOperatorGrantCandidatePostgreSql_Tests
             await ExpectFailureAsync(connection, tx,
                 $"""UPDATE "{Table}" SET "ExpiresAtUtc" = CURRENT_TIMESTAMP WHERE "Id" = '{grantId:D}'""",
                 PostgresErrorCodes.InsufficientPrivilege);
+            // Even authorized revocation UPDATE columns cannot reactivate
+            // a revoked grant or rewrite previously recorded audit history.
+            await ExpectFailureAsync(connection, tx,
+                $"""UPDATE "{Table}" SET "RevokedAtUtc" = NULL, "RevokedByUserId" = NULL, "RevisionNumber" = 3 WHERE "Id" = '{grantId:D}'""",
+                PostgresErrorCodes.CheckViolation);
+            await ExpectFailureAsync(connection, tx,
+                $"""UPDATE "{Table}" SET "RevokedAtUtc" = '2026-10-29T00:00:00Z', "RevisionNumber" = 3 WHERE "Id" = '{grantId:D}'""",
+                PostgresErrorCodes.CheckViolation);
             await ExpectFailureAsync(connection, tx,
                 $"""DELETE FROM "{Table}" WHERE "Id" = '{grantId:D}'""",
                 PostgresErrorCodes.InsufficientPrivilege);

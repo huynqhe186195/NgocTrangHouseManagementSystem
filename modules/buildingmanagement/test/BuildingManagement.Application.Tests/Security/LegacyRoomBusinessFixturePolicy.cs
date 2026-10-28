@@ -17,6 +17,8 @@ namespace BuildingManagement.Tests.Security;
 public sealed class LegacyRoomBusinessFixturePolicy : IBuildingCrudAccessPolicy
 {
     private static readonly AsyncLocal<int> RoomBusinessDepth = new();
+    // Visible only in test assemblies. Not a production privilege source.
+    public static bool IsWithinRoomBusinessAssertion => RoomBusinessDepth.Value > 0;
 
     public static IDisposable AllowRoomBusinessAssertions()
     {

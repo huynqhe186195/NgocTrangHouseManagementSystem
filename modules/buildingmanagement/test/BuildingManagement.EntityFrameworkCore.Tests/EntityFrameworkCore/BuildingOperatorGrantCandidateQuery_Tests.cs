@@ -253,19 +253,18 @@ public sealed class BuildingOperatorGrantCandidateQuery_Tests
     }
 
     [Fact]
-    public async Task GRANTPOLICY04_Unmapped_Runtime_Model_Fails_Closed()
+    public async Task GRANTPOLICY04_Runtime_Mapping_Does_Not_Bypass_DenyAll_DI()
     {
-        // No connection is opened or migrated. The real runtime model
-        // lacks membership mapping, so a candidate cannot grant access.
+        // Model/schema is now declared, but this never seeds or applies
+        // migration and must not imply active user authorizations.
         using var connection = new SqliteConnection("Data Source=:memory:");
         using var db = new BuildingManagementDbContext(
             new DbContextOptionsBuilder<BuildingManagementDbContext>()
                 .UseSqlite(connection).Options);
-        var reader = new EfBuildingOperatorGrantCandidateReader(
-            db, new FixedClock(At));
-
-        Assert.Empty(await reader.GetActiveBuildingIdsAsync(Guid.NewGuid()));
-        Assert.Empty(await reader.GetActiveBuildingIdsAsync(Guid.Empty));
+        Assert.NotNull(db.Model.FindEntityType(typeof(BuildingOperatorAccessGrant)));
+        var production = new DenyAllBuildingOperatorGrantReader();
+        Assert.Empty(await production.GetActiveBuildingIdsAsync(Guid.NewGuid()));
+        Assert.Empty(await production.GetActiveBuildingIdsAsync(Guid.Empty));
     }
 
     [Fact]

@@ -38,6 +38,9 @@ public class BuildingManagementEntityFrameworkCoreTestModule : AbpModule
         context.Services.Replace(
             ServiceDescriptor.Transient<IBuildingCrudAccessPolicy,
                 LegacyRoomBusinessFixturePolicy>());
+        context.Services.Replace(
+            ServiceDescriptor.Transient<IBuildingScopedWriteBoundary,
+                LegacyRoomBusinessFixtureWriteBoundary>());
 
         // Existing contract lifecycle tests cover transition rules, not
         // authorization. Individual tests opt in explicitly; production

@@ -1947,10 +1947,14 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 var content = await response.Content.ReadAsStringAsync();
                 using var json = JsonDocument.Parse(content);
                 var rows = json.RootElement.EnumerateArray().ToArray();
-                Assert.Single(rows);
-                Assert.Equal(500000m,
-                    rows[0].GetProperty("amount").GetDecimal());
-                Assert.Equal(2, rows[0].GetProperty("status").GetInt32());
+                Assert.Equal(2, rows.Length);
+                Assert.Contains(rows, p =>
+                    p.GetProperty("id").GetGuid() == pendingPaymentId &&
+                    p.GetProperty("amount").GetDecimal() == 500000m &&
+                    p.GetProperty("status").GetInt32() == 2);
+                Assert.Contains(rows, p =>
+                    p.GetProperty("id").GetGuid() == alternatePayment &&
+                    p.GetProperty("status").GetInt32() == 4);
                 Assert.DoesNotContain("tenantId", content,
                     StringComparison.OrdinalIgnoreCase);
                 Assert.DoesNotContain("transactionReference", content,

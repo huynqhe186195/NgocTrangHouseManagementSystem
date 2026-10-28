@@ -167,6 +167,26 @@ public sealed class SliceAStagingHttpTwoBuildings_Tests
                 await permissions.SetForUserAsync(actorA,
                     BuildingManagement.Permissions.BuildingManagementPermissions.Rooms.Manage,
                     true);
+                // Both actors can read their own Floor/Room graph; B can
+                // manage B's children but NEVER A's without an A grant.
+                foreach (var user in new[] { actorA, actorB })
+                {
+                    await permissions.SetForUserAsync(user,
+                        BuildingManagement.Permissions.BuildingManagementPermissions.Floors.Read,
+                        true);
+                    await permissions.SetForUserAsync(user,
+                        BuildingManagement.Permissions.BuildingManagementPermissions.Rooms.Read,
+                        true);
+                }
+                await permissions.SetForUserAsync(actorB,
+                    BuildingManagement.Permissions.BuildingManagementPermissions.Floors.Manage,
+                    true);
+                await permissions.SetForUserAsync(actorB,
+                    BuildingManagement.Permissions.BuildingManagementPermissions.Rooms.Manage,
+                    true);
+                await permissions.SetForUserAsync(actorB,
+                    BuildingManagement.Permissions.BuildingManagementPermissions.Buildings.RevokeOperators,
+                    true);
                 await uow.CompleteAsync();
             }
 
@@ -258,9 +278,13 @@ public sealed class SliceAStagingHttpTwoBuildings_Tests
                 Regex.Replace(route, @"\{[^}]+\}", id.ToString("D"));
 
             var floorCreate = Route(typeof(FloorAppService), "CreateAsync");
+            var floorGet = Route(typeof(FloorAppService), "GetAsync");
+            var floorList = Route(typeof(FloorAppService), "GetListAsync");
             var floorUpdate = Route(typeof(FloorAppService), "UpdateAsync");
             var floorDelete = Route(typeof(FloorAppService), "DeleteAsync");
             var roomCreate = Route(typeof(RoomAppService), "CreateAsync");
+            var roomGet = Route(typeof(RoomAppService), "GetAsync");
+            var roomList = Route(typeof(RoomAppService), "GetListAsync");
             var roomUpdate = Route(typeof(RoomAppService), "UpdateAsync");
             var roomDelete = Route(typeof(RoomAppService), "DeleteAsync");
             async Task<Guid> PostId(HttpClient client, string route, string json)
@@ -286,6 +310,27 @@ public sealed class SliceAStagingHttpTwoBuildings_Tests
             var floorA = await PostId(clientA, floorCreate,
                 JsonSerializer.Serialize(new {
                     buildingId = a, floorNumber = 1, name = "Floor A1" }));
+            var floorB = await PostId(clientB, floorCreate,
+                JsonSerializer.Serialize(new {
+                    buildingId = b, floorNumber = 1, name = "Floor B1" }));
+            // Read scopes use server-persisted Building IDs even when the
+            // other actor has the same global ABP Floor.Read permission.
+            foreach (var entry in new[] {
+                (client: clientA, own: floorA, other: floorB),
+                (client: clientB, own: floorB, other: floorA) })
+            {
+                using (var own = await entry.client.GetAsync(AtId(floorGet, entry.own)))
+                    Assert.Equal(HttpStatusCode.OK, own.StatusCode);
+                using (var other = await entry.client.GetAsync(AtId(floorGet, entry.other)))
+                    Assert.Equal(HttpStatusCode.Forbidden, other.StatusCode);
+                using (var listing = await entry.client.GetAsync(floorList))
+                {
+                    Assert.Equal(HttpStatusCode.OK, listing.StatusCode);
+                    var payload = await listing.Content.ReadAsStringAsync();
+                    Assert.Contains(entry.own.ToString("D"), payload, StringComparison.OrdinalIgnoreCase);
+                    Assert.DoesNotContain(entry.other.ToString("D"), payload, StringComparison.OrdinalIgnoreCase);
+                }
+            }
             await Update(clientA, floorUpdate, floorA,
                 """{"floorNumber":1,"name":"Floor A1 updated"}""",
                 HttpStatusCode.OK);
@@ -302,6 +347,26 @@ public sealed class SliceAStagingHttpTwoBuildings_Tests
                 JsonSerializer.Serialize(new {
                     floorId = floorA, roomNumber = "101", name = "A101",
                     area = 25.0, capacity = 2, status = 0 }));
+            var roomB = await PostId(clientB, roomCreate,
+                JsonSerializer.Serialize(new {
+                    floorId = floorB, roomNumber = "101", name = "B101",
+                    area = 25.0, capacity = 2, status = 0 }));
+            foreach (var entry in new[] {
+                (client: clientA, own: roomA, other: roomB),
+                (client: clientB, own: roomB, other: roomA) })
+            {
+                using (var own = await entry.client.GetAsync(AtId(roomGet, entry.own)))
+                    Assert.Equal(HttpStatusCode.OK, own.StatusCode);
+                using (var other = await entry.client.GetAsync(AtId(roomGet, entry.other)))
+                    Assert.Equal(HttpStatusCode.Forbidden, other.StatusCode);
+                using (var listing = await entry.client.GetAsync(roomList))
+                {
+                    Assert.Equal(HttpStatusCode.OK, listing.StatusCode);
+                    var payload = await listing.Content.ReadAsStringAsync();
+                    Assert.Contains(entry.own.ToString("D"), payload, StringComparison.OrdinalIgnoreCase);
+                    Assert.DoesNotContain(entry.other.ToString("D"), payload, StringComparison.OrdinalIgnoreCase);
+                }
+            }
             await Update(clientA, roomUpdate, roomA,
                 """{"roomNumber":"101","name":"A101 updated","area":26,"capacity":2,"status":0}""",
                 HttpStatusCode.OK);
@@ -309,6 +374,14 @@ public sealed class SliceAStagingHttpTwoBuildings_Tests
                 """{"roomNumber":"101","name":"Unauthorized","area":26,"capacity":2,"status":0}""",
                 HttpStatusCode.Forbidden);
 
+            using (var response = await clientB.DeleteAsync(AtId(roomDelete, roomA)))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var response = await clientB.DeleteAsync(AtId(floorDelete, floorA)))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var response = await clientA.DeleteAsync(AtId(roomDelete, roomB)))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var response = await clientA.DeleteAsync(AtId(floorDelete, floorB)))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
             using (var response = await clientA.DeleteAsync(AtId(roomDelete, roomA)))
                 Assert.True(response.StatusCode is HttpStatusCode.NoContent or
                     HttpStatusCode.OK);
@@ -337,6 +410,19 @@ public sealed class SliceAStagingHttpTwoBuildings_Tests
                 Assert.Contains(a.ToString("D"), payload, StringComparison.OrdinalIgnoreCase);
                 Assert.Contains(b.ToString("D"), payload, StringComparison.OrdinalIgnoreCase);
             }
+            // B has the RevokeOperators capability and temporary A
+            // membership, but must NEVER revoke A's founding owner grant.
+            using (var body = new StringContent(JsonSerializer.Serialize(new
+                {
+                    buildingId = a, operatorUserId = actorA,
+                    expectedRevision = 1
+                }), Encoding.UTF8, "application/json"))
+            using (var response = await clientB.PostAsync(
+                delegationBase + "/revoke", body))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var response = await clientA.GetAsync(Url(a)))
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
             using (var body = new StringContent(JsonSerializer.Serialize(new
                 {
                     buildingId = a, operatorUserId = actorB,

@@ -129,3 +129,21 @@ Global phone and citizen-ID uniqueness failures are deliberately presented
 as generic denials, never with the existing record's identifying value.
 Successful API responses contain only `TenantId` and `Role`, not tenant
 names, phones or identity documents. This does not open generic Tenant CRUD.
+
+## Contract sign/activate (isolated staging)
+
+The scoped staging contract controller exposes `POST /{id}/sign` and
+`POST /{id}/activate` only through the existing fenced
+`SliceBStagingContractMutation`; legacy HTTP service stays deny-all.
+The current operator needs `Contracts.Manage`, an active Identity account,
+persisted ABP permission locked through Building UoW commit, and live scoped
+membership locked by `EfBuildingScopedWriteFenceCandidate`. The current
+contract row is locked `FOR UPDATE`, the room is locked `FOR UPDATE`
+**before** checking other signed/active contracts, and room→floor→building
+graph is re-resolved under row locks. This serializes concurrent signing
+and activation attempts on **different** contracts for the same room.
+
+The original domain service still validates Draft/Signed lifecycle,
+exactly one primary tenant, committed occupancy overlap, Available/Reserved
+room status, and changes room status to Occupied on activation. No new
+method for direct ending, financial settlement or cross-building transfer.

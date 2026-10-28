@@ -76,6 +76,22 @@ public sealed class SliceBStagingContractsController : ControllerBase
         return _mutation.UpdateAsync(id, input);
     }
 
+    [HttpPost("{id:guid}/sign")]
+    [UnitOfWork(true)]
+    public Task<ContractDto> SignAsync([FromRoute] Guid id)
+    {
+        RequireIsolatedStaging();
+        return (_mutation ?? throw Denied()).SignAsync(id);
+    }
+
+    [HttpPost("{id:guid}/activate")]
+    [UnitOfWork(true)]
+    public Task<ContractDto> ActivateAsync([FromRoute] Guid id)
+    {
+        RequireIsolatedStaging();
+        return (_mutation ?? throw Denied()).ActivateAsync(id);
+    }
+
     [HttpPost("{id:guid}/tenants/new")]
     [UnitOfWork(true)]
     public Task<SliceBScopedContractTenantLink> RegisterTenantAsync(

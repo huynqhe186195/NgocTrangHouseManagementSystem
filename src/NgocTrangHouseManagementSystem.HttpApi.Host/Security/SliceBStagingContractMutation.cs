@@ -112,6 +112,63 @@ public sealed class SliceBStagingContractMutation
     }
 
     /// <summary>
+    /// Signing/activating a contract changes the committed occupancy state.
+    /// Membership+Identity authority are held to commit, and the room row
+    /// is locked EXCLUSIVELY before conflict checks so two different draft
+    /// contracts on the same room cannot both pass overlap preflight.
+    /// Original domain service still enforces tenant, period, room status
+    /// and lifecycle validation.
+    /// </summary>
+    public Task<ContractDto> SignAsync(Guid contractId)
+        => TransitionAsync(contractId, activate: false);
+
+    public Task<ContractDto> ActivateAsync(Guid contractId)
+        => TransitionAsync(contractId, activate: true);
+
+    private async Task<ContractDto> TransitionAsync(Guid contractId, bool activate)
+    {
+        if (contractId == Guid.Empty)
+            throw Denied();
+        var actor = RequireActor();
+        var buildingId = await ResolveAsync(
+            BuildingBusinessResourceKind.Contract, contractId);
+        await _policy.EnsureResourceAsync(
+            BuildingBusinessResourceKind.Contract, contractId,
+            BuildingBusinessCapability.ManageContract);
+        await _identity.AcquireContractManageAsync(actor);
+        var db = await _provider.GetDbContextAsync();
+        return await Fence(db).ExecuteAsync(actor, buildingId, async () =>
+        {
+            var currentRoom = await LockContractRoomAsync(db, contractId);
+            // Serialize all signing and activation candidates for this room.
+            // A second transition must re-read overlap/status after first
+            // transaction commits. Acquiring this exclusive lock before the
+            // shared floor/building graph also avoids a SHARE→UPDATE upgrade.
+            await LockRoomExclusivelyAsync(db, currentRoom);
+            if (await LockRoomBuildingAsync(db, currentRoom) != buildingId)
+                throw Denied();
+            return activate
+                ? await _contracts.ActivateAsync(contractId)
+                : await _contracts.SignAsync(contractId);
+        }, () => _policy.EnsureResourceAsync(
+            BuildingBusinessResourceKind.Contract, contractId,
+            BuildingBusinessCapability.ManageContract));
+    }
+
+    private static async Task LockRoomExclusivelyAsync(
+        BuildingManagementDbContext db, Guid roomId)
+    {
+        await using var cmd = Command(db, """
+            SELECT r."Id" FROM "BuildingManagementRooms" AS r
+             WHERE r."Id" = @id AND r."IsDeleted" = FALSE
+             FOR UPDATE OF r
+            """);
+        AddId(cmd, roomId);
+        if (await cmd.ExecuteScalarAsync() is not Guid)
+            throw Denied();
+    }
+
+    /// <summary>
     /// The only new-tenant onboarding route: atomically create a new global
     /// profile AND bind it to a Draft contract of an authorized building.
     /// Never expose generic TenantAppService CRUD or create orphan profiles.

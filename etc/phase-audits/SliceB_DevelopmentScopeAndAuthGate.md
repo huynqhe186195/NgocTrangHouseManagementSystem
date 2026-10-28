@@ -304,3 +304,8 @@ Staging-only POST contract cancel uses the same commit-bound Contracts.Manage an
 ## Paid reservation cancellation full refund coverage
 
 The PostgreSQL HTTP fixture now also exercises the supported 3,000,000 VND completed full deposit refund path, verifies a single completed refund accounting journal on cancellation and rejects a repeated cancellation. Cash refunds are ledger disposition records here; they are not evidence of an external bank transfer. The separate 500,000 VND forfeit case remains covered.
+
+
+## Scoped move-out final readiness preflight — STILL BLOCKED
+
+Added isolated staging read-only GET on an exact contract/request relation. PostgreSQL transaction holds a shared lock on the request, contract/room/building graph and operator membership through the readiness service call, and Identity Contracts.Read is locked to commit. The original internal MoveOutCompletionReadiness evaluator remains authoritative and **CanCompleteMoveOut is always false** until final invoice issue, actual debt clearance and verified deposit disposition exist. No contract termination, room release or cash payout API is exposed. HTTP tests prove foreign request denial and the explicit blockers.

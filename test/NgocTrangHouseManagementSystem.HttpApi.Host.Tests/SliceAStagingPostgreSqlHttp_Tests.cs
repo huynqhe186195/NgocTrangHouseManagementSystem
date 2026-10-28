@@ -2042,6 +2042,27 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 Assert.Equal((int)BuildingManagement.MoveOuts.MoveOutRequestStatus.Rejected,
                     json.RootElement.GetProperty("status").GetInt32());
             }
+            // Source-controlled read-only closeout readiness is NEVER a
+            // backdoor to CompleteMoveOut or an invented final payout.
+            using (var response = await clientB.GetAsync(
+                MoveOutRoute(contractA) + "/" +
+                moveOutRequest.ToString("D") + "/readiness"))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var response = await clientB.GetAsync(
+                MoveOutRoute(cancelContract) + "/" +
+                moveOutRequest.ToString("D") + "/readiness"))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await response.Content.ReadAsStringAsync());
+                Assert.False(json.RootElement
+                    .GetProperty("canCompleteMoveOut").GetBoolean());
+                var blockers = json.RootElement.GetProperty("blockers")
+                    .EnumerateArray().Select(x => x.GetString()).ToArray();
+                Assert.Contains("MoveOutNotApproved", blockers);
+                Assert.Contains("FinalInvoiceIssuanceNotImplemented", blockers);
+            }
+
             // A terminal rejected request cannot be approved retroactively.
             using (var payload = new StringContent("{}",
                 Encoding.UTF8, "application/json"))

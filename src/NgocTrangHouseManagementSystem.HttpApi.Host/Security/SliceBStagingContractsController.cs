@@ -215,6 +215,16 @@ public sealed class SliceBStagingContractsController : ControllerBase
             id, requestId, input);
     }
 
+    [HttpGet("{id:guid}/move-out-requests/{requestId:guid}/readiness")]
+    [UnitOfWork(true)]
+    public Task<MoveOutCompletionReadinessDto> GetMoveOutReadinessAsync(
+        [FromRoute] Guid id, [FromRoute] Guid requestId)
+    {
+        RequireIsolatedStaging();
+        return (_query ?? throw Denied()).GetMoveOutReadinessAsync(
+            id, requestId);
+    }
+
     [HttpPost("{id:guid}/move-out-requests/{requestId:guid}/reject")]
     [UnitOfWork(true)]
     public Task<MoveOutRequestDto> RejectMoveOutRequestAsync(

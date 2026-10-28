@@ -7,6 +7,7 @@ using BuildingManagement.MoveOuts;
 using BuildingManagement.EntityFrameworkCore;
 using BuildingManagement.Security;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Volo.Abp.Authorization;
 using Volo.Abp.EntityFrameworkCore;
 using Volo.Abp.Users;
@@ -24,17 +25,20 @@ public sealed class SliceBStagingContractQuery
     private readonly IBuildingCrudAccessPolicy _access;
     private readonly ICurrentUser _currentUser;
     private readonly SliceAStagingIdentityCommitLease _identityLease;
+    private readonly MoveOutCompletionReadinessAppService _readiness;
 
     public SliceBStagingContractQuery(
         IDbContextProvider<BuildingManagementDbContext> provider,
         IBuildingCrudAccessPolicy access,
         ICurrentUser currentUser,
-        SliceAStagingIdentityCommitLease identityLease)
+        SliceAStagingIdentityCommitLease identityLease,
+        MoveOutCompletionReadinessAppService readiness)
     {
         _provider = provider;
         _access = access;
         _currentUser = currentUser;
         _identityLease = identityLease;
+        _readiness = readiness;
     }
 
     public async Task<IReadOnlyList<SliceBScopedContractRead>> GetListAsync(
@@ -207,6 +211,79 @@ public sealed class SliceBStagingContractQuery
                 task.Id, task.MoveOutRequestId, task.Type,
                 task.IsCompleted, task.CompletedAt))
             .ToListAsync();
+    }
+
+    /// <summary>
+    /// Read-only move-out closing preflight. Lock request/contract/room
+    /// graph and membership FOR SHARE through the transactional read UoW,
+    /// so revocation or room transfer cannot overtake the subsequent
+    /// cross-module evidence assessment.
+    /// </summary>
+    public async Task<MoveOutCompletionReadinessDto> GetMoveOutReadinessAsync(
+        Guid contractId, Guid requestId)
+    {
+        if (contractId == Guid.Empty || requestId == Guid.Empty)
+            throw Denied();
+        var actor = RequireActor();
+        await _access.EnsureResourceAsync(
+            BuildingBusinessResourceKind.Contract, contractId,
+            BuildingBusinessCapability.ReadContract);
+        await _identityLease.AcquireContractReadAsync(actor);
+        var db = await _provider.GetDbContextAsync();
+        if (!db.Database.IsNpgsql())
+            throw Denied();
+        var transaction = db.Database.CurrentTransaction?.GetDbTransaction()
+            ?? throw Denied();
+        await using (var cmd = db.Database.GetDbConnection().CreateCommand())
+        {
+            cmd.Transaction = transaction;
+            cmd.CommandText = """
+                SELECT req."Id"
+                  FROM "BuildingManagementMoveOutRequests" AS req
+                  JOIN "BuildingManagementContracts" AS contract
+                    ON contract."Id" = req."ContractId"
+                  JOIN "BuildingManagementRooms" AS room
+                    ON room."Id" = contract."RoomId"
+                  JOIN "BuildingManagementFloors" AS floor
+                    ON floor."Id" = room."FloorId"
+                  JOIN "Buildings" AS building
+                    ON building."Id" = floor."BuildingId"
+                  JOIN "BuildingManagementOperatorBuildingGrants" AS grant
+                    ON grant."BuildingId" = building."Id"
+                 WHERE req."Id" = @request
+                   AND req."ContractId" = @contract
+                   AND req."RoomId" = contract."RoomId"
+                   AND grant."OperatorUserId" = @actor
+                   AND grant."RevokedAtUtc" IS NULL
+                   AND grant."GrantedAtUtc" <= NOW()
+                   AND (grant."ExpiresAtUtc" IS NULL OR
+                        grant."ExpiresAtUtc" > NOW())
+                   AND NOT req."IsDeleted" AND NOT contract."IsDeleted"
+                   AND NOT room."IsDeleted" AND NOT floor."IsDeleted"
+                   AND NOT building."IsDeleted"
+                 FOR SHARE OF req, contract, room, floor, building, grant
+                """;
+            foreach (var (key, value) in new[]
+                { ("request", requestId), ("contract", contractId),
+                  ("actor", actor) })
+            {
+                var parameter = cmd.CreateParameter();
+                parameter.ParameterName = key;
+                parameter.Value = value;
+                cmd.Parameters.Add(parameter);
+            }
+            if (await cmd.ExecuteScalarAsync() is not Guid)
+                throw Denied();
+        }
+
+        // This evaluator deliberately denies final completion until invoice
+        // issuance, debt clearance, and deposit disposition actually exist.
+        var report = await _readiness.GetAsync(requestId);
+        if (report.ContractId != contractId ||
+            report.MoveOutRequestId != requestId ||
+            report.CanCompleteMoveOut)
+            throw Denied();
+        return report;
     }
 
     private Guid RequireActor()

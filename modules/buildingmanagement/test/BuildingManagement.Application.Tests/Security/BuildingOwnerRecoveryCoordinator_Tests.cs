@@ -20,14 +20,14 @@ public sealed class BuildingOwnerRecoveryCoordinator_Tests
         var f = Valid();
         var noApproval = new BuildingOwnerRecoveryCoordinator(
             f.Root, f.Accounts, new DenyAllBuildingOwnerRecoveryApprovalReader(),
-            f.Founder, f.Writer, f.Options);
+            f.Founder, f.Writer, f.Options, f.RecoveryOptions);
         await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
             noApproval.RecoverAsync(f.Building, f.Recipient));
         Assert.Equal(0, f.Writer.Calls);
 
         var noWriter = new BuildingOwnerRecoveryCoordinator(
             f.Root, f.Accounts, f.Approvals, f.Founder,
-            new DenyAllBuildingOwnerRecoveryWriter(), f.Options);
+            new DenyAllBuildingOwnerRecoveryWriter(), f.Options, f.RecoveryOptions);
         await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
             noWriter.RecoverAsync(f.Building, f.Recipient));
     }
@@ -86,7 +86,7 @@ public sealed class BuildingOwnerRecoveryCoordinator_Tests
         await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
             f.Coordinator.RecoverAsync(f.Building, f.Recipient));
         f.Root.Id = f.First;
-        f.Options.Value.RootUserIds.Remove(f.Second);
+        f.RecoveryOptions.Value.CoSignerUserIds.Remove(f.Second);
         await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
             f.Coordinator.RecoverAsync(f.Building, f.Recipient));
         Assert.Equal(0, f.Writer.Calls);
@@ -139,17 +139,22 @@ public sealed class BuildingOwnerRecoveryCoordinator_Tests
         var writer = new Writer();
         var options = Options.Create(new BuildingOwnerBootstrapSecurityOptions
         {
-            RootUserIds = new HashSet<Guid> { first, second }
+            RootUserIds = new HashSet<Guid> { first }
+        });
+        var recoveryOptions = Options.Create(new BuildingOwnerRecoverySecurityOptions
+        {
+            CoSignerUserIds = new HashSet<Guid> { second }
         });
         return new(first, second, owner, recipient, building, root,
-            accounts, approvals, founder, writer, options,
-            new(root, accounts, approvals, founder, writer, options));
+            accounts, approvals, founder, writer, options, recoveryOptions,
+            new(root, accounts, approvals, founder, writer, options, recoveryOptions));
     }
 
     private sealed record Fixture(Guid First, Guid Second, Guid Owner,
         Guid Recipient, Guid Building, Root Root, Accounts Accounts,
         Approvals Approvals, Founder Founder, Writer Writer,
         IOptions<BuildingOwnerBootstrapSecurityOptions> Options,
+        IOptions<BuildingOwnerRecoverySecurityOptions> RecoveryOptions,
         BuildingOwnerRecoveryCoordinator Coordinator);
 
     private sealed class Root : IBuildingOwnerBootstrapPrincipalReader

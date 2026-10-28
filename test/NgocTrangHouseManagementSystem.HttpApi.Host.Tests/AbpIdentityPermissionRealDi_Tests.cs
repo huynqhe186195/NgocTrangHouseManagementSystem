@@ -75,6 +75,13 @@ public sealed class AbpIdentityPermissionRealDi_Tests
                 var db = setupScope.ServiceProvider
                     .GetRequiredService<NgocTrangHouseManagementSystemDbContext>();
                 await db.Database.EnsureCreatedAsync();
+                var source = db.Database.GetDbConnection().DataSource;
+                Assert.True(string.Equals(Path.GetFullPath(source),
+                    Path.GetFullPath(filename), StringComparison.Ordinal),
+                    "ABP Identity DbContext is using unexpected SQLite file: " +
+                    source + " expected " + filename);
+                await db.Database.ExecuteSqlRawAsync(
+                    "SELECT 1 FROM \"AbpUsers\" LIMIT 1");
                 db.Users.Add(new IdentityUser(actor,
                     "isolated-" + actor.ToString("N"),
                     "isolated-" + actor.ToString("N") + "@example.test"));

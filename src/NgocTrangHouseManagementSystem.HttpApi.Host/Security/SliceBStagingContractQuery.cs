@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using BuildingManagement.Contracts;
+using BuildingManagement.MoveOuts;
 using BuildingManagement.EntityFrameworkCore;
 using BuildingManagement.Security;
 using Microsoft.EntityFrameworkCore;
@@ -90,6 +91,51 @@ public sealed class SliceBStagingContractQuery
             .ToListAsync();
     }
 
+    /// <summary>
+    /// A move-out request inherits contract scope. Join its current
+    /// Contract→Room→Floor→Building path AND the live operator grant in SQL
+    /// before returning any result; do not expose free-form private notes.
+    /// </summary>
+    public async Task<IReadOnlyList<SliceBScopedMoveOutRequestRead>> GetMoveOutRequestsAsync(
+        Guid contractId)
+    {
+        if (contractId == Guid.Empty)
+            throw Denied();
+        var actor = RequireActor();
+        await _access.EnsureResourceAsync(
+            BuildingBusinessResourceKind.Contract, contractId,
+            BuildingBusinessCapability.ReadContract);
+        await _identityLease.AcquireContractReadAsync(actor);
+        var db = await _provider.GetDbContextAsync();
+        var now = DateTime.UtcNow;
+        return await (
+            from request in db.MoveOutRequests.AsNoTracking()
+            join contract in db.Contracts.AsNoTracking()
+                on request.ContractId equals contract.Id
+            join room in db.Rooms.AsNoTracking()
+                on contract.RoomId equals room.Id
+            join floor in db.Floors.AsNoTracking()
+                on room.FloorId equals floor.Id
+            join building in db.Buildings.AsNoTracking()
+                on floor.BuildingId equals building.Id
+            where request.ContractId == contractId &&
+                !request.IsDeleted && !contract.IsDeleted &&
+                !room.IsDeleted && !floor.IsDeleted && !building.IsDeleted &&
+                request.RoomId == room.Id &&
+                db.OperatorBuildingGrants.Any(grant =>
+                    grant.OperatorUserId == actor &&
+                    grant.BuildingId == building.Id &&
+                    grant.RevokedAtUtc == null &&
+                    grant.GrantedAtUtc <= now &&
+                    (grant.ExpiresAtUtc == null || grant.ExpiresAtUtc > now))
+            orderby request.CreationTime descending, request.Id
+            select new SliceBScopedMoveOutRequestRead(
+                request.Id, request.ContractId, request.RoomId,
+                building.Id, request.Status, request.RequestedMoveOutDate,
+                request.ApprovedMoveOutDate, request.CreationTime))
+            .ToListAsync();
+    }
+
     private Guid RequireActor()
     {
         if (!_currentUser.IsAuthenticated || _currentUser.Id is not Guid id ||
@@ -138,3 +184,10 @@ public sealed record SliceBScopedContractRead(
 
 public sealed record SliceBScopedContractTenantLink(
     Guid TenantId, ContractTenantRole Role);
+
+
+/// <summary>Move-out metadata only: no personal reasons or review notes.</summary>
+public sealed record SliceBScopedMoveOutRequestRead(
+    Guid Id, Guid ContractId, Guid RoomId, Guid BuildingId,
+    MoveOutRequestStatus Status, DateOnly RequestedMoveOutDate,
+    DateOnly? ApprovedMoveOutDate, DateTime CreationTime);

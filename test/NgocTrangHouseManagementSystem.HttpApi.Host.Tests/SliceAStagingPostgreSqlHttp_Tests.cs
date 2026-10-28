@@ -1650,6 +1650,80 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 reservationRoute + "?maxResultCount=101"))
                 Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
 
+            // Scoped move-out scheduling and approval reuse the Contract
+            // row UPDATE gate, identity permission lease and live membership.
+            // They must NEVER settle a deposit or release the Room here.
+            string MoveOutRoute(Guid id) => scopedContracts + "/" +
+                id.ToString("D") + "/move-out-requests";
+            string MoveOutBody(Guid contractId) => JsonSerializer.Serialize(new
+            {
+                contractId,
+                requestedMoveOutDate = "2027-01-31",
+                reason = "Scheduled departure"
+            });
+            using (var payload = new StringContent(
+                MoveOutBody(contractA), Encoding.UTF8, "application/json"))
+            using (var response = await clientB.PostAsync(
+                MoveOutRoute(contractA), payload))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var payload = new StringContent(
+                MoveOutBody(contractA), Encoding.UTF8, "application/json"))
+            using (var response = await clientB.PostAsync(
+                MoveOutRoute(cancelContract), payload))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+
+            Guid moveOutRequest;
+            using (var payload = new StringContent(
+                MoveOutBody(cancelContract), Encoding.UTF8, "application/json"))
+            using (var response = await clientB.PostAsync(
+                MoveOutRoute(cancelContract), payload))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await response.Content.ReadAsStringAsync());
+                moveOutRequest = json.RootElement.GetProperty("id").GetGuid();
+                Assert.NotEqual(Guid.Empty, moveOutRequest);
+            }
+            using (var response = await clientB.GetAsync(
+                MoveOutRoute(contractA)))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var response = await clientB.GetAsync(
+                MoveOutRoute(cancelContract)))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                var body = await response.Content.ReadAsStringAsync();
+                Assert.Contains(moveOutRequest.ToString("D"), body,
+                    StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain("Scheduled departure", body,
+                    StringComparison.OrdinalIgnoreCase);
+            }
+            using (var payload = new StringContent("{}",
+                Encoding.UTF8, "application/json"))
+            using (var response = await clientB.PostAsync(
+                MoveOutRoute(contractA) + "/" +
+                moveOutRequest.ToString("D") + "/approve", payload))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var payload = new StringContent("{}",
+                Encoding.UTF8, "application/json"))
+            using (var response = await clientB.PostAsync(
+                MoveOutRoute(cancelContract) + "/" +
+                moveOutRequest.ToString("D") + "/approve", payload))
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var db = await sp.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>()
+                    .GetDbContextAsync();
+                Assert.True(await db.MoveOutChecklistTasks.AnyAsync(task =>
+                    task.MoveOutRequestId == moveOutRequest));
+                Assert.Equal(BuildingManagement.Rooms.RoomStatus.Occupied,
+                    (await db.Rooms.SingleAsync(r => r.Id == roomB)).Status);
+                await uow.CompleteAsync();
+            }
+
             // Identity Contracts.Manage DELETE cannot pass a Building write
             // transaction's permission lease. After revocation commits,
             // a fresh POST fails even if ABP's cache still says granted.

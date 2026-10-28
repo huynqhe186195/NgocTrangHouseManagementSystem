@@ -8,6 +8,7 @@ using BuildingManagement.EntityFrameworkCore.Security;
 using BuildingManagement.Security;
 using BuildingManagement.Tenants;
 using BuildingManagement.RoomReservations;
+using BuildingManagement.MoveOuts;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Volo.Abp;
@@ -36,6 +37,7 @@ public sealed class SliceBStagingContractMutation
     private readonly ITenantAppService _tenants;
     private readonly IContractRenewalHoldAppService _holds;
     private readonly IRoomReservationAppService _reservations;
+    private readonly IMoveOutRequestAppService _moveOuts;
 
     public SliceBStagingContractMutation(
         IDbContextProvider<BuildingManagementDbContext> provider,
@@ -45,7 +47,8 @@ public sealed class SliceBStagingContractMutation
         SliceAStagingIdentityCommitLease identity,
         IContractAppService contracts, ITenantAppService tenants,
         IContractRenewalHoldAppService holds,
-        IRoomReservationAppService reservations)
+        IRoomReservationAppService reservations,
+        IMoveOutRequestAppService moveOuts)
     {
         _provider = provider;
         _policy = policy;
@@ -56,6 +59,7 @@ public sealed class SliceBStagingContractMutation
         _tenants = tenants;
         _holds = holds;
         _reservations = reservations;
+        _moveOuts = moveOuts;
     }
 
     /// <summary>
@@ -88,6 +92,41 @@ public sealed class SliceBStagingContractMutation
         }, () => _policy.EnsureResourceAsync(
             BuildingBusinessResourceKind.Room, input.RoomId,
             BuildingBusinessCapability.ManageContract));
+    }
+
+    /// <summary>
+    /// Create a notice only for the route's own authorized Active contract.
+    /// The body cannot substitute a foreign ContractId. Existing domain
+    /// notice-date, open-request and transaction rules remain authoritative.
+    /// </summary>
+    public Task<MoveOutRequestDto> CreateMoveOutRequestAsync(
+        Guid contractId, CreateMoveOutRequestDto input)
+    {
+        if (input is null || contractId == Guid.Empty ||
+            input.ContractId != contractId)
+            throw Denied();
+        return MutateLinkAsync(contractId,
+            (_, _) => _moveOuts.CreateAsync(input));
+    }
+
+    /// <summary>
+    /// Approving a request only creates the original move-out checklist.
+    /// Completion and all room/deposit/contract state transitions remain
+    /// unavailable through this controller.
+    /// </summary>
+    public Task<MoveOutRequestDto> ApproveMoveOutRequestAsync(
+        Guid contractId, Guid requestId, ApproveMoveOutRequestDto input)
+    {
+        if (input is null || contractId == Guid.Empty || requestId == Guid.Empty)
+            throw Denied();
+        return MutateLinkAsync(contractId, async (db, _) =>
+        {
+            if (!await db.MoveOutRequests.AnyAsync(request =>
+                request.Id == requestId && request.ContractId == contractId &&
+                !request.IsDeleted))
+                throw Denied();
+            return await _moveOuts.ApproveAsync(requestId, input);
+        });
     }
 
     public async Task<ContractDto> CreateAsync(CreateContractDto input)

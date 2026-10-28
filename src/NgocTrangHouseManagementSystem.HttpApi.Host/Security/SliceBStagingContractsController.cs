@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using BuildingManagement.Contracts;
 using BuildingManagement.RoomReservations;
+using BuildingManagement.MoveOuts;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
@@ -124,6 +125,37 @@ public sealed class SliceBStagingContractsController : ControllerBase
     {
         RequireIsolatedStaging();
         return (_mutation ?? throw Denied()).CreateRoomReservationAsync(input);
+    }
+
+    // Move-out scheduling/approval only; never completes move-out, settles
+    // deposits, ends a contract, or releases an occupied room.
+    [HttpGet("{id:guid}/move-out-requests")]
+    [UnitOfWork(true)]
+    public Task<IReadOnlyList<SliceBScopedMoveOutRequestRead>> GetMoveOutRequestsAsync(
+        [FromRoute] Guid id)
+    {
+        RequireIsolatedStaging();
+        return (_query ?? throw Denied()).GetMoveOutRequestsAsync(id);
+    }
+
+    [HttpPost("{id:guid}/move-out-requests")]
+    [UnitOfWork(true)]
+    public Task<MoveOutRequestDto> CreateMoveOutRequestAsync(
+        [FromRoute] Guid id, [FromBody] CreateMoveOutRequestDto input)
+    {
+        RequireIsolatedStaging();
+        return (_mutation ?? throw Denied()).CreateMoveOutRequestAsync(id, input);
+    }
+
+    [HttpPost("{id:guid}/move-out-requests/{requestId:guid}/approve")]
+    [UnitOfWork(true)]
+    public Task<MoveOutRequestDto> ApproveMoveOutRequestAsync(
+        [FromRoute] Guid id, [FromRoute] Guid requestId,
+        [FromBody] ApproveMoveOutRequestDto input)
+    {
+        RequireIsolatedStaging();
+        return (_mutation ?? throw Denied()).ApproveMoveOutRequestAsync(
+            id, requestId, input);
     }
 
     [HttpPost("{id:guid}/renewal-holds")]

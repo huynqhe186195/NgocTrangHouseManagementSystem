@@ -190,3 +190,24 @@ tenant GUID only. It never projects global tenant PII, free-form notes, or
 payment evidence. Legacy reservation CRUD, cancellation and deposit settlement
 endpoints remain DENY. Disposable PostgreSQL authenticated HTTP tests cover
 two-building list/get visibility and missing/foreign IDs. No production rollout.
+
+
+## Scoped move-out request/approval (isolated staging only)
+
+The staging contract controller adds contract-bound GET/POST
+\`/{contractId}/move-out-requests\` and POST
+\`/{contractId}/move-out-requests/{requestId}/approve\`. Creation rejects a
+body ContractId differing from the route; both writes use the existing
+Contract-row lock, Contracts.Manage Identity commit-bound lease, live
+building membership fence, and server-rechecked Room→Floor→Building graph.
+Approval also checks the request belongs to the locked contract before
+calling the unchanged domain application service. The transaction keeps
+creation/approval and checklist creation atomic. Reading joins the live
+MoveOut→Contract→Room→Floor→Building graph and membership in SQL and exposes
+only schedule/status metadata, no free-form private reasons. Legacy global
+MoveOut endpoints stay DENY, and no move-out completion, deposit settlement,
+Contract termination or Room release is enabled.
+
+The disposable PostgreSQL HTTP fixture exercises foreign contract denial,
+body/route mismatch, authorized scheduling and approval, privacy-preserving
+read, checklist persistence and unchanged occupied Room state.

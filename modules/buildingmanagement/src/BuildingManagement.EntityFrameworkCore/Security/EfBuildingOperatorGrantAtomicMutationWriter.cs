@@ -86,8 +86,10 @@ public sealed class EfBuildingOperatorGrantAtomicMutationWriter :
             throw new ArgumentOutOfRangeException(nameof(expectedRevision));
 
         var now = _clock.GetUtcNow().UtcDateTime;
-        await using var tx = await _db.Database.BeginTransactionAsync(
-            IsolationLevel.Serializable);
+        // Revoke uses the same ABP UoW as recipient/issuer checks.
+        var owned = _db.Database.CurrentTransaction is null
+            ? await _db.Database.BeginTransactionAsync(IsolationLevel.Serializable)
+            : null;
         try
         {
             await EnsureIssuerGrantAsync(trustedIssuerId, buildingId, now);

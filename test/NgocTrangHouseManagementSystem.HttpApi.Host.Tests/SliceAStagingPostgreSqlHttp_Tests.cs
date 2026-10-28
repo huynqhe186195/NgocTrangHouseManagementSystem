@@ -885,6 +885,48 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
             using (var response = await clientRoot.GetAsync(GetAt(b)))
                 Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+            // Recovery founder lookup must not arbitrarily pick a
+            // self-issued grant. A scratch-only privileged insertion of a
+            // second "founder" invalidates the unique founder proof.
+            using (var scope = app.Services.CreateScope())
+            {
+                using var uow = scope.ServiceProvider
+                    .GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                Assert.Equal(root, await scope.ServiceProvider
+                    .GetRequiredService<IBuildingOwnerRecoveryFounderReader>()
+                    .ReadFoundingOwnerAsync(a));
+                await uow.CompleteAsync();
+            }
+            await using (var conn = new NpgsqlConnection(buildingCs))
+            {
+                await conn.OpenAsync();
+                await using var forge = new NpgsqlCommand(
+                    """
+                    INSERT INTO "BuildingManagementOperatorBuildingGrants"
+                        ("Id","OperatorUserId","BuildingId","GrantedByUserId",
+                         "GrantedAtUtc","RevisionNumber","ExtraProperties",
+                         "ConcurrencyStamp")
+                    VALUES (@id,@other,@building,@other,@at,1,'{}',@stamp)
+                    """, conn);
+                forge.Parameters.AddWithValue("id", Guid.NewGuid());
+                forge.Parameters.AddWithValue("other", cosigner);
+                forge.Parameters.AddWithValue("building", a);
+                forge.Parameters.AddWithValue("at", DateTime.UtcNow.AddMinutes(-1));
+                forge.Parameters.AddWithValue("stamp", Guid.NewGuid().ToString("N"));
+                Assert.Equal(1, await forge.ExecuteNonQueryAsync());
+            }
+            using (var scope = app.Services.CreateScope())
+            {
+                using var uow = scope.ServiceProvider
+                    .GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                Assert.Null(await scope.ServiceProvider
+                    .GetRequiredService<IBuildingOwnerRecoveryFounderReader>()
+                    .ReadFoundingOwnerAsync(a));
+                await uow.CompleteAsync();
+            }
         }
         finally
         {

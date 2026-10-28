@@ -99,13 +99,15 @@ public sealed class SliceAStagingOwnerRecoveryEvidenceStore :
         return await ScalarGuidAsync(db,
             """
             SELECT CASE WHEN COUNT(*) = 1
+                          AND COUNT(*) FILTER (
+                              WHERE g."RevokedAtUtc" IS NULL
+                                AND g."ExpiresAtUtc" IS NULL) = 1
                         THEN (array_agg(g."OperatorUserId"))[1]
                         ELSE NULL END
               FROM "BuildingManagementOperatorBuildingGrants" g
               JOIN "Buildings" b ON b."Id" = g."BuildingId"
              WHERE g."BuildingId" = @building
                AND g."OperatorUserId" = g."GrantedByUserId"
-               AND g."RevokedAtUtc" IS NULL
                AND b."IsDeleted" = FALSE
             """, buildingId);
     }

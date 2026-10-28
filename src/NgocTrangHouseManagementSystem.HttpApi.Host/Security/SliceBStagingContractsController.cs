@@ -82,6 +82,16 @@ public sealed class SliceBStagingContractsController : ControllerBase
         return _mutation.UpdateAsync(id, input);
     }
 
+    // Cancelling an unsigned contract does not end an Active tenancy,
+    // release a room, or settle a deposit.
+    [HttpPost("{id:guid}/cancel")]
+    [UnitOfWork(true)]
+    public Task<ContractDto> CancelDraftContractAsync([FromRoute] Guid id)
+    {
+        RequireIsolatedStaging();
+        return (_mutation ?? throw Denied()).CancelDraftContractAsync(id);
+    }
+
     [HttpPost("{id:guid}/sign")]
     [UnitOfWork(true)]
     public Task<ContractDto> SignAsync([FromRoute] Guid id)

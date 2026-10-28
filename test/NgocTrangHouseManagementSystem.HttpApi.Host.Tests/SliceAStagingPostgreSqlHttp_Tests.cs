@@ -2143,6 +2143,27 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 await uow.CompleteAsync();
             }
 
+            // Cancel Draft contract, reject cross-building ID and Active
+            // contract; this API is NOT a backdoor to ending occupancy.
+            using (var response = await clientB.PostAsync(
+                scopedContracts + "/" + contractA.ToString("D") + "/cancel", null))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var response = await clientB.PostAsync(
+                scopedContracts + "/" + cancelContract.ToString("D") + "/cancel", null))
+                Assert.NotEqual(HttpStatusCode.OK, response.StatusCode);
+            using (var response = await clientB.PostAsync(
+                scopedContracts + "/" + contractC.ToString("D") + "/cancel", null))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await response.Content.ReadAsStringAsync());
+                Assert.Equal((int)BuildingManagement.Contracts.ContractStatus.Cancelled,
+                    json.RootElement.GetProperty("status").GetInt32());
+            }
+            using (var response = await clientB.PostAsync(
+                scopedContracts + "/" + contractC.ToString("D") + "/cancel", null))
+                Assert.NotEqual(HttpStatusCode.OK, response.StatusCode);
+
             // Remove ONLY newly inserted disposable contract fixtures before
             // the pre-existing Room/Floor tests exercise deletion semantics.
             using (var scope = app.Services.CreateScope())

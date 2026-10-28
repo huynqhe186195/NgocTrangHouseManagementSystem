@@ -408,6 +408,14 @@ public sealed class SliceBStagingContractMutation
     }
 
     /// <summary>
+    /// Only Draft/Signed cancellation is exposed. The original service
+    /// rejects Active contract termination; the locked building graph and
+    /// persisted Identity/permission boundary stay authoritative.
+    /// </summary>
+    public Task<ContractDto> CancelDraftContractAsync(Guid contractId)
+        => MutateLinkAsync(contractId, (_, _) => _contracts.CancelAsync(contractId));
+
+    /// <summary>
     /// Signing/activating a contract changes the committed occupancy state.
     /// Membership+Identity authority are held to commit, and the room row
     /// is locked EXCLUSIVELY before conflict checks so two different draft

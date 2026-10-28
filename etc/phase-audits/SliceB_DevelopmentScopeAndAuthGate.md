@@ -294,3 +294,8 @@ transaction logic or production rollout.
 ## Isolated staged reservation deposit allocation
 
 Added contract-bound POST allocation for a completed reservation deposit on the **same exact room** as the Active contract. The flow locks Contract before Reservation, verifies Contracts.Manage and building membership to commit, then calls the existing payment allocation service for amount/primary-tenant/duplicate validation and accounting. Generic legacy payment HTTP remains DENY; no production rollout.
+
+
+## Scoped Draft/Signed contract cancellation
+
+Staging-only POST contract cancel uses the same commit-bound Contracts.Manage and building fence; original ContractAppService.CancelAsync only accepts Draft/Signed. Active tenancy termination and room/deposit settlement remain blocked. PostgreSQL HTTP checks foreign contract denial, Active rejection and idempotent terminal rejection.

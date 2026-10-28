@@ -6,11 +6,11 @@ using Microsoft.EntityFrameworkCore.Metadata.Builders;
 namespace BuildingManagement.EntityFrameworkCore.EntityConfigurations;
 
 /// <summary>
-/// STAGED allocation journal with SOURCE-ONLY PostgreSQL migration.
-/// Invoice is intentionally NOT FK-linked: the current Invoice table
-/// contains Draft records, NEVER issued invoices. The staged DB guards
-/// source receipt consistency/uniqueness, but legal issuance, writer
-/// authorization and posted receivable accounting remain unimplemented.
+/// STAGED journal mapped to an issued-ledger id, not a Draft.
+/// The SOURCE-ONLY SliceBInvoiceReconciliationBoundary migration adds the
+/// FK to IssuedInvoiceLedger (intentionally absent from initial model).
+/// No live posting writer, debt reduction, or refund authority exists;
+/// the PostgreSQL chain rejects journal rows without a real issued source.
 /// </summary>
 public sealed class InvoicePaymentAllocationJournalEntryConfiguration
     : IEntityTypeConfiguration<InvoicePaymentAllocationJournalEntry>

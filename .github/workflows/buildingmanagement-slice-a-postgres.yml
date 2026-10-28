@@ -148,6 +148,12 @@ jobs:
             --filter "FullyQualifiedName~SliceBIssuedInvoiceLedgerPostgreSql_Tests" \
             --logger "console;verbosity=normal"
 
+      - name: Slice B full issued-invoice and receipt reconciliation PostgreSQL chain
+        run: |
+          dotnet test modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/BuildingManagement.PostgreSql.Tests.csproj \
+            --filter "FullyQualifiedName~SliceBReconciliationBoundaryPostgreSql_Tests" \
+            --logger "console;verbosity=normal"
+
       - name: Isolated PostgreSQL ABP authenticated staging HTTP
         run: |
           dotnet test test/NgocTrangHouseManagementSystem.HttpApi.Host.Tests/NgocTrangHouseManagementSystem.HttpApi.Host.Tests.csproj \

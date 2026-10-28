@@ -443,3 +443,28 @@ lock the owning Draft row before checking issued history; this lock order
 serializes with ledger insertion and prevents late inserts/updates/deletes of
 meter evidence after issue. Additional PostgreSQL probes exercise those
 paths. No application issuer is enabled by these database checks.
+
+## Single-chain issued invoice → completed receipt candidate reconciliation
+
+`20261029203000_SliceBInvoiceReconciliationBoundary` is an **additional
+source-only** migration that links staged allocation rows to the actual
+immutable issued ledger (not the Draft), caps their sum under a row lock,
+refuses cross-contract references, verifies the existing completed payment
+source through the earlier trigger, disallows fractional-VND issued amounts,
+and checks financial terms JSON against immutable indexed metadata.
+
+A read-only `BuildingManagementInvoiceAllocationCandidateBalances` view
+reports the exact issued total, staged attributed payments, outstanding
+candidate balance, and whether all *staged* receipts match the total. Its
+`IsDebtLegallyCleared`, `MaySettleDeposit`, and `MayCompleteMoveOut` fields
+are deliberately FALSE. A paid-looking journal is NOT authorization to
+refund, offset a deposit or release a room. Source SHA verification, an
+approved policy/issuer, confirmed bank disbursement and a transaction-scoped
+closeout operator grant remain required for a real posting service.
+
+The PostgreSQL acceptance test executes the **entire four-migration Slice B
+chain** (archive, review, staged allocation, issued ledger, reconciliation)
+in a generated schema inside one rollback-only transaction, probing invalid
+draft references, cross-contract allocation, over-allocation, duplicate
+receipts, false closeout flags and rollback of populated history. No
+production, application DB, payment processor, or unscoped API is touched.

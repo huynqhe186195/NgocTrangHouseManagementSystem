@@ -150,3 +150,16 @@ user/building unique index and Building lookup index names. This
 reduces accidental EF migration drift. `PGCHAIN01` must PASS against
 the runtime migration on a disposable populated PG database before
 release signoff. No schema or permission change was made on production.
+
+## 2026-10-28 — ABP UnitOfWork PostgreSQL transaction interoperability
+
+The locked write fence now joins an already-active EF transaction from
+ABP UnitOfWork, without committing or rolling back someone else's UoW.
+If no transaction exists it starts/owns a READ COMMITTED transaction
+itself. Only READ COMMITTED and SERIALIZABLE ambient isolation are
+permitted; other levels fail closed before any mutation.
+`EFMEMBER10–11` exercise an existing transaction: callback updates
+are invisible to other connections until outer commit; outer rollback
+undoes them, and unsupported isolation cannot enter callback. The actual
+runtime EF DbContext/UoW provider still requires explicit staging DI
+integration and final PostgreSQL host verification.

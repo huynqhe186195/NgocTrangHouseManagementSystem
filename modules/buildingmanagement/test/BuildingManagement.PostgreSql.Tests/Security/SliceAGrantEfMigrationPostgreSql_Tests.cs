@@ -498,6 +498,101 @@ public sealed class SliceAGrantEfMigrationPostgreSql_Tests
         });
     }
 
+    [Fact]
+    public async Task EFMEMBER10_Existing_AbpStyle_UnitOfWork_Transaction_Retains_Lock_And_Commit_Ownership()
+    {
+        await InScratchAsync(async cs =>
+        {
+            var actor = Guid.NewGuid();
+            Guid building;
+            await using (var seed = OpenGrantDb(cs))
+            {
+                await seed.Database.MigrateAsync();
+                building = (await new EfBuildingOwnerBootstrapAtomicWriter(seed)
+                    .CreateWithOwnerAtomicallyAsync(
+                        actor, "Before", "PG scratch", null)).Id;
+            }
+
+            // Mimic ABP UoW: transaction is established BEFORE the scoped
+            // boundary runs. The boundary must NOT commit or rollback it.
+            await using (var scope = OpenGrantDb(cs))
+            {
+                await using var outer = await scope.Database
+                    .BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted);
+                var fence = new EfBuildingScopedWriteFenceCandidate(
+                    scope, TimeProvider.System);
+                Assert.Equal(77, await fence.ExecuteAsync(actor, building, async () =>
+                {
+                    await scope.Database.ExecuteSqlInterpolatedAsync(
+                        $"UPDATE \"Buildings\" SET \"Name\" = {"Not committed"} WHERE \"Id\" = {building}");
+                    return 77;
+                }));
+                Assert.NotNull(scope.Database.CurrentTransaction);
+                await using (var independent = OpenGrantDb(cs))
+                    Assert.Equal("Before",
+                        (await independent.Buildings.SingleAsync(x =>
+                            x.Id == building)).Name);
+                // An outer UoW rollback MUST undo the successful callback.
+                await outer.RollbackAsync();
+            }
+
+            await using (var verify = OpenGrantDb(cs))
+                Assert.Equal("Before",
+                    (await verify.Buildings.SingleAsync(x =>
+                        x.Id == building)).Name);
+
+            await using (var scope = OpenGrantDb(cs))
+            {
+                await using var outer = await scope.Database
+                    .BeginTransactionAsync(System.Data.IsolationLevel.ReadCommitted);
+                var fence = new EfBuildingScopedWriteFenceCandidate(
+                    scope, TimeProvider.System);
+                await fence.ExecuteAsync(actor, building, async () =>
+                {
+                    await scope.Database.ExecuteSqlInterpolatedAsync(
+                        $"UPDATE \"Buildings\" SET \"Name\" = {"Committed"} WHERE \"Id\" = {building}");
+                    return true;
+                });
+                await outer.CommitAsync();
+            }
+            await using var final = OpenGrantDb(cs);
+            Assert.Equal("Committed",
+                (await final.Buildings.SingleAsync(x => x.Id == building)).Name);
+        });
+    }
+
+    [Fact]
+    public async Task EFMEMBER11_Unsupported_Ambient_Isolation_Fails_Closed_Without_Callback()
+    {
+        await InScratchAsync(async cs =>
+        {
+            var actor = Guid.NewGuid();
+            Guid building;
+            await using (var seed = OpenGrantDb(cs))
+            {
+                await seed.Database.MigrateAsync();
+                building = (await new EfBuildingOwnerBootstrapAtomicWriter(seed)
+                    .CreateWithOwnerAtomicallyAsync(
+                        actor, "Before", "PG scratch", null)).Id;
+            }
+            await using var scope = OpenGrantDb(cs);
+            await using var outer = await scope.Database
+                .BeginTransactionAsync(System.Data.IsolationLevel.RepeatableRead);
+            var fence = new EfBuildingScopedWriteFenceCandidate(
+                scope, TimeProvider.System);
+            var reached = false;
+            await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+                fence.ExecuteAsync(actor, building, () =>
+                {
+                    reached = true;
+                    return Task.FromResult(true);
+                }));
+            Assert.False(reached);
+            Assert.NotNull(scope.Database.CurrentTransaction);
+            await outer.RollbackAsync();
+        });
+    }
+
     private static SliceAGrantScratchDb OpenGrantDb(string cs)
         => new(new DbContextOptionsBuilder<SliceAGrantScratchDb>()
             .UseNpgsql(cs, n => n.MigrationsAssembly(

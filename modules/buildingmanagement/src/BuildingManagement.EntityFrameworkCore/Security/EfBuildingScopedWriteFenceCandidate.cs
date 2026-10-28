@@ -36,18 +36,29 @@ public sealed class EfBuildingScopedWriteFenceCandidate
             serverResolvedBuildingId == Guid.Empty ||
             !_db.Database.IsNpgsql() ||
             _db.Model.FindEntityType(typeof(BuildingOperatorAccessGrant)) is null ||
-            _db.Model.FindEntityType(typeof(Building)) is null ||
-            _db.Database.CurrentTransaction is not null)
+            _db.Model.FindEntityType(typeof(Building)) is null)
             throw Denied();
 
         // READ COMMITTED + SELECT FOR SHARE obtains a *row* lock on the
         // issuer membership. PostgreSQL UPDATE/revoke conflicts with it.
         // If revocation committed first, the SELECT returns no live row.
         // Do not ever mutate before acquiring the membership lock.
-        await using var tx = await _db.Database.BeginTransactionAsync(
-            IsolationLevel.ReadCommitted);
+        // ABP ApplicationServices normally run inside an ambient UnitOfWork.
+        // Join its existing EF transaction (the same DbContext used by the
+        // repositories) so the membership row lock survives to the UoW
+        // commit. Never start a second independent transaction in that case.
+        // This also supports explicit standalone transactions in PG tests.
+        var ownedTx = _db.Database.CurrentTransaction is null
+            ? await _db.Database.BeginTransactionAsync(IsolationLevel.ReadCommitted)
+            : null;
         try
         {
+            var tx = _db.Database.CurrentTransaction ?? ownedTx
+                ?? throw Denied();
+            var isolation = tx.GetDbTransaction().IsolationLevel;
+            if (isolation != IsolationLevel.ReadCommitted &&
+                isolation != IsolationLevel.Serializable)
+                throw Denied();
             var connection = _db.Database.GetDbConnection();
             await using (var command = connection.CreateCommand())
             {
@@ -85,13 +96,22 @@ public sealed class EfBuildingScopedWriteFenceCandidate
             // No further permission/identity claim is trusted from DTO.
             var result = await mutation();
             await _db.SaveChangesAsync();
-            await tx.CommitAsync();
+            // Never commit or rollback a transaction owned by ABP UoW.
+            // The external caller remains responsible for final commit.
+            if (ownedTx is not null)
+                await ownedTx.CommitAsync();
             return result;
         }
         catch
         {
-            await tx.RollbackAsync();
+            if (ownedTx is not null)
+                await ownedTx.RollbackAsync();
             throw;
+        }
+        finally
+        {
+            if (ownedTx is not null)
+                await ownedTx.DisposeAsync();
         }
     }
 

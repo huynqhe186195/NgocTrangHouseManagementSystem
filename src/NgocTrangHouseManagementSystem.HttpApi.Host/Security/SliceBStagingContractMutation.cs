@@ -133,6 +133,19 @@ public sealed class SliceBStagingContractMutation
 
         return await Fence(db).ExecuteAsync(actor, buildingId, async () =>
         {
+            // Match shared payment/renewal order:
+            // Active Contract -> Reservation -> Room graph.
+            // Without this contract gate, Create/Cancel could hold the
+            // Reservation while a renewal holds Room UPDATE and waits for
+            // that Reservation, causing a transaction deadlock.
+            var activeContract = await db.Contracts.AsNoTracking()
+                .Where(c => c.RoomId == roomId && !c.IsDeleted &&
+                    c.Status == ContractStatus.Active)
+                .Select(c => c.Id).FirstOrDefaultAsync();
+            if (activeContract != Guid.Empty &&
+                await LockContractRoomAsync(db, activeContract) != roomId)
+                throw Denied();
+
             // Lock the exact reservation (not just a stale scalar lookup)
             // before its current Room graph or deposit disposition.
             await using var command = Command(db, """

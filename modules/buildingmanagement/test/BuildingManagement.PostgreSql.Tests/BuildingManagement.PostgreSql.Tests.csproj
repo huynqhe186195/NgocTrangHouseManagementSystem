@@ -21,6 +21,8 @@
                       LogicalName="SliceA_OperatorBuildingGrant_Up_Candidate.sql" />
     <EmbeddedResource Include="..\..\..\..\etc\phase-audits\SliceA_OperatorBuildingGrant_Down_Candidate.sql"
                       LogicalName="SliceA_OperatorBuildingGrant_Down_Candidate.sql" />
+    <EmbeddedResource Include="..\..\..\..\etc\phase-audits\SliceA_RuntimeDbRole_ReadOnlyAudit.sql"
+                      LogicalName="SliceA_RuntimeDbRole_ReadOnlyAudit.sql" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />

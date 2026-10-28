@@ -8,6 +8,7 @@ on:
       - ".github/workflows/buildingmanagement-slice-a-postgres.yml"
       - "modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/**"
       - "etc/phase-audits/SliceA_OperatorBuildingGrant_*.sql"
+      - "modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Security/EfBuildingOwnerBootstrapAtomicWriter.cs"
   pull_request:
     branches:
       - wip/phase-2g2
@@ -15,6 +16,7 @@ on:
       - ".github/workflows/buildingmanagement-slice-a-postgres.yml"
       - "modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/**"
       - "etc/phase-audits/SliceA_OperatorBuildingGrant_*.sql"
+      - "modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Security/EfBuildingOwnerBootstrapAtomicWriter.cs"
 
 permissions:
   contents: read
@@ -62,7 +64,7 @@ jobs:
       - name: Membership SQL rollback and concurrent transaction probes
         run: |
           dotnet test modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/BuildingManagement.PostgreSql.Tests.csproj \
-            --filter "FullyQualifiedName~BuildingOperatorGrantCandidatePostgreSql_Tests|FullyQualifiedName~BuildingOperatorGrantConcurrencyPostgreSql_Tests" \
+            --filter "FullyQualifiedName~BuildingOperatorGrantCandidatePostgreSql_Tests|FullyQualifiedName~BuildingOperatorGrantConcurrencyPostgreSql_Tests|FullyQualifiedName~SliceAGrantEfMigrationPostgreSql_Tests" \
             --logger "console;verbosity=normal"
 
 # Does not start the ABP app, use EF Migrate/DbMigrator, alter runtime

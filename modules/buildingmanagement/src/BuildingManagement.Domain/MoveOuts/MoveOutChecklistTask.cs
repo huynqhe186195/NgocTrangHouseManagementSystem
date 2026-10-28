@@ -34,6 +34,33 @@ public class MoveOutChecklistTask : AuditedAggregateRoot<Guid>
         CompletedAt = verifiedAt;
     }
 
+    /// <summary>
+    /// A non-meter checklist can only be marked by the atomic root
+    /// closeout transaction after it has verified the immutable approval
+    /// record and the matching inspection/handover/financial evidence.
+    /// It is never an independent authorization to settle or end a lease.
+    /// </summary>
+    public void MarkCloseoutEvidenceVerified(
+        MoveOutChecklistTaskType expectedType, Guid rootActorId,
+        string signedEvidenceReference, DateTime verifiedAtUtc)
+    {
+        if (expectedType == MoveOutChecklistTaskType.FinalMeterReading ||
+            !Enum.IsDefined(expectedType) ||
+            Type != expectedType ||
+            rootActorId == Guid.Empty ||
+            IsCompleted ||
+            verifiedAtUtc == default ||
+            verifiedAtUtc.Kind != DateTimeKind.Utc ||
+            string.IsNullOrWhiteSpace(signedEvidenceReference) ||
+            signedEvidenceReference.Trim().Length < 8 ||
+            signedEvidenceReference.Trim().Length > 500)
+            throw new InvalidOperationException(
+                "Only a root-verified non-meter closeout checklist can be completed.");
+
+        IsCompleted = true;
+        CompletedAt = verifiedAtUtc;
+    }
+
     protected MoveOutChecklistTask() { }
 
     public MoveOutChecklistTask(Guid id, Guid moveOutRequestId,

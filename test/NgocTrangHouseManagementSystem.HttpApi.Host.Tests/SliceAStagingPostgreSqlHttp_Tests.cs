@@ -253,6 +253,115 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             using (var response = await clientB.GetAsync(listPath))
                 Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
 
+            // Real durable two-principal signoff against the extra,
+            // completely isolated recovery building. No HTTP recovery route.
+            var recoveryBuilding = Guid.NewGuid();
+            var evidence = Guid.NewGuid();
+            await using (var identitySeed = new NpgsqlConnection(idCs))
+            {
+                await identitySeed.OpenAsync();
+                await using var inactive = new NpgsqlCommand(
+                    """UPDATE "AbpUsers" SET "IsActive" = FALSE WHERE "Id" = @id""",
+                    identitySeed);
+                inactive.Parameters.AddWithValue("id", disabledFounder);
+                Assert.Equal(1, await inactive.ExecuteNonQueryAsync());
+            }
+            await using (var seed = new NpgsqlConnection(buildingCs))
+            {
+                await seed.OpenAsync();
+                await using (var buildingInsert = new NpgsqlCommand(
+                    """
+                    INSERT INTO "Buildings"
+                        ("Id","Name","Address","ExtraProperties",
+                         "ConcurrencyStamp","CreationTime","IsDeleted")
+                    VALUES (@id, 'Recovery-only Building', 'Scratch',
+                            '{}', @stamp, CURRENT_TIMESTAMP, FALSE)
+                    """, seed))
+                {
+                    buildingInsert.Parameters.AddWithValue("id", recoveryBuilding);
+                    buildingInsert.Parameters.AddWithValue("stamp",
+                        Guid.NewGuid().ToString("N"));
+                    Assert.Equal(1, await buildingInsert.ExecuteNonQueryAsync());
+                }
+                await using (var grantInsert = new NpgsqlCommand(
+                    """
+                    INSERT INTO "BuildingManagementOperatorBuildingGrants"
+                        ("Id","OperatorUserId","BuildingId","GrantedByUserId",
+                         "GrantedAtUtc","RevisionNumber","ExtraProperties","ConcurrencyStamp")
+                    VALUES (@id,@founder,@building,@founder,@at,1,'{}',@stamp)
+                    """, seed))
+                {
+                    grantInsert.Parameters.AddWithValue("id", Guid.NewGuid());
+                    grantInsert.Parameters.AddWithValue("founder", disabledFounder);
+                    grantInsert.Parameters.AddWithValue("building", recoveryBuilding);
+                    grantInsert.Parameters.AddWithValue("at", DateTime.UtcNow.AddMinutes(-1));
+                    grantInsert.Parameters.AddWithValue("stamp", Guid.NewGuid().ToString("N"));
+                    Assert.Equal(1, await grantInsert.ExecuteNonQueryAsync());
+                }
+            }
+
+            async Task SignAsync(Guid actor)
+            {
+                using var scope = app.Services.CreateScope();
+                var sp = scope.ServiceProvider;
+                var accessor = sp.GetRequiredService<ICurrentPrincipalAccessor>();
+                using (accessor.Change(new ClaimsPrincipal(new ClaimsIdentity(
+                    new[] { new Claim(AbpClaimTypes.UserId, actor.ToString("D")) },
+                    "RecoverySigner"))))
+                {
+                    using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                        .Begin(requiresNew: true, isTransactional: true);
+                    await sp.GetRequiredService<SliceAStagingOwnerRecoveryEvidenceStore>()
+                        .RecordSignoffAsync(evidence, recoveryBuilding,
+                            disabledFounder, operatorB, DateTime.UtcNow.AddHours(1));
+                    await uow.CompleteAsync();
+                }
+            }
+            await SignAsync(root);
+            using (var incomplete = app.Services.CreateScope())
+            {
+                using var uow = incomplete.ServiceProvider
+                    .GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                Assert.Null(await incomplete.ServiceProvider
+                    .GetRequiredService<IBuildingOwnerRecoveryApprovalReader>()
+                    .ReadApprovedAsync(recoveryBuilding, operatorB));
+            }
+            await SignAsync(cosigner);
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                var accessor = sp.GetRequiredService<ICurrentPrincipalAccessor>();
+                using (accessor.Change(new ClaimsPrincipal(new ClaimsIdentity(
+                    new[] { new Claim(AbpClaimTypes.UserId, root.ToString("D")) },
+                    "RecoveryRoot"))))
+                {
+                    using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                        .Begin(requiresNew: true, isTransactional: true);
+                    var approval = await sp
+                        .GetRequiredService<IBuildingOwnerRecoveryApprovalReader>()
+                        .ReadApprovedAsync(recoveryBuilding, operatorB);
+                    Assert.NotNull(approval);
+                    Assert.Equal(evidence, approval.EvidenceId);
+                    await sp.GetRequiredService<BuildingOwnerRecoveryCoordinator>()
+                        .RecoverAsync(recoveryBuilding, operatorB);
+                    await uow.CompleteAsync();
+                }
+            }
+            // Durable proof was consumed, not reused; founder untouched.
+            using (var scope = app.Services.CreateScope())
+            {
+                using var uow = scope.ServiceProvider.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                Assert.Null(await scope.ServiceProvider
+                    .GetRequiredService<IBuildingOwnerRecoveryApprovalReader>()
+                    .ReadApprovedAsync(recoveryBuilding, operatorB));
+            }
+            using (var response = await clientB.GetAsync(GetAt(recoveryBuilding)))
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            using (var response = await clientRoot.GetAsync(GetAt(recoveryBuilding)))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+
             const string grants = "/api/slice-a-staging/operator-grants";
             using (var payload = new StringContent(JsonSerializer.Serialize(
                 new { buildingId = b, operatorUserId = operatorB }),

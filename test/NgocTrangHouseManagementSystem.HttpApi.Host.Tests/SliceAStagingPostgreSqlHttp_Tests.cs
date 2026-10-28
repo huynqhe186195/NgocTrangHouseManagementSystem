@@ -1650,6 +1650,22 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 reservationRoute + "?maxResultCount=101"))
                 Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
 
+            // Record the real room state rather than assuming occupancy:
+            // other independent contract tests may have changed it earlier.
+            BuildingManagement.Rooms.RoomStatus originalRoomStatus;
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var db = await sp.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>()
+                    .GetDbContextAsync();
+                originalRoomStatus = (await db.Rooms.SingleAsync(
+                    r => r.Id == roomB)).Status;
+                await uow.CompleteAsync();
+            }
+
             // Scoped move-out scheduling and approval reuse the Contract
             // row UPDATE gate, identity permission lease and live membership.
             // They must NEVER settle a deposit or release the Room here.
@@ -1719,8 +1735,10 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     .GetDbContextAsync();
                 Assert.True(await db.MoveOutChecklistTasks.AnyAsync(task =>
                     task.MoveOutRequestId == moveOutRequest));
-                Assert.Equal(BuildingManagement.Rooms.RoomStatus.Occupied,
+                Assert.Equal(originalRoomStatus,
                     (await db.Rooms.SingleAsync(r => r.Id == roomB)).Status);
+                Assert.Equal(BuildingManagement.Contracts.ContractStatus.Active,
+                    (await db.Contracts.SingleAsync(c => c.Id == cancelContract)).Status);
                 await uow.CompleteAsync();
             }
 

@@ -480,3 +480,28 @@ migration, confirms invoice draft and membership tables survive unchanged,
 then upgrades the real chain again and finally drops only its own database.
 This is a CI-only opt-in using an ephemeral container and createdb-capable
 test role. It never runs on a user or production database.
+
+## Atomic isolated-staging final invoice and move-out closeout
+
+Isolated host APIs now provide a single, explicitly opted-in, building-scoped
+path for preparing final evidence, independent design review, root-only
+candidate invoice issuance, manual completed bank receipt attribution and
+an atomic root-approved move-out closeout with explicit deposit disposition.
+The closeout transaction enforces approved date, existing final meter signoff,
+all issued invoices fully backed by completed journaled receipts, verified
+held contract deposit, no cross-room active leases/reservations, signed
+inspection/handover and written deposit policy, documented damage for any
+forfeiture, and a root attestation/reference for an ALREADY completed refund.
+It inserts Refund/Forfeit records, immutable deposit approval, updates the
+remaining four checklists, ends Contract, completes MoveOutRequest and
+releases Room (or sets Maintenance when damage occurred) in one Building UoW.
+Any failure rolls the entire transaction back. No automatic deduction from
+debt, automatic bank transfer or production access is enabled; a manual
+bank reference remains a human claim, not independently bank-verified funds.
+
+The scoped stage adapter holds the persisted Identity permission/account
+lease and building membership through the Building commit; BootstrapOwner
+is additionally required for issuance, financial receipt and closeout.
+For database-level financial history, `20261029204000` adds the immutable
+approval table with source and completed disbursement constraints. No actual
+application or production migration has been applied.

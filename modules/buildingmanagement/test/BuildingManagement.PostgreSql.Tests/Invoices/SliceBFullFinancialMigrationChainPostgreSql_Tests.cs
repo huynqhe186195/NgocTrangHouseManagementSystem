@@ -20,7 +20,7 @@ public sealed class SliceBFullFinancialMigrationChainPostgreSql_Tests
     private const string LastSliceAMigration =
         "20261028190000_SliceAOwnerRecoveryApprovals";
     private const string LastSliceBMigration =
-        "20261029203000_SliceBInvoiceReconciliationBoundary";
+        "20261029204000_SliceBContractDepositCloseoutApprovals";
 
     [Fact]
     public async Task SBCHAIN01_Full_Runtime_Migrations_Upgrade_EmptyDown_And_Reupgrade()
@@ -83,6 +83,10 @@ public sealed class SliceBFullFinancialMigrationChainPostgreSql_Tests
                     SELECT count(*) FROM pg_constraint
                     WHERE conname = 'CK_BM_IssuedLedger_JsonMatchesColumns'
                     """));
+                Assert.Equal(1L, await ScalarAsync(inspect,
+                    "SELECT to_regclass('\"BuildingManagementContractDepositCloseoutApprovals\"') IS NOT NULL"));
+                Assert.Equal(1L, await ScalarAsync(inspect,
+                    "SELECT count(*) FROM pg_constraint WHERE conname = 'FK_BM_DepositCloseout_RefundSettlement'"));
             }
 
             // All financial sources are empty: reversible source-only
@@ -98,6 +102,8 @@ public sealed class SliceBFullFinancialMigrationChainPostgreSql_Tests
                 await inspect.OpenAsync();
                 Assert.Equal(1L, await ScalarAsync(inspect,
                     "SELECT to_regclass('\"BuildingManagementIssuedInvoiceLedger\"') IS NULL"));
+                Assert.Equal(1L, await ScalarAsync(inspect,
+                    "SELECT to_regclass('\"BuildingManagementContractDepositCloseoutApprovals\"') IS NULL"));
                 Assert.Equal(1L, await ScalarAsync(inspect,
                     "SELECT to_regclass('\"BuildingManagementInvoiceAllocationCandidateBalances\"') IS NULL"));
                 Assert.Equal(1L, await ScalarAsync(inspect,

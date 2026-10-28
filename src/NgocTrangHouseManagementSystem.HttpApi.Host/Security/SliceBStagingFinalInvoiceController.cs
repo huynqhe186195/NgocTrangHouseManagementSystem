@@ -84,6 +84,19 @@ public sealed class SliceBStagingFinalInvoiceController : ControllerBase
             .IssueCandidateAsync(contractId, evidenceId, input);
     }
 
+    [HttpPost("contracts/{contractId:guid}/issued/{issuedId:guid}/manual-receipts")]
+    [UnitOfWork(true)]
+    public Task<SliceBStagedInvoiceReceiptRead> RecordManualReceiptAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid issuedId,
+        [FromBody] SliceBFinalInvoiceManualReceiptInput input)
+    {
+        RequireIsolatedStaging();
+        if (input is null)
+            throw Denied();
+        return (_mutation ?? throw Denied())
+            .RecordManualReceiptAsync(contractId, issuedId, input);
+    }
+
     private void RequireIsolatedStaging()
     {
         if (!_environment.IsStaging() ||

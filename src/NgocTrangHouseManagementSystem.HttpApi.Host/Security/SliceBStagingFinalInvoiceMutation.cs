@@ -203,6 +203,104 @@ public sealed class SliceBStagingFinalInvoiceMutation
                     ledger.InvoiceNumber);
             });
 
+    /// <summary>
+    /// A root-authenticated MANUAL bank receipt may be staged only when a
+    /// receipt belongs to a tenant of the exact contract and an immutable
+    /// issued invoice. Payment + allocation are inserted in ONE transaction:
+    /// a conflicting/over-amount journal rollbacks BOTH. The bank evidence
+    /// reference is a recorded claim, not electronic bank verification.
+    /// Candidate allocation does NOT authorize deposit refund/closeout.
+    /// </summary>
+    public Task<SliceBStagedInvoiceReceiptRead> RecordManualReceiptAsync(
+        Guid contractId, Guid issuedInvoiceId,
+        SliceBFinalInvoiceManualReceiptInput input)
+        => ExecuteScopedAsync(contractId, requireBootstrapOwner: true,
+            async (db, actor, building, roomId) =>
+            {
+                if (input is null ||
+                    input.TenantId == Guid.Empty ||
+                    input.Amount <= 0m ||
+                    decimal.Truncate(input.Amount) != input.Amount ||
+                    input.PaidAtUtc == default ||
+                    input.PaidAtUtc.Kind != DateTimeKind.Utc ||
+                    input.PaidAtUtc > DateTime.UtcNow ||
+                    string.IsNullOrWhiteSpace(input.TransactionReference) ||
+                    input.TransactionReference.Trim().Length > 128 ||
+                    input.TransactionReference.Trim().Length < 8 ||
+                    string.IsNullOrWhiteSpace(input.BankEvidenceReference) ||
+                    input.BankEvidenceReference.Trim().Length < 8 ||
+                    input.BankEvidenceReference.Trim().Length > 200)
+                    throw Denied();
+
+                await using (var cmd = Command(db, """
+                    SELECT "Id" FROM "BuildingManagementIssuedInvoiceLedger"
+                     WHERE "Id" = @id AND "ContractId" = @contract
+                       AND "RoomId" = @room AND "BuildingId" = @building
+                     FOR UPDATE
+                    """))
+                {
+                    Add(cmd, "id", issuedInvoiceId);
+                    Add(cmd, "contract", contractId);
+                    Add(cmd, "room", roomId);
+                    Add(cmd, "building", building);
+                    if (await cmd.ExecuteScalarAsync() is not Guid)
+                        throw Denied();
+                }
+
+                var ledger = await db.IssuedInvoiceLedger.AsNoTracking()
+                    .SingleOrDefaultAsync(x => x.Id == issuedInvoiceId);
+                if (ledger is null || ledger.ContractId != contractId ||
+                    ledger.RoomId != roomId || ledger.BuildingId != building ||
+                    input.PaidAtUtc < ledger.IssuedAtUtc)
+                    throw Denied();
+
+                // A bank receipt may never be attributed to a foreign
+                // building's tenant or an arbitrary existing TenantId.
+                await using (var cmd = Command(db, """
+                    SELECT ct."Id" FROM "BuildingManagementContractTenants" ct
+                      JOIN "BuildingManagementTenants" t
+                        ON t."Id" = ct."TenantId"
+                     WHERE ct."ContractId" = @contract
+                       AND ct."TenantId" = @tenant
+                       AND ct."IsDeleted" = FALSE
+                       AND t."IsDeleted" = FALSE
+                     FOR SHARE OF ct, t
+                    """))
+                {
+                    Add(cmd, "contract", contractId);
+                    Add(cmd, "tenant", input.TenantId);
+                    if (await cmd.ExecuteScalarAsync() is not Guid)
+                        throw Denied();
+                }
+
+                var receiptId = Guid.NewGuid();
+                var receipt = new Payment(
+                    receiptId, "FIN-" + receiptId.ToString("N"),
+                    input.TenantId,
+                    PaymentPurpose.InvoicePayment,
+                    PaymentMethod.BankTransfer,
+                    PaymentChannel.Manual,
+                    input.Amount, contractId: contractId,
+                    invoiceId: issuedInvoiceId,
+                    transactionReference: input.TransactionReference.Trim(),
+                    notes: "BANK-PROOF: " + input.BankEvidenceReference.Trim());
+                receipt.Complete(
+                    input.PaidAtUtc, input.TransactionReference.Trim());
+                db.Payments.Add(receipt);
+                // FK needs its source receipt before immutable journal
+                // INSERT; both SaveChanges occur in SAME enclosing UoW.
+                await db.SaveChangesAsync();
+
+                var journal = InvoicePaymentAllocationJournalEntry.StageForValidation(
+                    Guid.NewGuid(), receipt, issuedInvoiceId, actor,
+                    DateTime.UtcNow);
+                db.InvoicePaymentAllocationJournal.Add(journal);
+                // The PG trigger serializes concurrent allocations on the
+                // same issued ledger and refuses an overpayment atomically.
+                return new SliceBStagedInvoiceReceiptRead(
+                    receipt.Id, journal.Id, ledger.Id, receipt.Amount);
+            });
+
     private async Task<T> ExecuteScopedAsync<T>(
         Guid contractId, bool requireBootstrapOwner,
         Func<BuildingManagementDbContext, Guid, Guid, Guid, Task<T>> work)
@@ -439,3 +537,16 @@ public sealed record SliceBStagedInvoiceEvidenceRead(
 public sealed record SliceBStagedIssuedInvoiceRead(
     Guid Id, Guid DraftInvoiceId, Guid ContractId, decimal Amount,
     DateOnly DueDate, string InvoiceNumber);
+
+public sealed class SliceBFinalInvoiceManualReceiptInput
+{
+    public Guid TenantId { get; set; }
+    public decimal Amount { get; set; }
+    public DateTime PaidAtUtc { get; set; }
+    public string TransactionReference { get; set; } = string.Empty;
+    public string BankEvidenceReference { get; set; } = string.Empty;
+}
+
+public sealed record SliceBStagedInvoiceReceiptRead(
+    Guid PaymentId, Guid AllocationJournalId,
+    Guid IssuedInvoiceId, decimal StagedAmount);

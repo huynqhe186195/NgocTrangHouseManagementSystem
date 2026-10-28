@@ -423,7 +423,7 @@ public sealed class BuildingManagementAutoApiAuthorization_Tests
     }
 
     [Fact]
-    public async Task APIAUTO16_Authenticated_SliceB_Five_Service_Groups_Deny_Before_DI()
+    public async Task APIAUTO16_Authenticated_SliceB_Six_Service_Groups_Deny_Before_DI()
     {
         await using var app = await StartIsolatedAbpHostAsync();
         using var client = AuthenticatedClient(app);
@@ -439,7 +439,8 @@ public sealed class BuildingManagementAutoApiAuthorization_Tests
             typeof(BuildingManagement.Contracts.ContractRenewalHoldAppService),
             typeof(BuildingManagement.Tenants.TenantAppService),
             typeof(BuildingManagement.RoomReservations.RoomReservationAppService),
-            typeof(BuildingManagement.MoveOuts.MoveOutRequestAppService)
+            typeof(BuildingManagement.MoveOuts.MoveOutRequestAppService),
+            typeof(BuildingManagement.Payments.PaymentAppService)
         };
         var actions = GetGeneratedActions(app);
         foreach (var service in serviceTypes)
@@ -480,6 +481,19 @@ public sealed class BuildingManagementAutoApiAuthorization_Tests
         using (var body = new StringContent("{}", Encoding.UTF8, "application/json"))
         using (var response = await client.PostAsync(
             "/" + Assert.IsType<string>(legacyCreate.AttributeRouteInfo?.Template)
+                .TrimStart('/'), body))
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+
+        // A forged authenticated caller cannot create arbitrary deposit
+        // records via legacy PaymentAppService, even without a database.
+        var legacyPaymentCreate = Assert.Single(actions, action =>
+            action.ControllerTypeInfo.AsType() ==
+                typeof(BuildingManagement.Payments.PaymentAppService) &&
+            action.MethodInfo.Name == "CreateReservationDepositAsync");
+        using (var body = new StringContent("{}", Encoding.UTF8, "application/json"))
+        using (var response = await client.PostAsync(
+            "/" + Assert.IsType<string>(
+                legacyPaymentCreate.AttributeRouteInfo?.Template)
                 .TrimStart('/'), body))
             Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
 

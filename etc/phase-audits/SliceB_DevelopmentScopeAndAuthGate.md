@@ -44,3 +44,15 @@ expose contract, tenant or move-out APIs to authenticated callers.
   proving denial before any repository access.
 - Existing Slice A Building/Floor/Room filters remain unchanged.
 - Keep the source/route gate fail-closed when future methods are added.
+
+## Shared contract scope policy groundwork
+
+The enforced `BuildingCrudAccessPolicy` can now check the already-defined
+`Contracts.Read` and `Contracts.Manage` capabilities for a server-resolved
+Contract → Room → Floor → Building resource graph. Creating a contract
+requires `ManageContract` on its Room parent; neither `Rooms.Manage` nor
+a permission for another building may substitute. Tests `CRUDSEC17–19`
+cover positive scope, cross-building denial, read/manage separation and
+capability/resource mismatch. This is an internal prerequisite only; the
+five unscoped Slice B HTTP services remain denied until mutations actually
+call the policy and use an Identity/Building commit-bound fence.

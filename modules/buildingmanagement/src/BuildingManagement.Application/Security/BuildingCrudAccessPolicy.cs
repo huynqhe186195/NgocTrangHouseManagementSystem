@@ -13,7 +13,10 @@ namespace BuildingManagement.Security;
 /// points. A permission alone NEVER authorizes another building. The
 /// account + grant readers intentionally DENY ALL until a reviewed Identity
 /// integration and membership migration are activated.
-/// This is NOT the existing EligibleForDesignOnly preview gate.
+/// Contract capability checks reuse this real account+membership gate, but
+/// all unscoped Slice B HTTP actions remain explicitly denied until their
+/// operations use a transactional authorization boundary. This is NOT the
+/// existing EligibleForDesignOnly preview gate.
 /// </summary>
 public interface IBuildingCrudAccessPolicy
 {
@@ -129,7 +132,11 @@ public sealed class BuildingCrudAccessPolicy
             BuildingBusinessCapability.ManageRoom) => true,
         (BuildingBusinessResourceKind.Room,
             BuildingBusinessCapability.ReadRoom or
-            BuildingBusinessCapability.ManageRoom) => true,
+            BuildingBusinessCapability.ManageRoom or
+            BuildingBusinessCapability.ManageContract) => true,
+        (BuildingBusinessResourceKind.Contract,
+            BuildingBusinessCapability.ReadContract or
+            BuildingBusinessCapability.ManageContract) => true,
         _ => false
     };
 
@@ -140,7 +147,9 @@ public sealed class BuildingCrudAccessPolicy
             BuildingBusinessCapability.ReadFloor or
             BuildingBusinessCapability.ManageFloor or
             BuildingBusinessCapability.ReadRoom or
-            BuildingBusinessCapability.ManageRoom;
+            BuildingBusinessCapability.ManageRoom or
+            BuildingBusinessCapability.ReadContract or
+            BuildingBusinessCapability.ManageContract;
 
     private static AbpAuthorizationException Denied()
         => new("BuildingManagement: operation permission, active account, " +

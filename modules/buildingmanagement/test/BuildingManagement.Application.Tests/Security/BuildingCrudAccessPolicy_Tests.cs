@@ -90,6 +90,8 @@ public sealed class BuildingCrudAccessPolicy_Tests
     [InlineData(BuildingBusinessResourceKind.Floor, BuildingBusinessCapability.ManageFloor)]
     [InlineData(BuildingBusinessResourceKind.Room, BuildingBusinessCapability.ReadRoom)]
     [InlineData(BuildingBusinessResourceKind.Room, BuildingBusinessCapability.ManageRoom)]
+    [InlineData(BuildingBusinessResourceKind.Contract, BuildingBusinessCapability.ReadContract)]
+    [InlineData(BuildingBusinessResourceKind.Contract, BuildingBusinessCapability.ManageContract)]
     public async Task CRUDSEC06_Valid_Scoped_Actor_Can_Pass_Resource_Check(
         BuildingBusinessResourceKind kind,
         BuildingBusinessCapability permission)
@@ -232,6 +234,57 @@ public sealed class BuildingCrudAccessPolicy_Tests
         Assert.Equal(0, f.Principal.Calls);
     }
 
+    [Fact]
+    public async Task CRUDSEC17_Contract_Authorization_Uses_Server_Resolved_Building()
+    {
+        var f = Valid();
+        await f.Policy.EnsureResourceAsync(
+            BuildingBusinessResourceKind.Contract, f.ResourceA,
+            BuildingBusinessCapability.ReadContract);
+        await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+            f.Policy.EnsureResourceAsync(
+                BuildingBusinessResourceKind.Contract, f.ResourceB,
+                BuildingBusinessCapability.ReadContract));
+        Assert.Equal(BuildingBusinessCapability.ReadContract,
+            f.Principal.LastPermission);
+    }
+
+    [Fact]
+    public async Task CRUDSEC18_Contract_Manage_Does_Not_Grant_Read_Or_Unrelated_Scope()
+    {
+        var f = Valid();
+        await f.Policy.EnsureResourceAsync(
+            BuildingBusinessResourceKind.Room, f.ResourceA,
+            BuildingBusinessCapability.ManageContract);
+        await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+            f.Policy.EnsureResourceAsync(
+                BuildingBusinessResourceKind.Room, f.ResourceB,
+                BuildingBusinessCapability.ManageContract));
+        f.Principal.ManageDenied = true;
+        await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+            f.Policy.EnsureResourceAsync(
+                BuildingBusinessResourceKind.Contract, f.ResourceA,
+                BuildingBusinessCapability.ManageContract));
+        await f.Policy.EnsureResourceAsync(
+            BuildingBusinessResourceKind.Contract, f.ResourceA,
+            BuildingBusinessCapability.ReadContract);
+    }
+
+    [Fact]
+    public async Task CRUDSEC19_Contract_And_Room_Permissions_Cannot_Be_Interchanged()
+    {
+        var f = Valid();
+        await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+            f.Policy.EnsureResourceAsync(
+                BuildingBusinessResourceKind.Contract, f.ResourceA,
+                BuildingBusinessCapability.ManageRoom));
+        await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+            f.Policy.EnsureResourceAsync(
+                BuildingBusinessResourceKind.Building, f.ResourceA,
+                BuildingBusinessCapability.ReadContract));
+        Assert.Equal(0, f.Principal.Calls);
+    }
+
     private static Fixture Valid()
     {
         var operatorId = Guid.NewGuid();
@@ -272,7 +325,8 @@ public sealed class BuildingCrudAccessPolicy_Tests
             LastPermission = capability;
             var isManage = capability is BuildingBusinessCapability.ManageBuilding
                 or BuildingBusinessCapability.ManageFloor
-                or BuildingBusinessCapability.ManageRoom;
+                or BuildingBusinessCapability.ManageRoom
+                or BuildingBusinessCapability.ManageContract;
             return Task.FromResult<BuildingBusinessPrincipal?>(
                 Actor.HasValue
                     ? new BuildingBusinessPrincipal(Actor.Value,

@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using BuildingManagement.Buildings;
 using BuildingManagement.Security;
 using Volo.Abp.Authorization;
+using Volo.Abp.Data;
 using BuildingManagement.EntityFrameworkCore.EntityConfigurations;
 using BuildingManagement.EntityFrameworkCore.Security;
 using Microsoft.EntityFrameworkCore;
@@ -882,6 +883,63 @@ public sealed class SliceAGrantEfMigrationPostgreSql_Tests
                 new EfBuildingOperatorGrantAtomicMutationWriter(
                     verify, TimeProvider.System)
                     .AssignAtomicallyAsync(manager, laterActor, building, null));
+        });
+    }
+
+    [Fact]
+    public async Task EFMEMBER18_Recovery_Cosignature_Is_Atomic_And_Does_Not_Remove_Founding_Owner()
+    {
+        await InScratchAsync(async cs =>
+        {
+            var founder = Guid.NewGuid();
+            var recipient = Guid.NewGuid();
+            var first = Guid.NewGuid();
+            var second = Guid.NewGuid();
+            var evidence = Guid.NewGuid();
+            Guid building;
+            await using (var seed = OpenGrantDb(cs))
+            {
+                await seed.Database.MigrateAsync();
+                building = (await new EfBuildingOwnerBootstrapAtomicWriter(seed)
+                    .CreateWithOwnerAtomicallyAsync(
+                        founder, "Founding grant intact", "Scratch PG", null)).Id;
+            }
+
+            await using (var operation = OpenGrantDb(cs))
+            {
+                var writer = new EfBuildingOwnerRecoveryAtomicWriter(
+                    operation, TimeProvider.System);
+                await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+                    writer.RecoverAtomicallyAsync(building, founder, recipient,
+                        first, first, evidence));
+                await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+                    writer.RecoverAtomicallyAsync(Guid.NewGuid(), founder, recipient,
+                        first, second, evidence));
+                var created = await writer.RecoverAtomicallyAsync(
+                    building, founder, recipient, first, second, evidence);
+                Assert.NotEqual(Guid.Empty, created);
+                await Assert.ThrowsAsync<DbUpdateException>(() =>
+                    writer.RecoverAtomicallyAsync(
+                        building, founder, recipient, first, second,
+                        Guid.NewGuid()));
+            }
+
+            await using var verify = OpenGrantDb(cs);
+            Assert.Equal(2, await verify.Grants.CountAsync(x =>
+                x.BuildingId == building && x.RevokedAtUtc == null));
+            var original = await verify.Grants.SingleAsync(x =>
+                x.OperatorUserId == founder);
+            Assert.Equal(founder, original.GrantedByUserId);
+            Assert.Null(original.RevokedAtUtc);
+            var recovered = await verify.Grants.SingleAsync(x =>
+                x.OperatorUserId == recipient);
+            Assert.Equal(first, recovered.GrantedByUserId);
+            Assert.Equal(evidence.ToString("D"),
+                recovered.GetProperty<string>("OwnerRecoveryEvidenceId"));
+            Assert.Equal(second.ToString("D"),
+                recovered.GetProperty<string>("OwnerRecoverySecondRootId"));
+            Assert.Equal(founder.ToString("D"),
+                recovered.GetProperty<string>("OwnerRecoveryFoundingUserId"));
         });
     }
 

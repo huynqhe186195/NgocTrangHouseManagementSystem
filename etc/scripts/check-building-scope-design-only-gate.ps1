@@ -21,6 +21,11 @@ function Read-Source([string]$path) {
 
 $db = Read-Source 'modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/EntityFrameworkCore/BuildingManagementDbContext.cs'
 $model = Read-Source 'modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/EntityFrameworkCore/BuildingManagementDbContextModelCreatingExtensions.cs'
+$hostModule = Read-Source 'src/NgocTrangHouseManagementSystem.HttpApi.Host/NgocTrangHouseManagementSystemHttpApiHostModule.cs'
+if ($hostModule -notmatch 'BuildingManagement:Bootstrap' -or
+    $hostModule -notmatch 'BuildingOwnerBootstrapSecurityOptions') {
+    throw 'Safety stop: configured root account allowlist missing.'
+}
 $identity = Read-Source 'src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/AbpIdentityBuildingOperatorAccountProbe.cs'
 $gate = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/Security/BuildingBusinessScopeDesignGate.cs'
 $delegation = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/Security/BuildingOperatorChangeDesignGate.cs'
@@ -140,6 +145,9 @@ foreach ($check in @(
 $bootstrapCoordinator = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/Security/BuildingOwnerBootstrapCoordinator.cs'
 $atomicWriter = Read-Source 'modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Security/EfBuildingOwnerBootstrapAtomicWriter.cs'
 if ($buildingCrud -notmatch 'CreateWithCurrentOwnerAsync' -or
+    $bootstrapCoordinator -notmatch 'RootUserIds\?\.Contains' -or
+    $bootstrapCoordinator -notmatch 'BuildingOwnerBootstrapSecurityOptions' -or
+    $bootstrapCoordinator -notmatch 'BootstrapOwner' -or
     $bootstrapCoordinator -notmatch 'DenyAllBuildingOwnerBootstrapWriter' -or
     $bootstrapCoordinator -notmatch 'IBuildingOperatorActiveAccountReader' -or
     $bootstrapCoordinator -notmatch '\[RemoteService\(IsEnabled\s*=\s*false\)\]' -or

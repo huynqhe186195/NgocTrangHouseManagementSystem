@@ -117,6 +117,10 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule // syst
         var configuration = context.Services.GetConfiguration();
         var hostingEnvironment = context.Services.GetHostingEnvironment();
 
+        // Server-controlled root IDs; default EMPTY, no permission/role seed.
+        context.Services.Configure<BuildingManagement.Security.BuildingOwnerBootstrapSecurityOptions>(
+            configuration.GetSection("BuildingManagement:Bootstrap"));
+
         Configure<AbpMvcLibsOptions>(options =>
         {
             options.CheckLibs = false;

@@ -7,6 +7,8 @@ using Volo.Abp.Authorization;
 using Volo.Abp.Authorization.Permissions;
 using Volo.Abp.DependencyInjection;
 using Volo.Abp.Users;
+using Microsoft.Extensions.Options;
+using System.Collections.Generic;
 
 namespace BuildingManagement.Security;
 
@@ -20,24 +22,41 @@ public interface IBuildingOwnerBootstrapPrincipalReader
     Task<Guid?> GetAuthorizedIssuerAsync();
 }
 
+/// <summary>
+/// Explicit root account allowlist, EMPTY by default. Being an ABP Admin
+/// never implies first-owner authority.
+/// </summary>
+public sealed class BuildingOwnerBootstrapSecurityOptions
+{
+    public HashSet<Guid> RootUserIds { get; set; } = new();
+}
+
 [ExposeServices(typeof(IBuildingOwnerBootstrapPrincipalReader))]
 public sealed class AbpBuildingOwnerBootstrapPrincipalReader :
     IBuildingOwnerBootstrapPrincipalReader, ITransientDependency
 {
     private readonly ICurrentUser _user;
     private readonly IPermissionChecker _permissions;
+    private readonly IOptions<BuildingOwnerBootstrapSecurityOptions> _roots;
 
     public AbpBuildingOwnerBootstrapPrincipalReader(
-        ICurrentUser user, IPermissionChecker permissions)
+        ICurrentUser user, IPermissionChecker permissions,
+        IOptions<BuildingOwnerBootstrapSecurityOptions> roots)
     {
         _user = user;
         _permissions = permissions;
+        _roots = roots;
     }
 
     public async Task<Guid?> GetAuthorizedIssuerAsync()
     {
         if (!_user.IsAuthenticated || !_user.Id.HasValue ||
             _user.Id.Value == Guid.Empty)
+            return null;
+
+        // BOTH explicit root account membership AND dedicated permission:
+        // there is no blanket administrator exception.
+        if (_roots.Value.RootUserIds?.Contains(_user.Id.Value) != true)
             return null;
 
         if (!await _permissions.IsGrantedAsync(

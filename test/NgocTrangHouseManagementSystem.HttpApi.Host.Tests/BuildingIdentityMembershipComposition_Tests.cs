@@ -309,6 +309,56 @@ public sealed class BuildingIdentityMembershipComposition_Tests
     }
 
     [Fact]
+    public async Task IDMEM12_Only_Explicit_Root_And_Permission_Can_Create_First_Owner()
+    {
+        await using var f = await Fixture.CreateAsync();
+        var roots = new BuildingOwnerBootstrapSecurityOptions();
+        var issuer = new AbpBuildingOwnerBootstrapPrincipalReader(
+            f.CurrentUser, f.PermissionChecker, Options.Create(roots));
+        var coordinator = new BuildingOwnerBootstrapCoordinator(
+            issuer, f.AccountProbe,
+            new EfBuildingOwnerBootstrapAtomicWriter(f.StoreReader));
+        var input = new CreateBuildingDto
+        {
+            Name = "Root bootstrap", Address = "SQLite scratch only"
+        };
+
+        // Even BootstrapOwner role permission is insufficient without
+        // explicit server-side root designation.
+        f.Permissions.Allowed.Add(
+            BuildingManagementPermissions.Buildings.BootstrapOwner);
+        await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+            coordinator.CreateWithCurrentOwnerAsync(input));
+
+        roots.RootUserIds.Add(f.Actor);
+        f.Permissions.Allowed.Clear();
+        await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+            coordinator.CreateWithCurrentOwnerAsync(input));
+
+        f.Permissions.Allowed.Add(
+            BuildingManagementPermissions.Buildings.BootstrapOwner);
+        var created = await coordinator.CreateWithCurrentOwnerAsync(input);
+        await using (var verify = f.Store.Open())
+        {
+            var grant = await verify.Grants.SingleAsync(g =>
+                g.BuildingId == created.Id);
+            Assert.Equal(f.Actor, grant.OperatorUserId);
+            Assert.Equal(f.Actor, grant.GrantedByUserId);
+            Assert.Equal(3, await verify.Buildings.CountAsync());
+        }
+
+        f.Principal.User = f.Other;
+        await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+            coordinator.CreateWithCurrentOwnerAsync(input));
+        f.Principal.User = f.Actor;
+        f.Accounts[f.Actor].SetIsActive(false);
+        await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+            coordinator.CreateWithCurrentOwnerAsync(input));
+        await using (var verify = f.Store.Open())
+            Assert.Equal(3, await verify.Buildings.CountAsync());
+    }
+
+    [Fact]
     public async Task IDMEM10_Production_DI_Does_Not_Use_Identity_Or_Grant_Candidates()
     {
         // The cross-building positives above are ONLY for explicitly

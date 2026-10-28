@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using BuildingManagement.Security;
 using Microsoft.AspNetCore.Authorization;
@@ -24,15 +25,18 @@ public sealed class SliceAStagingOperatorGrantsController : ControllerBase
     private readonly IHostEnvironment _environment;
     private readonly IConfiguration _configuration;
     private readonly BuildingOperatorChangeCoordinator _changes;
+    private readonly SliceAStagingOperatorGrantQuery _query;
 
     public SliceAStagingOperatorGrantsController(
         IHostEnvironment environment,
         IConfiguration configuration,
-        BuildingOperatorChangeCoordinator changes)
+        BuildingOperatorChangeCoordinator changes,
+        SliceAStagingOperatorGrantQuery query)
     {
         _environment = environment;
         _configuration = configuration;
         _changes = changes;
+        _query = query;
     }
 
     [HttpPost]
@@ -55,6 +59,17 @@ public sealed class SliceAStagingOperatorGrantsController : ControllerBase
         ArgumentNullException.ThrowIfNull(input);
         await _changes.RevokeAsync(
             input.BuildingId, input.OperatorUserId, input.ExpectedRevision);
+    }
+
+    [HttpGet("{buildingId:guid}")]
+    [UnitOfWork]
+    public async Task<IReadOnlyList<OperatorGrantListItem>> GetAsync(
+        [FromRoute] Guid buildingId,
+        [FromQuery] int skipCount = 0,
+        [FromQuery] int maxResultCount = 50)
+    {
+        RequireIsolatedStaging();
+        return await _query.GetAsync(buildingId, skipCount, maxResultCount);
     }
 
     private void RequireIsolatedStaging()

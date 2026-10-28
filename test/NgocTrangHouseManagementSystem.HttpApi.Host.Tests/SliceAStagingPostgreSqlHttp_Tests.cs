@@ -370,12 +370,21 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 await using var db = new NgocTrangHouseManagementSystemDbContext(
                     new DbContextOptionsBuilder<NgocTrangHouseManagementSystemDbContext>()
                         .UseNpgsql(idCs).Options);
-                var user = await db.Users.SingleAsync(x => x.Id == operatorB);
-                user.SetIsActive(active);
-                db.Entry(user).Property(x => x.LockoutEnabled).CurrentValue = locked;
-                db.Entry(user).Property(x => x.LockoutEnd).CurrentValue =
-                    locked ? DateTimeOffset.UtcNow.AddMinutes(15) : (DateTimeOffset?)null;
-                await db.SaveChangesAsync();
+                var until = locked ? DateTimeOffset.UtcNow.AddMinutes(15)
+                    : (DateTimeOffset?)null;
+                // This manually instantiated ABP DbContext has no injected
+                // DbSet/ABP audit services. Update ONLY the test-generated
+                // Identity database through a parameterized SQL statement.
+                // Subsequent HTTP requests load fresh records via the real
+                // ABP Identity repository and IdentityUserManager.
+                var updated = await db.Database.ExecuteSqlInterpolatedAsync($"""
+                    UPDATE "AbpUsers"
+                       SET "IsActive" = {active},
+                           "LockoutEnabled" = {locked},
+                           "LockoutEnd" = {until}
+                     WHERE "Id" = {operatorB}
+                    """);
+                Assert.Equal(1, updated);
             }
             async Task SetReadPermissionAsync(bool enabled)
             {

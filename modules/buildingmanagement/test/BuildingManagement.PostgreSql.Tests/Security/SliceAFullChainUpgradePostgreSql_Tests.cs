@@ -86,14 +86,14 @@ public sealed class SliceAFullChainUpgradePostgreSql_Tests
                     ("Id","Name","Address","ExtraProperties","ConcurrencyStamp",
                      "CreationTime","IsDeleted")
                     VALUES ({existingA}, {"Existing Building A"}, {"Old address A"},
-                            '{{}}', {Guid.NewGuid().ToString("N")}, CURRENT_TIMESTAMP, FALSE)
+                            {"{}"}, {Guid.NewGuid().ToString("N")}, CURRENT_TIMESTAMP, FALSE)
                     """);
                 await existing.Database.ExecuteSqlInterpolatedAsync($"""
                     INSERT INTO "Buildings"
                     ("Id","Name","Address","ExtraProperties","ConcurrencyStamp",
                      "CreationTime","IsDeleted")
                     VALUES ({existingB}, {"Existing Building B"}, {"Old address B"},
-                            '{{}}', {Guid.NewGuid().ToString("N")}, CURRENT_TIMESTAMP, FALSE)
+                            {"{}"}, {Guid.NewGuid().ToString("N")}, CURRENT_TIMESTAMP, FALSE)
                     """);
             }
 

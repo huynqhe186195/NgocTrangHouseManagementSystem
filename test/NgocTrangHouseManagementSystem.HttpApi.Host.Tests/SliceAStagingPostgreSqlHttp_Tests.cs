@@ -1561,6 +1561,34 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 RenewalRoute(cancelContract), payload))
                 Assert.NotEqual(HttpStatusCode.OK, response.StatusCode);
 
+            // Reservation creation is scoped to existing tenant provenance:
+            // operator B may reserve only a B room for a B-linked tenant.
+            var reservationRoute = scopedContracts + "/reservations";
+            string ReservationJson(Guid roomId, Guid tenantId) =>
+                JsonSerializer.Serialize(new {
+                    reservationNumber = "RES-STAGE-" + Guid.NewGuid().ToString("N"),
+                    roomId, tenantId, expectedMoveInDate = "2027-11-01T00:00:00Z",
+                    quotedMonthlyRent = 2800000m,
+                    requiredDepositAmount = 3000000m,
+                    minimumReservationDepositAmount = 500000m
+                });
+            async Task<HttpStatusCode> TryReserveAsync(Guid roomId, Guid tenantId)
+            {
+                using var payload = new StringContent(
+                    ReservationJson(roomId, tenantId), Encoding.UTF8,
+                    "application/json");
+                using var response = await clientB.PostAsync(reservationRoute, payload);
+                return response.StatusCode;
+            }
+            Assert.Equal(HttpStatusCode.Forbidden,
+                await TryReserveAsync(roomA, tenantB));
+            Assert.Equal(HttpStatusCode.Forbidden,
+                await TryReserveAsync(roomB, tenantA));
+            Assert.Equal(HttpStatusCode.Forbidden,
+                await TryReserveAsync(roomB, Guid.NewGuid()));
+            Assert.Equal(HttpStatusCode.OK,
+                await TryReserveAsync(roomB, tenantB));
+
             // Identity Contracts.Manage DELETE cannot pass a Building write
             // transaction's permission lease. After revocation commits,
             // a fresh POST fails even if ABP's cache still says granted.

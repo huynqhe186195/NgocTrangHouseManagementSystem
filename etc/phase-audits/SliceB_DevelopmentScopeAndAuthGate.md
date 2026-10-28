@@ -468,3 +468,15 @@ in a generated schema inside one rollback-only transaction, probing invalid
 draft references, cross-contract allocation, over-allocation, duplicate
 receipts, false closeout flags and rollback of populated history. No
 production, application DB, payment processor, or unscoped API is touched.
+
+## Entire runtime EF financial migration chain verification
+
+`SliceBFullFinancialMigrationChainPostgreSql_Tests.SBCHAIN01` additionally
+creates a random dedicated PostgreSQL database (not just a scratch schema),
+executes `BuildingManagementDbContext.Database.MigrateAsync()` through the
+new final finance migration, verifies real tables/FK/terms constraints, rolls
+back only the empty Slice B financial migrations to Slice A's final recovery
+migration, confirms invoice draft and membership tables survive unchanged,
+then upgrades the real chain again and finally drops only its own database.
+This is a CI-only opt-in using an ephemeral container and createdb-capable
+test role. It never runs on a user or production database.

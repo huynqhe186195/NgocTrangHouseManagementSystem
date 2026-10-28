@@ -130,6 +130,12 @@ jobs:
             --filter "FullyQualifiedName~BuildingOperatorGrantCandidatePostgreSql_Tests|FullyQualifiedName~BuildingOperatorGrantConcurrencyPostgreSql_Tests|FullyQualifiedName~SliceAGrantEfMigrationPostgreSql_Tests|FullyQualifiedName~SliceAFullChainUpgradePostgreSql_Tests" \
             --logger "console;verbosity=normal"
 
+      - name: Full Slice B real EF migration chain in disposable PostgreSQL database
+        run: |
+          dotnet test modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/BuildingManagement.PostgreSql.Tests.csproj \
+            --filter "FullyQualifiedName~SliceBFullFinancialMigrationChainPostgreSql_Tests" \
+            --logger "console;verbosity=normal"
+
       - name: Slice B staged final invoice evidence PostgreSQL rollback probes
         run: |
           dotnet test modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/BuildingManagement.PostgreSql.Tests.csproj \

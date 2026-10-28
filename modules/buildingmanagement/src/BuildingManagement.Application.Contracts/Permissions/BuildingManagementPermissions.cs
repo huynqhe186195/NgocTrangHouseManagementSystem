@@ -19,6 +19,8 @@ public class BuildingManagementPermissions
         public const string RevokeOperators = GroupName + ".Buildings.RevokeOperators";
         // Never assigned automatically. Dedicated, audited first-owner provisioning only.
         public const string BootstrapOwner = GroupName + ".Buildings.BootstrapOwner";
+        // Separate from BootstrapOwner: recovery co-signers cannot create buildings.
+        public const string CoSignOwnerRecovery = GroupName + ".Buildings.CoSignOwnerRecovery";
     }
 
     public static class Floors

@@ -16,11 +16,11 @@
 
 ## 2. Cross-database Identity transaction lease
 
-- `SliceAStagingIdentityCommitLease` starts an independent read-committed transaction in the **isolated Identity PostgreSQL database**, selects the enabled user row `FOR SHARE`, and also locks the **explicit direct-user ABP permission grant row** for the exact Building/Floor/Room mutation capability. Missing row fails closed (no role-claim-only bypass).
+- `SliceAStagingIdentityCommitLease` starts an independent read-committed transaction in the **isolated Identity PostgreSQL database** and locks the enabled user row `FOR SHARE`. It accepts the exact Building/Floor/Room mutation capability only when it locks either (a) a real direct-user `AbpPermissionGrants` row, or (b) the persisted `AbpUserRoles`, `AbpRoles` and role-provider `AbpPermissionGrants` rows together. It compares `TenantId` to the real Identity user and role; a role name claim without matching tenant-bound rows fails closed.
 - The Building writer still locks the operator-building membership row in the **Building database** and revalidates account/permission after the mutation. Identity row locks remain held through Building Unit-of-Work commit, then are released by `OnCompleted`; failed or disposed units close the lease.
-- Direct Identity account `UPDATE` and direct-user permission `UPDATE/DELETE` conflict with those locks; the race is serialized by PostgreSQL row locks. Tests must assert that the Identity mutation waits for Building commit and that later requests are denied.
-- This **is not 2PC/XA**. Role-level permission changes, role membership, privileged direct SQL, out-of-band cache mutation, grant bootstrap/delegation mutations and uncoordinated migrations are not all protected by this Building CRUD lease. A privileged DBA can bypass these rules. These paths remain HOLD for production.
-- Lock order: **Identity user + direct permission row → Building membership → Building business mutation**. Do not introduce inverse lock acquisition in revocation services.
+- Direct Identity account `UPDATE`, direct-user permission `UPDATE/DELETE`, the selected role permission `UPDATE/DELETE`, user-role membership `UPDATE/DELETE`, and selected role rename/delete conflict with held row locks. Isolated PostgreSQL HTTP tests check the account, direct permission, role-permission and role-membership revocation waits through Building commit and that stale claims cannot authorize a subsequent write.
+- This **is not 2PC/XA**. The selected persisted role grant and membership row are protected, but new or alternative role grants, concurrent role creation, privileged direct SQL, out-of-band cache mutation, grant bootstrap/delegation mutations and uncoordinated migrations are NOT covered by this Building CRUD lease. A privileged DBA can bypass these rules. These paths remain HOLD for production.
+- Lock order: **Identity user → direct permission OR selected user-role/role/role-permission rows → Building membership → Building business mutation**. Do not introduce inverse lock acquisition in revocation services.
 
 ## 3. PostgreSQL runtime role verification
 
@@ -29,6 +29,18 @@ The CI role test uses a freshly generated `LOGIN` account with non-owner credent
 **Required before actual staging/production acceptance:** a separate deployment owner must provision and inspect actual effective DB roles, including inherited membership and ownership. The runtime web account must not own the Building schema, signoff/grant tables, functions or triggers, and must have no superuser, `CREATEDB`, `CREATEROLE` or schema DDL permission. Runtime identity and Building accounts must be separate from migration/administrative credentials. Audit both databases using a *read-only* session as the actual service login; capture `current_user`, `session_user`, `pg_roles`, effective `has_table_privilege`/`has_column_privilege`, schema ownership and trigger enablement. Do not paste secrets into reports.
 
 An actual deployed-role audit is **not PASS** merely because CI runs on an isolated role. No commands here grant/revoke privileges on a non-test database.
+
+### Read-only operator attestation SQL
+
+The version-controlled `etc/phase-audits/SliceA_RuntimeDbRole_ReadOnlyAudit.sql` is one `SELECT` against the **current effective login** (not `SET ROLE`). It checks both Building grant and recovery signoff tables, their enabled immutable-history guard triggers, runtime schema/table/function ownership, inherited owner membership, privilege escalation through column grants, and administrative role bits. It returns separate `role_pass`, `grant_pass`, `recovery_pass`, and overall `slice_a_role_pass`. Missing objects or unexpected authority fail closed.
+
+Run only during a **separately approved isolated staging/deployment review** using the real, independently provided runtime service-login credentials; do not supply administrator or migration credentials. Example from an approved PowerShell shell with connection secrets supplied securely by the operator (e.g., a permissions-restricted PGPASSFILE):
+
+```powershell
+psql -X -v ON_ERROR_STOP=1 -f .\etc\phase-audits\SliceA_RuntimeDbRole_ReadOnlyAudit.sql
+```
+
+Require `session_login = runtime_login` and all four flags `true`, confirm expected database + search_path and retain a signed audit record. The script performs **zero writes** and never provisions a role. Its negative-path CI test grants an unsafe immutable-column `UPDATE` to a disposable login and verifies the attestation flips to `FALSE`. Production approval additionally needs a separately approved audit of the **Identity database service-login role**, since Building-only permissions cannot attest Identity credentials.
 
 ## 4. Safe validation
 

@@ -25,13 +25,13 @@ public sealed class SliceAStagingOperatorGrantsController : ControllerBase
     private readonly IHostEnvironment _environment;
     private readonly IConfiguration _configuration;
     private readonly BuildingOperatorChangeCoordinator _changes;
-    private readonly SliceAStagingOperatorGrantQuery _query;
+    private readonly SliceAStagingOperatorGrantQuery? _query;
 
     public SliceAStagingOperatorGrantsController(
         IHostEnvironment environment,
         IConfiguration configuration,
         BuildingOperatorChangeCoordinator changes,
-        SliceAStagingOperatorGrantQuery query)
+        SliceAStagingOperatorGrantQuery? query = null)
     {
         _environment = environment;
         _configuration = configuration;
@@ -69,6 +69,9 @@ public sealed class SliceAStagingOperatorGrantsController : ControllerBase
         [FromQuery] int maxResultCount = 50)
     {
         RequireIsolatedStaging();
+        if (_query is null)
+            throw new AbpAuthorizationException(
+                "Scoped grant history is disabled without isolated PostgreSQL adapters.");
         return await _query.GetAsync(buildingId, skipCount, maxResultCount);
     }
 

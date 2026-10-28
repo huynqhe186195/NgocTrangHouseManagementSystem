@@ -89,6 +89,44 @@ public sealed class EfBuildingOwnerRecoveryAtomicWriter :
             }
 
             var now = _clock.GetUtcNow().UtcDateTime;
+            // Both signatures are persisted independently by authenticated
+            // server principals. Lock matching evidence rows BEFORE issuing
+            // any grant; serialized consumption prevents replay and races.
+            var seen = new System.Collections.Generic.HashSet<Guid>();
+            await using (var signoffs = conn.CreateCommand())
+            {
+                signoffs.Transaction = transaction.GetDbTransaction();
+                signoffs.CommandText = """
+                    SELECT "ApprovedByUserId"
+                      FROM "BuildingManagementOwnerRecoverySignoffs"
+                     WHERE "EvidenceId" = @evidence AND "BuildingId" = @building
+                       AND "FoundingOwnerId" = @founder AND "NewOwnerId" = @recipient
+                       AND "ApprovedByUserId" IN (@first, @second)
+                       AND "ConsumedAtUtc" IS NULL AND "ExpiresAtUtc" > @now
+                     FOR UPDATE
+                    """;
+                void Add(string name, object value)
+                {
+                    var parameter = signoffs.CreateParameter();
+                    parameter.ParameterName = name;
+                    parameter.Value = value;
+                    signoffs.Parameters.Add(parameter);
+                }
+                Add("evidence", approvalEvidenceId);
+                Add("building", buildingId);
+                Add("founder", originalOwnerId);
+                Add("recipient", newOwnerId);
+                Add("first", firstApprovedRootId);
+                Add("second", secondApprovedRootId);
+                Add("now", now);
+                await using var rows = await signoffs.ExecuteReaderAsync();
+                while (await rows.ReadAsync())
+                    seen.Add(rows.GetGuid(0));
+            }
+            if (seen.Count != 2 || !seen.Contains(firstApprovedRootId) ||
+                !seen.Contains(secondApprovedRootId))
+                throw Denied();
+
             var grant = BuildingOperatorAccessGrant.Issue(
                 Guid.NewGuid(), newOwnerId, buildingId,
                 firstApprovedRootId, now, null);
@@ -103,6 +141,20 @@ public sealed class EfBuildingOwnerRecoveryAtomicWriter :
                 originalOwnerId.ToString("D"));
             _db.Set<BuildingOperatorAccessGrant>().Add(grant);
             await _db.SaveChangesAsync();
+            // Consume exactly the same two approval rows IN this Building
+            // transaction. Failure rolls back both new grant and evidence.
+            var consumed = await _db.Database.ExecuteSqlInterpolatedAsync($"""
+                UPDATE "BuildingManagementOwnerRecoverySignoffs"
+                   SET "ConsumedAtUtc" = {now}, "RecoveryGrantId" = {grant.Id}
+                 WHERE "EvidenceId" = {approvalEvidenceId}
+                   AND "BuildingId" = {buildingId}
+                   AND "FoundingOwnerId" = {originalOwnerId}
+                   AND "NewOwnerId" = {newOwnerId}
+                   AND "ApprovedByUserId" IN ({firstApprovedRootId}, {secondApprovedRootId})
+                   AND "ConsumedAtUtc" IS NULL
+                """);
+            if (consumed != 2)
+                throw Denied();
             if (owned is not null)
                 await owned.CommitAsync();
             return grant.Id;

@@ -1,0 +1,183 @@
+using System;
+using System.Data.Common;
+using System.Threading.Tasks;
+using BuildingManagement.Contracts;
+using BuildingManagement.EntityFrameworkCore;
+using BuildingManagement.EntityFrameworkCore.Security;
+using BuildingManagement.Security;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
+using Volo.Abp.Authorization;
+using Volo.Abp.EntityFrameworkCore;
+using Volo.Abp.Users;
+
+namespace NgocTrangHouseManagementSystem.Security;
+
+/// <summary>
+/// Explicit, isolated-staging-only draft contract mutation adapter.
+/// NOT a global replacement for the unscoped legacy contract service.
+/// Requires BOTH active ABP Contracts.Manage (locked until Building commit)
+/// and live building membership (FOR SHARE until Building commit).
+/// Room/floor links and the current contract row are also locked in the
+/// SAME Building transaction to prevent a cross-building TOCTOU change.
+/// </summary>
+public sealed class SliceBStagingContractMutation
+{
+    private readonly IDbContextProvider<BuildingManagementDbContext> _provider;
+    private readonly IBuildingCrudAccessPolicy _policy;
+    private readonly IBuildingBusinessResourceScopeReader _resources;
+    private readonly ICurrentUser _user;
+    private readonly SliceAStagingIdentityCommitLease _identity;
+    private readonly IContractAppService _contracts;
+
+    public SliceBStagingContractMutation(
+        IDbContextProvider<BuildingManagementDbContext> provider,
+        IBuildingCrudAccessPolicy policy,
+        IBuildingBusinessResourceScopeReader resources,
+        ICurrentUser user,
+        SliceAStagingIdentityCommitLease identity,
+        IContractAppService contracts)
+    {
+        _provider = provider;
+        _policy = policy;
+        _resources = resources;
+        _user = user;
+        _identity = identity;
+        _contracts = contracts;
+    }
+
+    public async Task<ContractDto> CreateAsync(CreateContractDto input)
+    {
+        if (input is null || input.RoomId == Guid.Empty)
+            throw Denied();
+        var actor = RequireActor();
+        var initial = await ResolveAsync(BuildingBusinessResourceKind.Room, input.RoomId);
+        await _policy.EnsureResourceAsync(BuildingBusinessResourceKind.Room,
+            input.RoomId, BuildingBusinessCapability.ManageContract);
+        await _identity.AcquireContractManageAsync(actor);
+        var db = await _provider.GetDbContextAsync();
+        return await Fence(db).ExecuteAsync(actor, initial, async () =>
+        {
+            if (await LockRoomBuildingAsync(db, input.RoomId) != initial)
+                throw Denied();
+            return await _contracts.CreateAsync(input);
+        }, () => _policy.EnsureResourceAsync(BuildingBusinessResourceKind.Room,
+            input.RoomId, BuildingBusinessCapability.ManageContract));
+    }
+
+    public async Task<ContractDto> UpdateAsync(Guid id, UpdateContractDto input)
+    {
+        if (id == Guid.Empty || input is null || input.RoomId == Guid.Empty)
+            throw Denied();
+        var actor = RequireActor();
+        var sourceBuilding = await ResolveAsync(
+            BuildingBusinessResourceKind.Contract, id);
+        var targetBuilding = await ResolveAsync(
+            BuildingBusinessResourceKind.Room, input.RoomId);
+
+        // A change of building would require two independent membership
+        // row locks and a dedicated transfer protocol. For this first write
+        // vertical we explicitly forbid cross-building room transfers,
+        // including when the actor is a member of both buildings.
+        if (sourceBuilding != targetBuilding)
+            throw Denied();
+
+        await _policy.EnsureResourceAsync(BuildingBusinessResourceKind.Contract,
+            id, BuildingBusinessCapability.ManageContract);
+        await _policy.EnsureResourceAsync(BuildingBusinessResourceKind.Room,
+            input.RoomId, BuildingBusinessCapability.ManageContract);
+        await _identity.AcquireContractManageAsync(actor);
+        var db = await _provider.GetDbContextAsync();
+        return await Fence(db).ExecuteAsync(actor, sourceBuilding, async () =>
+        {
+            var existingRoomId = await LockContractRoomAsync(db, id);
+            var currentBuilding = await LockRoomBuildingAsync(db, existingRoomId);
+            if (currentBuilding != sourceBuilding ||
+                await LockRoomBuildingAsync(db, input.RoomId) != sourceBuilding)
+                throw Denied();
+            // The existing app service preserves its Draft-only validation,
+            // uniqueness checks, persistence and DTO contract.
+            return await _contracts.UpdateAsync(id, input);
+        }, async () =>
+        {
+            await _policy.EnsureResourceAsync(BuildingBusinessResourceKind.Contract,
+                id, BuildingBusinessCapability.ManageContract);
+            await _policy.EnsureResourceAsync(BuildingBusinessResourceKind.Room,
+                input.RoomId, BuildingBusinessCapability.ManageContract);
+        });
+    }
+
+    private EfBuildingScopedWriteFenceCandidate Fence(BuildingManagementDbContext db)
+        => new(db, TimeProvider.System);
+
+    private Guid RequireActor()
+    {
+        if (!_user.IsAuthenticated || _user.Id is not Guid actor ||
+            actor == Guid.Empty)
+            throw Denied();
+        return actor;
+    }
+
+    private async Task<Guid> ResolveAsync(
+        BuildingBusinessResourceKind kind, Guid id)
+    {
+        var result = await _resources.ReadAsync(kind, id);
+        if (result is null || result.ResourceId != id ||
+            result.BuildingId == Guid.Empty)
+            throw Denied();
+        return result.BuildingId;
+    }
+
+    private static async Task<Guid> LockContractRoomAsync(
+        BuildingManagementDbContext db, Guid contractId)
+    {
+        await using var cmd = Command(db, """
+            SELECT c."RoomId" FROM "Contracts" AS c
+             WHERE c."Id" = @id AND c."IsDeleted" = FALSE
+             FOR UPDATE OF c
+            """);
+        AddId(cmd, contractId);
+        return await cmd.ExecuteScalarAsync() is Guid roomId && roomId != Guid.Empty
+            ? roomId : throw Denied();
+    }
+
+    private static async Task<Guid> LockRoomBuildingAsync(
+        BuildingManagementDbContext db, Guid roomId)
+    {
+        await using var cmd = Command(db, """
+            SELECT f."BuildingId"
+              FROM "Rooms" AS r
+              JOIN "Floors" AS f ON f."Id" = r."FloorId"
+              JOIN "Buildings" AS b ON b."Id" = f."BuildingId"
+             WHERE r."Id" = @id AND r."IsDeleted" = FALSE
+               AND f."IsDeleted" = FALSE AND b."IsDeleted" = FALSE
+             FOR SHARE OF r, f, b
+            """);
+        AddId(cmd, roomId);
+        return await cmd.ExecuteScalarAsync() is Guid buildingId && buildingId != Guid.Empty
+            ? buildingId : throw Denied();
+    }
+
+    private static DbCommand Command(BuildingManagementDbContext db, string sql)
+    {
+        if (!db.Database.IsNpgsql())
+            throw Denied();
+        var tx = db.Database.CurrentTransaction?.GetDbTransaction()
+            ?? throw Denied();
+        var cmd = db.Database.GetDbConnection().CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = sql;
+        return cmd;
+    }
+
+    private static void AddId(DbCommand command, Guid id)
+    {
+        var parameter = command.CreateParameter();
+        parameter.ParameterName = "id";
+        parameter.Value = id;
+        command.Parameters.Add(parameter);
+    }
+
+    private static AbpAuthorizationException Denied()
+        => new("Draft contract change requires a current building-scoped Contracts.Manage grant.");
+}

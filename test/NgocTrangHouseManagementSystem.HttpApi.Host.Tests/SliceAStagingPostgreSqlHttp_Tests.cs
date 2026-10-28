@@ -202,6 +202,8 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     await permissions.SetForUserAsync(id,
                         BuildingManagementPermissions.Contracts.Read, true);
                     await permissions.SetForUserAsync(id,
+                        BuildingManagementPermissions.Contracts.Manage, true);
+                    await permissions.SetForUserAsync(id,
                         BuildingManagementPermissions.Floors.Read, true);
                     await permissions.SetForUserAsync(id,
                         BuildingManagementPermissions.Floors.Manage, true);
@@ -1707,6 +1709,7 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             context.Services.AddTransient<SliceAStagingIdentityCommitLease>();
             context.Services.AddTransient<SliceAStagingOperatorGrantQuery>();
             context.Services.AddTransient<SliceBStagingContractQuery>();
+            context.Services.AddTransient<SliceBStagingContractMutation>();
             context.Services.Replace(
                 ServiceDescriptor.Transient<IBuildingScopedWriteBoundary,
                     SliceAStagingWriteBoundary>());

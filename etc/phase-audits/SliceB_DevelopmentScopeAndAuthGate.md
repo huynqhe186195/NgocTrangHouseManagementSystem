@@ -72,3 +72,25 @@ verifies root's two-building listing, rejects oversize pagination and proves
 direct Contracts.Read revocation waits until the read UoW completes.
 Any legacy write/action remains intentionally blocked. This does **not**
 complete Slice B write authorization or tenant privacy.
+
+## Draft contract create/update write slice (isolated staging)
+
+The explicit staging contract controller now exposes POST and PUT **only**
+through `SliceBStagingContractMutation`; the legacy unscoped
+`ContractAppService` HTTP routes remain forbidden. The adapter:
+
+1. Rejects unauthenticated/invalid input; resolves the current Room/Contract
+   building from trusted repositories and checks `Contracts.Manage`.
+2. Holds a persisted ABP Identity permission/account lock through the Building
+   transaction commit. The existing PostgreSQL membership fence separately
+   locks the actor's grant through commit.
+3. Inside that SAME transaction, locks contract row (`FOR UPDATE` on update)
+   and live room/floor/building graph (`FOR SHARE`), comparing the graph with
+   the authorized building. Rechecks the permission+membership after mutation.
+4. Uses original `IContractAppService` Draft validation and persistence
+   inside the protected UnitOfWork, never a second independent commit.
+5. **Forbids cross-building moves**, even with two memberships, until a
+   separate two-building transfer protocol is designed.
+
+This does not unlock signing, renewal, activation, tenant linkage or
+reservation/deposit side effects.

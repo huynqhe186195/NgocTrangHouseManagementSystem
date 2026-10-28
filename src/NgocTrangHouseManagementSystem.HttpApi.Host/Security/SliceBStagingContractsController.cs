@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using BuildingManagement.Contracts;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
@@ -12,8 +13,9 @@ using Volo.Abp.Uow;
 namespace NgocTrangHouseManagementSystem.Security;
 
 /// <summary>
-/// Read-only, isolated-staging-only Slice B entrypoint. This does NOT
-/// enable the legacy unscoped contract controller or any contract mutation.
+/// Isolated-staging-only Slice B contract entrypoint. This does NOT
+/// enable the legacy unscoped contract controller or arbitrary mutations.
+/// Only create/update Draft contracts pass the separately fenced adapter.
 /// </summary>
 [ApiController]
 [Authorize]
@@ -23,14 +25,17 @@ public sealed class SliceBStagingContractsController : ControllerBase
     private readonly IHostEnvironment _environment;
     private readonly IConfiguration _configuration;
     private readonly SliceBStagingContractQuery? _query;
+    private readonly SliceBStagingContractMutation? _mutation;
 
     public SliceBStagingContractsController(
         IHostEnvironment environment, IConfiguration configuration,
-        SliceBStagingContractQuery? query = null)
+        SliceBStagingContractQuery? query = null,
+        SliceBStagingContractMutation? mutation = null)
     {
         _environment = environment;
         _configuration = configuration;
         _query = query;
+        _mutation = mutation;
     }
 
     [HttpGet]
@@ -48,6 +53,27 @@ public sealed class SliceBStagingContractsController : ControllerBase
     {
         RequireIsolatedStaging();
         return _query!.GetAsync(id);
+    }
+
+    [HttpPost]
+    [UnitOfWork(true)]
+    public Task<ContractDto> CreateAsync([FromBody] CreateContractDto input)
+    {
+        RequireIsolatedStaging();
+        if (_mutation is null)
+            throw Denied();
+        return _mutation.CreateAsync(input);
+    }
+
+    [HttpPut("{id:guid}")]
+    [UnitOfWork(true)]
+    public Task<ContractDto> UpdateAsync(
+        [FromRoute] Guid id, [FromBody] UpdateContractDto input)
+    {
+        RequireIsolatedStaging();
+        if (_mutation is null)
+            throw Denied();
+        return _mutation.UpdateAsync(id, input);
     }
 
     private void RequireIsolatedStaging()

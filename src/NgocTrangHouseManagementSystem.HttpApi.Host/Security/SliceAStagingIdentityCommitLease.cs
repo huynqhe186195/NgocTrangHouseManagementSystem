@@ -124,6 +124,15 @@ public sealed class SliceAStagingIdentityCommitLease
         => AcquirePermissionAsync(authenticatedOperatorId,
             BuildingManagementPermissions.Contracts.Read, null);
 
+    /// <summary>
+    /// Contract draft creation/update has a distinct operation permission.
+    /// Keep its persisted Identity grant and active account under a SHARE
+    /// lease until the corresponding Building mutation commits.
+    /// </summary>
+    public Task AcquireContractManageAsync(Guid authenticatedOperatorId)
+        => AcquirePermissionAsync(authenticatedOperatorId,
+            BuildingManagementPermissions.Contracts.Manage, null);
+
     public Task AcquireAsync(
         Guid trustedUserId, BuildingBusinessCapability capability)
         => AcquirePermissionAsync(trustedUserId, capability switch

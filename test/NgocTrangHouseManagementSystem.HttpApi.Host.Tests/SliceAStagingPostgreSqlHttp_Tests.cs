@@ -1064,6 +1064,127 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 scopedContracts + "/" + contractC.ToString("D")))
                 Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
+            // Tenant IDs are globally shared PII identifiers, not proof
+            // of belonging to B. Seed A- and B-provenance in the SCRATCH
+            // PostgreSQL database and exercise actual authenticated HTTP.
+            var tenantA = Guid.NewGuid();
+            var tenantB = Guid.NewGuid();
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var db = await sp.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>()
+                    .GetDbContextAsync();
+                db.Tenants.AddRange(
+                    new BuildingManagement.Tenants.Tenant(
+                        tenantA, "Tenant A scratch", "090" + tenantA.ToString("N")[..7],
+                        null, null, null,
+                        BuildingManagement.Tenants.IdentityType.CitizenId,
+                        "CID-A-" + tenantA.ToString("N")),
+                    new BuildingManagement.Tenants.Tenant(
+                        tenantB, "Tenant B scratch", "091" + tenantB.ToString("N")[..7],
+                        null, null, null,
+                        BuildingManagement.Tenants.IdentityType.CitizenId,
+                        "CID-B-" + tenantB.ToString("N")));
+                db.ContractTenants.AddRange(
+                    new BuildingManagement.Contracts.ContractTenant(
+                        Guid.NewGuid(), contractA, tenantA,
+                        BuildingManagement.Contracts.ContractTenantRole.PrimaryTenant),
+                    new BuildingManagement.Contracts.ContractTenant(
+                        Guid.NewGuid(), contractB, tenantB,
+                        BuildingManagement.Contracts.ContractTenantRole.PrimaryTenant));
+                await db.SaveChangesAsync();
+                await uow.CompleteAsync();
+            }
+
+            string Members(Guid contractId) => scopedContracts + "/" +
+                contractId.ToString("D") + "/tenants";
+            using (var response = await clientB.GetAsync(Members(contractB)))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await response.Content.ReadAsStringAsync());
+                var rows = json.RootElement.EnumerateArray().ToArray();
+                Assert.Single(rows);
+                Assert.Equal(tenantB, rows[0].GetProperty("tenantId").GetGuid());
+                var body = await response.Content.ReadAsStringAsync();
+                Assert.DoesNotContain("Tenant B scratch", body);
+                Assert.DoesNotContain("CID-B-", body);
+            }
+            using (var response = await clientB.GetAsync(Members(contractA)))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var response = await clientRoot.GetAsync(Members(contractA)))
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+            string AddMember(Guid tenant, int role) =>
+                JsonSerializer.Serialize(new { tenantId = tenant, role });
+            async Task<HttpStatusCode> PostMemberAsync(
+                Guid contract, Guid tenant, int role)
+            {
+                using var content = new StringContent(AddMember(tenant, role),
+                    Encoding.UTF8, "application/json");
+                using var response = await clientB.PostAsync(Members(contract), content);
+                return response.StatusCode;
+            }
+            Assert.Equal(HttpStatusCode.Forbidden,
+                await PostMemberAsync(contractC, tenantA, 2));
+            Assert.Equal(HttpStatusCode.Forbidden,
+                await PostMemberAsync(contractC, Guid.NewGuid(), 2));
+            Assert.Equal(HttpStatusCode.Forbidden,
+                await PostMemberAsync(contractA, tenantA, 2));
+            Assert.Equal(HttpStatusCode.OK,
+                await PostMemberAsync(contractC, tenantB, 2));
+            using (var response = await clientB.GetAsync(Members(contractC)))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await response.Content.ReadAsStringAsync());
+                var rows = json.RootElement.EnumerateArray().ToArray();
+                Assert.Single(rows);
+                Assert.Equal(tenantB, rows[0].GetProperty("tenantId").GetGuid());
+            }
+            using (var payload = new StringContent("""{"role":1}""",
+                Encoding.UTF8, "application/json"))
+            using (var response = await clientB.PutAsync(
+                Members(contractC) + "/" + tenantB.ToString("D"), payload))
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            using (var response = await clientB.GetAsync(Members(contractC)))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await response.Content.ReadAsStringAsync());
+                var rows = json.RootElement.EnumerateArray().ToArray();
+                Assert.Single(rows);
+                Assert.Equal(1, rows[0].GetProperty("role").GetInt32());
+            }
+            using (var payload = new StringContent("""{"role":2}""",
+                Encoding.UTF8, "application/json"))
+            using (var response = await clientB.PutAsync(
+                Members(contractA) + "/" + tenantA.ToString("D"), payload))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var response = await clientB.DeleteAsync(
+                Members(contractA) + "/" + tenantA.ToString("D")))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var response = await clientB.DeleteAsync(
+                Members(contractC) + "/" + tenantB.ToString("D")))
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            using (var response = await clientB.GetAsync(Members(contractC)))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await response.Content.ReadAsStringAsync());
+                Assert.Empty(json.RootElement.EnumerateArray());
+            }
+            // Legacy service must restore a soft-deleted relation, never
+            // create a duplicate despite the contract/tenant unique index.
+            Assert.Equal(HttpStatusCode.OK,
+                await PostMemberAsync(contractC, tenantB, 2));
+            using (var response = await clientB.DeleteAsync(
+                Members(contractC) + "/" + tenantB.ToString("D")))
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
             // Identity Contracts.Manage DELETE cannot pass a Building write
             // transaction's permission lease. After revocation commits,
             // a fresh POST fails even if ABP's cache still says granted.

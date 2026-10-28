@@ -95,8 +95,9 @@ public sealed class SliceBDepositCloseoutPostgreSql_Tests
             // deposit Refund/Forfeit settlement is already completed.
             await ExecAsync(db, tx, $"""
                 INSERT INTO "BuildingManagementInvoicePaymentAllocationJournal"
-                    ("Id","IssuedInvoiceId","Amount")
-                VALUES ('{Guid.NewGuid():D}','{f.InvoiceId:D}', 999999);
+                    ("Id","PaymentId","IssuedInvoiceId","ContractId","Amount")
+                VALUES ('{Guid.NewGuid():D}','{f.PaymentId:D}',
+                        '{f.InvoiceId:D}','{f.ContractId:D}',999999);
                 """);
             await DeniedAsync(db, tx, ApprovalSql(f), "23514");
 

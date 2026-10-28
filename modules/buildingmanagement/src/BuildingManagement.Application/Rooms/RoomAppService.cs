@@ -1,6 +1,7 @@
 ﻿using BuildingManagement.Contracts;
 using BuildingManagement.Buildings;
 using BuildingManagement.Security;
+using Volo.Abp.Authorization;
 using System.Linq;
 using BuildingManagement.Floors;
 using BuildingManagement.Utilities;
@@ -26,6 +27,8 @@ namespace BuildingManagement.Rooms
         private readonly IRepository<UtilityMeter, Guid> _utilityMeterRepository;
         private readonly IRepository<Building, Guid> _buildingRepository;
         private readonly IBuildingCrudAccessPolicy _access;
+        private readonly IBuildingBusinessResourceScopeReader _resourceScope;
+        private readonly IBuildingScopedWriteBoundary _writes;
 
         public RoomAppService(
     IRepository<Room, Guid> roomRepository,
@@ -33,7 +36,9 @@ namespace BuildingManagement.Rooms
     IRepository<Contract, Guid> contractRepository,
     IRepository<UtilityMeter, Guid> utilityMeterRepository,
     IRepository<Building, Guid> buildingRepository,
-    IBuildingCrudAccessPolicy access)
+    IBuildingCrudAccessPolicy access,
+    IBuildingBusinessResourceScopeReader resourceScope,
+    IBuildingScopedWriteBoundary writes)
         {
             _roomRepository = roomRepository;
             _floorRepository = floorRepository;
@@ -41,6 +46,8 @@ namespace BuildingManagement.Rooms
             _utilityMeterRepository = utilityMeterRepository;
             _buildingRepository = buildingRepository;
             _access = access;
+            _resourceScope = resourceScope;
+            _writes = writes;
         }
 
         public async Task<RoomDto> CreateAsync(
@@ -49,33 +56,21 @@ namespace BuildingManagement.Rooms
             await _access.EnsureResourceAsync(
                 BuildingBusinessResourceKind.Floor, input.FloorId,
                 BuildingBusinessCapability.ManageRoom);
-            var floor = await GetExistingFloorAsync(
-                input.FloorId
-            );
-
-            ValidateRoomNumber(
-                floor.FloorNumber,
-                input.RoomNumber
-            );
-
-            await EnsureRoomNumberUniqueAsync(input.FloorId, input.RoomNumber);
-
-            var room = new Room(
-                GuidGenerator.Create(),
-                input.FloorId,
-                input.RoomNumber,
-                input.Name,
-                input.Area,
-                input.Capacity,
-                input.Status,
-                input.Description
-            );
-
-            await _roomRepository.InsertAsync(room);
-
-            return ObjectMapper.Map<Room, RoomDto>(
-                room
-            );
+            var buildingId = await ResolveBuildingAsync(
+                BuildingBusinessResourceKind.Floor, input.FloorId);
+            return await _writes.ExecuteBuildingAsync(buildingId, async () =>
+            {
+                var floor = await GetExistingFloorAsync(input.FloorId);
+                if (floor.BuildingId != buildingId)
+                    throw new AbpAuthorizationException("Room parent moved.");
+                ValidateRoomNumber(floor.FloorNumber, input.RoomNumber);
+                await EnsureRoomNumberUniqueAsync(input.FloorId, input.RoomNumber);
+                var room = new Room(GuidGenerator.Create(), input.FloorId,
+                    input.RoomNumber, input.Name, input.Area, input.Capacity,
+                    input.Status, input.Description);
+                await _roomRepository.InsertAsync(room, autoSave: true);
+                return ObjectMapper.Map<Room, RoomDto>(room);
+            });
         }
 
         public async Task<RoomDto> GetAsync(Guid id)
@@ -122,36 +117,22 @@ namespace BuildingManagement.Rooms
             await _access.EnsureResourceAsync(
                 BuildingBusinessResourceKind.Room, id,
                 BuildingBusinessCapability.ManageRoom);
-            var room =
-                await GetExistingRoomAsync(id);
-
-            var floor =
-                await GetExistingFloorAsync(
-                    room.FloorId
-                );
-
-            ValidateRoomNumber(
-                floor.FloorNumber,
-                input.RoomNumber
-            );
-
-            await EnsureRoomNumberUniqueAsync(room.FloorId, input.RoomNumber, room.Id);
-
-            room.Update(
-                input.RoomNumber,
-                input.Name,
-                input.Area,
-                input.Capacity,
-                input.Status,
-                input.Description
-            );
-
-            await _roomRepository.UpdateAsync(room);
-
-            return ObjectMapper.Map<
-                Room,
-                RoomDto
-            >(room);
+            var buildingId = await ResolveBuildingAsync(
+                BuildingBusinessResourceKind.Room, id);
+            return await _writes.ExecuteBuildingAsync(buildingId, async () =>
+            {
+                var room = await GetExistingRoomAsync(id);
+                var floor = await GetExistingFloorAsync(room.FloorId);
+                if (floor.BuildingId != buildingId)
+                    throw new AbpAuthorizationException("Room scope changed.");
+                ValidateRoomNumber(floor.FloorNumber, input.RoomNumber);
+                await EnsureRoomNumberUniqueAsync(room.FloorId,
+                    input.RoomNumber, room.Id);
+                room.Update(input.RoomNumber, input.Name, input.Area,
+                    input.Capacity, input.Status, input.Description);
+                await _roomRepository.UpdateAsync(room, autoSave: true);
+                return ObjectMapper.Map<Room, RoomDto>(room);
+            });
         }
 
         public async Task DeleteAsync(Guid id)
@@ -159,70 +140,47 @@ namespace BuildingManagement.Rooms
             await _access.EnsureResourceAsync(
                 BuildingBusinessResourceKind.Room, id,
                 BuildingBusinessCapability.ManageRoom);
-            var room =
-                await GetExistingRoomAsync(id);
-
-            var hasActiveContract =
-                await _contractRepository.AnyAsync(
-                    x =>
-                        x.RoomId == id
-                        &&
-                        x.Status == ContractStatus.Active
-                );
-
-            if (hasActiveContract)
+            var buildingId = await ResolveBuildingAsync(
+                BuildingBusinessResourceKind.Room, id);
+            await _writes.ExecuteBuildingAsync(buildingId, async () =>
             {
-                throw new BusinessException(
-                    BuildingManagementErrorCodes
-                        .RoomHasActiveContract
-                );
-            }
+                var room = await GetExistingRoomAsync(id);
+                var floor = await GetExistingFloorAsync(room.FloorId);
+                if (floor.BuildingId != buildingId)
+                    throw new AbpAuthorizationException("Room scope changed.");
+                if (await _contractRepository.AnyAsync(x =>
+                    x.RoomId == id && x.Status == ContractStatus.Active))
+                    throw new BusinessException(
+                        BuildingManagementErrorCodes.RoomHasActiveContract);
+                if (await _utilityMeterRepository.AnyAsync(x =>
+                    x.RoomId == id && x.IsActive))
+                    throw new BusinessException(
+                        BuildingManagementErrorCodes.RoomHasActiveUtilityMeter);
+                var hasContract = await _contractRepository.AnyAsync(
+                    x => x.RoomId == id);
+                var hasMeter = await _utilityMeterRepository.AnyAsync(
+                    x => x.RoomId == id);
+                if (hasContract || hasMeter)
+                {
+                    room.ChangeStatus(RoomStatus.Inactive);
+                    await _roomRepository.UpdateAsync(room, autoSave: true);
+                }
+                else
+                {
+                    await _roomRepository.DeleteAsync(room, autoSave: true);
+                }
+                return true;
+            });
+        }
 
-            var hasActiveUtilityMeter =
-                await _utilityMeterRepository.AnyAsync(
-                    x =>
-                        x.RoomId == id
-                        &&
-                        x.IsActive
-                );
-
-            if (hasActiveUtilityMeter)
-            {
-                throw new BusinessException(
-                    BuildingManagementErrorCodes
-                        .RoomHasActiveUtilityMeter
-                );
-            }
-
-            var hasAnyContract =
-                await _contractRepository.AnyAsync(
-                    x => x.RoomId == id
-                );
-
-            var hasAnyUtilityMeter =
-                await _utilityMeterRepository.AnyAsync(
-                    x => x.RoomId == id
-                );
-
-            if (hasAnyContract ||
-                hasAnyUtilityMeter)
-            {
-                room.ChangeStatus(
-                    RoomStatus.Inactive
-                );
-
-                await _roomRepository.UpdateAsync(
-                    room,
-                    autoSave: true
-                );
-
-                return;
-            }
-
-            await _roomRepository.DeleteAsync(
-                room,
-                autoSave: true
-            );
+        private async Task<Guid> ResolveBuildingAsync(
+            BuildingBusinessResourceKind kind, Guid resourceId)
+        {
+            var scope = await _resourceScope.ReadAsync(kind, resourceId);
+            if (scope is null || scope.ResourceId != resourceId ||
+                scope.BuildingId == Guid.Empty)
+                throw new AbpAuthorizationException("Room/Building scope unavailable.");
+            return scope.BuildingId;
         }
 
         // floor 1 -> room 101, room 102 || floor 2 -> room 201, room 202

@@ -192,6 +192,12 @@ if ($buildingCrud -notmatch 'CreateWithCurrentOwnerAsync' -or
     $atomicWriter -notmatch 'RollbackAsync') {
     throw 'Safety stop: building owner creation lost privilege, transaction or default-deny safeguards.'
 }
+if (([regex]::Matches($floorCrud, 'ExecuteBuildingAsync')).Count -lt 3 -or
+    ([regex]::Matches($roomCrud, 'ExecuteBuildingAsync')).Count -lt 3 -or
+    $floorCrud -notmatch 'ResolveBuildingAsync' -or
+    $roomCrud -notmatch 'ResolveBuildingAsync') {
+    throw 'Safety stop: Floor/Room mutating paths are not transaction-fenced.'
+}
 if ($floorCrud -notmatch 'EnsureBuildingAsync' -or
     $floorCrud -notmatch 'AsyncExecuter.ToListAsync' -or
     $roomCrud -notmatch 'AsyncExecuter.ToListAsync') {

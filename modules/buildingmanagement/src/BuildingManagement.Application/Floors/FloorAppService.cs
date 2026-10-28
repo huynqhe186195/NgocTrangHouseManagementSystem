@@ -1,6 +1,7 @@
 ﻿using BuildingManagement.Buildings;
 using BuildingManagement.Rooms;
 using BuildingManagement.Security;
+using Volo.Abp.Authorization;
 using System.Linq;
 using System;
 using System.Collections.Generic;
@@ -22,17 +23,23 @@ namespace BuildingManagement.Floors
         private readonly IRepository<Building, Guid> _buildingRepository;
         private readonly IRepository<Room, Guid> _roomRepository;
         private readonly IBuildingCrudAccessPolicy _access;
+        private readonly IBuildingBusinessResourceScopeReader _resourceScope;
+        private readonly IBuildingScopedWriteBoundary _writes;
 
         public FloorAppService(
             IRepository<Floor, Guid> floorRepository,
             IRepository<Building, Guid> buildingRepository,
             IRepository<Room, Guid> roomRepository,
-            IBuildingCrudAccessPolicy access)
+            IBuildingCrudAccessPolicy access,
+            IBuildingBusinessResourceScopeReader resourceScope,
+            IBuildingScopedWriteBoundary writes)
         {
             _floorRepository = floorRepository;
             _buildingRepository = buildingRepository;
             _roomRepository = roomRepository;
             _access = access;
+            _resourceScope = resourceScope;
+            _writes = writes;
         }
 
         public async Task<FloorDto> CreateAsync(
@@ -40,29 +47,17 @@ namespace BuildingManagement.Floors
         {
             await _access.EnsureBuildingAsync(
                 input.BuildingId, BuildingBusinessCapability.ManageFloor);
-            // Kiểm tra Building có tồn tại không
-            await EnsureBuildingExistsAsync(
-    input.BuildingId
-);
-            // Check exits floor
-            await EnsureFloorNumberUniqueAsync(input.BuildingId, input.FloorNumber);
-
-            var floor = new Floor(
-                GuidGenerator.Create(),
-                input.BuildingId,
-                input.FloorNumber,
-                input.Name,
-                input.Description
-            );
-
-            await _floorRepository.InsertAsync(
-                floor
-            );
-
-            return ObjectMapper.Map<
-                Floor,
-                FloorDto
-            >(floor);
+            return await _writes.ExecuteBuildingAsync(input.BuildingId, async () =>
+            {
+                // Parent checks, uniqueness and inserts run after the lock.
+                await EnsureBuildingExistsAsync(input.BuildingId);
+                await EnsureFloorNumberUniqueAsync(
+                    input.BuildingId, input.FloorNumber);
+                var created = new Floor(GuidGenerator.Create(), input.BuildingId,
+                    input.FloorNumber, input.Name, input.Description);
+                await _floorRepository.InsertAsync(created, autoSave: true);
+                return ObjectMapper.Map<Floor, FloorDto>(created);
+            });
         }
 
         public async Task<List<FloorDto>> GetListAsync()
@@ -107,25 +102,19 @@ namespace BuildingManagement.Floors
             await _access.EnsureResourceAsync(
                 BuildingBusinessResourceKind.Floor, id,
                 BuildingBusinessCapability.ManageFloor);
-            var floor =
-                await _floorRepository.GetAsync(id);
-
-            await EnsureFloorNumberUniqueAsync(floor.BuildingId, input.FloorNumber, floor.Id);
-
-            floor.Update(
-                input.FloorNumber,
-                input.Name,
-                input.Description
-            );
-
-            await _floorRepository.UpdateAsync(
-                floor
-            );
-
-            return ObjectMapper.Map<
-                Floor,
-                FloorDto
-            >(floor);
+            var buildingId = await ResolveBuildingAsync(
+                BuildingBusinessResourceKind.Floor, id);
+            return await _writes.ExecuteBuildingAsync(buildingId, async () =>
+            {
+                var floor = await _floorRepository.GetAsync(id);
+                if (floor.BuildingId != buildingId)
+                    throw new AbpAuthorizationException("Floor scope changed.");
+                await EnsureFloorNumberUniqueAsync(
+                    buildingId, input.FloorNumber, floor.Id);
+                floor.Update(input.FloorNumber, input.Name, input.Description);
+                await _floorRepository.UpdateAsync(floor, autoSave: true);
+                return ObjectMapper.Map<Floor, FloorDto>(floor);
+            });
         }
 
         public async Task DeleteAsync(Guid id)
@@ -133,22 +122,29 @@ namespace BuildingManagement.Floors
             await _access.EnsureResourceAsync(
                 BuildingBusinessResourceKind.Floor, id,
                 BuildingBusinessCapability.ManageFloor);
-            var floor =
-                await _floorRepository.FindAsync(id);
-
-            if (floor is null)
+            var buildingId = await ResolveBuildingAsync(
+                BuildingBusinessResourceKind.Floor, id);
+            await _writes.ExecuteBuildingAsync(buildingId, async () =>
             {
-                throw new BusinessException(
-                    BuildingManagementErrorCodes.FloorNotFound
-                );
-            }
+                var floor = await _floorRepository.FindAsync(id)
+                    ?? throw new BusinessException(
+                        BuildingManagementErrorCodes.FloorNotFound);
+                if (floor.BuildingId != buildingId)
+                    throw new AbpAuthorizationException("Floor scope changed.");
+                await EnsureNoFloorRoomsAsync(id);
+                await _floorRepository.DeleteAsync(floor, autoSave: true);
+                return true;
+            });
+        }
 
-            await EnsureNoFloorRoomsAsync(id);
-
-            await _floorRepository.DeleteAsync(
-                floor,
-                autoSave: true
-            );
+        private async Task<Guid> ResolveBuildingAsync(
+            BuildingBusinessResourceKind kind, Guid resourceId)
+        {
+            var scope = await _resourceScope.ReadAsync(kind, resourceId);
+            if (scope is null || scope.ResourceId != resourceId ||
+                scope.BuildingId == Guid.Empty)
+                throw new AbpAuthorizationException("Floor/Building scope unavailable.");
+            return scope.BuildingId;
         }
 
         private async Task EnsureNoFloorRoomsAsync(Guid floorId)

@@ -54,6 +54,8 @@ WITH target AS (
            COALESCE(
                (SELECT no_admin_powers FROM role_info), FALSE)
                AND current_user = session_user
+               AND NOT COALESCE(
+                   has_database_privilege(current_database(), 'CREATE'), TRUE)
                AND o.schema_owner IS NOT NULL
                AND NOT pg_has_role(current_user, o.schema_owner, 'MEMBER')
                AND NOT COALESCE(has_schema_privilege(o.schema_name, 'CREATE'), TRUE)

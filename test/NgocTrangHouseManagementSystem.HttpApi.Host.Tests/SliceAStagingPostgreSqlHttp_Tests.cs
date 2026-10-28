@@ -362,11 +362,10 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             using (var response = await clientRoot.DeleteAsync(ChildId(floorDelete, floorA)))
                 Assert.True(response.StatusCode is HttpStatusCode.OK or HttpStatusCode.NoContent);
 
-            // Race rehearsal across TWO distinct PostgreSQL databases.
-            // The Building UoW starts with B authorized, while an external
-            // Identity transaction disables B during its write callback.
-            // The staged postflight must reject and the outer UoW must
-            // roll the provisional Building UPDATE back.
+            // Two-database COMMIT-bound race: native Identity UPDATE must
+            // wait until the ABP Building UoW has committed and released
+            // its separate locked Identity transaction.
+            Task<int>? disableResult = null;
             using (var scope = app.Services.CreateScope())
             {
                 var sp = scope.ServiceProvider;
@@ -381,26 +380,41 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
                         .Begin(requiresNew: true, isTransactional: true);
                     var boundary = sp.GetRequiredService<IBuildingScopedWriteBoundary>();
-                    await Assert.ThrowsAsync<Volo.Abp.Authorization.AbpAuthorizationException>(
-                        () => boundary.ExecuteBuildingAsync(b, async () =>
+                    await boundary.ExecuteBuildingAsync(b, async () =>
+                    {
+                        var pg = await sp.GetRequiredService<
+                            IDbContextProvider<BuildingManagementDbContext>>()
+                            .GetDbContextAsync();
+                        await pg.Database.ExecuteSqlInterpolatedAsync(
+                            $"UPDATE \"Buildings\" SET \"Name\" = {"Committed before disable"} WHERE \"Id\" = {b}");
+                        disableResult = Task.Run(async () =>
                         {
-                            var pg = await sp.GetRequiredService<
-                                IDbContextProvider<BuildingManagementDbContext>>()
-                                .GetDbContextAsync();
-                            await pg.Database.ExecuteSqlInterpolatedAsync(
-                                $"UPDATE \"Buildings\" SET \"Name\" = {"Must roll back"} WHERE \"Id\" = {b}");
-                            await using var identityConnection = new NpgsqlConnection(idCs);
+                            await using var identityConnection =
+                                new NpgsqlConnection(idCs);
                             await identityConnection.OpenAsync();
                             await using var revoke = new NpgsqlCommand(
                                 """UPDATE "AbpUsers" SET "IsActive" = FALSE WHERE "Id" = @id""",
                                 identityConnection);
                             revoke.Parameters.AddWithValue("id", operatorB);
-                            Assert.Equal(1, await revoke.ExecuteNonQueryAsync());
-                            return true;
-                        }));
-                    // No CompleteAsync: ABP disposes/rolls back the
-                    // failed business transaction. Identity remains disabled.
+                            return await revoke.ExecuteNonQueryAsync();
+                        });
+                        await Task.Delay(250);
+                        Assert.False(disableResult.IsCompleted,
+                            "Identity disable must wait for Building UoW commit.");
+                        return true;
+                    });
+                    await uow.CompleteAsync();
                 }
+            }
+            Assert.NotNull(disableResult);
+            Assert.Equal(1, await disableResult!.WaitAsync(TimeSpan.FromSeconds(15)));
+            using (var response = await clientB.GetAsync(GetAt(b)))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var response = await clientRoot.GetAsync(GetAt(b)))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                Assert.Contains("Committed before disable",
+                    await response.Content.ReadAsStringAsync());
             }
             await using (var identityRestore = new NpgsqlConnection(idCs))
             {
@@ -410,13 +424,6 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     identityRestore);
                 restore.Parameters.AddWithValue("id", operatorB);
                 Assert.Equal(1, await restore.ExecuteNonQueryAsync());
-            }
-            using (var response = await clientRoot.GetAsync(GetAt(b)))
-            {
-                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-                var payload = await response.Content.ReadAsStringAsync();
-                Assert.Contains("PG Building B", payload);
-                Assert.DoesNotContain("Must roll back", payload);
             }
 
             // The PostgreSQL-backed HTTP path must also honor fresh ABP

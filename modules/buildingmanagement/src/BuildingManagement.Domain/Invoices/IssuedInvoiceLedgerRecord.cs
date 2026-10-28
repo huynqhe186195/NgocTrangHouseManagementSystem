@@ -85,7 +85,24 @@ public sealed class IssuedInvoiceLedgerRecord : Entity<Guid>
         {
             using var json = JsonDocument.Parse(FinancialTermsJson);
             var root = json.RootElement;
+            var duePolicy = root.GetProperty("DueDatePolicyReference").GetString();
+            var feePolicy = root.GetProperty("AuxiliaryFeePolicyReference").GetString();
+            var feeReviewer = root.GetProperty("AuxiliaryFeeReviewerId").GetGuid();
+            var feeDecision = root.GetProperty("AuxiliaryFeeDecision").GetInt32();
+            var charges = root.GetProperty("AuxiliaryCharges");
             if (root.ValueKind != JsonValueKind.Object ||
+                string.IsNullOrWhiteSpace(duePolicy) || duePolicy.Trim().Length < 8 ||
+                duePolicy.Trim().Length > 200 ||
+                string.IsNullOrWhiteSpace(feePolicy) || feePolicy.Trim().Length < 8 ||
+                feePolicy.Trim().Length > 200 ||
+                feeReviewer == Guid.Empty ||
+                charges.ValueKind != JsonValueKind.Array ||
+                (AuxiliaryAmount == 0m &&
+                    (feeDecision != (int)AuxiliaryFeeAssessmentDecision.ExplicitlyNoCharges ||
+                     charges.GetArrayLength() != 0)) ||
+                (AuxiliaryAmount > 0m &&
+                    (feeDecision != (int)AuxiliaryFeeAssessmentDecision.ItemizedCharges ||
+                     charges.GetArrayLength() == 0)) ||
                 root.GetProperty("BaseAmount").GetDecimal() != BaseAmount ||
                 root.GetProperty("AuxiliaryAmount").GetDecimal() != AuxiliaryAmount ||
                 root.GetProperty("TotalAmount").GetDecimal() != TotalAmount ||

@@ -99,7 +99,7 @@ public sealed class SliceAStagingOwnerRecoveryEvidenceStore :
         return await ScalarGuidAsync(db,
             """
             SELECT CASE WHEN COUNT(*) = 1
-                        THEN MIN(g."OperatorUserId")
+                        THEN (array_agg(g."OperatorUserId"))[1]
                         ELSE NULL END
               FROM "BuildingManagementOperatorBuildingGrants" g
               JOIN "Buildings" b ON b."Id" = g."BuildingId"

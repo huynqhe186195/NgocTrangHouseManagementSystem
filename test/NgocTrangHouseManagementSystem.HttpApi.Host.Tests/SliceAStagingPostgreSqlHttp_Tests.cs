@@ -125,6 +125,10 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     .UseNpgsql(buildingCs).Options))
                 await buildings.Database.MigrateAsync();
 
+            // An independent LOGIN verifies the actual ABP Identity schema,
+            // not a mock table. Only these generated disposable databases.
+            await AttestIdentityRuntimeLoginAsync(admin, idCs);
+
             var config = new ConfigurationBuilder()
                 .AddInMemoryCollection(new Dictionary<string, string?>
                 {
@@ -831,6 +835,113 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 await ExecuteAsync(admin, $"""DROP DATABASE "{buildingName}" WITH (FORCE)""");
             if (identityCreated)
                 await ExecuteAsync(admin, $"""DROP DATABASE "{idName}" WITH (FORCE)""");
+        }
+    }
+
+    private static async Task AttestIdentityRuntimeLoginAsync(
+        NpgsqlConnection admin, string isolatedIdentityConnection)
+    {
+        var original = new NpgsqlConnectionStringBuilder(isolatedIdentityConnection)
+        {
+            Pooling = false, CommandTimeout = 20
+        };
+        if (original.Host is not ("127.0.0.1" or "localhost") ||
+            !Regex.IsMatch(original.Database ?? string.Empty,
+                @"^bm_slicea_staging_identity_[0-9a-f]{32}$"))
+            throw new InvalidOperationException(
+                "Refusing Identity runtime audit outside generated scratch database.");
+
+        var login = "bm_identity_runtime_" + Guid.NewGuid().ToString("N");
+        var password = Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N");
+        Assert.Matches(@"^bm_identity_runtime_[0-9a-f]{32}$", login);
+        var created = false;
+        await using var idAdmin = new NpgsqlConnection(original.ConnectionString);
+        try
+        {
+            await ExecuteAsync(admin,
+                $"""CREATE ROLE "{login}" LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT PASSWORD '{password}'""");
+            created = true;
+            await idAdmin.OpenAsync();
+            Assert.StartsWith("bm_slicea_staging_identity_", idAdmin.Database);
+            await ExecuteAsync(idAdmin,
+                $"""GRANT USAGE ON SCHEMA public TO "{login}" """);
+            await ExecuteAsync(idAdmin,
+                $"""
+                GRANT SELECT ON TABLE "AbpUsers", "AbpRoles",
+                    "AbpUserRoles", "AbpPermissionGrants" TO "{login}"
+                """);
+            var runtimeCs = new NpgsqlConnectionStringBuilder(
+                original.ConnectionString)
+            {
+                Username = login, Password = password,
+                Pooling = false
+            };
+            using var stream = typeof(SliceAStagingPostgreSqlHttp_Tests)
+                .Assembly.GetManifestResourceStream(
+                    "SliceA_IdentityRuntimeDbRole_ReadOnlyAudit.sql")
+                ?? throw new InvalidOperationException(
+                    "Missing embedded review-only Identity runtime audit SQL.");
+            using var reader = new System.IO.StreamReader(stream);
+            var audit = reader.ReadToEnd().TrimStart('\uFEFF');
+            Assert.Equal(1, Regex.Matches(audit,
+                @"(?im)^SELECT\s+runtime_login").Count);
+            Assert.False(Regex.IsMatch(audit,
+                @"(?im)^\s*(CREATE|ALTER|DROP|GRANT|REVOKE|UPDATE|DELETE|INSERT|TRUNCATE|SET|DO|CALL)\b"));
+
+            await using (var runtime = new NpgsqlConnection(runtimeCs.ConnectionString))
+            {
+                await runtime.OpenAsync();
+                async Task<(bool IdentityPresent, bool Role, bool All)> CheckAsync()
+                {
+                    await using var cmd = new NpgsqlCommand(audit, runtime);
+                    await using var result = await cmd.ExecuteReaderAsync();
+                    Assert.True(await result.ReadAsync());
+                    Assert.Equal(login, result.GetString(0));
+                    Assert.Equal(login, result.GetString(1));
+                    Assert.Equal(original.Database, result.GetString(2));
+                    Assert.Equal("public", result.GetString(3));
+                    var exists = result.GetBoolean(4);
+                    var rolePass = result.GetBoolean(5);
+                    var all = result.GetBoolean(10);
+                    return (exists, rolePass, all);
+                }
+                var minimal = await CheckAsync();
+                Assert.True(minimal.IdentityPresent);
+                Assert.True(minimal.Role);
+                Assert.True(minimal.All);
+
+                // Test negative findings without ever executing unsafe
+                // statements as the limited login.
+                await ExecuteAsync(idAdmin,
+                    $"""GRANT TRUNCATE ON TABLE "AbpUsers" TO "{login}" """);
+                var dangerousTable = await CheckAsync();
+                Assert.True(dangerousTable.Role);
+                Assert.False(dangerousTable.All);
+                await ExecuteAsync(idAdmin,
+                    $"""REVOKE TRUNCATE ON TABLE "AbpUsers" FROM "{login}" """);
+
+                await ExecuteAsync(idAdmin,
+                    $"""GRANT CREATE ON SCHEMA public TO "{login}" """);
+                var dangerousSchema = await CheckAsync();
+                Assert.False(dangerousSchema.Role);
+                Assert.False(dangerousSchema.All);
+                await ExecuteAsync(idAdmin,
+                    $"""REVOKE CREATE ON SCHEMA public FROM "{login}" """);
+                Assert.True((await CheckAsync()).All);
+            }
+        }
+        finally
+        {
+            if (created)
+            {
+                if (idAdmin.State != System.Data.ConnectionState.Open)
+                    await idAdmin.OpenAsync();
+                await ExecuteAsync(idAdmin,
+                    $"""REVOKE ALL ON TABLE "AbpUsers", "AbpRoles", "AbpUserRoles", "AbpPermissionGrants" FROM "{login}" """);
+                await ExecuteAsync(idAdmin,
+                    $"""REVOKE ALL ON SCHEMA public FROM "{login}" """);
+                await ExecuteAsync(admin, $"""DROP ROLE "{login}" """);
+            }
         }
     }
 

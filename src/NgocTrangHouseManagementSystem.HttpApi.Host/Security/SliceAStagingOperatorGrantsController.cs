@@ -36,7 +36,7 @@ public sealed class SliceAStagingOperatorGrantsController : ControllerBase
     }
 
     [HttpPost]
-    [UnitOfWork(IsTransactional = true)]
+    [UnitOfWork]
     public async Task<AssignOperatorGrantResult> AssignAsync(
         [FromBody] AssignOperatorGrantRequest input)
     {
@@ -48,7 +48,7 @@ public sealed class SliceAStagingOperatorGrantsController : ControllerBase
     }
 
     [HttpPost("revoke")]
-    [UnitOfWork(IsTransactional = true)]
+    [UnitOfWork]
     public async Task RevokeAsync([FromBody] RevokeOperatorGrantRequest input)
     {
         RequireIsolatedStaging();

@@ -91,10 +91,10 @@ public sealed class SliceAStagingOperatorGrantQuery
         Guid actor, BuildingOperatorChangeIssuer? assign,
         BuildingOperatorChangeIssuer? revoke)
         => actor != Guid.Empty &&
-           ((assign?.OperatorId == actor &&
-             assign.PrivilegedPermissionGranted) ||
-            (revoke?.OperatorId == actor &&
-             revoke.PrivilegedPermissionGranted));
+           ((assign is { PrivilegedPermissionGranted: true } &&
+             assign.OperatorId == actor) ||
+            (revoke is { PrivilegedPermissionGranted: true } &&
+             revoke.OperatorId == actor));
 
     private static AbpAuthorizationException Denied()
         => new("No active building-scoped permission to view operator grants.");

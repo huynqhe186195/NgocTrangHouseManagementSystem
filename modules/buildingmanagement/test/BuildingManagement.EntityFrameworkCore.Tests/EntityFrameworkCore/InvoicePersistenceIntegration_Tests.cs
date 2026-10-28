@@ -1980,6 +1980,17 @@ public sealed class InvoicePersistenceIntegration_Tests
                 "APPROVED-EXPLICIT-NO-FEES",
                 reviewerId,
                 Array.Empty<FinalInvoiceAuxiliaryChargeProposal>());
+            var scopeReview = InvoiceIssuanceScopePolicy.Assess(preflight, scope);
+            var termsReview = FinalInvoiceFinancialTermsEvaluator.Assess(preflight, terms);
+            Assert.True(scopeReview.IsScopeConsistent,
+                "Scope: " + string.Join(", ", scopeReview.Blockers));
+            Assert.Equal(
+                new[] { "FinancialTermsProposalIsNotPostingAuthorization" },
+                termsReview.Blockers);
+            Assert.Equal(seeded.DraftId, preflight.UtilityDraftId);
+            Assert.Equal(archive.EvidenceSha256, preflight.EvidenceSha256);
+            Assert.True(provenance.MatchesPersistedSources,
+                "Sources: " + string.Join(", ", provenance.Blockers));
             var candidateId = Guid.NewGuid();
             var issueTime = DateTime.UtcNow.AddMinutes(10);
             var candidate = IssuedInvoiceLedgerRecord.BuildVerifiedCandidate(

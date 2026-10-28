@@ -33,6 +33,16 @@ public sealed class SliceAStagingIdentityCommitLease
         _uowManager = uowManager;
     }
 
+    /// <summary>
+    /// The ONLY founding root must retain a persisted BootstrapOwner grant
+    /// and an enabled Identity account until the first Building + grant
+    /// commit. A stale permission cache or authenticated root claim alone
+    /// is insufficient.
+    /// </summary>
+    public Task AcquireBootstrapAsync(Guid trustedOwnerUserId)
+        => AcquirePermissionAsync(trustedOwnerUserId,
+            BuildingManagementPermissions.Buildings.BootstrapOwner, null);
+
     public Task AcquireAsync(
         Guid trustedUserId, BuildingBusinessCapability capability)
         => AcquirePermissionAsync(trustedUserId, capability switch

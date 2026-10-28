@@ -6,6 +6,7 @@ using BuildingManagement.EntityFrameworkCore;
 using BuildingManagement.EntityFrameworkCore.Security;
 using BuildingManagement.Security;
 using Volo.Abp.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Volo.Abp.Users;
 
 namespace NgocTrangHouseManagementSystem.Security;
@@ -31,14 +32,42 @@ public sealed class SliceAStagingGrantReader : IBuildingOperatorGrantReader
 public sealed class SliceAStagingFirstOwnerWriter : IBuildingOwnerBootstrapWriter
 {
     private readonly IDbContextProvider<BuildingManagementDbContext> _provider;
+    private readonly ICurrentUser _actor;
+    private readonly IOptions<BuildingOwnerBootstrapSecurityOptions> _roots;
+    private readonly SliceAStagingIdentityCommitLease _lease;
+
     public SliceAStagingFirstOwnerWriter(
-        IDbContextProvider<BuildingManagementDbContext> provider) => _provider = provider;
+        IDbContextProvider<BuildingManagementDbContext> provider,
+        ICurrentUser actor,
+        IOptions<BuildingOwnerBootstrapSecurityOptions> roots,
+        SliceAStagingIdentityCommitLease lease)
+    {
+        _provider = provider;
+        _actor = actor;
+        _roots = roots;
+        _lease = lease;
+    }
 
     public async Task<Building> CreateWithOwnerAtomicallyAsync(
         Guid trustedOwnerUserId, string name, string address, string? description)
-        => await new EfBuildingOwnerBootstrapAtomicWriter(
+    {
+        // The staging writer must not trust its own in-process caller:
+        // only the one configured, authenticated root can bootstrap.
+        // This check also protects direct writer use outside the coordinator.
+        if (trustedOwnerUserId == Guid.Empty ||
+            !_actor.IsAuthenticated || _actor.Id != trustedOwnerUserId ||
+            _roots.Value.RootUserIds is not { Count: 1 } roots ||
+            !roots.Contains(trustedOwnerUserId))
+            throw new Volo.Abp.Authorization.AbpAuthorizationException(
+                "First-owner writer requires the designated authenticated root.");
+
+        // Hold Identity account and persisted ABP BootstrapOwner permission
+        // locks until the Building UoW commits (or fails).
+        await _lease.AcquireBootstrapAsync(trustedOwnerUserId);
+        return await new EfBuildingOwnerBootstrapAtomicWriter(
             await _provider.GetDbContextAsync())
             .CreateWithOwnerAtomicallyAsync(trustedOwnerUserId, name, address, description);
+    }
 }
 
 public sealed class SliceAStagingWriteBoundary : IBuildingScopedWriteBoundary

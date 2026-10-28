@@ -252,6 +252,83 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             var a = await BootstrapAsync("PG Building A");
             var b = await BootstrapAsync("PG Building B");
             Assert.NotEqual(a, b);
+
+            // Bootstrap also must hold the Identity BootstrapOwner grant
+            // through Building commit. Otherwise revocation could commit
+            // before a new Building + self-issued founder grant is visible.
+            Task<int>? revokeBootstrap = null;
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                var accessor = sp.GetRequiredService<ICurrentPrincipalAccessor>();
+                using (accessor.Change(new ClaimsPrincipal(new ClaimsIdentity(
+                    new[]
+                    {
+                        new Claim(AbpClaimTypes.UserId, root.ToString("D")),
+                        new Claim(ClaimTypes.NameIdentifier, root.ToString("D"))
+                    }, "CommitBoundBootstrap"))))
+                {
+                    using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                        .Begin(requiresNew: true, isTransactional: true);
+                    var created = await sp.GetRequiredService<IBuildingOwnerBootstrapWriter>()
+                        .CreateWithOwnerAtomicallyAsync(
+                            root, "Bootstrap under revocation", "Scratch", null);
+                    Assert.NotEqual(Guid.Empty, created.Id);
+                    revokeBootstrap = Task.Run(async () =>
+                    {
+                        await using var connection = new NpgsqlConnection(idCs);
+                        await connection.OpenAsync();
+                        await using var command = new NpgsqlCommand(
+                            """
+                            DELETE FROM "AbpPermissionGrants"
+                             WHERE "ProviderName" = 'U'
+                               AND "ProviderKey" = @root
+                               AND "Name" = @permission
+                            """, connection);
+                        command.Parameters.AddWithValue("root", root.ToString("D"));
+                        command.Parameters.AddWithValue("permission",
+                            BuildingManagementPermissions.Buildings.BootstrapOwner);
+                        return await command.ExecuteNonQueryAsync();
+                    });
+                    await Task.Delay(250);
+                    Assert.False(revokeBootstrap.IsCompleted,
+                        "BootstrapOwner revocation must wait for Building commit.");
+                    await uow.CompleteAsync();
+                }
+            }
+            Assert.NotNull(revokeBootstrap);
+            Assert.Equal(1, await revokeBootstrap!.WaitAsync(TimeSpan.FromSeconds(15)));
+
+            // Even a direct, stale internal writer invocation must now
+            // fail closed after permission revocation, before DB mutation.
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                var accessor = sp.GetRequiredService<ICurrentPrincipalAccessor>();
+                using (accessor.Change(new ClaimsPrincipal(new ClaimsIdentity(
+                    new[] { new Claim(AbpClaimTypes.UserId, root.ToString("D")) },
+                    "StaleBootstrapGrant"))))
+                {
+                    using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                        .Begin(requiresNew: true, isTransactional: true);
+                    await Assert.ThrowsAsync<Volo.Abp.Authorization.AbpAuthorizationException>(
+                        () => sp.GetRequiredService<IBuildingOwnerBootstrapWriter>()
+                            .CreateWithOwnerAtomicallyAsync(
+                                root, "Must not exist", "Scratch", null));
+                }
+            }
+
+            // Restore scratch fixture permission for the remaining recovery,
+            // delegation and CRUD scenarios. No real DB is modified.
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                await sp.GetRequiredService<IPermissionManager>().SetForUserAsync(
+                    root, BuildingManagementPermissions.Buildings.BootstrapOwner, true);
+                await uow.CompleteAsync();
+            }
             using (var response = await clientB.GetAsync(GetAt(a)))
                 Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
             using (var response = await clientB.GetAsync(listPath))

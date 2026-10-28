@@ -171,6 +171,66 @@ public sealed class SliceBStagingContractMutation
     }
 
     /// <summary>
+    /// Confirm one existing pending ReservationDeposit payment, not any
+    /// arbitrary global Payment/ContractDeposit. The legacy completion
+    /// service acquires Contract -> Reservation -> Payment locks; do NOT
+    /// prelock the Reservation here (would invert its concurrency order).
+    /// Room building is rechecked under a PostgreSQL share lock AFTER
+    /// payment completion, before the shared transaction commits.
+    /// </summary>
+    public async Task<PaymentDto> CompleteReservationDepositPaymentAsync(
+        Guid reservationId, Guid paymentId, CompletePaymentDto input)
+    {
+        if (reservationId == Guid.Empty || paymentId == Guid.Empty || input is null)
+            throw Denied();
+
+        var db = await _provider.GetDbContextAsync();
+        var payment = await db.Payments.AsNoTracking()
+            .Where(p => p.Id == paymentId && !p.IsDeleted)
+            .Select(p => new { p.RoomReservationId, p.Purpose })
+            .SingleOrDefaultAsync();
+        if (payment is null ||
+            payment.Purpose != PaymentPurpose.ReservationDeposit ||
+            payment.RoomReservationId != reservationId)
+            throw Denied();
+
+        var roomId = await db.RoomReservations.AsNoTracking()
+            .Where(r => r.Id == reservationId && !r.IsDeleted)
+            .Select(r => r.RoomId).SingleOrDefaultAsync();
+        if (roomId == Guid.Empty)
+            throw Denied();
+
+        var buildingId = await ResolveAsync(
+            BuildingBusinessResourceKind.Room, roomId);
+        await _policy.EnsureResourceAsync(
+            BuildingBusinessResourceKind.Room, roomId,
+            BuildingBusinessCapability.ManageContract);
+        var actor = RequireActor();
+        await _identity.AcquireContractManageAsync(actor);
+
+        return await Fence(db).ExecuteAsync(actor, buildingId, async () =>
+        {
+            // Use the original domain path and lock order; it will reject
+            // duplicate completion and re-check deposit/room conflicts.
+            var result = await _payments.CompleteAsync(paymentId, input);
+            if (result.Purpose != PaymentPurpose.ReservationDeposit ||
+                result.RoomReservationId != reservationId ||
+                !await db.Payments.AnyAsync(p =>
+                    p.Id == paymentId && !p.IsDeleted &&
+                    p.RoomReservationId == reservationId &&
+                    p.Purpose == PaymentPurpose.ReservationDeposit) ||
+                !await db.RoomReservations.AnyAsync(r =>
+                    r.Id == reservationId && !r.IsDeleted &&
+                    r.RoomId == roomId) ||
+                await LockRoomBuildingAsync(db, roomId) != buildingId)
+                throw Denied();
+            return result;
+        }, () => _policy.EnsureResourceAsync(
+            BuildingBusinessResourceKind.Room, roomId,
+            BuildingBusinessCapability.ManageContract));
+    }
+
+    /// <summary>
     /// Create a notice only for the route's own authorized Active contract.
     /// The body cannot substitute a foreign ContractId. Existing domain
     /// notice-date, open-request and transaction rules remain authoritative.

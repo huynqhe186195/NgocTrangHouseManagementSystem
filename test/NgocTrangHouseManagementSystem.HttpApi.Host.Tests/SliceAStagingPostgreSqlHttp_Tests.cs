@@ -1720,8 +1720,43 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             var pendingDeposit = await TryCreateDepositAsync(
                 paidCandidate, paidCandidate);
             Assert.Equal(HttpStatusCode.OK, pendingDeposit.Status);
+            Guid pendingPaymentId;
             using (var json = JsonDocument.Parse(pendingDeposit.Body))
-                Assert.NotEqual(Guid.Empty, json.RootElement.GetProperty("id").GetGuid());
+            {
+                pendingPaymentId = json.RootElement.GetProperty("id").GetGuid();
+                Assert.NotEqual(Guid.Empty, pendingPaymentId);
+                Assert.Equal(1, json.RootElement.GetProperty("status").GetInt32());
+            }
+            async Task<HttpStatusCode> TryCompleteDepositAsync(Guid routeReservation)
+            {
+                using var payload = new StringContent("{}",
+                    Encoding.UTF8, "application/json");
+                using var response = await clientB.PostAsync(
+                    reservationRoute + "/" + routeReservation.ToString("D") +
+                    "/deposit-payments/" + pendingPaymentId.ToString("D") +
+                    "/complete", payload);
+                return response.StatusCode;
+            }
+            Assert.Equal(HttpStatusCode.Forbidden,
+                await TryCompleteDepositAsync(reservationA));
+            Assert.Equal(HttpStatusCode.OK,
+                await TryCompleteDepositAsync(paidCandidate));
+            Assert.NotEqual(HttpStatusCode.OK,
+                await TryCompleteDepositAsync(paidCandidate));
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var db = await sp.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>()
+                    .GetDbContextAsync();
+                Assert.Equal(BuildingManagement.Payments.PaymentStatus.Completed,
+                    (await db.Payments.SingleAsync(p => p.Id == pendingPaymentId)).Status);
+                Assert.Equal(BuildingManagement.RoomReservations.RoomReservationStatus.Reserved,
+                    (await db.RoomReservations.SingleAsync(r => r.Id == paidCandidate)).Status);
+                await uow.CompleteAsync();
+            }
 
             // Record the real room state rather than assuming occupancy:
             // other independent contract tests may have changed it earlier.

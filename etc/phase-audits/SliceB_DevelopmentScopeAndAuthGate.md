@@ -258,3 +258,20 @@ validation all apply. No payment completion, bank integration, refund
 transfer, or global payment API is enabled by this stage. The disposable
 PostgreSQL HTTP test covers route/body mismatch, foreign reservation denial
 and success for a B-scoped pending payment.
+
+
+## Reservation deposit completion (isolated staging only)
+
+\`POST /api/slice-b-staging/contracts/reservations/{reservationId}/deposit-payments/{paymentId}/complete\`
+accepts only an existing ReservationDeposit with a matching persisted
+reservation relationship, and requires a current Contracts.Manage
+permission with commit-bound Identity and Building membership. Unlike the
+pending-payment create/cancel gate, completion deliberately does NOT
+pre-lock the Reservation: the original PaymentAppService.CompleteAsync
+acquires its Active Contract→Reservation→Payment locks in order and
+serializes competing holds/renewals. The staged wrapper checks the original
+payment relationship before and after completion, revalidates the
+Room→Floor→Building graph under PostgreSQL row locks before commit, and
+keeps global ContractDeposit, generic Payment APIs and bank integration
+blocked. Isolated PostgreSQL HTTP tests cover mismatched route, successful
+cash confirmation, duplicate denial and persisted Reserved status.

@@ -150,6 +150,19 @@ public sealed class SliceBStagingContractsController : ControllerBase
             .CreateReservationDepositPaymentAsync(id, input);
     }
 
+    // Completion is a manually confirmed deposit receipt under the
+    // original payment service's Contract→Reservation→Payment lock order.
+    [HttpPost("reservations/{reservationId:guid}/deposit-payments/{paymentId:guid}/complete")]
+    [UnitOfWork(true)]
+    public Task<PaymentDto> CompleteReservationDepositPaymentAsync(
+        [FromRoute] Guid reservationId, [FromRoute] Guid paymentId,
+        [FromBody] CompletePaymentDto input)
+    {
+        RequireIsolatedStaging();
+        return (_mutation ?? throw Denied())
+            .CompleteReservationDepositPaymentAsync(reservationId, paymentId, input);
+    }
+
     // Move-out scheduling/approval only; never completes move-out, settles
     // deposits, ends a contract, or releases an occupied room.
     [HttpGet("{id:guid}/move-out-requests")]

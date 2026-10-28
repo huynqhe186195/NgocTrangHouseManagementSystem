@@ -81,19 +81,21 @@ public sealed class EfBuildingOwnerRecoveryAtomicWriter :
                     throw Denied();
             }
 
-            // All live self-issued grants, not just a caller-selected one,
-            // must have a SINGLE matching founder. Lock each such row so
-            // revocation cannot change this identity during recovery.
-            var founders = new System.Collections.Generic.HashSet<Guid>();
+            // Founder identity is a HISTORICAL invariant: a previously
+            // revoked self-issued grant is still evidence of another founder.
+            // No client may select one of several past/present identities.
+            // Lock all immutable records through Building commit.
+            var founderRows = 0;
+            var canonicalFounder = Guid.Empty;
+            var originalIsActivePermanent = false;
             await using (var command = conn.CreateCommand())
             {
                 command.Transaction = transaction.GetDbTransaction();
                 command.CommandText = """
-                    SELECT g."OperatorUserId"
+                    SELECT g."OperatorUserId", g."RevokedAtUtc", g."ExpiresAtUtc"
                     FROM "BuildingManagementOperatorBuildingGrants" AS g
                     WHERE g."BuildingId" = @building
                       AND g."OperatorUserId" = g."GrantedByUserId"
-                      AND g."RevokedAtUtc" IS NULL
                     FOR SHARE OF g
                     """;
                 var building = command.CreateParameter();
@@ -102,9 +104,15 @@ public sealed class EfBuildingOwnerRecoveryAtomicWriter :
                 command.Parameters.Add(building);
                 await using var rows = await command.ExecuteReaderAsync();
                 while (await rows.ReadAsync())
-                    founders.Add(rows.GetGuid(0));
+                {
+                    founderRows++;
+                    canonicalFounder = rows.GetGuid(0);
+                    originalIsActivePermanent =
+                        rows.IsDBNull(1) && rows.IsDBNull(2);
+                }
             }
-            if (founders.Count != 1 || !founders.Contains(originalOwnerId))
+            if (founderRows != 1 || canonicalFounder != originalOwnerId ||
+                !originalIsActivePermanent)
                 throw Denied();
 
             var now = _clock.GetUtcNow().UtcDateTime;

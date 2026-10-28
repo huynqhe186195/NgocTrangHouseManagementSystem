@@ -2148,6 +2148,33 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 Assert.DoesNotContain("identityNumber", body,
                     StringComparison.OrdinalIgnoreCase);
             }
+            // Final meter signoff requires BOTH verified electricity
+            // and water evidence; a merely approved request has neither.
+            // Foreign IDs cannot complete checklist tasks.
+            using (var response = await clientB.PostAsync(
+                MoveOutRoute(contractA) + "/" + moveOutRequest.ToString("D") +
+                "/verify-final-meters", null))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var response = await clientB.PostAsync(
+                MoveOutRoute(cancelContract) + "/" + Guid.NewGuid().ToString("D") +
+                "/verify-final-meters", null))
+                Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            using (var response = await clientB.PostAsync(
+                MoveOutRoute(cancelContract) + "/" + moveOutRequest.ToString("D") +
+                "/verify-final-meters", null))
+                Assert.NotEqual(HttpStatusCode.OK, response.StatusCode);
+            using (var response = await clientB.GetAsync(
+                MoveOutRoute(cancelContract) + "/" + moveOutRequest.ToString("D") +
+                "/checklist"))
+            {
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await response.Content.ReadAsStringAsync());
+                Assert.All(json.RootElement.EnumerateArray(),
+                    task => Assert.False(
+                        task.GetProperty("isCompleted").GetBoolean()));
+            }
+
             using (var scope = app.Services.CreateScope())
             {
                 var sp = scope.ServiceProvider;

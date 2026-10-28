@@ -322,3 +322,17 @@ Its DTO contains no tenant PII or free-form notes; monetary totals are labeled
 OBSERVED evidence and all issue/debt/refund/closeout permissions remain false.
 Foreign/missing request IDs return 403, and final issuance, receipt allocation,
 bank transfers, room release and direct contract termination stay DENY.
+
+
+## Evidence-gated final meter signoff (isolated staging only)
+
+POST \`/{contractId}/move-out-requests/{requestId}/verify-final-meters\`
+is the only scoped checklist completion write. It demands persisted
+Contracts.Manage **and** Rooms.Manage Identity permission leases to commit,
+current building membership, matching request/contract and locked Contract.
+The existing internal MoveOutFinalMeterSignoffAppService re-checks both
+electricity and water physical evidence and marks ONLY FinalMeterReading
+complete atomically. If actual readings are missing or ambiguous it refuses,
+and no other checklist task, invoice, deposit or contract state changes.
+PostgreSQL HTTP tests cover foreign IDs and no-evidence rejection with
+all checklist tasks still incomplete.

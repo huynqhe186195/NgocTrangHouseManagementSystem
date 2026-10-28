@@ -40,6 +40,7 @@ public sealed class SliceBStagingContractMutation
     private readonly IRoomReservationAppService _reservations;
     private readonly IMoveOutRequestAppService _moveOuts;
     private readonly IPaymentAppService _payments;
+    private readonly MoveOutFinalMeterSignoffAppService _meterSignoff;
 
     public SliceBStagingContractMutation(
         IDbContextProvider<BuildingManagementDbContext> provider,
@@ -51,7 +52,8 @@ public sealed class SliceBStagingContractMutation
         IContractRenewalHoldAppService holds,
         IRoomReservationAppService reservations,
         IMoveOutRequestAppService moveOuts,
-        IPaymentAppService payments)
+        IPaymentAppService payments,
+        MoveOutFinalMeterSignoffAppService meterSignoff)
     {
         _provider = provider;
         _policy = policy;
@@ -64,6 +66,7 @@ public sealed class SliceBStagingContractMutation
         _reservations = reservations;
         _moveOuts = moveOuts;
         _payments = payments;
+        _meterSignoff = meterSignoff;
     }
 
     /// <summary>
@@ -322,6 +325,38 @@ public sealed class SliceBStagingContractMutation
                 !request.IsDeleted))
                 throw Denied();
             return await _moveOuts.ApproveAsync(requestId, input);
+        });
+    }
+
+    /// <summary>
+    /// Evidence-backed completion of ONLY the final-meter checklist type.
+    /// This path never marks room inspection, handover, invoice or deposit
+    /// tasks complete. It requires both persisted Contracts.Manage and
+    /// Rooms.Manage Identity leases, exact request ownership and a single
+    /// Building transaction. The underlying signoff service re-validates
+    /// both physical utility readings under Contract -> Request locks.
+    /// </summary>
+    public async Task<MoveOutChecklistTaskDto> VerifyFinalMetersAsync(
+        Guid contractId, Guid requestId)
+    {
+        if (contractId == Guid.Empty || requestId == Guid.Empty)
+            throw Denied();
+        var actor = RequireActor();
+        // Acquire BOTH Identity permissions before Building locks to avoid
+        // role/permission revocation races while the signoff is committed.
+        await _identity.AcquireAsync(actor, BuildingBusinessCapability.ManageRoom);
+        return await MutateLinkAsync(contractId, async (db, _) =>
+        {
+            if (!await db.MoveOutRequests.AnyAsync(request =>
+                request.Id == requestId &&
+                request.ContractId == contractId &&
+                !request.IsDeleted))
+                throw Denied();
+            var signed = await _meterSignoff.VerifyAsync(requestId);
+            if (signed.MoveOutRequestId != requestId ||
+                signed.Type != MoveOutChecklistTaskType.FinalMeterReading)
+                throw Denied();
+            return signed;
         });
     }
 

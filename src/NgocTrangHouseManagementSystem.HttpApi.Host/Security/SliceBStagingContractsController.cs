@@ -235,6 +235,15 @@ public sealed class SliceBStagingContractsController : ControllerBase
             id, requestId);
     }
 
+    [HttpPost("{id:guid}/move-out-requests/{requestId:guid}/verify-final-meters")]
+    [UnitOfWork(true)]
+    public Task<MoveOutChecklistTaskDto> VerifyFinalMetersAsync(
+        [FromRoute] Guid id, [FromRoute] Guid requestId)
+    {
+        RequireIsolatedStaging();
+        return (_mutation ?? throw Denied()).VerifyFinalMetersAsync(id, requestId);
+    }
+
     [HttpPost("{id:guid}/move-out-requests/{requestId:guid}/reject")]
     [UnitOfWork(true)]
     public Task<MoveOutRequestDto> RejectMoveOutRequestAsync(

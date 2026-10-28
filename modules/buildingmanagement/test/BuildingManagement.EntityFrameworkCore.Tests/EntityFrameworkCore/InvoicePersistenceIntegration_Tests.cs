@@ -1854,6 +1854,51 @@ public sealed class InvoicePersistenceIntegration_Tests
         });
     }
 
+    [Fact]
+    public async Task ISSUEREVIEWDB04_Rejects_Submission_Before_Evidence_Preparation()
+    {
+        var data = await SeedIssuanceReviewAsync();
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var archive = await GetRequiredService<
+                IRepository<FinalInvoiceIssueEvidenceRecord, Guid>>()
+                .GetAsync(data.ArchiveId);
+
+            Assert.Throws<ArgumentException>(() =>
+                InvoiceIssuanceReviewTicket.Stage(
+                    Guid.NewGuid(), archive, Guid.NewGuid(), Guid.NewGuid(),
+                    archive.PreparedAtUtc.AddMinutes(-1),
+                    "Backdated independent review attempt"));
+        });
+    }
+
+    [Fact]
+    public async Task ISSUEREVIEWDB05_Backdated_Stored_Submission_Fails_Integrity_Verification()
+    {
+        var data = await SeedIssuanceReviewAsync();
+
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var archive = await GetRequiredService<
+                IRepository<FinalInvoiceIssueEvidenceRecord, Guid>>()
+                .GetAsync(data.ArchiveId);
+            var review = await GetRequiredService<
+                IRepository<InvoiceIssuanceReviewTicket, Guid>>()
+                .GetAsync(data.ReviewId);
+
+            // Simulates an imported/privileged row that bypassed Stage().
+            typeof(InvoiceIssuanceReviewTicket)
+                .GetProperty(nameof(InvoiceIssuanceReviewTicket.SubmittedAtUtc))!
+                .SetValue(review, archive.PreparedAtUtc.AddMinutes(-1));
+
+            Assert.Throws<InvalidDataException>(() =>
+                review.VerifyStagedEvidence(archive));
+            Assert.False(review.CanIssue);
+            Assert.False(review.CanPostReceivable);
+        });
+    }
+
     private async Task<(Guid DraftId, Guid ArchiveId, Guid ReviewId, Guid SubmittedBy,
         Guid RequestId, Guid ContractId)> SeedIssuanceReviewAsync()
     {

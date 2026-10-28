@@ -74,6 +74,12 @@ public sealed class InvoiceIssuanceReviewTicket : Entity<Guid>
             throw new ArgumentException("Submission note is too long.", nameof(submissionNote));
 
         archived.VerifyStoredEvidence();
+        // An approval trail cannot start before its source evidence existed.
+        // Enforce this for both new records and rehydrated persisted rows.
+        if (submittedAtUtc < archived.PreparedAtUtc)
+            throw new ArgumentException(
+                "Review submission cannot predate its prepared invoice evidence.",
+                nameof(submittedAtUtc));
         return new InvoiceIssuanceReviewTicket(
             id, archived, buildingId, submittedByUserId,
             submittedAtUtc, submissionNote);
@@ -149,6 +155,7 @@ public sealed class InvoiceIssuanceReviewTicket : Entity<Guid>
         archived.VerifyStoredEvidence();
         if (StagedEvidenceId == Guid.Empty || BuildingId == Guid.Empty ||
             SubmittedByUserId == Guid.Empty || SubmittedAtUtc == default ||
+            SubmittedAtUtc < archived.PreparedAtUtc ||
             archived.Id != StagedEvidenceId ||
             archived.DraftInvoiceId != DraftInvoiceId ||
             archived.MoveOutRequestId != MoveOutRequestId ||

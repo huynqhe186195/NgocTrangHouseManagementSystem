@@ -161,7 +161,7 @@ public sealed class SliceBDepositCloseoutPostgreSql_Tests
                 '2026-10-29T02:00:00Z','Documented floor tile damage',
                 'INSPECTION-PHOTO-0001','SIGNED-INSPECTION-0001',
                 'SIGNED-HANDOVER-0001','APPROVED-DEPOSIT-POLICY',
-                '{{}}','{new string('a',64)}');
+                '{string.Concat((char)123,(char)125)}','{new string('a',64)}');
         """;
 
     private static string MigrationSql(bool down)

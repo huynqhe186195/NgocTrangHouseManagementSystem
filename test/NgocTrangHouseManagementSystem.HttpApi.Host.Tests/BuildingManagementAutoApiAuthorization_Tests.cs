@@ -215,6 +215,13 @@ public sealed class BuildingManagementAutoApiAuthorization_Tests
         Assert.IsType<
             BuildingManagement.Security.DenyAllBuildingOperatorGrantReader>(grants);
         Assert.Empty(await grants.GetActiveBuildingIdsAsync(Guid.NewGuid()));
+        var writer = app.Services.GetRequiredService<
+            BuildingManagement.Security.IBuildingOperatorGrantMutationWriter>();
+        Assert.IsType<
+            BuildingManagement.Security.DenyAllBuildingOperatorGrantMutationWriter>(writer);
+        await Assert.ThrowsAsync<Volo.Abp.Authorization.AbpAuthorizationException>(() =>
+            writer.AssignAtomicallyAsync(
+                Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), null));
     }
 
     [Fact]

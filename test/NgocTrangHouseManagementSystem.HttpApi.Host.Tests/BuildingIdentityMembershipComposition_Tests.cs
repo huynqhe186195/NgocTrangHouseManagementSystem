@@ -359,6 +359,53 @@ public sealed class BuildingIdentityMembershipComposition_Tests
     }
 
     [Fact]
+    public async Task IDMEM13_Delegation_Requires_Permission_And_Revocation_Stops_Access()
+    {
+        await using var f = await Fixture.CreateAsync();
+        await f.GrantAsync(f.Actor, f.BuildingA);
+        var issuer = new AbpBuildingOperatorChangeIssuerReader(
+            f.CurrentUser, f.PermissionChecker);
+        var preflight = new BuildingOperatorChangeDesignGate(
+            issuer, f.AccountProbe, f.Scope, f.GrantReader);
+        var coordinator = new BuildingOperatorChangeCoordinator(
+            preflight, issuer,
+            new EfBuildingOperatorGrantAtomicMutationWriter(
+                f.StoreReader, TimeProvider.System));
+
+        f.Permissions.Allowed.Add(BuildingManagementPermissions.Buildings.Manage);
+        await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+            coordinator.AssignAsync(f.BuildingA, f.Other, null));
+        f.Permissions.Allowed.Add(BuildingManagementPermissions.Buildings.AssignOperators);
+        await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+            coordinator.AssignAsync(f.BuildingB, f.Other, null));
+        await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+            coordinator.AssignAsync(f.BuildingA, f.Actor, null));
+
+        var grantedId = await coordinator.AssignAsync(f.BuildingA, f.Other, null);
+        await using (var db = f.Store.Open())
+            Assert.Equal(f.Actor, (await db.Grants.SingleAsync(
+                g => g.Id == grantedId)).GrantedByUserId);
+
+        f.Permissions.Allowed.Add(BuildingManagementPermissions.Buildings.Read);
+        f.Principal.User = f.Other;
+        await f.Policy.EnsureBuildingAsync(f.BuildingA,
+            BuildingBusinessCapability.ReadBuilding);
+        await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+            f.Policy.EnsureBuildingAsync(f.BuildingB,
+                BuildingBusinessCapability.ReadBuilding));
+        f.Principal.User = f.Actor;
+
+        await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+            coordinator.RevokeAsync(f.BuildingA, f.Other, 1));
+        f.Permissions.Allowed.Add(BuildingManagementPermissions.Buildings.RevokeOperators);
+        await coordinator.RevokeAsync(f.BuildingA, f.Other, 1);
+        f.Principal.User = f.Other;
+        await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+            f.Policy.EnsureBuildingAsync(f.BuildingA,
+                BuildingBusinessCapability.ReadBuilding));
+    }
+
+    [Fact]
     public async Task IDMEM10_Production_DI_Does_Not_Use_Identity_Or_Grant_Candidates()
     {
         // The cross-building positives above are ONLY for explicitly

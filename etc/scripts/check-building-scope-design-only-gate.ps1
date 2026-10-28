@@ -75,6 +75,19 @@ foreach ($name in @('IQueryable<Building>', 'IQueryable<Floor>',
     }
 }
 
+# Fail closed: the staging grant/revoke writer must remain unregistered.
+$mutation = Read-Source 'modules/buildingmanagement/src/BuildingManagement.Application/Security/BuildingOperatorChangeCoordinator.cs'
+$mutationEf = Read-Source 'modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Security/EfBuildingOperatorGrantAtomicMutationWriter.cs'
+if ($mutation -notmatch 'class DenyAllBuildingOperatorGrantMutationWriter' -or
+    $mutation -notmatch '\[RemoteService\(IsEnabled\s*=\s*false\)\]' -or
+    $mutationEf -match ':\s*IBuildingOperatorGrantMutationWriter\s*,\s*ITransientDependency' -or
+    $mutationEf -match '\[(ExposeServices|Dependency)\s*\(' -or
+    $mutationEf -notmatch 'IsolationLevel.Serializable' -or
+    $mutationEf -notmatch 'EnsureIssuerGrantAsync' -or
+    $mutationEf -notmatch 'RevisionNumber') {
+    throw 'Safety stop: staged operator delegation writer lost security guards.'
+}
+
 # The reviewed OFFLINE candidate must remain separate from runtime EF and
 # never grant DB roles or run destructive SQL.
 $grantUp = Read-Source 'etc/phase-audits/SliceA_OperatorBuildingGrant_Up_Candidate.sql'

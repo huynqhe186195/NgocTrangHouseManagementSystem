@@ -3,6 +3,8 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using BuildingManagement.Buildings;
+using BuildingManagement.Security;
+using Volo.Abp.Authorization;
 using BuildingManagement.EntityFrameworkCore.EntityConfigurations;
 using BuildingManagement.EntityFrameworkCore.Security;
 using Microsoft.EntityFrameworkCore;
@@ -158,6 +160,137 @@ public sealed class SliceAGrantEfMigrationPostgreSql_Tests
                 .FindActiveBuildingIdsAsync(reader.Grants, reader.Buildings, b, now);
             Assert.Equal(new[] { buildingA.Id }, grantsA);
             Assert.Equal(new[] { buildingB.Id }, grantsB);
+        });
+    }
+
+    [Fact]
+    public async Task EFMEMBER04_Only_Existing_Building_Owner_Can_Delegate_And_Never_To_Self()
+    {
+        await InScratchAsync(async cs =>
+        {
+            var issuerA = Guid.NewGuid();
+            var issuerB = Guid.NewGuid();
+            Guid buildingA, buildingB;
+            await using (var seed = OpenGrantDb(cs))
+            {
+                await seed.Database.MigrateAsync();
+                var bootstrap = new EfBuildingOwnerBootstrapAtomicWriter(seed);
+                buildingA = (await bootstrap.CreateWithOwnerAtomicallyAsync(
+                    issuerA, "A", "Scratch A", null)).Id;
+                buildingB = (await bootstrap.CreateWithOwnerAtomicallyAsync(
+                    issuerB, "B", "Scratch B", null)).Id;
+            }
+            var recipient = Guid.NewGuid();
+            await using var db = OpenGrantDb(cs);
+            var writer = new EfBuildingOperatorGrantAtomicMutationWriter(
+                db, TimeProvider.System);
+            await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+                writer.AssignAtomicallyAsync(issuerA, issuerA, buildingA, null));
+            await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+                writer.AssignAtomicallyAsync(issuerA, recipient, buildingB, null));
+            await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+                writer.AssignAtomicallyAsync(Guid.NewGuid(), recipient, buildingA, null));
+            var id = await writer.AssignAtomicallyAsync(
+                issuerA, recipient, buildingA, null);
+            await using var verify = OpenGrantDb(cs);
+            var grant = await verify.Grants.AsNoTracking()
+                .SingleAsync(x => x.Id == id);
+            Assert.Equal(issuerA, grant.GrantedByUserId);
+            Assert.Equal(buildingA, grant.BuildingId);
+            Assert.False(await verify.Grants.AnyAsync(x =>
+                x.BuildingId == buildingB && x.OperatorUserId == recipient));
+        });
+    }
+
+    [Fact]
+    public async Task EFMEMBER05_Revoke_With_Revision_Retains_History_And_Allows_Regrant()
+    {
+        await InScratchAsync(async cs =>
+        {
+            var issuer = Guid.NewGuid();
+            var recipient = Guid.NewGuid();
+            Guid building;
+            await using (var seed = OpenGrantDb(cs))
+            {
+                await seed.Database.MigrateAsync();
+                building = (await new EfBuildingOwnerBootstrapAtomicWriter(seed)
+                    .CreateWithOwnerAtomicallyAsync(issuer, "A", "Scratch", null)).Id;
+            }
+            Guid oldId;
+            await using (var first = OpenGrantDb(cs))
+            {
+                var w = new EfBuildingOperatorGrantAtomicMutationWriter(
+                    first, TimeProvider.System);
+                oldId = await w.AssignAtomicallyAsync(issuer, recipient, building, null);
+            }
+            await using (var duplicate = OpenGrantDb(cs))
+            {
+                await Assert.ThrowsAsync<DbUpdateException>(() =>
+                    new EfBuildingOperatorGrantAtomicMutationWriter(
+                        duplicate, TimeProvider.System)
+                        .AssignAtomicallyAsync(issuer, recipient, building, null));
+            }
+            await using (var revoke = OpenGrantDb(cs))
+            {
+                var w = new EfBuildingOperatorGrantAtomicMutationWriter(
+                    revoke, TimeProvider.System);
+                await Assert.ThrowsAsync<DbUpdateConcurrencyException>(() =>
+                    w.RevokeAtomicallyAsync(issuer, recipient, building, 123));
+                await w.RevokeAtomicallyAsync(issuer, recipient, building, 1);
+            }
+            await using (var regrant = OpenGrantDb(cs))
+            {
+                var next = await new EfBuildingOperatorGrantAtomicMutationWriter(
+                    regrant, TimeProvider.System)
+                    .AssignAtomicallyAsync(issuer, recipient, building, null);
+                Assert.NotEqual(oldId, next);
+            }
+            await using var verify = OpenGrantDb(cs);
+            Assert.Equal(2, await verify.Grants.CountAsync(x =>
+                x.OperatorUserId == recipient && x.BuildingId == building));
+            Assert.Equal(1, await verify.Grants.CountAsync(x =>
+                x.OperatorUserId == recipient && x.BuildingId == building &&
+                x.RevokedAtUtc == null));
+            var history = await verify.Grants.SingleAsync(x => x.Id == oldId);
+            Assert.Equal(2, history.RevisionNumber);
+            Assert.Equal(issuer, history.RevokedByUserId);
+        });
+    }
+
+    [Fact]
+    public async Task EFMEMBER06_Concurrent_Assignment_Cannot_Create_Two_Active_Grants()
+    {
+        await InScratchAsync(async cs =>
+        {
+            var issuer = Guid.NewGuid();
+            var recipient = Guid.NewGuid();
+            Guid building;
+            await using (var seed = OpenGrantDb(cs))
+            {
+                await seed.Database.MigrateAsync();
+                building = (await new EfBuildingOwnerBootstrapAtomicWriter(seed)
+                    .CreateWithOwnerAtomicallyAsync(issuer, "A", "Scratch", null)).Id;
+            }
+            async Task<bool> TryAssignAsync()
+            {
+                await using var db = OpenGrantDb(cs);
+                try
+                {
+                    await new EfBuildingOperatorGrantAtomicMutationWriter(
+                        db, TimeProvider.System).AssignAtomicallyAsync(
+                            issuer, recipient, building, null);
+                    return true;
+                }
+                catch (DbUpdateException) { return false; }
+                catch (PostgresException ex) when (ex.SqlState is "40001" or "23505")
+                { return false; }
+            }
+            var results = await Task.WhenAll(TryAssignAsync(), TryAssignAsync());
+            Assert.Equal(1, results.Count(x => x));
+            await using var check = OpenGrantDb(cs);
+            Assert.Equal(1, await check.Grants.CountAsync(x =>
+                x.OperatorUserId == recipient && x.BuildingId == building &&
+                x.RevokedAtUtc == null));
         });
     }
 

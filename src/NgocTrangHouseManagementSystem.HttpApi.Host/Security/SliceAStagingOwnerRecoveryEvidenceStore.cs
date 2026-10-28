@@ -30,13 +30,15 @@ public sealed class SliceAStagingOwnerRecoveryEvidenceStore :
     private readonly IBuildingOperatorActiveAccountReader _accounts;
     private readonly IOptions<BuildingOwnerBootstrapSecurityOptions> _bootstrap;
     private readonly IOptions<BuildingOwnerRecoverySecurityOptions> _recovery;
+    private readonly SliceAStagingIdentityCommitLease _lease;
 
     public SliceAStagingOwnerRecoveryEvidenceStore(
         IDbContextProvider<BuildingManagementDbContext> provider,
         ICurrentUser user, IPermissionChecker permissions,
         IBuildingOperatorActiveAccountReader accounts,
         IOptions<BuildingOwnerBootstrapSecurityOptions> bootstrap,
-        IOptions<BuildingOwnerRecoverySecurityOptions> recovery)
+        IOptions<BuildingOwnerRecoverySecurityOptions> recovery,
+        SliceAStagingIdentityCommitLease lease)
     {
         _provider = provider;
         _user = user;
@@ -44,6 +46,7 @@ public sealed class SliceAStagingOwnerRecoveryEvidenceStore :
         _accounts = accounts;
         _bootstrap = bootstrap;
         _recovery = recovery;
+        _lease = lease;
     }
 
     /// <summary>
@@ -77,6 +80,10 @@ public sealed class SliceAStagingOwnerRecoveryEvidenceStore :
                 ? BuildingManagementPermissions.Buildings.BootstrapOwner
                 : BuildingManagementPermissions.Buildings.CoSignOwnerRecovery))
             throw Denied();
+        // Lock the exact signer ABP permission and Identity account state
+        // through Building UoW commit, not only during a cached preflight.
+        await _lease.AcquireOwnerRecoverySignoffAsync(
+            signer, isRoot, foundingOwnerId, newOwnerId);
         if (await ReadFoundingOwnerAsync(buildingId) != foundingOwnerId)
             throw Denied();
 

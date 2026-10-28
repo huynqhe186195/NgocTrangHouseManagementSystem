@@ -43,6 +43,28 @@ public sealed class SliceAStagingIdentityCommitLease
         => AcquirePermissionAsync(trustedOwnerUserId,
             BuildingManagementPermissions.Buildings.BootstrapOwner, null);
 
+    /// <summary>
+    /// One recovery sign-off holds the independently authenticated signer's
+    /// current persisted permission, active recipient, and inactive founder
+    /// account state until the sign-off audit row commits. A deleted or
+    /// missing founder without a lockable record fails closed.
+    /// </summary>
+    public Task AcquireOwnerRecoverySignoffAsync(
+        Guid authenticatedSignerId, bool isBootstrapRoot,
+        Guid originalFounderId, Guid recipientId)
+    {
+        if (originalFounderId == Guid.Empty ||
+            recipientId == Guid.Empty ||
+            originalFounderId == authenticatedSignerId ||
+            originalFounderId == recipientId)
+            throw Denied();
+        return AcquirePermissionAsync(authenticatedSignerId,
+            isBootstrapRoot
+                ? BuildingManagementPermissions.Buildings.BootstrapOwner
+                : BuildingManagementPermissions.Buildings.CoSignOwnerRecovery,
+            recipientId, originalFounderId);
+    }
+
     public Task AcquireAsync(
         Guid trustedUserId, BuildingBusinessCapability capability)
         => AcquirePermissionAsync(trustedUserId, capability switch
@@ -78,7 +100,8 @@ public sealed class SliceAStagingIdentityCommitLease
     }
 
     private async Task AcquirePermissionAsync(
-        Guid trustedUserId, string permission, Guid? activeRecipientId)
+        Guid trustedUserId, string permission, Guid? activeRecipientId,
+        Guid? inactiveFounderId = null)
     {
         if (trustedUserId == Guid.Empty ||
             !_config.GetValue<bool>("BuildingManagement:SliceAStaging:Enabled") ||
@@ -134,6 +157,23 @@ public sealed class SliceAStagingIdentityCommitLease
                     """, connection, transaction);
                 recipient.Parameters.AddWithValue("id", activeRecipientId.Value);
                 if (await recipient.ExecuteScalarAsync() is not Guid)
+                    throw Denied();
+            }
+            if (inactiveFounderId.HasValue)
+            {
+                // Prevent a founder reactivation between sign-off preflight
+                // and durable Building audit commit. Missing rows are denied.
+                await using var founder = new NpgsqlCommand(
+                    """
+                    SELECT "Id" FROM "AbpUsers"
+                     WHERE "Id" = @id
+                       AND ("IsDeleted" = TRUE OR "IsActive" = FALSE
+                            OR ("LockoutEnabled" = TRUE
+                                AND "LockoutEnd" > NOW()))
+                     FOR SHARE
+                    """, connection, transaction);
+                founder.Parameters.AddWithValue("id", inactiveFounderId.Value);
+                if (await founder.ExecuteScalarAsync() is not Guid)
                     throw Denied();
             }
             // Prefer a persisted direct user grant. If absent, verify

@@ -408,7 +408,62 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     .GetRequiredService<IBuildingOwnerRecoveryApprovalReader>()
                     .ReadApprovedAsync(recoveryBuilding, operatorB));
             }
-            await SignAsync(cosigner);
+            // The co-signer's permission cannot be revoked before the
+            // independently authenticated durable sign-off commits.
+            Task<int>? revokeCoSign = null;
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                var accessor = sp.GetRequiredService<ICurrentPrincipalAccessor>();
+                using (accessor.Change(new ClaimsPrincipal(new ClaimsIdentity(
+                    new[]
+                    {
+                        new Claim(AbpClaimTypes.UserId, cosigner.ToString("D")),
+                        new Claim(ClaimTypes.NameIdentifier, cosigner.ToString("D"))
+                    }, "CommitBoundRecoverySignoff"))))
+                {
+                    using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                        .Begin(requiresNew: true, isTransactional: true);
+                    await sp.GetRequiredService<SliceAStagingOwnerRecoveryEvidenceStore>()
+                        .RecordSignoffAsync(evidence, recoveryBuilding,
+                            disabledFounder, operatorB, DateTime.UtcNow.AddHours(1));
+                    revokeCoSign = Task.Run(async () =>
+                    {
+                        await using var connection = new NpgsqlConnection(idCs);
+                        await connection.OpenAsync();
+                        await using var command = new NpgsqlCommand(
+                            """
+                            DELETE FROM "AbpPermissionGrants"
+                             WHERE "ProviderName" = 'U'
+                               AND "ProviderKey" = @signer
+                               AND "Name" = @permission
+                            """, connection);
+                        command.Parameters.AddWithValue("signer", cosigner.ToString("D"));
+                        command.Parameters.AddWithValue("permission",
+                            BuildingManagementPermissions.Buildings.CoSignOwnerRecovery);
+                        return await command.ExecuteNonQueryAsync();
+                    });
+                    await Task.Delay(250);
+                    Assert.False(revokeCoSign.IsCompleted,
+                        "Co-signer revocation must wait for evidence commit.");
+                    await uow.CompleteAsync();
+                }
+            }
+            Assert.NotNull(revokeCoSign);
+            Assert.Equal(1, await revokeCoSign!.WaitAsync(TimeSpan.FromSeconds(15)));
+            // Restore isolated evidence fixture privilege for subsequent
+            // checks; this is never applied to any deployed account.
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                await sp.GetRequiredService<IPermissionManager>().SetForUserAsync(
+                    cosigner,
+                    BuildingManagementPermissions.Buildings.CoSignOwnerRecovery,
+                    true);
+                await uow.CompleteAsync();
+            }
             using (var scope = app.Services.CreateScope())
             {
                 var sp = scope.ServiceProvider;

@@ -1950,7 +1950,11 @@ public sealed class InvoicePersistenceIntegration_Tests
                 seeded.RequestId);
             var provenance = await MakeSourceProvenanceService().GetAsync(
                 seeded.ArchiveId);
+            var drift = await MakeIssueDriftService().GetAsync(
+                seeded.ArchiveId);
             Assert.True(provenance.MatchesPersistedSources);
+            Assert.True(drift.MatchesCurrentDraft,
+                "Drift: " + string.Join(", ", drift.Blockers));
             var scope = new InvoiceIssuanceScopeFacts(
                 AuthenticatedIssuerId: issuerId,
                 IssuerPermissionGranted: true,
@@ -1980,15 +1984,31 @@ public sealed class InvoicePersistenceIntegration_Tests
                 "APPROVED-EXPLICIT-NO-FEES",
                 reviewerId,
                 Array.Empty<FinalInvoiceAuxiliaryChargeProposal>());
-            var scopeReview = InvoiceIssuanceScopePolicy.Assess(preflight, scope);
-            var termsReview = FinalInvoiceFinancialTermsEvaluator.Assess(preflight, terms);
+            // Use the persisted archival digest for terms and scope, not
+            // the fresh snapshot timestamp-dependent preview digest.
+            var anchoredPreflight = new FinalInvoiceIssuePreflight
+            {
+                MoveOutRequestId = preflight.MoveOutRequestId,
+                ContractId = preflight.ContractId,
+                RoomId = preflight.RoomId,
+                UtilityDraftId = preflight.UtilityDraftId,
+                KnownBaseChargeTotal = preflight.KnownBaseChargeTotal,
+                BaseCharges = preflight.BaseCharges,
+                EvidenceSha256 = archive.EvidenceSha256
+            };
+            anchoredPreflight.Blockers.AddRange(preflight.Blockers);
+            var scopeReview = InvoiceIssuanceScopePolicy.Assess(
+                anchoredPreflight, scope);
+            var termsReview = FinalInvoiceFinancialTermsEvaluator.Assess(
+                anchoredPreflight, terms);
             Assert.True(scopeReview.IsScopeConsistent,
                 "Scope: " + string.Join(", ", scopeReview.Blockers));
             Assert.Equal(
                 new[] { "FinancialTermsProposalIsNotPostingAuthorization" },
                 termsReview.Blockers);
             Assert.Equal(seeded.DraftId, preflight.UtilityDraftId);
-            Assert.Equal(archive.EvidenceSha256, preflight.EvidenceSha256);
+            Assert.Equal(archive.KnownBaseChargeTotal,
+                preflight.KnownBaseChargeTotal);
             Assert.True(provenance.MatchesPersistedSources,
                 "Sources: " + string.Join(", ", provenance.Blockers));
             var candidateId = Guid.NewGuid();
@@ -1996,7 +2016,7 @@ public sealed class InvoicePersistenceIntegration_Tests
             var candidate = IssuedInvoiceLedgerRecord.BuildVerifiedCandidate(
                 candidateId, "NT-FINAL-" + candidateId.ToString("N"),
                 issuerId, issueTime, archive, review, preflight,
-                scope, terms, provenance);
+                scope, terms, drift, provenance);
             candidate.VerifyStoredTerms(archive, review);
             Assert.Equal(3_110_000m, candidate.BaseAmount);
             Assert.Equal(0m, candidate.AuxiliaryAmount);
@@ -2010,14 +2030,14 @@ public sealed class InvoicePersistenceIntegration_Tests
                     Guid.NewGuid(), "SCOPE-DENIED", issuerId, issueTime,
                     archive, review, preflight,
                     scope with { IssuerPermissionGranted = false },
-                    terms, provenance));
+                    terms, drift, provenance));
             Assert.Throws<InvalidOperationException>(() =>
                 IssuedInvoiceLedgerRecord.BuildVerifiedCandidate(
                     Guid.NewGuid(), "FEE-DENIED", issuerId, issueTime,
                     archive, review, preflight, scope,
                     terms with { AuxiliaryFeeDecision =
                         AuxiliaryFeeAssessmentDecision.NotReviewed },
-                    provenance));
+                    drift, provenance));
             Assert.Equal(InvoiceStatus.Draft,
                 (await _invoices.GetAsync(seeded.DraftId)).Status);
         });

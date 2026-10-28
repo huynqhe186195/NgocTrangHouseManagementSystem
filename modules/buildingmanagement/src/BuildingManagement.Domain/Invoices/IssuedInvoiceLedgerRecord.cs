@@ -56,6 +56,7 @@ public sealed class IssuedInvoiceLedgerRecord : Entity<Guid>
         FinalInvoiceIssuePreflight preflight,
         InvoiceIssuanceScopeFacts scopeFacts,
         FinalInvoiceFinancialTermsProposal approvedTerms,
+        FinalInvoiceIssueEvidenceDriftReview driftReview,
         FinalInvoiceSourceProvenanceReview provenance)
     {
         ArgumentNullException.ThrowIfNull(evidence);
@@ -63,6 +64,7 @@ public sealed class IssuedInvoiceLedgerRecord : Entity<Guid>
         ArgumentNullException.ThrowIfNull(preflight);
         ArgumentNullException.ThrowIfNull(scopeFacts);
         ArgumentNullException.ThrowIfNull(approvedTerms);
+        ArgumentNullException.ThrowIfNull(driftReview);
         ArgumentNullException.ThrowIfNull(provenance);
         if (id == Guid.Empty || id == evidence.DraftInvoiceId ||
             issuerUserId == Guid.Empty || string.IsNullOrWhiteSpace(invoiceNumber) ||
@@ -72,9 +74,40 @@ public sealed class IssuedInvoiceLedgerRecord : Entity<Guid>
 
         evidence.VerifyStoredEvidence();
         review.VerifyStagedEvidence(evidence);
-        var scope = InvoiceIssuanceScopePolicy.Assess(preflight, scopeFacts);
+        // A fresh final-invoice preview captures a NEW CapturedAtUtc
+        // and therefore a NEW JSON/SHA even if the physical values
+        // are unchanged. The authoritative archived SHA is stable; a
+        // separate drift evaluator compares the archived snapshot to
+        // the CURRENT persisted Draft using its original capture time.
+        // We must not equate two time-dependent snapshot hashes.
+        if (driftReview.EvidenceRecordId != evidence.Id ||
+            driftReview.DraftInvoiceId != evidence.DraftInvoiceId ||
+            driftReview.ContractId != evidence.ContractId ||
+            !driftReview.MatchesCurrentDraft ||
+            driftReview.Blockers.Any(x =>
+                x != "InvoiceIssuanceAndDebtPostingNotImplemented") ||
+            preflight.KnownBaseChargeTotal != evidence.KnownBaseChargeTotal ||
+            preflight.BaseCharges.Count != 3 ||
+            preflight.BaseCharges.Sum(x => x.Amount) !=
+                evidence.KnownBaseChargeTotal)
+            throw new InvalidOperationException(
+                "Current draft has drifted or its archived financial base is inconsistent.");
+
+        var archivedPreflight = new FinalInvoiceIssuePreflight
+        {
+            MoveOutRequestId = preflight.MoveOutRequestId,
+            ContractId = preflight.ContractId,
+            RoomId = preflight.RoomId,
+            UtilityDraftId = preflight.UtilityDraftId,
+            KnownBaseChargeTotal = preflight.KnownBaseChargeTotal,
+            BaseCharges = preflight.BaseCharges,
+            EvidenceSha256 = evidence.EvidenceSha256
+        };
+        archivedPreflight.Blockers.AddRange(preflight.Blockers);
+        var scope = InvoiceIssuanceScopePolicy.Assess(
+            archivedPreflight, scopeFacts);
         var finance = FinalInvoiceFinancialTermsEvaluator.Assess(
-            preflight, approvedTerms);
+            archivedPreflight, approvedTerms);
         if (review.Status != InvoiceIssuanceReviewStatus.ReviewedForDesign ||
             !review.ReviewedAtUtc.HasValue ||
             review.ReviewedAtUtc.Value > issuedAtUtc ||
@@ -87,7 +120,6 @@ public sealed class IssuedInvoiceLedgerRecord : Entity<Guid>
             evidence.DraftInvoiceId != preflight.UtilityDraftId ||
             evidence.ContractId != preflight.ContractId ||
             evidence.RoomId != preflight.RoomId ||
-            evidence.EvidenceSha256 != preflight.EvidenceSha256 ||
             provenance.StagedEvidenceId != evidence.Id ||
             !provenance.MatchesPersistedSources ||
             provenance.Blockers.Any(x =>

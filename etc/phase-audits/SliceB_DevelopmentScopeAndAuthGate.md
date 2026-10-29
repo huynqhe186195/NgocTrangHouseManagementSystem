@@ -669,7 +669,7 @@ deposit checklist. No bank calls and no production migration occur.
 
 Source-only migration `20261029216000_SliceBFreezeClosedContractPartiesAndExtras`
 prevents contract tenant/member INSERT, DELETE, TRUNCATE, role, tenant ID,
-contract link, soft-delete or ABP ExtraProperties changes once there is a
+contract link, soft-delete changes once there is a
 signed deposit closeout for that contract. Each row write locks the relevant
 Contract row(s) FOR UPDATE to serialize with approval insertion. The same
 migration seals `ExtraProperties` on signed Contracts, MoveOutRequests and
@@ -682,3 +682,11 @@ writers; the real isolated authenticated HTTP happy path now also attempts
 unauthorized tenant soft-deletion and Contract ExtraProperties rewriting.
 It does not freeze contact detail changes on the global Tenant entity, invoke
 real banks, migrate production or relax any earlier authorization boundary.
+
+The historical `BuildingManagementContractTenants` relation is a
+`FullAuditedEntity` and **has no ExtraProperties column** in its original
+EF migration. The tenant-party guard intentionally checks the actual
+`ContractId`, `TenantId`, `Role` and `IsDeleted` schema only; the
+separate extended-metadata guard applies to Contract, MoveOutRequest
+and ChecklistTask tables, each of which has an ExtraProperties column.
+This distinction was verified against the real migration and HTTP test.

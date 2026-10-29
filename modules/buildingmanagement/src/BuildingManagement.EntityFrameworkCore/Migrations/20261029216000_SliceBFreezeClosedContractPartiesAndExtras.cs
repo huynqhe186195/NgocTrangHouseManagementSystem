@@ -65,7 +65,6 @@ public sealed class SliceBFreezeClosedContractPartiesAndExtras : Migration
                    OR NEW."TenantId" IS DISTINCT FROM OLD."TenantId"
                    OR NEW."Role" IS DISTINCT FROM OLD."Role"
                    OR NEW."IsDeleted" IS DISTINCT FROM OLD."IsDeleted"
-                   OR NEW."ExtraProperties" IS DISTINCT FROM OLD."ExtraProperties"
                 THEN
                     RAISE EXCEPTION 'Signed contract tenants cannot be added, removed or rewritten'
                         USING ERRCODE = '23514';

@@ -37,7 +37,6 @@ public sealed class SliceBFreezeClosedContractPartiesAndExtrasPostgreSql_Tests
             "Id" uuid PRIMARY KEY, "ContractId" uuid NOT NULL,
             "TenantId" uuid NOT NULL, "Role" integer NOT NULL,
             "IsDeleted" boolean NOT NULL DEFAULT FALSE,
-            "ExtraProperties" text NOT NULL DEFAULT '{}',
             "LastModificationTime" timestamptz NULL
         );
         CREATE TABLE "BuildingManagementContractDepositCloseoutApprovals" (
@@ -83,11 +82,6 @@ public sealed class SliceBFreezeClosedContractPartiesAndExtrasPostgreSql_Tests
             await Denied(db, tx, $"""
                 UPDATE "BuildingManagementContractTenants"
                    SET "IsDeleted"=TRUE WHERE "Id"='{party:D}'
-                """);
-            await Denied(db, tx, $"""
-                UPDATE "BuildingManagementContractTenants"
-                   SET "ExtraProperties"=json_build_object('changed', TRUE)::text
-                 WHERE "Id"='{party:D}'
                 """);
             await Denied(db, tx, $"""
                 DELETE FROM "BuildingManagementContractTenants"

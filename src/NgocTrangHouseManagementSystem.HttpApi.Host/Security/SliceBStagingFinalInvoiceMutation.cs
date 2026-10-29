@@ -296,6 +296,16 @@ public sealed class SliceBStagingFinalInvoiceMutation
                 // FK needs its source receipt before immutable journal
                 // INSERT; both SaveChanges occur in SAME enclosing UoW.
                 await db.SaveChangesAsync();
+                // In ABP, the final scoped write fence can touch tracked
+                // audited entity metadata again at commit. Once journaled,
+                // the source Payment is deliberately immutable in SQL.
+                // Detach ONLY the already-saved, unchanged receipt before
+                // staging its immutable allocation, preserving the same
+                // transaction while preventing a later metadata UPDATE.
+                var receiptEntry = db.Entry(receipt);
+                if (receiptEntry.State != EntityState.Unchanged)
+                    throw Denied();
+                receiptEntry.State = EntityState.Detached;
 
                 var journal = InvoicePaymentAllocationJournalEntry.StageForValidation(
                     Guid.NewGuid(), receipt, issuedInvoiceId, actor,

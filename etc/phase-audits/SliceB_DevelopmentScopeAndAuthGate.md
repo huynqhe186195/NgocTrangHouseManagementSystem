@@ -618,3 +618,17 @@ Contract row lock as the approval writer. PostgreSQL probes cover forbidden
 rewrites, the legitimate end, unrelated contracts, downgrade refusal,
 empty-history re-upgrade and a concurrent direct-SQL race. It does not
 make a manual bank-reference claim into independent bank confirmation.
+
+### Protect approved move-out request after signed handover
+
+Source-only `20261029213000_SliceBFreezeClosedMoveOutRequest` blocks
+post-closeout updates/deletes of the exact move-out request's contract,
+room, planned dates, reasons, reviewer proof and deleted flag. The original
+closeout UoW writes immutable approval before completing the request: the
+SQL guard deliberately permits exactly Approved→Completed after approval,
+and audit metadata edits thereafter, not reopening/re-dating completed
+handover evidence. PostgreSQL source tests cover legal completion, illegal
+rewrites, empty downgrade and a concurrent update waiting on the request
+row lock. The full isolated HTTP happy-path test now also tries prohibited
+SQL rewrites of the finalized Contract and MoveOutRequest. No production
+DB, bank system or payment processor is touched.

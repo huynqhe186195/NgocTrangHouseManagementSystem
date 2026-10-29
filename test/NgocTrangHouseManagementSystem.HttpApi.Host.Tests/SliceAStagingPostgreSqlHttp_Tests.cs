@@ -1539,6 +1539,30 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 var refused = await Assert.ThrowsAsync<PostgresException>(
                     () => rewrite.ExecuteNonQueryAsync());
                 Assert.Equal("23514", refused.SqlState);
+
+                // A signed handover must also freeze both financial contract
+                // terms and the original approved move-out date, not merely
+                // its receipt. Keep direct SQL probes in the disposable DB.
+                await using var amendContract = new NpgsqlCommand(
+                    """
+                    UPDATE "BuildingManagementContracts"
+                       SET "DepositAmount" = 1 WHERE "Id" = @contract
+                    """, auditCash);
+                amendContract.Parameters.AddWithValue("contract", financeContract);
+                var contractDenied = await Assert.ThrowsAsync<PostgresException>(
+                    () => amendContract.ExecuteNonQueryAsync());
+                Assert.Equal("23514", contractDenied.SqlState);
+
+                await using var amendRequest = new NpgsqlCommand(
+                    """
+                    UPDATE "BuildingManagementMoveOutRequests"
+                       SET "ApprovedMoveOutDate" = '2026-12-31'
+                     WHERE "Id" = @request
+                    """, auditCash);
+                amendRequest.Parameters.AddWithValue("request", financeMoveOut);
+                var requestDenied = await Assert.ThrowsAsync<PostgresException>(
+                    () => amendRequest.ExecuteNonQueryAsync());
+                Assert.Equal("23514", requestDenied.SqlState);
             }
 
             string Members(Guid contractId) => scopedContracts + "/" +

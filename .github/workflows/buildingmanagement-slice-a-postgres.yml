@@ -202,6 +202,13 @@ jobs:
             --filter "FullyQualifiedName~SliceBFreezeClosedContractTermsPostgreSql_Tests" \
             --logger "console;verbosity=normal"
 
+      - name: Slice B immutable completed move-out evidence and transaction race
+        run: |
+          dotnet test modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/BuildingManagement.PostgreSql.Tests.csproj \
+            --no-restore --configuration Release \
+            --filter "FullyQualifiedName~SliceBFreezeClosedMoveOutRequestPostgreSql_Tests" \
+            --logger "console;verbosity=normal"
+
       - name: Isolated PostgreSQL ABP authenticated staging HTTP
         run: |
           dotnet test test/NgocTrangHouseManagementSystem.HttpApi.Host.Tests/NgocTrangHouseManagementSystem.HttpApi.Host.Tests.csproj \

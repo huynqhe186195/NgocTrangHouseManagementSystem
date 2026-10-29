@@ -65,19 +65,24 @@ public sealed class SliceBFreezeClosedDepositReceiptSourcesPostgreSql_Tests
                 """);
             await Denied(db,tx,$"""
                 UPDATE "BuildingManagementPayments" SET "Amount"=1
-                WHERE "Id"='{direct:D}' """);
+                WHERE "Id"='{direct:D}'
+                """);
             await Denied(db,tx,$"""
                 UPDATE "BuildingManagementPayments" SET "Status"=1
-                WHERE "Id"='{res:D}' """);
+                WHERE "Id"='{res:D}'
+                """);
             await Denied(db,tx,$"""
                 UPDATE "BuildingManagementPayments" SET "IsDeleted"=TRUE
-                WHERE "Id"='{direct:D}' """);
+                WHERE "Id"='{direct:D}'
+                """);
             await Denied(db,tx,$"""
-                DELETE FROM "BuildingManagementPayments" WHERE "Id"='{res:D}' """);
+                DELETE FROM "BuildingManagementPayments" WHERE "Id"='{res:D}'
+                """);
             await Denied(db,tx,$"""
                 INSERT INTO "BuildingManagementPayments"
                   ("Id","ContractId","Purpose","Status","Amount")
-                VALUES ('{Guid.NewGuid():D}','{contract:D}',2,1,1) """);
+                VALUES ('{Guid.NewGuid():D}','{contract:D}',2,1,1)
+                """);
             await Denied(db,tx,DownSql);
             await Run(db,tx,$"""
                 INSERT INTO "BuildingManagementPayments"
@@ -91,7 +96,8 @@ public sealed class SliceBFreezeClosedDepositReceiptSourcesPostgreSql_Tests
                 """);
             Assert.Equal(2000000L,await Scalar(db,tx,$"""
                 SELECT "Amount" FROM "BuildingManagementPayments"
-                 WHERE "Id"='{direct:D}' """));
+                 WHERE "Id"='{direct:D}'
+                """));
         });
     }
 
@@ -196,7 +202,8 @@ public sealed class SliceBFreezeClosedDepositReceiptSourcesPostgreSql_Tests
                 """);
             var pending=Run(editor,eTx,$"""
                 UPDATE "BuildingManagementPayments" SET "Amount"=1
-                 WHERE "Id"='{payment:D}' """);
+                 WHERE "Id"='{payment:D}'
+                """);
             await Task.Delay(150);
             Assert.False(pending.IsCompleted);
             await cTx.CommitAsync();

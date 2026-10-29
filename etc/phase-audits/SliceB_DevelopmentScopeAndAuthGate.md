@@ -648,3 +648,19 @@ move-out is Completed, with completion timestamps at/after approval.
 PostgreSQL tests force the deferred check before/after each terminal
 transition; full staging HTTP verifies the actual ABP audit flush. No
 relaxation of irreversible ledger immutability and no production rollout.
+
+### Immutable signed move-out checklist and commit-bound completeness
+
+Source-only migration `20261029215000_SliceBFreezeClosedMoveOutChecklist`
+locks contract then request before approval INSERT and uses the same request
+row to serialize competing checklist writes. After approval, the final meter
+proof cannot be altered, four other task statuses may only transition from
+incomplete to completed once with a completion timestamp at/after approval,
+and ABP audit-only metadata remains legal. Changing task identity, re-opening,
+re-dating, inserting/deleting tasks or truncating signed history is rejected.
+A deferred constraint trigger requires exactly five distinct completed task
+types at transaction COMMIT, while the existing closeout writer can persist
+them after immutable approval in the same UoW. Scratch PostgreSQL tests cover
+rollback, all-five, duplicate/missing task, forbidden edits and concurrent
+writers; the isolated HTTP happy-path tries raw SQL re-opening a completed
+deposit checklist. No bank calls and no production migration occur.

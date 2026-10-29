@@ -1563,6 +1563,19 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 var requestDenied = await Assert.ThrowsAsync<PostgresException>(
                     () => amendRequest.ExecuteNonQueryAsync());
                 Assert.Equal("23514", requestDenied.SqlState);
+
+                // The completed financial checklist is also part of the
+                // immutable signed handover, not editable task metadata.
+                await using var reopenChecklist = new NpgsqlCommand(
+                    """
+                    UPDATE "BuildingManagementMoveOutChecklistTasks"
+                       SET "IsCompleted" = FALSE, "CompletedAt" = NULL
+                     WHERE "MoveOutRequestId" = @request AND "Type" = 4
+                    """, auditCash);
+                reopenChecklist.Parameters.AddWithValue("request", financeMoveOut);
+                var taskDenied = await Assert.ThrowsAsync<PostgresException>(
+                    () => reopenChecklist.ExecuteNonQueryAsync());
+                Assert.Equal("23514", taskDenied.SqlState);
             }
 
             string Members(Guid contractId) => scopedContracts + "/" +

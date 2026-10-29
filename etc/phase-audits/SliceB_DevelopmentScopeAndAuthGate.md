@@ -603,3 +603,18 @@ Duplicate existing evidence fails migration atomically; any signed closeout
 blocks downgrade. The three scratch PostgreSQL tests cover normalized
 collision, independent refunds, empty rollback and two-connection race.
 This is anti-replay metadata validation, **not** external bank confirmation.
+
+### Freeze signed-closeout contract terms and lifecycle
+
+Source-only migration `20261029212000_SliceBFreezeClosedContractTerms`
+prevents direct SQL changes to a closed contract's room, deposit, monthly
+rent, dates, agreement number, renewal provenance, notes and soft-delete flag.
+It also rejects reopening an ended contract or changing an already-signed end
+timestamp/reason. The *existing* closeout transaction writes an immutable
+approval **before** calling `Contract.End`, so the trigger explicitly permits
+its single Active→Ended transition at/after approval time and audit-only
+metadata updates afterward. Transactions are serialized using the same
+Contract row lock as the approval writer. PostgreSQL probes cover forbidden
+rewrites, the legitimate end, unrelated contracts, downgrade refusal,
+empty-history re-upgrade and a concurrent direct-SQL race. It does not
+make a manual bank-reference claim into independent bank confirmation.

@@ -20,7 +20,7 @@ public sealed class SliceBFullFinancialMigrationChainPostgreSql_Tests
     private const string LastSliceAMigration =
         "20261028190000_SliceAOwnerRecoveryApprovals";
     private const string LastSliceBMigration =
-        "20261029211000_SliceBUniqueDepositRefundReferences";
+        "20261029212000_SliceBFreezeClosedContractTerms";
 
     [Fact]
     public async Task SBCHAIN01_Full_Runtime_Migrations_Upgrade_EmptyDown_And_Reupgrade()
@@ -100,6 +100,11 @@ public sealed class SliceBFullFinancialMigrationChainPostgreSql_Tests
                 Assert.Equal(1L, await ScalarAsync(inspect, """
                     SELECT count(*) FROM pg_indexes
                      WHERE indexname = 'UX_BM_DepositCloseout_RefundBankReference'
+                    """));
+                Assert.Equal(1L, await ScalarAsync(inspect, """
+                    SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal
+                     AND tgrelid='"BuildingManagementContracts"'::regclass
+                     AND tgname = 'TR_BM_ClosedContract_FreezeSource'
                     """));
             }
 

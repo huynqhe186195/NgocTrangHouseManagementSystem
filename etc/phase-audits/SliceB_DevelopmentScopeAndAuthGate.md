@@ -554,3 +554,15 @@ checks replay/overpayment denial and asserts persisted contract end, request
 completion, room release, all checklist sign-offs, issued ledger, receipt
 allocation and refund approval. **No external payment is made**. This
 scenario must pass CI before it is considered a verified end-to-end flow.
+
+### Full HTTP rehearsal: immutable cash settlement fix
+
+The positive HTTP rehearsal exposed a real EF change-tracking conflict:
+a completed refund was saved, then an immutable closeout approval was
+inserted, after which an ABP audit metadata UPDATE of the settlement was
+attempted. The guarded PostgreSQL trigger rightly rejected it. The staging
+writer now detaches already-persisted, unchanged DepositSettlement entities
+before writing immutable approval, refusing any unsaved settlement mutation
+instead of relaxing the DB trigger. The two renewal/occupied-room payment
+regressions now select a legal next-month reservation window using Vietnam
+local time rather than an invalid +10-day assumption near month-end.

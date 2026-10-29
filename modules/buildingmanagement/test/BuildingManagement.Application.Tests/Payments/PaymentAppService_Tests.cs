@@ -2017,8 +2017,14 @@ public abstract class PaymentAppService_Tests<TStartupModule>
         var roomId =
             await CreateRoomAsync();
 
-        var contractEndDate =
-            _clock.Now.Date.AddDays(10);
+        // Reserve the first day of next month: an occupied room can
+        // only be pre-booked after the incumbent contract ends BEFORE
+        // that month starts. A fixed +10 days crosses the cutoff near
+        // month-end and makes this regression time-dependent.
+        var localNow = TimeZoneInfo.ConvertTimeFromUtc(
+            _clock.Now, TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh"));
+        var contractEndDate = new DateTime(
+            localNow.Year, localNow.Month, 1).AddMonths(1).AddDays(-1);
 
         var currentContract =
             await CreateActiveContractAsync(
@@ -2095,8 +2101,14 @@ public abstract class PaymentAppService_Tests<TStartupModule>
         var roomId =
             await CreateRoomAsync();
 
-        var contractEndDate =
-            _clock.Now.Date.AddDays(10);
+        // Reserve the first day of next month: an occupied room can
+        // only be pre-booked after the incumbent contract ends BEFORE
+        // that month starts. A fixed +10 days crosses the cutoff near
+        // month-end and makes this regression time-dependent.
+        var localNow = TimeZoneInfo.ConvertTimeFromUtc(
+            _clock.Now, TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh"));
+        var contractEndDate = new DateTime(
+            localNow.Year, localNow.Month, 1).AddMonths(1).AddDays(-1);
 
         await CreateActiveContractAsync(
             roomId,

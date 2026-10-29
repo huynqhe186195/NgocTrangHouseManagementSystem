@@ -502,10 +502,21 @@ public sealed class SliceBStagingFinalInvoiceMutation
                     db.DepositSettlements.Add(forfeit);
                 }
 
-                // The DB approval trigger references completed settlement
-                // rows and approved MoveOut, so insert in this exact order.
-                // This SaveChanges does not commit the enclosing UoW.
+                // Persist completed cash dispositions BEFORE immutable
+                // approval. The audit layer may mark previously read
+                // DepositSettlement rows as modified while the approval
+                // and later contract/room mutations are flushed. Detach
+                // those already-saved rows so no UPDATE is attempted AFTER
+                // the approval trigger has permanently frozen the ledger.
+                // Never downgrade the database immutability protection.
                 await db.SaveChangesAsync();
+                foreach (var tracked in db.ChangeTracker
+                    .Entries<DepositSettlement>().ToArray())
+                {
+                    if (tracked.State != EntityState.Unchanged)
+                        throw Denied();
+                    tracked.State = EntityState.Detached;
+                }
                 db.DepositCloseoutApprovals.Add(approval);
                 await db.SaveChangesAsync();
 

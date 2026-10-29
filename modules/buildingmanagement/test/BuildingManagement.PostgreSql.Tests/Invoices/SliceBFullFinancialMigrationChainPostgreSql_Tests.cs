@@ -20,7 +20,7 @@ public sealed class SliceBFullFinancialMigrationChainPostgreSql_Tests
     private const string LastSliceAMigration =
         "20261028190000_SliceAOwnerRecoveryApprovals";
     private const string LastSliceBMigration =
-        "20261029204000_SliceBContractDepositCloseoutApprovals";
+        "20261029205000_SliceBFreezeAllocatedInvoiceReceipts";
 
     [Fact]
     public async Task SBCHAIN01_Full_Runtime_Migrations_Upgrade_EmptyDown_And_Reupgrade()
@@ -87,6 +87,11 @@ public sealed class SliceBFullFinancialMigrationChainPostgreSql_Tests
                     "SELECT to_regclass('\"BuildingManagementContractDepositCloseoutApprovals\"') IS NOT NULL"));
                 Assert.Equal(1L, await ScalarAsync(inspect,
                     "SELECT count(*) FROM pg_constraint WHERE conname = 'FK_BM_DepositCloseout_RefundSettlement'"));
+                Assert.Equal(2L, await ScalarAsync(inspect, """
+                    SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal
+                     AND tgrelid='"BuildingManagementPayments"'::regclass
+                     AND tgname LIKE 'TR_BM_FreezeAllocated%'
+                    """));
             }
 
             // All financial sources are empty: reversible source-only

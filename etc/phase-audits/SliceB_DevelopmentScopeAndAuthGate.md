@@ -566,3 +566,15 @@ before writing immutable approval, refusing any unsaved settlement mutation
 instead of relaxing the DB trigger. The two renewal/occupied-room payment
 regressions now select a legal next-month reservation window using Vietnam
 local time rather than an invalid +10-day assumption near month-end.
+
+### Immutable source payments after journal and deposit closeout
+
+Migration `20261029205000_SliceBFreezeAllocatedInvoiceReceipts` rejects updates,
+soft-deletes, ID reassignment, deletes and truncation of any payment already
+referenced by an immutable issued-invoice allocation journal. It also rejects
+new or reattributed invoice payments for contracts with durable signed
+deposit closeout, under the same contract row lock. Unrelated deposit receipts
+remain under separate deposit policy. Source-only PostgreSQL tests cover
+unsafe writes and empty rollback; the actual staging HTTP end-to-end test
+attempts a forbidden raw SQL Payment rewrite after closeout. No production
+migration or bank integration is invoked.

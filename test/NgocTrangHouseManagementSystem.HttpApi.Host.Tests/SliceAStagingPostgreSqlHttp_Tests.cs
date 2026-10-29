@@ -1525,6 +1525,21 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     x.Amount == monthlyRent));
                 await uow.CompleteAsync();
             }
+            // Prove a journaled payment is frozen even through raw SQL
+            // after a successful signed move-out in the isolated database.
+            await using (var auditCash = new NpgsqlConnection(buildingCs))
+            {
+                await auditCash.OpenAsync();
+                await using var rewrite = new NpgsqlCommand(
+                    """
+                    UPDATE "BuildingManagementPayments"
+                       SET "Amount" = 1 WHERE "Id" = @id
+                    """, auditCash);
+                rewrite.Parameters.AddWithValue("id", receiptId);
+                var refused = await Assert.ThrowsAsync<PostgresException>(
+                    () => rewrite.ExecuteNonQueryAsync());
+                Assert.Equal("23514", refused.SqlState);
+            }
 
             string Members(Guid contractId) => scopedContracts + "/" +
                 contractId.ToString("D") + "/tenants";

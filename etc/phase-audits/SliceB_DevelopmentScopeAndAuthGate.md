@@ -664,3 +664,21 @@ them after immutable approval in the same UoW. Scratch PostgreSQL tests cover
 rollback, all-five, duplicate/missing task, forbidden edits and concurrent
 writers; the isolated HTTP happy-path tries raw SQL re-opening a completed
 deposit checklist. No bank calls and no production migration occur.
+
+### Signed contract parties and extensible business metadata are immutable
+
+Source-only migration `20261029216000_SliceBFreezeClosedContractPartiesAndExtras`
+prevents contract tenant/member INSERT, DELETE, TRUNCATE, role, tenant ID,
+contract link, soft-delete or ABP ExtraProperties changes once there is a
+signed deposit closeout for that contract. Each row write locks the relevant
+Contract row(s) FOR UPDATE to serialize with approval insertion. The same
+migration seals `ExtraProperties` on signed Contracts, MoveOutRequests and
+MoveOutChecklistTasks, closing an alternate evidence rewrite path through
+ABP's extensible domain properties. Audit timestamps, actor attribution
+and concurrency stamps may still be updated without changing business facts;
+contracts without signed closeout remain editable. Scratch PostgreSQL
+probes verify both allowed and rejected paths, rollback and concurrent SQL
+writers; the real isolated authenticated HTTP happy path now also attempts
+unauthorized tenant soft-deletion and Contract ExtraProperties rewriting.
+It does not freeze contact detail changes on the global Tenant entity, invoke
+real banks, migrate production or relax any earlier authorization boundary.

@@ -1576,6 +1576,31 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 var taskDenied = await Assert.ThrowsAsync<PostgresException>(
                     () => reopenChecklist.ExecuteNonQueryAsync());
                 Assert.Equal("23514", taskDenied.SqlState);
+
+                // A signed financial closeout also seals the identities
+                // and roles of its contract parties; raw SQL must not
+                // silently replace historical tenant provenance.
+                await using var changeParty = new NpgsqlCommand(
+                    """
+                    UPDATE "BuildingManagementContractTenants"
+                       SET "IsDeleted" = TRUE
+                     WHERE "ContractId" = @contract
+                    """, auditCash);
+                changeParty.Parameters.AddWithValue("contract", financeContract);
+                var partyDenied = await Assert.ThrowsAsync<PostgresException>(
+                    () => changeParty.ExecuteNonQueryAsync());
+                Assert.Equal("23514", partyDenied.SqlState);
+
+                await using var rewriteExtras = new NpgsqlCommand(
+                    """
+                    UPDATE "BuildingManagementContracts"
+                       SET "ExtraProperties" = '{"deposit":"spoofed"}'
+                     WHERE "Id" = @contract
+                    """, auditCash);
+                rewriteExtras.Parameters.AddWithValue("contract", financeContract);
+                var extrasDenied = await Assert.ThrowsAsync<PostgresException>(
+                    () => rewriteExtras.ExecuteNonQueryAsync());
+                Assert.Equal("23514", extrasDenied.SqlState);
             }
 
             string Members(Guid contractId) => scopedContracts + "/" +

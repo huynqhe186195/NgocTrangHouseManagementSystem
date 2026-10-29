@@ -578,3 +578,16 @@ remain under separate deposit policy. Source-only PostgreSQL tests cover
 unsafe writes and empty rollback; the actual staging HTTP end-to-end test
 attempts a forbidden raw SQL Payment rewrite after closeout. No production
 migration or bank integration is invoked.
+
+### Freeze invoice issuance after signed contract closeout
+
+Source-only migration `20261029210000_SliceBBlockIssuedInvoiceAfterCloseout`
+prevents a new issued invoice for a contract with an immutable deposit
+closeout approval. An INSERT trigger locks the same persisted Contract row
+used by the closeout approval trigger, so competing direct SQL writers in
+READ COMMITTED serialize at commit; a closed contract cannot acquire new
+issued debt after all existing invoices were reconciled. Different contracts
+remain independently issuable. A downgrade is refused while any signed
+closeout approval exists. PostgreSQL tests cover negative/positive writes,
+unsafe downgrade, empty rollback and a two-connection lock race. No
+application or production migration, real payment or bank refund is run.

@@ -20,7 +20,7 @@ public sealed class SliceBFullFinancialMigrationChainPostgreSql_Tests
     private const string LastSliceAMigration =
         "20261028190000_SliceAOwnerRecoveryApprovals";
     private const string LastSliceBMigration =
-        "20261029205000_SliceBFreezeAllocatedInvoiceReceipts";
+        "20261029210000_SliceBBlockIssuedInvoiceAfterCloseout";
 
     [Fact]
     public async Task SBCHAIN01_Full_Runtime_Migrations_Upgrade_EmptyDown_And_Reupgrade()
@@ -91,6 +91,11 @@ public sealed class SliceBFullFinancialMigrationChainPostgreSql_Tests
                     SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal
                      AND tgrelid='"BuildingManagementPayments"'::regclass
                      AND tgname LIKE 'TR_BM_FreezeAllocated%'
+                    """));
+                Assert.Equal(1L, await ScalarAsync(inspect, """
+                    SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal
+                     AND tgrelid='"BuildingManagementIssuedInvoiceLedger"'::regclass
+                     AND tgname = 'TR_BM_IssuedLedger_RejectAfterDepositCloseout'
                     """));
             }
 

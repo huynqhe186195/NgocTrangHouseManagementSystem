@@ -86,7 +86,7 @@ public sealed class SliceBFreezeClosedContractPartiesAndExtrasPostgreSql_Tests
                 """);
             await Denied(db, tx, $"""
                 UPDATE "BuildingManagementContractTenants"
-                   SET "ExtraProperties"='{"changed":true}'
+                   SET "ExtraProperties"=json_build_object('changed', TRUE)::text
                  WHERE "Id"='{party:D}'
                 """);
             await Denied(db, tx, $"""
@@ -97,17 +97,17 @@ public sealed class SliceBFreezeClosedContractPartiesAndExtrasPostgreSql_Tests
                 """TRUNCATE "BuildingManagementContractTenants" """);
             await Denied(db, tx, $"""
                 UPDATE "BuildingManagementContracts"
-                   SET "ExtraProperties"='{"terms":"rewritten"}'
+                   SET "ExtraProperties"=json_build_object('terms', 'rewritten')::text
                  WHERE "Id"='{contract:D}'
                 """);
             await Denied(db, tx, $"""
                 UPDATE "BuildingManagementMoveOutRequests"
-                   SET "ExtraProperties"='{"proof":"replaced"}'
+                   SET "ExtraProperties"=json_build_object('proof', 'replaced')::text
                  WHERE "Id"='{request:D}'
                 """);
             await Denied(db, tx, $"""
                 UPDATE "BuildingManagementMoveOutChecklistTasks"
-                   SET "ExtraProperties"='{"verified":false}'
+                   SET "ExtraProperties"=json_build_object('verified', FALSE)::text
                  WHERE "Id"='{task:D}'
                 """);
 
@@ -125,7 +125,7 @@ public sealed class SliceBFreezeClosedContractPartiesAndExtrasPostgreSql_Tests
                     ("Id","ContractId","TenantId","Role")
                 VALUES ('{Guid.NewGuid():D}','{other:D}','{Guid.NewGuid():D}',1);
                 UPDATE "BuildingManagementContracts"
-                   SET "ExtraProperties"='{"open":true}'
+                   SET "ExtraProperties"=json_build_object('open', TRUE)::text
                  WHERE "Id"='{other:D}';
                 """);
             Assert.Equal(1L, await Scalar(db, tx, $"""

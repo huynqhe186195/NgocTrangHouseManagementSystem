@@ -591,3 +591,15 @@ remain independently issuable. A downgrade is refused while any signed
 closeout approval exists. PostgreSQL tests cover negative/positive writes,
 unsafe downgrade, empty rollback and a two-connection lock race. No
 application or production migration, real payment or bank refund is run.
+
+### Duplicate manual-bank refund evidence safeguard
+
+Source-only migration `20261029211000_SliceBUniqueDepositRefundReferences`
+adds a PostgreSQL unique index on the trimmed, case-normalized manual refund
+transaction reference from signed closeout approvals. An already-claimed
+transfer reference cannot be reused to attest to a second contract refund,
+even under concurrent inserts; pure forfeits without a refund remain allowed.
+Duplicate existing evidence fails migration atomically; any signed closeout
+blocks downgrade. The three scratch PostgreSQL tests cover normalized
+collision, independent refunds, empty rollback and two-connection race.
+This is anti-replay metadata validation, **not** external bank confirmation.

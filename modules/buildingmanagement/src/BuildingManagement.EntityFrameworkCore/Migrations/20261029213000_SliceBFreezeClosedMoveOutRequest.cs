@@ -51,6 +51,15 @@ public sealed class SliceBFreezeClosedMoveOutRequest : Migration
                         USING ERRCODE = '23514';
                 END IF;
 
+                -- ABP auditing may flush only ConcurrencyStamp and
+                -- modification time while the request is still Approved.
+                -- A deferred approval constraint requires Completed at COMMIT.
+                IF OLD."Status" = 1 AND NEW."Status" = 1
+                   AND OLD."CompletedAt" IS NULL AND NEW."CompletedAt" IS NULL
+                THEN
+                    RETURN NEW;
+                END IF;
+
                 -- The actual application writes approval before Request.Complete.
                 -- Only the Approved(1) -> Completed(4) transition and later
                 -- audit metadata updates are legal once approval exists.

@@ -66,6 +66,12 @@ public sealed class SliceBFreezeClosedContractTermsPostgreSql_Tests
                 VALUES ('{Guid.NewGuid():D}','{contract:D}','2026-10-29T03:00:00Z');
                 """);
 
+            // ABP may flush audit metadata before invoking Contract.End.
+            await Run(db, tx, $"""
+                UPDATE "BuildingManagementContracts"
+                   SET "LastModificationTime"='2026-10-29T03:00:01Z'
+                 WHERE "Id"='{contract:D}'
+                """);
             await Denied(db, tx, $"""
                 UPDATE "BuildingManagementContracts" SET "DepositAmount"=0
                 WHERE "Id"='{contract:D}'

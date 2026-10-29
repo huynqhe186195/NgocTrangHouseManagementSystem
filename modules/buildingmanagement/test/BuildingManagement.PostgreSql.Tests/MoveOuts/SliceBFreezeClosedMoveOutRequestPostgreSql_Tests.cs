@@ -63,6 +63,12 @@ public sealed class SliceBFreezeClosedMoveOutRequestPostgreSql_Tests
                 VALUES ('{Guid.NewGuid():D}','{request:D}',
                         '2026-10-29T03:00:00Z');
                 """);
+            // ABP can flush audit metadata while request is Approved.
+            await Run(db, tx, $"""
+                UPDATE "BuildingManagementMoveOutRequests"
+                   SET "LastModificationTime"='2026-10-29T03:00:01Z'
+                 WHERE "Id"='{request:D}'
+                """);
             await Denied(db, tx, $"""
                 UPDATE "BuildingManagementMoveOutRequests"
                    SET "ContractId"='{Guid.NewGuid():D}' WHERE "Id"='{request:D}'

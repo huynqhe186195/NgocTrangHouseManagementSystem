@@ -632,3 +632,19 @@ rewrites, empty downgrade and a concurrent update waiting on the request
 row lock. The full isolated HTTP happy-path test now also tries prohibited
 SQL rewrites of the finalized Contract and MoveOutRequest. No production
 DB, bank system or payment processor is touched.
+
+### Closed contract and handover: ABP audit-flush race correction
+
+The isolated HTTP positive rehearsal caught ABP persisting only
+`ConcurrencyStamp`/`LastModificationTime` on an unchanged Active contract
+**between** the immutable approval SaveChanges and `Contract.End`.
+The new source guards now permit audit-only writes to an unchanged Active
+contract or Approved move-out request during that narrow in-transaction
+window, while still blocking all business/source mutations. A separate
+**DEFERRABLE INITIALLY DEFERRED** constraint trigger in
+`20261029214000_SliceBValidateCompletedCloseoutAtCommit` guarantees the
+same approval cannot COMMIT unless the contract is Ended and the exact
+move-out is Completed, with completion timestamps at/after approval.
+PostgreSQL tests force the deferred check before/after each terminal
+transition; full staging HTTP verifies the actual ABP audit flush. No
+relaxation of irreversible ledger immutability and no production rollout.

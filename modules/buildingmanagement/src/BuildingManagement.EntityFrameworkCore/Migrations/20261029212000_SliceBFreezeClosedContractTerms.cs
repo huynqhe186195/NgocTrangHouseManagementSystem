@@ -54,6 +54,17 @@ public sealed class SliceBFreezeClosedContractTerms : Migration
                         USING ERRCODE = '23514';
                 END IF;
 
+                -- ABP may flush audited metadata on an unchanged Active
+                -- contract after approval INSERT and before Contract.End.
+                -- The separate deferred commit trigger requires that
+                -- Active state cannot survive the enclosing transaction.
+                IF OLD."Status" = 2 AND NEW."Status" = 2
+                   AND OLD."ActualEndedAt" IS NULL AND NEW."ActualEndedAt" IS NULL
+                   AND OLD."EndReason" IS NULL AND NEW."EndReason" IS NULL
+                THEN
+                    RETURN NEW;
+                END IF;
+
                 -- The single expected transition runs AFTER the approval
                 -- INSERT and BEFORE the transaction commits. The UoW may
                 -- still update audit metadata without changing these facts.

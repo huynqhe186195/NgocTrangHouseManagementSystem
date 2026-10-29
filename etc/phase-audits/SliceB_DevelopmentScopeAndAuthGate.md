@@ -541,3 +541,16 @@ must leave issue evidence, issue review, issued ledger, allocation and deposit
 approval tables empty. This is an *authorization/rollback smoke test*, **not**
 yet a full happy-path issuance-to-closeout test. Only isolated scratch PG is
 used; it is never activated for production.
+
+### Slice B end-to-end positive HTTP rehearsal
+
+The isolated two-PostgreSQL-database ABP HTTP test now also seeds a real
+active contract, an approved past-month move-out, a five-item checklist,
+original electricity/water rates/meters/readings, a two-line Draft invoice,
+a completed contract-deposit receipt with durable allocation and matching
+tenant membership. It then calls prepare → independent two-person review →
+root issue candidate → completed manual bank receipt → root refund/closeout;
+checks replay/overpayment denial and asserts persisted contract end, request
+completion, room release, all checklist sign-offs, issued ledger, receipt
+allocation and refund approval. **No external payment is made**. This
+scenario must pass CI before it is considered a verified end-to-end flow.

@@ -1214,6 +1214,318 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 await uow.CompleteAsync();
             }
 
+            // COMPLETE STAGING FINANCIAL HTTP FLOW:
+            // scoped month-end draft -> prepared immutable evidence ->
+            // independent reviewer -> root-issued ledger -> completed bank
+            // receipt -> journal -> root refund/closeout -> freed room.
+            // The actual banks are NEVER contacted. Every database lives
+            // under the two random scratch names created in this test.
+            var financeRoom = await CreateChildAsync(clientB, roomCreate,
+                new { floorId = floorB, roomNumber = "109",
+                    name = "PG B109 finance end-to-end", area = 28.0,
+                    capacity = 2,
+                    status = (int)BuildingManagement.Rooms.RoomStatus.Occupied });
+            var financeContract = Guid.NewGuid();
+            var financeMoveOut = Guid.NewGuid();
+            var financeDepositPaymentId = Guid.NewGuid();
+            var financeInvoiceDraftId = Guid.NewGuid();
+            var financeRateE = Guid.NewGuid();
+            var financeRateW = Guid.NewGuid();
+            var financeMeterE = Guid.NewGuid();
+            var financeMeterW = Guid.NewGuid();
+            var financeReadingE = Guid.NewGuid();
+            var financeReadingW = Guid.NewGuid();
+            const decimal monthlyRent = 3000000m;
+            const decimal finalBill = 3083000m;
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var db = await sp.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>()
+                    .GetDbContextAsync();
+
+                var activeContract = new BuildingManagement.Contracts.Contract(
+                    financeContract,
+                    "FIN-HTTP-" + financeContract.ToString("N"),
+                    financeRoom,
+                    new DateTime(2026, 9, 1, 0, 0, 0, DateTimeKind.Utc),
+                    null, monthlyRent);
+                activeContract.Activate();
+                db.Contracts.Add(activeContract);
+                db.ContractTenants.Add(new BuildingManagement.Contracts.ContractTenant(
+                    Guid.NewGuid(), financeContract, tenantB,
+                    BuildingManagement.Contracts.ContractTenantRole.PrimaryTenant));
+                var request = new BuildingManagement.MoveOuts.MoveOutRequest(
+                    financeMoveOut, financeContract, financeRoom,
+                    new DateOnly(2026, 9, 30), "Isolated E2E move-out");
+                request.Approve(DateTime.UtcNow.AddDays(-5),
+                    "Month-end move-out approved for staging");
+                db.MoveOutRequests.Add(request);
+                foreach (var type in Enum.GetValues<
+                    BuildingManagement.MoveOuts.MoveOutChecklistTaskType>())
+                {
+                    var task = new BuildingManagement.MoveOuts.MoveOutChecklistTask(
+                        Guid.NewGuid(), financeMoveOut, type);
+                    if (type == BuildingManagement.MoveOuts.MoveOutChecklistTaskType
+                            .FinalMeterReading)
+                        task.MarkFinalMeterReadingsVerified(
+                            DateTime.UtcNow.AddDays(-5));
+                    db.MoveOutChecklistTasks.Add(task);
+                }
+
+                var installed = new DateTime(2026, 8, 1);
+                var readAt = new DateTime(2026, 9, 30);
+                db.UtilityMeters.AddRange(
+                    new BuildingManagement.Utilities.UtilityMeter(
+                        financeMeterE, financeRoom,
+                        BuildingManagement.Utilities.UtilityType.Electricity,
+                        "PG-E-" + financeMeterE.ToString("N"),
+                        10m, installed),
+                    new BuildingManagement.Utilities.UtilityMeter(
+                        financeMeterW, financeRoom,
+                        BuildingManagement.Utilities.UtilityType.Water,
+                        "PG-W-" + financeMeterW.ToString("N"),
+                        15m, installed));
+                db.UtilityRates.AddRange(
+                    new BuildingManagement.Utilities.UtilityRate(
+                        financeRateE, b,
+                        BuildingManagement.Utilities.UtilityType.Electricity,
+                        3500m, installed, null),
+                    new BuildingManagement.Utilities.UtilityRate(
+                        financeRateW, b,
+                        BuildingManagement.Utilities.UtilityType.Water,
+                        12000m, installed, null));
+                db.MeterReadings.AddRange(
+                    new BuildingManagement.Utilities.MeterReading(
+                        financeReadingE, financeMeterE, 2026, 9,
+                        10m, 20m, readAt),
+                    new BuildingManagement.Utilities.MeterReading(
+                        financeReadingW, financeMeterW, 2026, 9,
+                        15m, 19m, readAt));
+
+                var draft = BuildingManagement.Invoices.Invoice.CreateDraft(
+                    financeInvoiceDraftId,
+                    BuildingManagement.Invoices.InvoiceDraftSnapshot.Capture(
+                        financeContract, financeRoom, 2026, 9, new[]
+                        {
+                            new BuildingManagement.Invoices.InvoiceDraftUtilityLineSnapshot(
+                                BuildingManagement.Utilities.UtilityType.Electricity,
+                                financeRateE, "SingleRateWholeMonth",
+                                10m, 3500m, 35000m,
+                                new[] {
+                                    new BuildingManagement.Invoices.InvoiceDraftMeterSegmentSnapshot(
+                                        financeReadingE, financeMeterE,
+                                        BuildingManagement.Utilities.MeterUsageSourceType.MonthlyReading,
+                                        readAt, 10m, 20m)
+                                },
+                                Array.Empty<string>()),
+                            new BuildingManagement.Invoices.InvoiceDraftUtilityLineSnapshot(
+                                BuildingManagement.Utilities.UtilityType.Water,
+                                financeRateW, "SingleRateWholeMonth",
+                                4m, 12000m, 48000m,
+                                new[] {
+                                    new BuildingManagement.Invoices.InvoiceDraftMeterSegmentSnapshot(
+                                        financeReadingW, financeMeterW,
+                                        BuildingManagement.Utilities.MeterUsageSourceType.MonthlyReading,
+                                        readAt, 15m, 19m)
+                                },
+                                Array.Empty<string>())
+                        }), Guid.NewGuid);
+                db.Invoices.Add(draft);
+
+                // An independent completed CONTRACT deposit payment and
+                // durable settlement prove the funds held. This is not a
+                // synthetic refund and never reduces the final invoice.
+                var deposit = new BuildingManagement.Payments.Payment(
+                    financeDepositPaymentId,
+                    "PG-DEPOSIT-" + financeDepositPaymentId.ToString("N"),
+                    tenantB,
+                    BuildingManagement.Payments.PaymentPurpose.ContractDeposit,
+                    BuildingManagement.Payments.BuildingManagement.Payments
+                        .PaymentMethod.BankTransfer,
+                    BuildingManagement.Payments.PaymentChannel.Manual,
+                    monthlyRent, contractId: financeContract,
+                    transactionReference: "SCRATCH-INITIAL-DEPOSIT-2026");
+                deposit.Complete(DateTime.UtcNow.AddDays(-25),
+                    "SCRATCH-INITIAL-DEPOSIT-2026");
+                db.Payments.Add(deposit);
+                await db.SaveChangesAsync();
+                var allocation = new BuildingManagement.DepositSettlements
+                    .DepositSettlement(
+                        Guid.NewGuid(),
+                        BuildingManagement.DepositSettlements.DepositSettlementType
+                            .AllocateToContractDeposit,
+                        monthlyRent,
+                        paymentId: financeDepositPaymentId,
+                        targetContractId: financeContract,
+                        notes: "Verified isolated held deposit");
+                allocation.Complete(DateTime.UtcNow.AddDays(-24));
+                db.DepositSettlements.Add(allocation);
+                await db.SaveChangesAsync();
+                await uow.CompleteAsync();
+            }
+
+            async Task<JsonDocument> PostValidFinanceAsync(
+                HttpClient caller, string route, object payload)
+            {
+                var (status, body) = await PostFinalAsync(
+                    caller, route, JsonSerializer.Serialize(payload));
+                Assert.True(status is HttpStatusCode.OK or HttpStatusCode.Created,
+                    $"Slice B E2E {route}: {status}, {body}");
+                return JsonDocument.Parse(body);
+            }
+
+            var financeRoot = FinalInvoices(financeContract);
+            using var prepared = await PostValidFinanceAsync(
+                clientRoot,
+                financeRoot + "/move-outs/" + financeMoveOut.ToString("D") +
+                    "/prepare", new { });
+            var evidenceId = prepared.RootElement.GetProperty("id").GetGuid();
+            var evidenceHash = prepared.RootElement
+                .GetProperty("sha256").GetString();
+            Assert.Equal(financeInvoiceDraftId,
+                prepared.RootElement.GetProperty("draftInvoiceId").GetGuid());
+            Assert.NotNull(evidenceHash);
+
+            using var reviewSubmission = await PostValidFinanceAsync(
+                clientRoot, financeRoot + "/evidence/" +
+                    evidenceId.ToString("D") + "/reviews",
+                new { note = "Independent scoped finance review" });
+            var reviewId = reviewSubmission.RootElement.GetGuid();
+            Assert.NotEqual(Guid.Empty, reviewId);
+
+            // The submitter may NOT self-review, while the independent
+            // B operator may review current, matching evidence.
+            var ownReview = await PostFinalAsync(
+                clientRoot, financeRoot + "/reviews/" +
+                    reviewId.ToString("D") + "/decide",
+                """{"acceptForDesign":true,"reason":"Cannot approve my own submission"}""");
+            Assert.Equal(HttpStatusCode.Forbidden, ownReview.Status);
+            using var reviewDecision = await PostValidFinanceAsync(
+                clientB, financeRoot + "/reviews/" +
+                    reviewId.ToString("D") + "/decide",
+                new { acceptForDesign = true,
+                    reason = "Independent meter, rent and policy evidence verified" });
+            Assert.Equal(reviewId, reviewDecision.RootElement.GetGuid());
+
+            using var issued = await PostValidFinanceAsync(
+                clientRoot, financeRoot + "/evidence/" +
+                    evidenceId.ToString("D") + "/issue-candidate",
+                new {
+                    draftInvoiceId = financeInvoiceDraftId,
+                    contractId = financeContract,
+                    roomId = financeRoom,
+                    evidenceSha256 = evidenceHash,
+                    paymentDueDate = "2026-11-05",
+                    dueDatePolicyReference = "AGREED-DUE-DATE-POLICY-2026",
+                    auxiliaryFeeDecision = 1,
+                    auxiliaryFeePolicyReference = "NO-AUXILIARY-FEES-POLICY-2026",
+                    auxiliaryFeeReviewerId = root,
+                    auxiliaryCharges = Array.Empty<object>()
+                });
+            var financeIssuedId = issued.RootElement.GetProperty("id").GetGuid();
+            Assert.Equal(finalBill,
+                issued.RootElement.GetProperty("amount").GetDecimal());
+
+            // This receipt is a MANUAL bank-evidence attestation; test data
+            // never initiates an actual bank transfer or payment gateway.
+            using var paid = await PostValidFinanceAsync(
+                clientRoot, financeRoot + "/issued/" +
+                    financeIssuedId.ToString("D") + "/manual-receipts",
+                new {
+                    tenantId = tenantB, amount = finalBill,
+                    paidAtUtc = DateTime.UtcNow,
+                    transactionReference = "SCRATCH-BANK-FINAL-BILL-0001",
+                    bankEvidenceReference = "SCRATCH-SIGNED-RECEIPT-0001"
+                });
+            var receiptId = paid.RootElement.GetProperty("paymentId").GetGuid();
+            Assert.Equal(financeIssuedId,
+                paid.RootElement.GetProperty("issuedInvoiceId").GetGuid());
+
+            // Duplicate allocation cannot silently overpay a final bill.
+            var duplicate = await PostFinalAsync(clientRoot,
+                financeRoot + "/issued/" + financeIssuedId.ToString("D") +
+                    "/manual-receipts",
+                JsonSerializer.Serialize(new {
+                    tenantId = tenantB, amount = 1m,
+                    paidAtUtc = DateTime.UtcNow,
+                    transactionReference = "SCRATCH-BANK-OVERPAY-0001",
+                    bankEvidenceReference = "SCRATCH-OVERPAY-PROOF-0001"
+                }));
+            Assert.NotEqual(HttpStatusCode.OK, duplicate.Status);
+
+            using var closeout = await PostValidFinanceAsync(
+                clientRoot,
+                financeRoot + "/move-outs/" + financeMoveOut.ToString("D") +
+                    "/complete",
+                new {
+                    forfeitAmount = 0m,
+                    inspectionEvidenceReference = "SCRATCH-SIGNED-INSPECTION-0001",
+                    handoverEvidenceReference = "SCRATCH-SIGNED-HANDOVER-0001",
+                    depositPolicyReference = "SCRATCH-CONTRACT-DEPOSIT-POLICY-2026",
+                    confirmManualRefundPaid = true,
+                    refundPaidAtUtc = DateTime.UtcNow,
+                    refundTransactionReference = "SCRATCH-MANUAL-REFUND-0001",
+                    refundBankEvidenceReference = "SCRATCH-REFUND-SIGNED-PROOF-0001"
+                });
+            Assert.Equal(financeContract,
+                closeout.RootElement.GetProperty("contractId").GetGuid());
+            Assert.Equal(monthlyRent,
+                closeout.RootElement.GetProperty("refundAmount").GetDecimal());
+            Assert.Equal((int)BuildingManagement.Rooms.RoomStatus.Available,
+                closeout.RootElement.GetProperty("roomStatus").GetInt32());
+
+            var repeatedCloseout = await PostFinalAsync(
+                clientRoot,
+                financeRoot + "/move-outs/" + financeMoveOut.ToString("D") +
+                    "/complete",
+                JsonSerializer.Serialize(new {
+                    forfeitAmount = 0m,
+                    inspectionEvidenceReference = "SCRATCH-SIGNED-INSPECTION-0001",
+                    handoverEvidenceReference = "SCRATCH-SIGNED-HANDOVER-0001",
+                    depositPolicyReference = "SCRATCH-CONTRACT-DEPOSIT-POLICY-2026",
+                    confirmManualRefundPaid = true,
+                    refundPaidAtUtc = DateTime.UtcNow,
+                    refundTransactionReference = "SCRATCH-MANUAL-REFUND-0001",
+                    refundBankEvidenceReference = "SCRATCH-REFUND-SIGNED-PROOF-0001"
+                }));
+            Assert.Equal(HttpStatusCode.Forbidden, repeatedCloseout.Status);
+
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var db = await sp.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>()
+                    .GetDbContextAsync();
+                Assert.Equal(BuildingManagement.Contracts.ContractStatus.Ended,
+                    (await db.Contracts.SingleAsync(x => x.Id == financeContract)).Status);
+                Assert.Equal(BuildingManagement.MoveOuts.MoveOutRequestStatus.Completed,
+                    (await db.MoveOutRequests.SingleAsync(x => x.Id == financeMoveOut)).Status);
+                Assert.Equal(BuildingManagement.Rooms.RoomStatus.Available,
+                    (await db.Rooms.SingleAsync(x => x.Id == financeRoom)).Status);
+                Assert.Equal(5, await db.MoveOutChecklistTasks.CountAsync(x =>
+                    x.MoveOutRequestId == financeMoveOut && x.IsCompleted));
+                Assert.Equal(1, await db.IssuedInvoiceLedger.CountAsync(x =>
+                    x.Id == financeIssuedId && x.ContractId == financeContract));
+                Assert.Equal(1, await db.InvoicePaymentAllocationJournal
+                    .CountAsync(x => x.IssuedInvoiceId == financeIssuedId &&
+                        x.Amount == finalBill && x.PaymentId == receiptId));
+                Assert.Equal(1, await db.DepositCloseoutApprovals.CountAsync(x =>
+                    x.ContractId == financeContract &&
+                    x.ApprovedRefundAmount == monthlyRent &&
+                    x.ApprovedForfeitAmount == 0m));
+                Assert.Equal(1, await db.DepositSettlements.CountAsync(x =>
+                    x.SourceContractId == financeContract &&
+                    x.Type == BuildingManagement.DepositSettlements
+                        .DepositSettlementType.Refund &&
+                    x.Amount == monthlyRent));
+                await uow.CompleteAsync();
+            }
+
             string Members(Guid contractId) => scopedContracts + "/" +
                 contractId.ToString("D") + "/tenants";
             using (var response = await clientB.GetAsync(Members(contractB)))

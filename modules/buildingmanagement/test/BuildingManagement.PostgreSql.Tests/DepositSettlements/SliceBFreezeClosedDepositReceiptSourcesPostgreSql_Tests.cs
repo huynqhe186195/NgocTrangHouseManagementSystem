@@ -113,14 +113,16 @@ public sealed class SliceBFreezeClosedDepositReceiptSourcesPostgreSql_Tests
                 """);
             await Denied(db,tx,$"""
                 INSERT INTO "BuildingManagementContractDepositCloseoutApprovals"
-                  VALUES ('{Guid.NewGuid():D}','{contract:D}'')
-                """.Replace("''", "'"));
+                  VALUES ('{Guid.NewGuid():D}','{contract:D}')
+                """);
             await Run(db,tx,$"""
                 UPDATE "BuildingManagementPayments"
                 SET "Status"=2,"PaidAt"='2026-10-29T03:00:00Z'
                 WHERE "Id"='{payment:D}'
                 """);
-            await Denied(db,tx,$"""
+            // No approved closeout yet: the Payment can still be edited.
+            // The subsequent approval must reject this drift.
+            await Run(db,tx,$"""
                 UPDATE "BuildingManagementPayments" SET "Amount"=1
                 WHERE "Id"='{payment:D}'
                 """);

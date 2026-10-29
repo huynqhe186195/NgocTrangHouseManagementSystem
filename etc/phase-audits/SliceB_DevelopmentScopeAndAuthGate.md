@@ -690,3 +690,23 @@ EF migration. The tenant-party guard intentionally checks the actual
 separate extended-metadata guard applies to Contract, MoveOutRequest
 and ChecklistTask tables, each of which has an ExtraProperties column.
 This distinction was verified against the real migration and HTTP test.
+
+### Closeout must attest and preserve the original deposit receipts
+
+Source-only `20261029217000_SliceBFreezeClosedDepositReceiptSources` makes the
+final approval re-attest *completed, paid, non-deleted* direct contract
+deposit and applied reservation deposit receipts against the real immutable
+`AllocateToContractDeposit` settlement rows, including correct contract
+or reservation attribution and no receipt over-allocation. Source Payments
+are held with PostgreSQL row share locks until the signing transaction
+commits. Once approved, the exact deposit Payment referenced by an allocation
+cannot be updated, reassigned, deleted or soft-deleted even through direct
+SQL; closed contracts cannot receive a new direct contract deposit receipt.
+Payment writers and approval share the Contract row serialization key.
+Unrelated open-contract receipts remain usable. This closes the original
+3,000,000 VND source cash drift gap previously covered only for invoice
+receipts. It is an evidence-integrity check, **not** confirmation by a bank
+or an external payment processor. Disposable PostgreSQL tests cover negative
+and positive attribution, over-allocation, closed source rewrites, empty
+rollback and concurrent edits; the isolated HTTP full closeout also attempts
+a forbidden raw SQL rewrite of the originally paid contract deposit.

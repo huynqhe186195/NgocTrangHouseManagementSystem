@@ -1601,6 +1601,19 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 var extrasDenied = await Assert.ThrowsAsync<PostgresException>(
                     () => rewriteExtras.ExecuteNonQueryAsync());
                 Assert.Equal("23514", extrasDenied.SqlState);
+
+                // A completed contract-deposit receipt supplied the held
+                // 3,000,000 VND; the signed refund must not outlive a
+                // direct SQL rewrite of that ORIGINAL cash evidence.
+                await using var rewriteDeposit = new NpgsqlCommand(
+                    """
+                    UPDATE "BuildingManagementPayments"
+                       SET "Amount" = 1 WHERE "Id" = @id
+                    """, auditCash);
+                rewriteDeposit.Parameters.AddWithValue("id", financeDepositPaymentId);
+                var depositDenied = await Assert.ThrowsAsync<PostgresException>(
+                    () => rewriteDeposit.ExecuteNonQueryAsync());
+                Assert.Equal("23514", depositDenied.SqlState);
             }
 
             string Members(Guid contractId) => scopedContracts + "/" +

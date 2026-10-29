@@ -530,3 +530,14 @@ non-deleted, amount, issued invoice and contract attribution) and refuses
 unjournaled completed invoice payments in the same contract. This closes the
 gap where a valid staged journal could outlive modified source payment data.
 Scratch PostgreSQL tests cover later status drift and orphan receipts.
+
+### Isolated ABP HTTP Slice B finance authorization smoke
+
+The existing two-database staging HTTP fixture now explicitly registers the
+Slice B financial mutation adapter, verifies the endpoint is mapped and the
+service resolves, and calls final invoice preparation, review, receipt and
+closeout endpoints with cross-building / missing-evidence requests. Denials
+must leave issue evidence, issue review, issued ledger, allocation and deposit
+approval tables empty. This is an *authorization/rollback smoke test*, **not**
+yet a full happy-path issuance-to-closeout test. Only isolated scratch PG is
+used; it is never activated for production.

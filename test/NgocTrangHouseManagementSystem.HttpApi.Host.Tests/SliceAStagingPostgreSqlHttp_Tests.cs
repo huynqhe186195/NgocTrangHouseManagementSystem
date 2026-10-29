@@ -919,6 +919,121 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 await ctx.SaveChangesAsync();
                 await uow.CompleteAsync();
             }
+            // Final-invoice Slice B endpoints MUST be reachable in the
+            // isolated authenticated HTTP host, yet reject cross-building
+            // callers and invalid/incomplete financial prerequisites.
+            // Historically this test host omitted the financial adapter;
+            // every endpoint then returned Forbidden without testing its
+            // actual policy/transaction implementation.
+            Assert.Contains(actions, action =>
+                action.ControllerTypeInfo.AsType() ==
+                    typeof(SliceBStagingFinalInvoiceController) &&
+                action.MethodInfo.Name == "PrepareAsync");
+            using (var serviceScope = app.Services.CreateScope())
+                Assert.NotNull(serviceScope.ServiceProvider
+                    .GetRequiredService<SliceBStagingFinalInvoiceMutation>());
+
+            string FinalInvoices(Guid contract) =>
+                "/api/slice-b-staging/final-invoices/contracts/" +
+                contract.ToString("D");
+            async Task<(HttpStatusCode Status, string Body)> PostFinalAsync(
+                HttpClient caller, string route, string? payload)
+            {
+                using var content = new StringContent(
+                    payload ?? "{}", Encoding.UTF8, "application/json");
+                using var response = await caller.PostAsync(route, content);
+                return (response.StatusCode,
+                    await response.Content.ReadAsStringAsync());
+            }
+            var missingMoveOut = Guid.NewGuid();
+            var missingEvidence = Guid.NewGuid();
+            var missingReview = Guid.NewGuid();
+            var missingIssued = Guid.NewGuid();
+
+            var foreignPrepare = await PostFinalAsync(clientB,
+                FinalInvoices(contractA) + "/move-outs/" +
+                    missingMoveOut.ToString("D") + "/prepare", "{}");
+            Assert.Equal(HttpStatusCode.Forbidden, foreignPrepare.Status);
+            var incompletePrepare = await PostFinalAsync(clientRoot,
+                FinalInvoices(contractA) + "/move-outs/" +
+                    missingMoveOut.ToString("D") + "/prepare", "{}");
+            Assert.Equal(HttpStatusCode.Forbidden, incompletePrepare.Status);
+
+            var foreignReview = await PostFinalAsync(clientB,
+                FinalInvoices(contractA) + "/evidence/" +
+                    missingEvidence.ToString("D") + "/reviews",
+                """{"note":"Unauthorized building review"}""");
+            Assert.Equal(HttpStatusCode.Forbidden, foreignReview.Status);
+            var foreignDecision = await PostFinalAsync(clientB,
+                FinalInvoices(contractA) + "/reviews/" +
+                    missingReview.ToString("D") + "/decide",
+                """{"acceptForDesign":true,"reason":"Foreign building signoff"}""");
+            Assert.Equal(HttpStatusCode.Forbidden, foreignDecision.Status);
+
+            var foreignReceipt = await PostFinalAsync(clientB,
+                FinalInvoices(contractA) + "/issued/" +
+                    missingIssued.ToString("D") + "/manual-receipts",
+                JsonSerializer.Serialize(new {
+                    tenantId = Guid.NewGuid(), amount = 100000m,
+                    paidAtUtc = DateTime.UtcNow.AddMinutes(-1),
+                    transactionReference = "FOREIGN-RECEIPT-0001",
+                    bankEvidenceReference = "FOREIGN-BANK-EVIDENCE-0001"
+                }));
+            Assert.Equal(HttpStatusCode.Forbidden, foreignReceipt.Status);
+
+            var foreignCloseout = await PostFinalAsync(clientB,
+                FinalInvoices(contractA) + "/move-outs/" +
+                    missingMoveOut.ToString("D") + "/complete",
+                JsonSerializer.Serialize(new {
+                    confirmManualRefundPaid = true, forfeitAmount = 0m,
+                    inspectionEvidenceReference = "UNVERIFIED-INSPECTION",
+                    handoverEvidenceReference = "UNVERIFIED-HANDOVER",
+                    depositPolicyReference = "UNVERIFIED-DEPOSIT-POLICY"
+                }));
+            Assert.Equal(HttpStatusCode.Forbidden, foreignCloseout.Status);
+
+            // Missing issued invoice/approved move-out must also deny a
+            // correctly scoped ROOT rather than accidentally recognizing a
+            // receipt or changing deposit/room/contract state.
+            var missingReceipt = await PostFinalAsync(clientRoot,
+                FinalInvoices(contractA) + "/issued/" +
+                    missingIssued.ToString("D") + "/manual-receipts",
+                JsonSerializer.Serialize(new {
+                    tenantId = Guid.NewGuid(), amount = 100000m,
+                    paidAtUtc = DateTime.UtcNow.AddMinutes(-1),
+                    transactionReference = "MISSING-ISSUED-0001",
+                    bankEvidenceReference = "MISSING-LEDGER-PROOF-0001"
+                }));
+            Assert.Equal(HttpStatusCode.Forbidden, missingReceipt.Status);
+            var prematureCloseout = await PostFinalAsync(clientRoot,
+                FinalInvoices(contractA) + "/move-outs/" +
+                    missingMoveOut.ToString("D") + "/complete",
+                JsonSerializer.Serialize(new {
+                    confirmManualRefundPaid = true, forfeitAmount = 0m,
+                    inspectionEvidenceReference = "MISSING-INSPECTION",
+                    handoverEvidenceReference = "MISSING-HANDOVER",
+                    depositPolicyReference = "MISSING-APPROVAL"
+                }));
+            Assert.Equal(HttpStatusCode.Forbidden, prematureCloseout.Status);
+
+            // Every rejected HTTP write must leave the existing finance
+            // and closeout tables empty in this exact disposable database.
+            using (var serviceScope = app.Services.CreateScope())
+            {
+                var sp = serviceScope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var db = await sp.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>()
+                    .GetDbContextAsync();
+                Assert.False(await db.FinalInvoiceIssueEvidence.AnyAsync());
+                Assert.False(await db.InvoiceIssuanceReviews.AnyAsync());
+                Assert.False(await db.IssuedInvoiceLedger.AnyAsync());
+                Assert.False(await db.InvoicePaymentAllocationJournal.AnyAsync());
+                Assert.False(await db.DepositCloseoutApprovals.AnyAsync());
+                await uow.CompleteAsync();
+            }
+
             const string scopedContracts = "/api/slice-b-staging/contracts";
             using (var response = await clientB.GetAsync(scopedContracts))
             {
@@ -3251,6 +3366,9 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             context.Services.AddTransient<SliceBStagingContractQuery>();
             context.Services.AddTransient<SliceBStagingReservationQuery>();
             context.Services.AddTransient<SliceBStagingContractMutation>();
+            // Explicitly exercise the same Slice B financial adapter that
+            // the real Host wires ONLY on two isolated staging databases.
+            context.Services.AddTransient<SliceBStagingFinalInvoiceMutation>();
             context.Services.Replace(
                 ServiceDescriptor.Transient<IBuildingScopedWriteBoundary,
                     SliceAStagingWriteBoundary>());

@@ -524,7 +524,7 @@ public sealed record SliceBScopedSignedCloseoutRead(
     Guid ApprovalId, Guid ContractId, Guid MoveOutRequestId,
     Guid IssuedInvoiceId, DateTime ApprovedAtUtc,
     decimal VerifiedHeldAmount, decimal RefundAmount,
-    decimal ForfeitAmount, BuildingManagement.RoomStatus RoomStatus,
+    decimal ForfeitAmount, RoomStatus RoomStatus,
     string ApprovalSha256, bool RefundManuallyAttested,
     bool BankTransferIndependentlyVerified);
 

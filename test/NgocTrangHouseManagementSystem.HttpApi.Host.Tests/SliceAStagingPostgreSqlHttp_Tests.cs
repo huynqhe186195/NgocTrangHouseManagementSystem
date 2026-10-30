@@ -1958,6 +1958,34 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 Assert.DoesNotContain(tenantB.ToString("D"), jsonText,
                     StringComparison.OrdinalIgnoreCase);
             }
+            var draftReadRoute = scopedContracts + "/" +
+                monthlyDraftContract.ToString("D") + "/monthly-utility-drafts/" +
+                persistedDraftId.ToString("D");
+            using (var saved = await clientB.GetAsync(draftReadRoute))
+            {
+                Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
+                var body = await saved.Content.ReadAsStringAsync();
+                using var json = JsonDocument.Parse(body);
+                Assert.Equal(persistedDraftId, json.RootElement.GetProperty("id").GetGuid());
+                Assert.Equal(monthlyDraftContract,
+                    json.RootElement.GetProperty("contractId").GetGuid());
+                Assert.Equal(2, json.RootElement.GetProperty("items").GetArrayLength());
+                Assert.Equal(83000m,
+                    json.RootElement.GetProperty("provisionalUtilityTotal").GetDecimal());
+                Assert.False(json.RootElement.GetProperty("isIssued").GetBoolean());
+                Assert.False(json.RootElement.GetProperty("hasRecognizedDebt").GetBoolean());
+                Assert.DoesNotContain(tenantB.ToString("D"), body,
+                    StringComparison.OrdinalIgnoreCase);
+            }
+            using (var foreignDraftRead = await clientB.GetAsync(
+                scopedContracts + "/" + contractA.ToString("D") +
+                "/monthly-utility-drafts/" + persistedDraftId.ToString("D")))
+                Assert.Equal(HttpStatusCode.Forbidden, foreignDraftRead.StatusCode);
+            using (var missingDraftRead = await clientB.GetAsync(
+                scopedContracts + "/" + monthlyDraftContract.ToString("D") +
+                "/monthly-utility-drafts/" + Guid.NewGuid().ToString("D")))
+                Assert.NotEqual(HttpStatusCode.OK, missingDraftRead.StatusCode);
+
             using (var duplicateDraft = await clientB.PostAsync(draftCreateRoute, null))
                 Assert.NotEqual(HttpStatusCode.OK, duplicateDraft.StatusCode);
             using (var scope = app.Services.CreateScope())

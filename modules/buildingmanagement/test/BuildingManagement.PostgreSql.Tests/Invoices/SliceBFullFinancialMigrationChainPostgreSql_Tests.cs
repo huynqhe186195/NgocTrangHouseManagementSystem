@@ -171,6 +171,20 @@ public sealed class SliceBFullFinancialMigrationChainPostgreSql_Tests
                                     'TR_BM_SignedMoveOut_Extras',
                                     'TR_BM_SignedChecklist_Extras')
                     """));
+                Assert.Equal(1L, await ScalarAsync(inspect,
+                    "SELECT to_regclass('\"BuildingManagementOfficialInvoiceReceivables\"') IS NOT NULL"));
+                Assert.Equal(1L, await ScalarAsync(inspect,
+                    "SELECT to_regclass('\"BuildingManagementOfficialInvoiceReceiptReviews\"') IS NOT NULL"));
+                Assert.Equal(2L, await ScalarAsync(inspect, """
+                    SELECT count(*) FROM pg_trigger
+                     WHERE NOT tgisinternal
+                       AND tgname IN ('TR_BM_OfficialReceivableImmutable',
+                                      'TR_BM_OfficialReceiptReviewImmutable')
+                    """));
+                Assert.Equal(1L, await ScalarAsync(inspect, """
+                    SELECT count(*) FROM pg_indexes WHERE
+                    indexname = 'UX_BM_OfficialReceipt_Payment'
+                    """));
                 // A completed bank transfer can be allocated only once
                 // across deposits and invoices, ignoring ref casing/spaces.
                 Assert.Equal(1L, await ScalarAsync(inspect, """
@@ -218,6 +232,8 @@ public sealed class SliceBFullFinancialMigrationChainPostgreSql_Tests
                 await inspect.OpenAsync();
                 Assert.Equal(1L, await ScalarAsync(inspect,
                     "SELECT to_regclass('\"BuildingManagementIssuedInvoiceLedger\"') IS NULL"));
+                Assert.Equal(1L, await ScalarAsync(inspect,
+                    "SELECT to_regclass('\"BuildingManagementOfficialInvoiceReceivables\"') IS NULL"));
                 Assert.Equal(1L, await ScalarAsync(inspect,
                     "SELECT to_regclass('\"BuildingManagementContractDepositCloseoutApprovals\"') IS NULL"));
                 Assert.Equal(1L, await ScalarAsync(inspect,

@@ -2693,6 +2693,100 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     caseVariant.RootElement.GetProperty("allocationJournalId").GetGuid());
             }
 
+            // Official 2G.3 posting never mutates the original
+            // issued bill. Unreviewed manually recorded receipts are NOT
+            // official debt settlement, despite their Completed status.
+            var monthlyPostRoute = FinalInvoices(monthlyDraftContract) +
+                "/monthly-issued/" + monthlyIssuedId.ToString("D") +
+                "/post-receivable";
+            var staffMonthPosting = await PostFinalAsync(
+                clientB, monthlyPostRoute, "{}");
+            Assert.Equal(HttpStatusCode.Forbidden, staffMonthPosting.Status);
+            var monthPosted = await PostFinalAsync(
+                clientRoot, monthlyPostRoute, "{}");
+            Assert.True(monthPosted.Status is HttpStatusCode.OK or
+                HttpStatusCode.Created,
+                $"Monthly posting: {monthPosted.Status}: {monthPosted.Body}");
+            Guid monthPostingId;
+            using (var json = JsonDocument.Parse(monthPosted.Body))
+            {
+                monthPostingId = json.RootElement.GetProperty("postingId").GetGuid();
+                Assert.True(json.RootElement.GetProperty(
+                    "isOfficialDebtPosted").GetBoolean());
+            }
+            var officialMonthBalance = FinalInvoices(monthlyDraftContract) +
+                "/receivables/" + monthPostingId.ToString("D") + "/balance";
+            using (var beforeReview = await clientB.GetAsync(officialMonthBalance))
+            {
+                Assert.Equal(HttpStatusCode.OK, beforeReview.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await beforeReview.Content.ReadAsStringAsync());
+                Assert.Equal(2_683_000m, json.RootElement
+                    .GetProperty("outstandingAmount").GetDecimal());
+                Assert.Equal(0m, json.RootElement
+                    .GetProperty("independentlyReviewedManualPayments").GetDecimal());
+                Assert.False(json.RootElement
+                    .GetProperty("isExternallyVerifiedBankTransfer").GetBoolean());
+            }
+            Guid[] monthJournalIds;
+            using (var officialScope = app.Services.CreateScope())
+            {
+                using var officialUow = officialScope.ServiceProvider
+                    .GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var officialDb = await officialScope.ServiceProvider
+                    .GetRequiredService<IDbContextProvider<BuildingManagementDbContext>>()
+                    .GetDbContextAsync();
+                monthJournalIds = await officialDb.MonthlyInvoicePaymentAllocations
+                    .AsNoTracking().Where(x => x.IssuedInvoiceId == monthlyIssuedId)
+                    .Select(x => x.Id).ToArrayAsync();
+                await officialUow.CompleteAsync();
+            }
+            Assert.Equal(3, monthJournalIds.Length);
+            foreach (var journalId in monthJournalIds)
+            {
+                var reviewRoute = FinalInvoices(monthlyDraftContract) +
+                    "/receivables/" + monthPostingId.ToString("D") +
+                    "/allocations/" + journalId.ToString("D") + "/review";
+                var reviewBody = JsonSerializer.Serialize(new {
+                    accept = true,
+                    bankStatementEvidenceReference = "INDEPENDENT-BANK-STATEMENT-" +
+                        journalId.ToString("N"),
+                    reason = "Bank statement manually checked against immutable receipt"
+                });
+                var selfReview = await PostFinalAsync(
+                    clientRoot, reviewRoute, reviewBody);
+                Assert.Equal(HttpStatusCode.Forbidden, selfReview.Status);
+                var approved = await PostFinalAsync(
+                    clientB, reviewRoute, reviewBody);
+                Assert.True(approved.Status is HttpStatusCode.OK or
+                    HttpStatusCode.Created,
+                    $"Monthly review: {approved.Status} {approved.Body}");
+            }
+            using (var officiallyPaid = await clientB.GetAsync(officialMonthBalance))
+            {
+                Assert.Equal(HttpStatusCode.OK, officiallyPaid.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await officiallyPaid.Content.ReadAsStringAsync());
+                Assert.Equal(0m, json.RootElement
+                    .GetProperty("outstandingAmount").GetDecimal());
+                Assert.Equal(2_683_000m, json.RootElement
+                    .GetProperty("independentlyReviewedManualPayments").GetDecimal());
+                Assert.Equal(3, json.RootElement
+                    .GetProperty("acceptedPaymentCount").GetInt32());
+            }
+            using (var monthPortfolio = await clientB.GetAsync(
+                FinalInvoices(monthlyDraftContract) + "/official-debt"))
+            {
+                Assert.Equal(HttpStatusCode.OK, monthPortfolio.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await monthPortfolio.Content.ReadAsStringAsync());
+                Assert.Equal(1, json.RootElement
+                    .GetProperty("invoiceCount").GetInt32());
+                Assert.Equal(0m, json.RootElement
+                    .GetProperty("outstandingAmount").GetDecimal());
+            }
+
             // A reused bank reference with changed money, tenant,
             // timestamp, or evidence is NOT an idempotent retry.
             var contradictory = await PostFinalAsync(
@@ -2806,6 +2900,74 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     bankEvidenceReference = "SCRATCH-OVERPAY-PROOF-0001"
                 }));
             Assert.NotEqual(HttpStatusCode.OK, duplicate.Status);
+
+            // Final move-out bill is also postable as a distinct official
+            // receivable. Two original manual receipts need independent
+            // bank-statement review before they count as settlement.
+            var finalPostingRoute = financeRoot + "/issued/" +
+                financeIssuedId.ToString("D") + "/post-receivable";
+            var postedFinal = await PostFinalAsync(
+                clientRoot, finalPostingRoute, "{}");
+            Assert.True(postedFinal.Status is HttpStatusCode.OK or
+                HttpStatusCode.Created,
+                $"Final posting: {postedFinal.Status} {postedFinal.Body}");
+            Guid officialFinalPostingId;
+            using (var json = JsonDocument.Parse(postedFinal.Body))
+                officialFinalPostingId = json.RootElement
+                    .GetProperty("postingId").GetGuid();
+            var officialFinalBalance = financeRoot + "/receivables/" +
+                officialFinalPostingId.ToString("D") + "/balance";
+            using (var unpaidFinal = await clientB.GetAsync(officialFinalBalance))
+            {
+                Assert.Equal(HttpStatusCode.OK, unpaidFinal.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await unpaidFinal.Content.ReadAsStringAsync());
+                Assert.Equal(finalBill, json.RootElement
+                    .GetProperty("outstandingAmount").GetDecimal());
+            }
+            Guid[] finalJournalIds;
+            using (var finalScope = app.Services.CreateScope())
+            {
+                using var finalUow = finalScope.ServiceProvider
+                    .GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var finalDb = await finalScope.ServiceProvider
+                    .GetRequiredService<IDbContextProvider<BuildingManagementDbContext>>()
+                    .GetDbContextAsync();
+                finalJournalIds = await finalDb.InvoicePaymentAllocationJournal
+                    .AsNoTracking().Where(x => x.IssuedInvoiceId == financeIssuedId)
+                    .Select(x => x.Id).ToArrayAsync();
+                await finalUow.CompleteAsync();
+            }
+            Assert.Equal(2, finalJournalIds.Length);
+            foreach (var journalId in finalJournalIds)
+            {
+                var route = financeRoot + "/receivables/" +
+                    officialFinalPostingId.ToString("D") +
+                    "/allocations/" + journalId.ToString("D") + "/review";
+                var response = await PostFinalAsync(clientB, route,
+                    JsonSerializer.Serialize(new {
+                        accept = true,
+                        bankStatementEvidenceReference =
+                            "MANUALLY-RECONCILED-BANK-STATEMENT-" + journalId.ToString("N"),
+                        reason = "Independent review confirmed original bank statement"
+                    }));
+                Assert.True(response.Status is HttpStatusCode.OK or
+                    HttpStatusCode.Created,
+                    $"Final payment review: {response.Status} {response.Body}");
+            }
+            using (var settledFinal = await clientB.GetAsync(officialFinalBalance))
+            {
+                Assert.Equal(HttpStatusCode.OK, settledFinal.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await settledFinal.Content.ReadAsStringAsync());
+                Assert.Equal(0m, json.RootElement
+                    .GetProperty("outstandingAmount").GetDecimal());
+                Assert.Equal(finalBill, json.RootElement
+                    .GetProperty("independentlyReviewedManualPayments").GetDecimal());
+                Assert.False(json.RootElement
+                    .GetProperty("isExternallyVerifiedBankTransfer").GetBoolean());
+            }
 
             // A signed statement must not exist before actual approval.
             var signedCloseoutRoute = scopedContracts + "/" +

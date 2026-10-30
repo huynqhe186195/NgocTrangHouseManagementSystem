@@ -1924,13 +1924,79 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 "/issued-invoices/" + Guid.NewGuid().ToString("D") + "/balance"))
                 Assert.Equal(HttpStatusCode.Forbidden, wrongInvoice.StatusCode);
 
+            // Phase 2G.3 contract-level debt portfolio must be server scoped,
+            // show the same unpaid issued invoice, and never leak Tenant PII.
+            var portfolioRoute = scopedContracts + "/" +
+                financeContract.ToString("D") + "/issued-invoices/debt";
+            using (var unpaidPortfolio = await clientB.GetAsync(portfolioRoute))
+            {
+                Assert.Equal(HttpStatusCode.OK, unpaidPortfolio.StatusCode);
+                var body = await unpaidPortfolio.Content.ReadAsStringAsync();
+                using var json = JsonDocument.Parse(body);
+                Assert.Equal(1, json.RootElement.GetProperty("issuedInvoiceCount").GetInt32());
+                Assert.Equal(finalBill,
+                    json.RootElement.GetProperty("observedOutstandingBeforeAdjustments").GetDecimal());
+                Assert.Equal(0m,
+                    json.RootElement.GetProperty("observedCompletedPaymentsAmount").GetDecimal());
+                var row = json.RootElement.GetProperty("invoices")[0];
+                Assert.Equal(financeIssuedId, row.GetProperty("issuedInvoiceId").GetGuid());
+                Assert.Equal((int)BuildingManagement.Invoices.IssuedInvoicePaymentStatus.Unpaid,
+                    row.GetProperty("observedPaymentStatus").GetInt32());
+                Assert.False(json.RootElement.GetProperty("isOfficialDebtPosted").GetBoolean());
+                Assert.DoesNotContain(tenantB.ToString("D"), body,
+                    StringComparison.OrdinalIgnoreCase);
+            }
+            using (var foreignPortfolio = await clientB.GetAsync(
+                scopedContracts + "/" + contractA.ToString("D") +
+                "/issued-invoices/debt"))
+                Assert.Equal(HttpStatusCode.Forbidden, foreignPortfolio.StatusCode);
+
+            // One valid PARTIAL payment must lower only the OBSERVED debt.
+            // It does not authorize a deposit refund or complete move-out.
+            const decimal partialAmount = 500000m;
+            using var partiallyPaid = await PostValidFinanceAsync(
+                clientRoot, financeRoot + "/issued/" +
+                    financeIssuedId.ToString("D") + "/manual-receipts",
+                new {
+                    tenantId = tenantB, amount = partialAmount,
+                    paidAtUtc = DateTime.UtcNow,
+                    transactionReference = "SCRATCH-BANK-PARTIAL-0001",
+                    bankEvidenceReference = "SCRATCH-PARTIAL-SIGNED-PROOF-0001"
+                });
+            var partialReceiptId = partiallyPaid.RootElement
+                .GetProperty("paymentId").GetGuid();
+            using (var partialBalance = await clientB.GetAsync(financeBalanceRoute))
+            {
+                Assert.Equal(HttpStatusCode.OK, partialBalance.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await partialBalance.Content.ReadAsStringAsync());
+                Assert.Equal((int)BuildingManagement.Invoices.IssuedInvoicePaymentStatus.PartiallyPaid,
+                    json.RootElement.GetProperty("observedPaymentStatus").GetInt32());
+                Assert.Equal(partialAmount,
+                    json.RootElement.GetProperty("observedCompletedPaymentsAmount").GetDecimal());
+                Assert.Equal(finalBill - partialAmount,
+                    json.RootElement.GetProperty("observedOutstandingBeforeAdjustments").GetDecimal());
+            }
+            using (var partialPortfolio = await clientB.GetAsync(portfolioRoute))
+            {
+                Assert.Equal(HttpStatusCode.OK, partialPortfolio.StatusCode);
+                var body = await partialPortfolio.Content.ReadAsStringAsync();
+                using var json = JsonDocument.Parse(body);
+                Assert.Equal(partialAmount,
+                    json.RootElement.GetProperty("observedCompletedPaymentsAmount").GetDecimal());
+                Assert.Equal(finalBill - partialAmount,
+                    json.RootElement.GetProperty("observedOutstandingBeforeAdjustments").GetDecimal());
+                Assert.False(json.RootElement.GetProperty("isOfficialDebtPosted").GetBoolean());
+                Assert.DoesNotContain("SCRATCH-BANK-PARTIAL-0001", body);
+            }
+
             // This receipt is a MANUAL bank-evidence attestation; test data
             // never initiates an actual bank transfer or payment gateway.
             using var paid = await PostValidFinanceAsync(
                 clientRoot, financeRoot + "/issued/" +
                     financeIssuedId.ToString("D") + "/manual-receipts",
                 new {
-                    tenantId = tenantB, amount = finalBill,
+                    tenantId = tenantB, amount = finalBill - partialAmount,
                     paidAtUtc = DateTime.UtcNow,
                     transactionReference = "SCRATCH-BANK-FINAL-BILL-0001",
                     bankEvidenceReference = "SCRATCH-SIGNED-RECEIPT-0001"
@@ -1950,11 +2016,34 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     json.RootElement.GetProperty("observedCompletedPaymentsAmount").GetDecimal());
                 Assert.Equal(0m,
                     json.RootElement.GetProperty("observedOutstandingBeforeAdjustments").GetDecimal());
-                Assert.Equal(1,
+                Assert.Equal(2,
                     json.RootElement.GetProperty("completedPaymentCount").GetInt32());
                 Assert.False(json.RootElement.GetProperty("isOfficialDebtPosted").GetBoolean());
                 Assert.False(json.RootElement.GetProperty("bankTransferIndependentlyVerified").GetBoolean());
                 Assert.DoesNotContain("SCRATCH-BANK-FINAL-BILL-0001", body);
+            }
+
+            using (var paidPortfolio = await clientB.GetAsync(portfolioRoute))
+            {
+                Assert.Equal(HttpStatusCode.OK, paidPortfolio.StatusCode);
+                var body = await paidPortfolio.Content.ReadAsStringAsync();
+                using var json = JsonDocument.Parse(body);
+                Assert.Equal(1,
+                    json.RootElement.GetProperty("issuedInvoiceCount").GetInt32());
+                Assert.Equal(finalBill,
+                    json.RootElement.GetProperty("observedIssuedAmount").GetDecimal());
+                Assert.Equal(finalBill,
+                    json.RootElement.GetProperty("observedCompletedPaymentsAmount").GetDecimal());
+                Assert.Equal(0m,
+                    json.RootElement.GetProperty("observedOutstandingBeforeAdjustments").GetDecimal());
+                Assert.Equal((int)BuildingManagement.Invoices.IssuedInvoicePaymentStatus.Paid,
+                    json.RootElement.GetProperty("invoices")[0]
+                        .GetProperty("observedPaymentStatus").GetInt32());
+                Assert.False(json.RootElement.GetProperty("bankTransferIndependentlyVerified").GetBoolean());
+                Assert.DoesNotContain(tenantB.ToString("D"), body,
+                    StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain("SCRATCH-BANK-FINAL-BILL-0001", body);
+                Assert.DoesNotContain("SCRATCH-BANK-PARTIAL-0001", body);
             }
 
             // Duplicate allocation cannot silently overpay a final bill.
@@ -2080,9 +2169,14 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     x.MoveOutRequestId == financeMoveOut && x.IsCompleted));
                 Assert.Equal(1, await db.IssuedInvoiceLedger.CountAsync(x =>
                     x.Id == financeIssuedId && x.ContractId == financeContract));
-                Assert.Equal(1, await db.InvoicePaymentAllocationJournal
+                Assert.Equal(2, await db.InvoicePaymentAllocationJournal
                     .CountAsync(x => x.IssuedInvoiceId == financeIssuedId &&
-                        x.Amount == finalBill && x.PaymentId == receiptId));
+                        (x.PaymentId == receiptId ||
+                         x.PaymentId == partialReceiptId)));
+                Assert.Equal(finalBill,
+                    await db.InvoicePaymentAllocationJournal
+                        .Where(x => x.IssuedInvoiceId == financeIssuedId)
+                        .SumAsync(x => x.Amount));
                 Assert.Equal(1, await db.DepositCloseoutApprovals.CountAsync(x =>
                     x.ContractId == financeContract &&
                     x.ApprovedRefundAmount == monthlyRent &&

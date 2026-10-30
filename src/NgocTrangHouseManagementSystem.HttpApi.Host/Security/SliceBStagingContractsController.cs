@@ -297,6 +297,17 @@ public sealed class SliceBStagingContractsController : ControllerBase
             id, requestId);
     }
 
+    // Phase 2G.3: complete contract-level observed invoice/debt portfolio.
+    // All amounts come from immutable issued evidence and journaled receipts.
+    [HttpGet("{id:guid}/issued-invoices/debt")]
+    [UnitOfWork(true)]
+    public Task<SliceBScopedContractIssuedDebtRead> GetIssuedDebtPortfolioAsync(
+        [FromRoute] Guid id)
+    {
+        RequireIsolatedStaging();
+        return (_query ?? throw Denied()).GetIssuedDebtPortfolioAsync(id);
+    }
+
     // Phase 2G.3: observed issued-invoice balance only, verified against
     // immutable source ledger and completed payment allocation evidence.
     // It never posts debt, applies deposits, or verifies external banks.

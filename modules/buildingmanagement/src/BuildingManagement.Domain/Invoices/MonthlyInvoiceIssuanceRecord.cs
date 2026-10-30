@@ -165,6 +165,13 @@ public sealed class MonthlyIssuedInvoiceRecord : Entity<Guid>
             IssuedByUserId == review.ReviewedByUserId ||
             IssuedAtUtc.Kind != DateTimeKind.Utc ||
             IssuedAtUtc < review.ReviewedAtUtc ||
+            // The creation gate also rejects an already-expired due date.
+            // Apply that invariant when loading persisted evidence, otherwise
+            // a rewritten IssuedAtUtc could bypass the historical guard.
+            DueDate < DateOnly.FromDateTime(
+                TimeZoneInfo.ConvertTimeFromUtc(IssuedAtUtc,
+                    TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh"))) ||
+            string.IsNullOrWhiteSpace(InvoiceNumber) ||
             InvoiceNumber.Length is < 5 or > 64)
             throw new InvalidDataException(
                 "Monthly issued invoice no longer matches archived, independently approved terms.");

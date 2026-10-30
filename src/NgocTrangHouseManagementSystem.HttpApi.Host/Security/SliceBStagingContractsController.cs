@@ -297,6 +297,19 @@ public sealed class SliceBStagingContractsController : ControllerBase
             id, requestId);
     }
 
+    // Full-month provisional rent and utilities; service fees require
+    // independent policy review. Never issues or posts an Invoice.
+    [HttpGet("{id:guid}/monthly-invoice-preview/{year:int}/{month:int}")]
+    [UnitOfWork(true, System.Data.IsolationLevel.RepeatableRead)]
+    public Task<BuildingManagement.Invoices.MonthlyInvoiceBasePreviewDto>
+        GetMonthlyInvoicePreviewAsync(
+        [FromRoute] Guid id, [FromRoute] int year, [FromRoute] int month)
+    {
+        RequireIsolatedStaging();
+        return (_query ?? throw Denied())
+            .GetMonthlyInvoicePreviewAsync(id, year, month);
+    }
+
     // Phase 2G.3: complete contract-level observed invoice/debt portfolio.
     // All amounts come from immutable issued evidence and journaled receipts.
     [HttpGet("{id:guid}/issued-invoices/debt")]

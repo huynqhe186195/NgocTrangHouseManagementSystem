@@ -60,6 +60,9 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
     public DbSet<MonthlyInvoicePaymentAllocationRecord> MonthlyInvoicePaymentAllocations { get; set; } = default!;
     public DbSet<MonthlyInvoiceAdjustmentRecord> MonthlyInvoiceAdjustments { get; set; } = default!;
     public DbSet<MonthlyInvoiceAdjustmentDecisionRecord> MonthlyInvoiceAdjustmentDecisions { get; set; } = default!;
+    // Phase 2G.3: immutable official debt, separate from original issuance.
+    public DbSet<OfficialInvoiceReceivablePostingRecord> OfficialInvoiceReceivables { get; set; } = default!;
+    public DbSet<OfficialInvoiceReceiptReviewRecord> OfficialInvoiceReceiptReviews { get; set; } = default!;
     // Source-only explicit root deposit disposition approval; no automatic refund.
     public DbSet<ContractDepositCloseoutApprovalRecord> DepositCloseoutApprovals { get; set; } = default!;
 
@@ -111,6 +114,10 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.MonthlyInvoiceAdjustmentRecordConfiguration());
         builder.ApplyConfiguration(
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.MonthlyInvoiceAdjustmentDecisionRecordConfiguration());
+        builder.ApplyConfiguration(
+            new BuildingManagement.EntityFrameworkCore.EntityConfigurations.OfficialInvoiceReceivablePostingRecordConfiguration());
+        builder.ApplyConfiguration(
+            new BuildingManagement.EntityFrameworkCore.EntityConfigurations.OfficialInvoiceReceiptReviewRecordConfiguration());
         builder.ApplyConfiguration(
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.ContractDepositCloseoutApprovalRecordConfiguration());
     }

@@ -761,3 +761,9 @@ HTTP scenario exercises before/after commit, owner/operator reads, mismatch,
 privacy and false-bank-verification rejection. Old `financial-readiness`
 remains a **preflight** only; the signed ledger read is authoritative for
 a terminal handover. No production route activation occurs.
+
+The signed result intentionally distinguishes `RoomStatusAtCloseout`
+(immutable handover disposition, derived from the signed damage forfeiture
+and the atomic writer's Room status decision) and `CurrentRoomStatus`
+(the room's live state). A subsequent re-rental or maintenance transition
+must not make an older, correctly signed financial record unreadable.

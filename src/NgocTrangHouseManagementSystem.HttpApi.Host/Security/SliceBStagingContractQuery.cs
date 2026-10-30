@@ -462,15 +462,19 @@ public sealed class SliceBStagingContractQuery
         var sha = reader.GetString(6);
         if ((ContractStatus)reader.GetInt32(7) != ContractStatus.Ended ||
             (MoveOutRequestStatus)reader.GetInt32(8) != MoveOutRequestStatus.Completed ||
-            (RoomStatus)reader.GetInt32(9) is not
-                (RoomStatus.Available or RoomStatus.Maintenance) ||
             deposit <= 0m || refund < 0m || forfeit < 0m ||
             refund + forfeit != deposit || sha.Length != 64)
             throw Denied();
+        // The current room may be reserved, occupied by a NEW tenant or
+        // in maintenance months after this signed historical closeout.
+        // Never use its mutable current status to deny or rewrite archival
+        // evidence; distinguish recorded closeout disposition from now.
+        var roomAtCloseout = forfeit > 0m
+            ? RoomStatus.Maintenance : RoomStatus.Available;
         return new SliceBScopedSignedCloseoutRead(
             approvedId, contractId, requestId, issuedId,
             approvedAt, deposit, refund, forfeit,
-            (RoomStatus)reader.GetInt32(9), sha,
+            roomAtCloseout, (RoomStatus)reader.GetInt32(9), sha,
             RefundManuallyAttested: refund > 0m,
             BankTransferIndependentlyVerified: false);
     }
@@ -524,7 +528,8 @@ public sealed record SliceBScopedSignedCloseoutRead(
     Guid ApprovalId, Guid ContractId, Guid MoveOutRequestId,
     Guid IssuedInvoiceId, DateTime ApprovedAtUtc,
     decimal VerifiedHeldAmount, decimal RefundAmount,
-    decimal ForfeitAmount, RoomStatus RoomStatus,
+    decimal ForfeitAmount, RoomStatus RoomStatusAtCloseout,
+    RoomStatus CurrentRoomStatus,
     string ApprovalSha256, bool RefundManuallyAttested,
     bool BankTransferIndependentlyVerified);
 

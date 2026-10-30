@@ -1505,6 +1505,10 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     record.GetProperty("refundAmount").GetDecimal());
                 Assert.Equal(0m,
                     record.GetProperty("forfeitAmount").GetDecimal());
+                Assert.Equal((int)BuildingManagement.Rooms.RoomStatus.Available,
+                    record.GetProperty("roomStatusAtCloseout").GetInt32());
+                Assert.Equal((int)BuildingManagement.Rooms.RoomStatus.Available,
+                    record.GetProperty("currentRoomStatus").GetInt32());
                 Assert.True(record.GetProperty(
                     "refundManuallyAttested").GetBoolean());
                 Assert.False(record.GetProperty(

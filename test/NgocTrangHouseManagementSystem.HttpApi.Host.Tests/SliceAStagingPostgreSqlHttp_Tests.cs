@@ -1893,6 +1893,37 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             Assert.Equal(finalBill,
                 issued.RootElement.GetProperty("amount").GetDecimal());
 
+            // Phase 2G.3: before a receipt, the scoped issued ledger must
+            // report the full amount outstanding and UNPAID. It is not a
+            // production debt or a verified external bank balance.
+            var financeBalanceRoute = scopedContracts + "/" +
+                financeContract.ToString("D") + "/issued-invoices/" +
+                financeIssuedId.ToString("D") + "/balance";
+            using (var unpaidResponse = await clientB.GetAsync(financeBalanceRoute))
+            {
+                Assert.Equal(HttpStatusCode.OK, unpaidResponse.StatusCode);
+                var body = await unpaidResponse.Content.ReadAsStringAsync();
+                using var json = JsonDocument.Parse(body);
+                Assert.Equal((int)BuildingManagement.Invoices.IssuedInvoicePaymentStatus.Unpaid,
+                    json.RootElement.GetProperty("observedPaymentStatus").GetInt32());
+                Assert.Equal(finalBill,
+                    json.RootElement.GetProperty("observedOutstandingBeforeAdjustments").GetDecimal());
+                Assert.Equal(0m,
+                    json.RootElement.GetProperty("observedCompletedPaymentsAmount").GetDecimal());
+                Assert.False(json.RootElement.GetProperty("isOfficialDebtPosted").GetBoolean());
+                Assert.False(json.RootElement.GetProperty("bankTransferIndependentlyVerified").GetBoolean());
+                Assert.DoesNotContain(tenantB.ToString("D"), body,
+                    StringComparison.OrdinalIgnoreCase);
+            }
+            using (var foreignBalance = await clientB.GetAsync(
+                scopedContracts + "/" + contractA.ToString("D") +
+                "/issued-invoices/" + financeIssuedId.ToString("D") + "/balance"))
+                Assert.Equal(HttpStatusCode.Forbidden, foreignBalance.StatusCode);
+            using (var wrongInvoice = await clientB.GetAsync(
+                scopedContracts + "/" + financeContract.ToString("D") +
+                "/issued-invoices/" + Guid.NewGuid().ToString("D") + "/balance"))
+                Assert.Equal(HttpStatusCode.Forbidden, wrongInvoice.StatusCode);
+
             // This receipt is a MANUAL bank-evidence attestation; test data
             // never initiates an actual bank transfer or payment gateway.
             using var paid = await PostValidFinanceAsync(
@@ -1907,6 +1938,24 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             var receiptId = paid.RootElement.GetProperty("paymentId").GetGuid();
             Assert.Equal(financeIssuedId,
                 paid.RootElement.GetProperty("issuedInvoiceId").GetGuid());
+
+            using (var paidResponse = await clientB.GetAsync(financeBalanceRoute))
+            {
+                Assert.Equal(HttpStatusCode.OK, paidResponse.StatusCode);
+                var body = await paidResponse.Content.ReadAsStringAsync();
+                using var json = JsonDocument.Parse(body);
+                Assert.Equal((int)BuildingManagement.Invoices.IssuedInvoicePaymentStatus.Paid,
+                    json.RootElement.GetProperty("observedPaymentStatus").GetInt32());
+                Assert.Equal(finalBill,
+                    json.RootElement.GetProperty("observedCompletedPaymentsAmount").GetDecimal());
+                Assert.Equal(0m,
+                    json.RootElement.GetProperty("observedOutstandingBeforeAdjustments").GetDecimal());
+                Assert.Equal(1,
+                    json.RootElement.GetProperty("completedPaymentCount").GetInt32());
+                Assert.False(json.RootElement.GetProperty("isOfficialDebtPosted").GetBoolean());
+                Assert.False(json.RootElement.GetProperty("bankTransferIndependentlyVerified").GetBoolean());
+                Assert.DoesNotContain("SCRATCH-BANK-FINAL-BILL-0001", body);
+            }
 
             // Duplicate allocation cannot silently overpay a final bill.
             var duplicate = await PostFinalAsync(clientRoot,

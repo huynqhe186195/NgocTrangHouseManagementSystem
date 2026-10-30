@@ -1437,6 +1437,12 @@ public sealed class SliceBStagingFinalInvoiceMutation
                         building, held, input.ForfeitAmount,
                         input.DamageReason, input.DamageEvidenceReference,
                         input.DepositPolicyReference);
+                    // The owner decision must precede an actual refund;
+                    // neither a backdated manual proof nor another refund
+                    // can be used to retroactively approve money sent.
+                    if (input.RefundPaidAtUtc.HasValue &&
+                        input.RefundPaidAtUtc.Value < decision.ApprovedAtUtc)
+                        throw Denied();
                 }
                 catch (Exception ex) when (ex is InvalidDataException or
                     InvalidOperationException or ArgumentException)

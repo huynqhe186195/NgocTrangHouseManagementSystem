@@ -3102,6 +3102,21 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 }));
             Assert.Equal(HttpStatusCode.Forbidden, contradictoryComplete.Status);
 
+            var backdatedRefund = await PostFinalAsync(
+                clientRoot, financeRoot + "/move-outs/" +
+                    financeMoveOut.ToString("D") + "/complete",
+                JsonSerializer.Serialize(new {
+                    forfeitAmount = 0m,
+                    inspectionEvidenceReference = "SCRATCH-SIGNED-INSPECTION-0001",
+                    handoverEvidenceReference = "SCRATCH-SIGNED-HANDOVER-0001",
+                    depositPolicyReference = "SCRATCH-CONTRACT-DEPOSIT-POLICY-2026",
+                    confirmManualRefundPaid = true,
+                    refundPaidAtUtc = DateTime.UtcNow.AddDays(-1),
+                    refundTransactionReference = "SCRATCH-MANUAL-REFUND-0001",
+                    refundBankEvidenceReference = "SCRATCH-REFUND-SIGNED-PROOF-0001"
+                }));
+            Assert.Equal(HttpStatusCode.Forbidden, backdatedRefund.Status);
+
             using var closeout = await PostValidFinanceAsync(
                 clientRoot,
                 financeRoot + "/move-outs/" + financeMoveOut.ToString("D") +

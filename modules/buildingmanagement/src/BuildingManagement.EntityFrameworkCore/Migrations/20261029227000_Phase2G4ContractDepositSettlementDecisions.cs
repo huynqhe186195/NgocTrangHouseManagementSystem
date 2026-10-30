@@ -264,6 +264,7 @@ public sealed class Phase2G4ContractDepositSettlementDecisions : Migration
                 END IF;
                 IF NEW."Status" = 2 THEN
                     IF NEW."CompletedAt" IS NULL OR
+                       NEW."CompletedAt" < approved."ApprovedAtUtc" OR
                        (NEW."Type" = 1 AND
                         (NEW."Notes" IS NULL OR
                          NEW."Notes" NOT LIKE 'MANUAL BANK REF %')) OR

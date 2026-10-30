@@ -3159,6 +3159,16 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 Assert.DoesNotContain(tenantB.ToString("D"), body,
                     StringComparison.OrdinalIgnoreCase);
             }
+            using (var afterSettlement = await clientB.GetAsync(readPlanRoute))
+            {
+                Assert.Equal(HttpStatusCode.OK, afterSettlement.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await afterSettlement.Content.ReadAsStringAsync());
+                Assert.True(json.RootElement
+                    .GetProperty("isRefundExecuted").GetBoolean());
+                Assert.Equal(monthlyRent, json.RootElement
+                    .GetProperty("approvedRefundAmount").GetDecimal());
+            }
             using (var rootSigned = await clientRoot.GetAsync(signedCloseoutRoute))
                 Assert.Equal(HttpStatusCode.OK, rootSigned.StatusCode);
             using (var foreign = await clientB.GetAsync(

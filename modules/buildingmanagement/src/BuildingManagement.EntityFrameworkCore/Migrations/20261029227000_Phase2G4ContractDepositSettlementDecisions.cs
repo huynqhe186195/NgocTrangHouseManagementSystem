@@ -172,6 +172,65 @@ public sealed class Phase2G4ContractDepositSettlementDecisions : Migration
               FOR EACH ROW
               EXECUTE FUNCTION "BM_RequireApprovedDepositDecisionAtCloseout"();
             """);
+        builder.Sql("""
+            -- Reuse the original DepositSettlement journal: an outgoing
+            -- contract refund or forfeiture must be PRE-authorized by the
+            -- immutable 2G.4 decision, not by a new parallel money ledger.
+            CREATE FUNCTION "BM_RequireDepositDecisionForOutgoing"()
+            RETURNS trigger LANGUAGE plpgsql AS $outgoing$
+            DECLARE approved record;
+            DECLARE earlier bigint;
+            BEGIN
+                IF NEW."SourceContractId" IS NULL OR
+                   NEW."Type" NOT IN (1, 2) THEN
+                    RETURN NEW;
+                END IF;
+                SELECT * INTO approved
+                  FROM "BuildingManagementContractDepositSettlementDecisions"
+                 WHERE "ContractId" = NEW."SourceContractId"
+                 FOR SHARE;
+                IF approved."Id" IS NULL OR
+                   (NEW."Type" = 1 AND
+                     (approved."ApprovedRefundAmount" <= 0 OR
+                      NEW."Amount" IS DISTINCT FROM approved."ApprovedRefundAmount")) OR
+                   (NEW."Type" = 2 AND
+                     (approved."ApprovedForfeitAmount" <= 0 OR
+                      NEW."Amount" IS DISTINCT FROM approved."ApprovedForfeitAmount")) THEN
+                    RAISE EXCEPTION
+                      'Contract deposit refund/forfeit requires matching approved decision'
+                      USING ERRCODE = '23514';
+                END IF;
+                IF NEW."Status" = 2 THEN
+                    IF NEW."CompletedAt" IS NULL OR
+                       (NEW."Type" = 1 AND
+                        (NEW."Notes" IS NULL OR
+                         NEW."Notes" NOT LIKE 'MANUAL BANK REF %')) OR
+                       (NEW."Type" = 2 AND
+                        (NEW."Notes" IS NULL OR
+                         position(approved."DamageReason" IN NEW."Notes") = 0)) THEN
+                        RAISE EXCEPTION
+                          'Completed contract deposit disposition lacks approved evidence'
+                          USING ERRCODE = '23514';
+                    END IF;
+                    SELECT count(*) INTO earlier
+                      FROM "BuildingManagementDepositSettlements" s
+                     WHERE s."SourceContractId" = NEW."SourceContractId"
+                       AND s."Type" = NEW."Type" AND s."Status" = 2
+                       AND s."Id" <> NEW."Id";
+                    IF earlier <> 0 THEN
+                        RAISE EXCEPTION 'Contract deposit already disposed for this kind'
+                          USING ERRCODE = '23505';
+                    END IF;
+                END IF;
+                RETURN NEW;
+            END;
+            $outgoing$;
+            CREATE TRIGGER "TR_BM_00_RequireDepositDecisionForOutgoing"
+              BEFORE INSERT OR UPDATE
+              ON "BuildingManagementDepositSettlements"
+              FOR EACH ROW
+              EXECUTE FUNCTION "BM_RequireDepositDecisionForOutgoing"();
+            """);
     }
 
     protected override void Down(MigrationBuilder builder)
@@ -188,6 +247,9 @@ public sealed class Phase2G4ContractDepositSettlementDecisions : Migration
                 END IF;
             END;
             $down$;
+            DROP TRIGGER "TR_BM_00_RequireDepositDecisionForOutgoing"
+              ON "BuildingManagementDepositSettlements";
+            DROP FUNCTION "BM_RequireDepositDecisionForOutgoing"();
             DROP TRIGGER "TR_BM_00_RequireApprovedDepositDecision"
               ON "BuildingManagementContractDepositCloseoutApprovals";
             DROP FUNCTION "BM_RequireApprovedDepositDecisionAtCloseout"();

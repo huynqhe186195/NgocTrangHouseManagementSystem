@@ -119,6 +119,18 @@ public sealed class ContractDepositSettlementDecision_Tests
     }
 
     [Fact]
+    public void DEP4_10_Blank_Optional_Damage_Fields_Are_Normalized_To_Null()
+    {
+        var decision = Decision(0m, "  ", "  ");
+        decision.VerifyStoredDecision();
+        Assert.Null(decision.DamageReason);
+        Assert.Null(decision.DamageEvidenceReference);
+        decision.RequireForCloseout(decision.ContractId, decision.MoveOutRequestId,
+            decision.FinalIssuedInvoiceId, decision.BuildingId, 3_000_000m,
+            0m, "  ", "", "SIGNED-DEPOSIT-POLICY-001");
+    }
+
+    [Fact]
     public void DEP4_09_Approval_Time_Must_Not_Precede_Issued_Invoice()
     {
         Assert.Throws<InvalidOperationException>(() =>

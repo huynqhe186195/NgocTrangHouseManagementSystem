@@ -187,6 +187,177 @@ public sealed class MonthlyInvoiceIssuance_Tests
             allocation.VerifySource(receipt));
     }
 
+    [Fact]
+    public void MONTISS12_Approved_Credit_Debit_And_Rejected_Note_Are_Audited()
+    {
+        var archive = Archive();
+        var review = Review(archive);
+        var issued = MonthlyIssuedInvoiceRecord.Issue(Guid.NewGuid(),
+            "NTM-CORRECT-012", archive.ReviewedByUserId,
+            PreparedAt.AddHours(2), archive, review);
+        var credit = MonthlyInvoiceAdjustmentRecord.Propose(
+            Guid.NewGuid(), issued, archive.ReviewedByUserId,
+            PreparedAt.AddHours(3), -100_000m,
+            "Incorrect recorded water charge needs credit",
+            "SIGNED-WATER-RATE-CORRECTION-001");
+        var debit = MonthlyInvoiceAdjustmentRecord.Propose(
+            Guid.NewGuid(), issued, archive.ReviewedByUserId,
+            PreparedAt.AddHours(4), 40_000m,
+            "Documented missed internet service fee",
+            "CONTRACT-INTERNET-FEE-ADDENDUM-001");
+        var rejected = MonthlyInvoiceAdjustmentRecord.Propose(
+            Guid.NewGuid(), issued, archive.ReviewedByUserId,
+            PreparedAt.AddHours(5), 8_000m,
+            "Unsupported extra parking monthly charge",
+            "NO-SIGNED-PARKING-POLICY-001");
+        var d1 = MonthlyInvoiceAdjustmentDecisionRecord.Decide(
+            Guid.NewGuid(), credit, issued, Guid.NewGuid(),
+            PreparedAt.AddHours(6), true, "Original meter comparison independently checked");
+        var d2 = MonthlyInvoiceAdjustmentDecisionRecord.Decide(
+            Guid.NewGuid(), debit, issued, Guid.NewGuid(),
+            PreparedAt.AddHours(7), true, "Signed internet policy reviewed independently");
+        var d3 = MonthlyInvoiceAdjustmentDecisionRecord.Decide(
+            Guid.NewGuid(), rejected, issued, Guid.NewGuid(),
+            PreparedAt.AddHours(8), false, "No authorized parking service reference exists");
+        var result = MonthlyInvoiceAdjustmentEvaluator.Assess(
+            issued, new[] { credit, debit, rejected }, new[] { d1, d2, d3 },
+            new DateOnly(2026, 10, 31), 500_000m);
+        Assert.Equal(-60_000m, result.ApprovedSignedAdjustment);
+        Assert.Equal(2_990_000m, result.AdjustedAmount);
+        Assert.Equal(2, result.ApprovedAdjustmentCount);
+        Assert.False(result.IsOfficialDebtPosted);
+        Assert.True(credit.IsCreditNote);
+        Assert.True(debit.IsDebitNote);
+        Assert.False(d3.Accepted);
+    }
+
+    [Fact]
+    public void MONTISS13_Rejected_Or_Pending_Adjustment_Does_Not_Change_Debt()
+    {
+        var issued = IssuedForAdjustment();
+        var proposal = MonthlyInvoiceAdjustmentRecord.Propose(
+            Guid.NewGuid(), issued, Guid.NewGuid(), PreparedAt.AddHours(3),
+            -50_000m, "Credit proposal still under independent review",
+            "REVIEW-PENDING-CREDIT-001");
+        var pending = MonthlyInvoiceAdjustmentEvaluator.Assess(
+            issued, new[] { proposal },
+            Array.Empty<MonthlyInvoiceAdjustmentDecisionRecord>(),
+            new DateOnly(2026, 10, 30), 0m);
+        Assert.Equal(issued.TotalAmount, pending.AdjustedAmount);
+        var declined = MonthlyInvoiceAdjustmentDecisionRecord.Decide(
+            Guid.NewGuid(), proposal, issued, Guid.NewGuid(),
+            PreparedAt.AddHours(4), false, "Evidence was not sufficient for a credit");
+        var rejected = MonthlyInvoiceAdjustmentEvaluator.Assess(
+            issued, new[] { proposal }, new[] { declined },
+            new DateOnly(2026, 10, 30), 0m);
+        Assert.Equal(issued.TotalAmount, rejected.AdjustedAmount);
+    }
+
+    [Fact]
+    public void MONTISS14_Self_Approval_And_Forged_History_Are_Rejected()
+    {
+        var issued = IssuedForAdjustment();
+        var owner = Guid.NewGuid();
+        var proposal = MonthlyInvoiceAdjustmentRecord.Propose(
+            Guid.NewGuid(), issued, owner, PreparedAt.AddHours(3),
+            -20_000m, "Correct previous double counted rent line",
+            "SIGNED-CONTRACT-CORRECTION-002");
+        Assert.Throws<InvalidOperationException>(() =>
+            MonthlyInvoiceAdjustmentDecisionRecord.Decide(
+                Guid.NewGuid(), proposal, issued, owner,
+                PreparedAt.AddHours(4), true, "Invalid same actor"));
+        var decision = MonthlyInvoiceAdjustmentDecisionRecord.Decide(
+            Guid.NewGuid(), proposal, issued, Guid.NewGuid(),
+            PreparedAt.AddHours(4), true, "Independent verification of original evidence");
+        typeof(MonthlyInvoiceAdjustmentDecisionRecord)
+            .GetProperty(nameof(MonthlyInvoiceAdjustmentDecisionRecord.ApprovedSignedDeltaAmount))!
+            .SetValue(decision, -21_000m);
+        Assert.Throws<InvalidDataException>(() =>
+            MonthlyInvoiceAdjustmentEvaluator.Assess(issued,
+                new[] { proposal }, new[] { decision },
+                new DateOnly(2026, 10, 31), 0m));
+    }
+
+    [Fact]
+    public void MONTISS15_Credit_Cannot_Erase_Already_Captured_Bank_Receipts()
+    {
+        var issued = IssuedForAdjustment();
+        var proposal = MonthlyInvoiceAdjustmentRecord.Propose(
+            Guid.NewGuid(), issued, Guid.NewGuid(),
+            PreparedAt.AddHours(3), -100_000m,
+            "Credit for incorrectly applied service charge",
+            "SIGNED-CREDIT-EVIDENCE-003");
+        var decision = MonthlyInvoiceAdjustmentDecisionRecord.Decide(
+            Guid.NewGuid(), proposal, issued, Guid.NewGuid(),
+            PreparedAt.AddHours(4), true,
+            "Independent check supports correction amount");
+        Assert.Throws<InvalidDataException>(() =>
+            MonthlyInvoiceAdjustmentEvaluator.Assess(
+                issued, new[] { proposal }, new[] { decision },
+                new DateOnly(2026, 10, 31), issued.TotalAmount));
+    }
+
+    [Fact]
+    public void MONTISS16_Adjustments_Apply_Only_On_Approval_Local_Date()
+    {
+        var issued = IssuedForAdjustment();
+        var proposal = MonthlyInvoiceAdjustmentRecord.Propose(
+            Guid.NewGuid(), issued, Guid.NewGuid(),
+            new DateTime(2026, 10, 30, 16, 30, 0, DateTimeKind.Utc),
+            60_000m, "Late recorded utility consumption evidence",
+            "SIGNED-METER-RECONCILIATION-004");
+        var decision = MonthlyInvoiceAdjustmentDecisionRecord.Decide(
+            Guid.NewGuid(), proposal, issued, Guid.NewGuid(),
+            new DateTime(2026, 10, 30, 17, 30, 0, DateTimeKind.Utc),
+            true, "Independent review verified the meter evidence");
+        var prior = MonthlyInvoiceAdjustmentEvaluator.Assess(
+            issued, new[] { proposal }, new[] { decision },
+            new DateOnly(2026, 10, 30), 0m);
+        var today = MonthlyInvoiceAdjustmentEvaluator.Assess(
+            issued, new[] { proposal }, new[] { decision },
+            new DateOnly(2026, 10, 31), 0m);
+        Assert.Equal(0m, prior.ApprovedSignedAdjustment);
+        Assert.Equal(60_000m, today.ApprovedSignedAdjustment);
+    }
+
+    [Fact]
+    public void MONTISS17_Orphaned_Duplicate_And_Cross_Invoice_Notes_Refused()
+    {
+        var issued = IssuedForAdjustment();
+        var proposal = MonthlyInvoiceAdjustmentRecord.Propose(
+            Guid.NewGuid(), issued, Guid.NewGuid(),
+            PreparedAt.AddHours(3), 10_000m,
+            "Original invoice had a missed charge",
+            "SIGNED-ORIGINAL-INVOICE-REF-005");
+        var decision = MonthlyInvoiceAdjustmentDecisionRecord.Decide(
+            Guid.NewGuid(), proposal, issued, Guid.NewGuid(),
+            PreparedAt.AddHours(4), true,
+            "Independent review of missed charge");
+        Assert.Throws<InvalidDataException>(() =>
+            MonthlyInvoiceAdjustmentEvaluator.Assess(issued,
+                Array.Empty<MonthlyInvoiceAdjustmentRecord>(),
+                new[] { decision }, new DateOnly(2026, 10, 30), 0m));
+        Assert.Throws<InvalidDataException>(() =>
+            MonthlyInvoiceAdjustmentEvaluator.Assess(issued,
+                new[] { proposal, proposal },
+                new[] { decision }, new DateOnly(2026, 10, 30), 0m));
+        var foreign = IssuedForAdjustment();
+        Assert.Throws<InvalidDataException>(() =>
+            MonthlyInvoiceAdjustmentEvaluator.Assess(foreign,
+                new[] { proposal }, new[] { decision },
+                new DateOnly(2026, 10, 30), 0m));
+    }
+
+    private static MonthlyIssuedInvoiceRecord IssuedForAdjustment()
+    {
+        var archive = Archive();
+        var review = Review(archive);
+        return MonthlyIssuedInvoiceRecord.Issue(
+            Guid.NewGuid(), "NTM-CORRECT-" + Guid.NewGuid().ToString("N"),
+            archive.ReviewedByUserId, PreparedAt.AddHours(2),
+            archive, review);
+    }
+
     private static Payment Receipt(MonthlyIssuedInvoiceRecord issued)
     {
         var receipt = new Payment(

@@ -563,6 +563,126 @@ public sealed class SliceBReconciliationBoundaryPostgreSql_Tests
         });
     }
 
+    [Fact]
+    public async Task SBRECON12_Audited_Monthly_Correction_Can_Debit_But_Never_Credit_Past_Receipts()
+    {
+        await InScratchAsync(async (db, tx, _) =>
+        {
+            var draft = Guid.NewGuid();
+            var contract = Guid.NewGuid();
+            var room = Guid.NewGuid();
+            await ExecuteAsync(db, tx, $"""
+                INSERT INTO "BuildingManagementInvoices"
+                  ("Id","ContractId","RoomId","BillingYear","BillingMonth","Status")
+                VALUES ('{draft:D}','{contract:D}','{room:D}',2026,10,0);
+                """);
+            var archive = MonthlyInvoiceCandidateLedgerRecord.Capture(
+                Guid.NewGuid(), MonthlyEvidence(draft, contract, room));
+            await ExecuteAsync(db, tx, Sql(new Phase2G3MonthlyCandidateEvidence(), false));
+            await ExecuteAsync(db, tx, MonthlyInsertSql(archive));
+            await ExecuteAsync(db, tx, Sql(new Phase2G3MonthlyIndependentIssuance(), false));
+            var review = MonthlyInvoiceIndependentReviewRecord.Capture(
+                Guid.NewGuid(), archive, Guid.NewGuid(),
+                archive.ReviewedAtUtc.AddHours(1), true,
+                "Independent monthly pricing review verified");
+            await ExecuteAsync(db, tx, MonthlyReviewInsertSql(review));
+            var issued = MonthlyIssuedInvoiceRecord.Issue(
+                Guid.NewGuid(), "NTM-ADJ-" + Guid.NewGuid().ToString("N"),
+                archive.ReviewedByUserId, review.ReviewedAtUtc.AddHours(1),
+                archive, review);
+            await ExecuteAsync(db, tx, MonthlyIssuedInsertSql(issued));
+            await ExecuteAsync(db, tx, Sql(new Phase2G3MonthlyReceiptAllocation(), false));
+            var migration = new Phase2G3AuditedMonthlyAdjustments();
+            await ExecuteAsync(db, tx, Sql(migration, false));
+
+            var debit = MonthlyInvoiceAdjustmentRecord.Propose(
+                Guid.NewGuid(), issued, archive.ReviewedByUserId,
+                issued.IssuedAtUtc.AddMinutes(30), 100_000m,
+                "Documented missing service fee on original invoice",
+                "SIGNED-SERVICE-ADDENDUM-001");
+            await ExecuteAsync(db, tx, MonthlyAdjustmentInsertSql(debit));
+            var approved = MonthlyInvoiceAdjustmentDecisionRecord.Decide(
+                Guid.NewGuid(), debit, issued, Guid.NewGuid(),
+                debit.ProposedAtUtc.AddMinutes(15), true,
+                "Separate manager confirmed signed service fee source");
+            await ExecuteAsync(db, tx, MonthlyDecisionInsertSql(approved));
+            Assert.Equal(100_000L, await ScalarAsync(db, tx, """
+                SELECT sum("ApprovedSignedDeltaAmount")
+                  FROM "BuildingManagementMonthlyInvoiceAdjustmentDecisions"
+                 WHERE "Accepted" = TRUE
+                """));
+
+            var payment = Guid.NewGuid();
+            await ExecuteAsync(db, tx, MonthlyPaymentInsertSql(
+                payment, issued, 3_100_000m));
+            await ExecuteAsync(db, tx, MonthlyAllocationInsertSql(
+                payment, issued, 3_100_000m));
+
+            var credit = MonthlyInvoiceAdjustmentRecord.Propose(
+                Guid.NewGuid(), issued, archive.ReviewedByUserId,
+                issued.IssuedAtUtc.AddHours(1), -100_000m,
+                "Correct an over-assessed charge with signed proof",
+                "SIGNED-CREDIT-NOTE-002");
+            await ExecuteAsync(db, tx, MonthlyAdjustmentInsertSql(credit));
+            var creditDecision = MonthlyInvoiceAdjustmentDecisionRecord.Decide(
+                Guid.NewGuid(), credit, issued, Guid.NewGuid(),
+                credit.ProposedAtUtc.AddMinutes(10), true,
+                "Independent comparison verified the credit note");
+            await ExpectFailureAsync(db, tx,
+                MonthlyDecisionInsertSql(creditDecision), "23514");
+
+            var rejected = MonthlyInvoiceAdjustmentDecisionRecord.Decide(
+                Guid.NewGuid(), credit, issued, Guid.NewGuid(),
+                credit.ProposedAtUtc.AddMinutes(20), false,
+                "Credit would wrongly erase already captured funds");
+            await ExecuteAsync(db, tx, MonthlyDecisionInsertSql(rejected));
+            await ExpectFailureAsync(db, tx,
+                MonthlyDecisionInsertSql(rejected).Replace(
+                    $"'{rejected.Id:D}'", $"'{Guid.NewGuid():D}'",
+                    StringComparison.Ordinal), "23505");
+            await ExpectFailureAsync(db, tx, $"""
+                UPDATE "BuildingManagementMonthlyInvoiceAdjustments"
+                   SET "SignedDeltaAmount" = 1 WHERE "Id" = '{credit.Id:D}';
+                """, "23514");
+            await ExpectFailureAsync(db, tx, $"""
+                DELETE FROM "BuildingManagementMonthlyInvoiceAdjustmentDecisions"
+                 WHERE "Id" = '{approved.Id:D}';
+                """, "23514");
+            await ExpectFailureAsync(db, tx, Sql(migration, true), "23514");
+        });
+    }
+
+    private static string MonthlyAdjustmentInsertSql(
+        MonthlyInvoiceAdjustmentRecord x)
+        => $"""
+            INSERT INTO "BuildingManagementMonthlyInvoiceAdjustments"
+              ("Id","IssuedInvoiceId","ContractId","BuildingId",
+               "InvoiceEvidenceSha256","SignedDeltaAmount","Reason",
+               "SourceEvidenceReference","ProposedByUserId","ProposedAtUtc")
+            VALUES ('{x.Id:D}','{x.IssuedInvoiceId:D}',
+              '{x.ContractId:D}','{x.BuildingId:D}',
+              '{x.InvoiceEvidenceSha256}',
+              {x.SignedDeltaAmount.ToString(CultureInfo.InvariantCulture)},
+              '{x.Reason.Replace("'", "''", StringComparison.Ordinal)}',
+              '{x.SourceEvidenceReference.Replace("'", "''", StringComparison.Ordinal)}',
+              '{x.ProposedByUserId:D}','{x.ProposedAtUtc:O}');
+            """;
+
+    private static string MonthlyDecisionInsertSql(
+        MonthlyInvoiceAdjustmentDecisionRecord x)
+        => $"""
+            INSERT INTO "BuildingManagementMonthlyInvoiceAdjustmentDecisions"
+              ("Id","AdjustmentId","IssuedInvoiceId","ContractId",
+               "ApprovedSignedDeltaAmount","ReviewedByUserId",
+               "ReviewedAtUtc","Accepted","ReviewReason")
+            VALUES ('{x.Id:D}','{x.AdjustmentId:D}','{x.IssuedInvoiceId:D}',
+              '{x.ContractId:D}',
+              {x.ApprovedSignedDeltaAmount.ToString(CultureInfo.InvariantCulture)},
+              '{x.ReviewedByUserId:D}','{x.ReviewedAtUtc:O}',
+              {(x.Accepted ? "TRUE" : "FALSE")},
+              '{x.ReviewReason.Replace("'", "''", StringComparison.Ordinal)}');
+            """;
+
     private static string MonthlyPaymentInsertSql(
         Guid paymentId, MonthlyIssuedInvoiceRecord issued, decimal amount)
         => $"""

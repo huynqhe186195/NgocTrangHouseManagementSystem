@@ -100,6 +100,31 @@ public sealed class SliceBStagingFinalInvoiceController : ControllerBase
             contractId, issuedId, asOfDate);
     }
 
+    [HttpPost("contracts/{contractId:guid}/monthly-issued/{issuedId:guid}/adjustments")]
+    [UnitOfWork(true, System.Data.IsolationLevel.RepeatableRead)]
+    public Task<SliceBStagedMonthlyAdjustmentRead> ProposeMonthlyAdjustmentAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid issuedId,
+        [FromBody] SliceBMonthlyAdjustmentInput input)
+    {
+        RequireIsolatedStaging();
+        if (input is null) throw Denied();
+        return (_mutation ?? throw Denied()).ProposeMonthlyAdjustmentAsync(
+            contractId, issuedId, input);
+    }
+
+    [HttpPost("contracts/{contractId:guid}/monthly-adjustments/{adjustmentId:guid}/review")]
+    [UnitOfWork(true, System.Data.IsolationLevel.RepeatableRead)]
+    public Task<SliceBStagedMonthlyAdjustmentDecisionRead>
+        ReviewMonthlyAdjustmentAsync(
+            [FromRoute] Guid contractId, [FromRoute] Guid adjustmentId,
+            [FromBody] SliceBMonthlyAdjustmentDecisionInput input)
+    {
+        RequireIsolatedStaging();
+        if (input is null) throw Denied();
+        return (_mutation ?? throw Denied()).ReviewMonthlyAdjustmentAsync(
+            contractId, adjustmentId, input);
+    }
+
     [HttpPost("contracts/{contractId:guid}/move-outs/{requestId:guid}/prepare")]
     [UnitOfWork(true)]
     public Task<SliceBStagedInvoiceEvidenceRead> PrepareAsync(

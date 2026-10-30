@@ -2316,6 +2316,170 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     .GetProperty("isOfficialDebtPosted").GetBoolean());
             }
 
+            // Audited post-issuance correction: proposer and approver
+            // are distinct, and the immutable ORIGINAL amount is never
+            // overwritten even when the corrected balance changes.
+            var monthAdjustmentsRoute = FinalInvoices(monthlyDraftContract) +
+                "/monthly-issued/" + monthlyIssuedId.ToString("D") +
+                "/adjustments";
+            var debitRequest = new {
+                signedDeltaAmount = 100_000m,
+                reason = "Additional service charge signed by tenant and verified",
+                sourceEvidenceReference = "SIGNED-RECURRING-SERVICE-ADDENDUM-001"
+            };
+            var staffAdjustment = await PostFinalAsync(
+                clientB, monthAdjustmentsRoute,
+                JsonSerializer.Serialize(debitRequest));
+            Assert.Equal(HttpStatusCode.Forbidden, staffAdjustment.Status);
+            var proposed = await PostFinalAsync(
+                clientRoot, monthAdjustmentsRoute,
+                JsonSerializer.Serialize(debitRequest));
+            Assert.True(proposed.Status is HttpStatusCode.OK or HttpStatusCode.Created,
+                $"Monthly adjustment proposal: {proposed.Status}: {proposed.Body}");
+            Guid monthlyAdjustmentId;
+            using (var json = JsonDocument.Parse(proposed.Body))
+            {
+                monthlyAdjustmentId = json.RootElement.GetProperty("adjustmentId").GetGuid();
+                Assert.True(json.RootElement.GetProperty("isDebitNote").GetBoolean());
+                Assert.False(json.RootElement.GetProperty("isOfficialDebtPosted").GetBoolean());
+            }
+            var reviewAdjustmentRoute = FinalInvoices(monthlyDraftContract) +
+                "/monthly-adjustments/" + monthlyAdjustmentId.ToString("D") +
+                "/review";
+            var adjustmentDecision = new {
+                accept = true,
+                reason = "Independent check of signed customer service agreement"
+            };
+            var selfApprove = await PostFinalAsync(
+                clientRoot, reviewAdjustmentRoute,
+                JsonSerializer.Serialize(adjustmentDecision));
+            Assert.Equal(HttpStatusCode.Forbidden, selfApprove.Status);
+            using (var pendingAdjustmentBalance =
+                await clientB.GetAsync(monthlyBalanceRoute))
+            {
+                Assert.Equal(HttpStatusCode.OK, pendingAdjustmentBalance.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await pendingAdjustmentBalance.Content.ReadAsStringAsync());
+                Assert.Equal(0m, json.RootElement
+                    .GetProperty("approvedSignedAdjustment").GetDecimal());
+                Assert.Equal(0m, json.RootElement
+                    .GetProperty("outstandingAfterAdjustments").GetDecimal());
+            }
+            var approvedAdjustment = await PostFinalAsync(
+                clientB, reviewAdjustmentRoute,
+                JsonSerializer.Serialize(adjustmentDecision));
+            Assert.True(approvedAdjustment.Status is HttpStatusCode.OK or
+                HttpStatusCode.Created,
+                $"Independent adjustment approval: {approvedAdjustment.Status}: {approvedAdjustment.Body}");
+            Guid approvedAdjustmentDecisionId;
+            using (var json = JsonDocument.Parse(approvedAdjustment.Body))
+            {
+                approvedAdjustmentDecisionId = json.RootElement.GetProperty("decisionId").GetGuid();
+                Assert.Equal(100_000m,
+                    json.RootElement.GetProperty("approvedSignedDeltaAmount").GetDecimal());
+                Assert.False(json.RootElement.GetProperty("isOfficialDebtPosted").GetBoolean());
+            }
+            var duplicateApproval = await PostFinalAsync(
+                clientB, reviewAdjustmentRoute,
+                JsonSerializer.Serialize(adjustmentDecision));
+            Assert.Equal(HttpStatusCode.Forbidden, duplicateApproval.Status);
+            using (var correctedBalance = await clientB.GetAsync(monthlyBalanceRoute))
+            {
+                Assert.Equal(HttpStatusCode.OK, correctedBalance.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await correctedBalance.Content.ReadAsStringAsync());
+                Assert.Equal(2_583_000m,
+                    json.RootElement.GetProperty("issuedAmount").GetDecimal());
+                Assert.Equal(100_000m,
+                    json.RootElement.GetProperty("approvedSignedAdjustment").GetDecimal());
+                Assert.Equal(2_683_000m,
+                    json.RootElement.GetProperty("adjustedAmount").GetDecimal());
+                Assert.Equal(0m,
+                    json.RootElement.GetProperty("outstandingBeforeAdjustments").GetDecimal());
+                Assert.Equal(100_000m,
+                    json.RootElement.GetProperty("outstandingAfterAdjustments").GetDecimal());
+                Assert.Equal(1, json.RootElement
+                    .GetProperty("approvedAdjustmentCount").GetInt32());
+            }
+
+            // A late credit below already-recorded money MUST be rejected,
+            // preserving the debit adjustment and original source journal.
+            var creditRequest = new {
+                signedDeltaAmount = -200_000m,
+                reason = "Proposed correction would exceed existing receipts",
+                sourceEvidenceReference = "SIGNED-RECURRING-CREDIT-PROOF-002"
+            };
+            var creditProposed = await PostFinalAsync(
+                clientRoot, monthAdjustmentsRoute,
+                JsonSerializer.Serialize(creditRequest));
+            Assert.True(creditProposed.Status is HttpStatusCode.OK or
+                HttpStatusCode.Created);
+            Guid monthlyCreditId;
+            using (var json = JsonDocument.Parse(creditProposed.Body))
+                monthlyCreditId = json.RootElement
+                    .GetProperty("adjustmentId").GetGuid();
+            var creditReviewRoute = FinalInvoices(monthlyDraftContract) +
+                "/monthly-adjustments/" + monthlyCreditId.ToString("D") +
+                "/review";
+            var invalidCreditApproval = await PostFinalAsync(
+                clientB, creditReviewRoute, JsonSerializer.Serialize(new {
+                    accept = true,
+                    reason = "Would erase previously captured payment funds"
+                }));
+            Assert.Equal(HttpStatusCode.Forbidden, invalidCreditApproval.Status);
+            var declinedCredit = await PostFinalAsync(
+                clientB, creditReviewRoute, JsonSerializer.Serialize(new {
+                    accept = false,
+                    reason = "Credit declined because payment evidence exceeds new total"
+                }));
+            Assert.True(declinedCredit.Status is HttpStatusCode.OK or
+                HttpStatusCode.Created);
+
+            var differencePaid = await PostFinalAsync(
+                clientRoot, monthReceiptRoute, JsonSerializer.Serialize(new {
+                    tenantId = tenantB, amount = 100_000m,
+                    paidAtUtc = DateTime.UtcNow,
+                    transactionReference = "SCRATCH-MONTH-CORRECTION-PAID-001",
+                    bankEvidenceReference = "BANK-SIGNED-MONTH-CORRECTION-RECEIPT-001"
+                }));
+            Assert.True(differencePaid.Status is HttpStatusCode.OK or
+                HttpStatusCode.Created,
+                $"Correction payment: {differencePaid.Status}: {differencePaid.Body}");
+            using (var paidAdjusted = await clientB.GetAsync(monthlyBalanceRoute))
+            {
+                Assert.Equal(HttpStatusCode.OK, paidAdjusted.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await paidAdjusted.Content.ReadAsStringAsync());
+                Assert.Equal(2_683_000m,
+                    json.RootElement.GetProperty("completedPaymentsAmount").GetDecimal());
+                Assert.Equal(0m,
+                    json.RootElement.GetProperty("outstandingAfterAdjustments").GetDecimal());
+                Assert.Equal(100_000m,
+                    json.RootElement.GetProperty("approvedSignedAdjustment").GetDecimal());
+                Assert.Equal((int)BuildingManagement.Invoices
+                    .IssuedInvoicePaymentStatus.Paid,
+                    json.RootElement.GetProperty("paymentStatus").GetInt32());
+                Assert.False(json.RootElement
+                    .GetProperty("isOfficialDebtPosted").GetBoolean());
+            }
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var db = await sp.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>().GetDbContextAsync();
+                var original = await db.MonthlyIssuedInvoices
+                    .SingleAsync(x => x.Id == monthlyIssuedId);
+                var accepted = await db.MonthlyInvoiceAdjustmentDecisions
+                    .SingleAsync(x => x.Id == approvedAdjustmentDecisionId);
+                Assert.Equal(2_583_000m, original.TotalAmount);
+                Assert.Equal(100_000m, accepted.ApprovedSignedDeltaAmount);
+                Assert.Equal(2, await db.MonthlyInvoiceAdjustmentDecisions
+                    .CountAsync(x => x.IssuedInvoiceId == monthlyIssuedId));
+                await uow.CompleteAsync();
+            }
+
             var overMonth = await PostFinalAsync(
                 clientRoot, monthReceiptRoute, JsonSerializer.Serialize(new {
                     tenantId = tenantB, amount = 2_083_001m,

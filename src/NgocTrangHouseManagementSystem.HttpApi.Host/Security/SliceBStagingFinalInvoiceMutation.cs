@@ -357,6 +357,137 @@ public sealed class SliceBStagingFinalInvoiceMutation
             });
 
     /// <summary>
+    /// Root-only, original-proof anchored credit/debit proposal.
+    /// A proposal alone NEVER changes the staged invoice balance.
+    /// </summary>
+    public Task<SliceBStagedMonthlyAdjustmentRead> ProposeMonthlyAdjustmentAsync(
+        Guid contractId, Guid monthlyIssuedId,
+        SliceBMonthlyAdjustmentInput input)
+        => ExecuteScopedAsync(contractId, requireBootstrapOwner: true,
+            async (db, actor, building, roomId) =>
+            {
+                if (monthlyIssuedId == Guid.Empty || input is null ||
+                    db.Database.CurrentTransaction?.GetDbTransaction()
+                        .IsolationLevel != System.Data.IsolationLevel.RepeatableRead)
+                    throw Denied();
+                var issued = await db.MonthlyIssuedInvoices.AsNoTracking()
+                    .SingleOrDefaultAsync(x =>
+                        x.Id == monthlyIssuedId && x.ContractId == contractId &&
+                        x.BuildingId == building && x.RoomId == roomId);
+                if (issued is null)
+                    throw Denied();
+                var archive = await db.MonthlyInvoiceCandidates.AsNoTracking()
+                    .SingleOrDefaultAsync(x => x.Id == issued.CandidateId);
+                var review = await db.MonthlyInvoiceReviews.AsNoTracking()
+                    .SingleOrDefaultAsync(x => x.Id == issued.ReviewId);
+                if (archive is null || review is null)
+                    throw Denied();
+                try { issued.VerifyAgainst(archive, review); }
+                catch (Exception ex) when (ex is InvalidDataException or
+                    InvalidOperationException or ArgumentException)
+                { throw Denied(); }
+
+                // One physical bank/contract correction evidence may only
+                // support one proposal per issued invoice, case-insensitive.
+                var evidenceRef = input.SourceEvidenceReference?.Trim();
+                if (string.IsNullOrWhiteSpace(evidenceRef) ||
+                    await db.MonthlyInvoiceAdjustments.AsNoTracking().AnyAsync(x =>
+                        x.IssuedInvoiceId == issued.Id &&
+                        x.SourceEvidenceReference.ToLower() ==
+                            evidenceRef.ToLowerInvariant()))
+                    throw Denied();
+                MonthlyInvoiceAdjustmentRecord proposal;
+                try
+                {
+                    proposal = MonthlyInvoiceAdjustmentRecord.Propose(
+                        Guid.NewGuid(), issued, actor, DateTime.UtcNow,
+                        input.SignedDeltaAmount, input.Reason,
+                        input.SourceEvidenceReference);
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or
+                    ArgumentException or OverflowException)
+                { throw Denied(); }
+                db.MonthlyInvoiceAdjustments.Add(proposal);
+                return new SliceBStagedMonthlyAdjustmentRead(
+                    proposal.Id, issued.Id, proposal.SignedDeltaAmount,
+                    proposal.IsCreditNote, proposal.IsDebitNote,
+                    IsOfficialDebtPosted: false);
+            });
+
+    /// <summary>
+    /// Second authenticated operator reviews proposal and original source.
+    /// Amount is protected by the issued row lock through commit, the same
+    /// lock as receipt posting; credit cannot erase captured payment funds.
+    /// </summary>
+    public Task<SliceBStagedMonthlyAdjustmentDecisionRead>
+        ReviewMonthlyAdjustmentAsync(
+            Guid contractId, Guid adjustmentId,
+            SliceBMonthlyAdjustmentDecisionInput input)
+        => ExecuteScopedAsync(contractId, requireBootstrapOwner: false,
+            async (db, actor, building, roomId) =>
+            {
+                if (adjustmentId == Guid.Empty || input is null ||
+                    db.Database.CurrentTransaction?.GetDbTransaction()
+                        .IsolationLevel != System.Data.IsolationLevel.RepeatableRead)
+                    throw Denied();
+                var proposal = await db.MonthlyInvoiceAdjustments.AsNoTracking()
+                    .SingleOrDefaultAsync(x =>
+                        x.Id == adjustmentId &&
+                        x.ContractId == contractId &&
+                        x.BuildingId == building);
+                if (proposal is null)
+                    throw Denied();
+                await using (var cmd = Command(db, """
+                    SELECT "Id" FROM "BuildingManagementMonthlyIssuedInvoiceLedger"
+                     WHERE "Id" = @id AND "ContractId" = @contract
+                       AND "RoomId" = @room AND "BuildingId" = @building
+                     FOR UPDATE
+                    """))
+                {
+                    Add(cmd, "id", proposal.IssuedInvoiceId);
+                    Add(cmd, "contract", contractId);
+                    Add(cmd, "room", roomId);
+                    Add(cmd, "building", building);
+                    if (await cmd.ExecuteScalarAsync() is not Guid)
+                        throw Denied();
+                }
+                var issued = await db.MonthlyIssuedInvoices.AsNoTracking()
+                    .SingleAsync(x => x.Id == proposal.IssuedInvoiceId);
+                if (await db.MonthlyInvoiceAdjustmentDecisions.AsNoTracking()
+                    .AnyAsync(x => x.AdjustmentId == adjustmentId))
+                    throw Denied();
+                MonthlyInvoiceAdjustmentDecisionRecord decision;
+                try
+                {
+                    decision = MonthlyInvoiceAdjustmentDecisionRecord.Decide(
+                        Guid.NewGuid(), proposal, issued, actor,
+                        DateTime.UtcNow, input.Accept, input.Reason);
+                    if (decision.Accepted)
+                    {
+                        var totalApproved = await db.MonthlyInvoiceAdjustmentDecisions
+                            .AsNoTracking().Where(x =>
+                                x.IssuedInvoiceId == issued.Id && x.Accepted)
+                            .SumAsync(x => x.ApprovedSignedDeltaAmount);
+                        var journalAmount = await db.MonthlyInvoicePaymentAllocations
+                            .AsNoTracking().Where(x => x.IssuedInvoiceId == issued.Id)
+                            .SumAsync(x => x.Amount);
+                        var adjusted = checked(issued.TotalAmount +
+                            totalApproved + decision.ApprovedSignedDeltaAmount);
+                        if (adjusted <= 0m || adjusted < journalAmount)
+                            throw Denied();
+                    }
+                }
+                catch (Exception ex) when (ex is InvalidDataException or
+                    InvalidOperationException or ArgumentException or OverflowException)
+                { throw Denied(); }
+                db.MonthlyInvoiceAdjustmentDecisions.Add(decision);
+                return new SliceBStagedMonthlyAdjustmentDecisionRead(
+                    decision.Id, proposal.Id, issued.Id, decision.Accepted,
+                    decision.ApprovedSignedDeltaAmount,
+                    IsOfficialDebtPosted: false);
+            });
+
+    /// <summary>
     /// Manual bank evidence for one independently reviewed MONTHLY invoice.
     /// Original Payment and monthly allocation journal commit atomically.
     /// Identical HTTP retries return original IDs; contradictory bank refs
@@ -465,7 +596,23 @@ public sealed class SliceBStagingFinalInvoiceMutation
                 var already = await db.MonthlyInvoicePaymentAllocations
                     .AsNoTracking().Where(x => x.IssuedInvoiceId == issued.Id)
                     .SumAsync(x => x.Amount);
-                if (already + input.Amount > issued.TotalAmount)
+                var proposals = await db.MonthlyInvoiceAdjustments.AsNoTracking()
+                    .Where(x => x.IssuedInvoiceId == issued.Id).ToArrayAsync();
+                var decisions = await db.MonthlyInvoiceAdjustmentDecisions.AsNoTracking()
+                    .Where(x => x.IssuedInvoiceId == issued.Id).ToArrayAsync();
+                MonthlyInvoiceAdjustmentSummary adjusted;
+                try
+                {
+                    var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(
+                        DateTime.UtcNow,
+                        TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh")));
+                    adjusted = MonthlyInvoiceAdjustmentEvaluator.Assess(
+                        issued, proposals, decisions, today, already);
+                }
+                catch (Exception ex) when (ex is InvalidDataException or
+                    InvalidOperationException or ArgumentException or OverflowException)
+                { throw Denied(); }
+                if (already + input.Amount > adjusted.AdjustedAmount)
                     throw Denied();
 
                 var receiptId = Guid.NewGuid();
@@ -563,22 +710,38 @@ public sealed class SliceBStagingFinalInvoiceMutation
                             TimeZoneInfo.ConvertTimeFromUtc(
                                 x.RecordedAtUtc, tz)) <= asOf)
                         .Select(x => byId[x.PaymentId]).ToArray();
-                    var debt = IssuedInvoicePaymentReconciler.Assess(
+                    var original = IssuedInvoicePaymentReconciler.Assess(
                         issued.Id, issued.ContractId, issued.TotalAmount,
                         issued.DueDate, asOf, eligiblePayments);
-                    if (debt.HasUnresolvedOverpayment)
+                    var proposals = await db.MonthlyInvoiceAdjustments
+                        .AsNoTracking().Where(x => x.IssuedInvoiceId == issued.Id)
+                        .ToArrayAsync();
+                    var decisions = await db.MonthlyInvoiceAdjustmentDecisions
+                        .AsNoTracking().Where(x => x.IssuedInvoiceId == issued.Id)
+                        .ToArrayAsync();
+                    var adjustments = MonthlyInvoiceAdjustmentEvaluator.Assess(
+                        issued, proposals, decisions, asOf,
+                        original.CompletedPaymentsAmount);
+                    var corrected = IssuedInvoicePaymentReconciler.Assess(
+                        issued.Id, issued.ContractId, adjustments.AdjustedAmount,
+                        issued.DueDate, asOf, eligiblePayments);
+                    if (corrected.HasUnresolvedOverpayment)
                         throw Denied();
                     return new SliceBStagedMonthlyBalanceRead(
                         issued.Id, contractId, building,
                         issued.InvoiceNumber, issued.DueDate, asOf,
-                        debt.IssuedAmount, debt.CompletedPaymentsAmount,
-                        debt.OutstandingBeforeAdjustments,
-                        debt.CompletedPaymentCount, debt.Status,
+                        original.IssuedAmount, corrected.CompletedPaymentsAmount,
+                        original.OutstandingBeforeAdjustments,
+                        corrected.CompletedPaymentCount, corrected.Status,
                         IsOfficialDebtPosted: false,
-                        BankTransferIndependentlyVerified: false);
+                        BankTransferIndependentlyVerified: false,
+                        adjustments.ApprovedSignedAdjustment,
+                        adjustments.AdjustedAmount,
+                        corrected.OutstandingBeforeAdjustments,
+                        adjustments.ApprovedAdjustmentCount);
                 }
-                catch (Exception ex) when (ex is InvalidOperationException or
-                    ArgumentException or OverflowException)
+                catch (Exception ex) when (ex is InvalidDataException or
+                    InvalidOperationException or ArgumentException or OverflowException)
                 {
                     throw Denied();
                 }
@@ -1399,7 +1562,29 @@ public sealed record SliceBStagedMonthlyBalanceRead(
     decimal IssuedAmount, decimal CompletedPaymentsAmount,
     decimal OutstandingBeforeAdjustments, int CompletedPaymentCount,
     IssuedInvoicePaymentStatus PaymentStatus,
-    bool IsOfficialDebtPosted, bool BankTransferIndependentlyVerified);
+    bool IsOfficialDebtPosted, bool BankTransferIndependentlyVerified,
+    decimal ApprovedSignedAdjustment, decimal AdjustedAmount,
+    decimal OutstandingAfterAdjustments, int ApprovedAdjustmentCount);
+
+public sealed class SliceBMonthlyAdjustmentInput
+{
+    public decimal SignedDeltaAmount { get; set; }
+    public string Reason { get; set; } = string.Empty;
+    public string SourceEvidenceReference { get; set; } = string.Empty;
+}
+public sealed class SliceBMonthlyAdjustmentDecisionInput
+{
+    public bool Accept { get; set; }
+    public string Reason { get; set; } = string.Empty;
+}
+public sealed record SliceBStagedMonthlyAdjustmentRead(
+    Guid AdjustmentId, Guid IssuedInvoiceId,
+    decimal SignedDeltaAmount, bool IsCreditNote, bool IsDebitNote,
+    bool IsOfficialDebtPosted);
+public sealed record SliceBStagedMonthlyAdjustmentDecisionRead(
+    Guid DecisionId, Guid AdjustmentId, Guid IssuedInvoiceId,
+    bool Accepted, decimal ApprovedSignedDeltaAmount,
+    bool IsOfficialDebtPosted);
 
 public sealed record SliceBStagedMonthlyReceiptRead(
     Guid PaymentId, Guid AllocationJournalId, Guid IssuedInvoiceId,

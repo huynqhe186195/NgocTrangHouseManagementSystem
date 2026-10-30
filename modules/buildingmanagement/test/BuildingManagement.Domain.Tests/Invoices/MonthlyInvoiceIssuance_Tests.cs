@@ -97,6 +97,27 @@ public sealed class MonthlyInvoiceIssuance_Tests
     }
 
     [Fact]
+    public void MONTISS18_Replayed_Issue_Cannot_Move_Past_Approved_Due_Date()
+    {
+        var archive = Archive();
+        var review = Review(archive);
+        var issued = MonthlyIssuedInvoiceRecord.Issue(
+            Guid.NewGuid(), "NTM-202610-018", archive.ReviewedByUserId,
+            PreparedAt.AddHours(2), archive, review);
+
+        // Simulate a corrupted or rewritten persisted issuance timestamp.
+        // Creation validation is insufficient: a reloaded record must
+        // independently enforce the immutable due-date invariant.
+        typeof(MonthlyIssuedInvoiceRecord)
+            .GetProperty(nameof(MonthlyIssuedInvoiceRecord.IssuedAtUtc))!
+            .SetValue(issued, new DateTime(
+                2026, 11, 6, 0, 0, 0, DateTimeKind.Utc));
+
+        Assert.Throws<InvalidDataException>(() =>
+            issued.VerifyAgainst(archive, review));
+    }
+
+    [Fact]
     public void MONTISS07_Review_Must_Follow_Preparation_And_Have_Reason()
     {
         var archive = Archive();

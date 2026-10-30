@@ -42,15 +42,21 @@ public sealed class SliceBMonthlyFinanceIsolation_Tests
         Assert.True(typeof(SliceBStagingFinalInvoiceController)
             .IsDefined(typeof(AuthorizeAttribute), inherit: true));
 
+        // Controller performs its deny-all gate synchronously, before
+        // returning the Task; use an Action (not Func<Task>) to assert it.
         Assert.Throws<AbpAuthorizationException>(() =>
-            controller.RecordMonthlyReceiptAsync(
+        {
+            _ = controller.RecordMonthlyReceiptAsync(
                 Guid.NewGuid(), Guid.NewGuid(),
-                new SliceBFinalInvoiceManualReceiptInput()));
+                new SliceBFinalInvoiceManualReceiptInput());
+        });
 
         Assert.Throws<AbpAuthorizationException>(() =>
-            controller.ReviewMonthlyAdjustmentAsync(
+        {
+            _ = controller.ReviewMonthlyAdjustmentAsync(
                 Guid.NewGuid(), Guid.NewGuid(),
-                new SliceBMonthlyAdjustmentDecisionInput()));
+                new SliceBMonthlyAdjustmentDecisionInput());
+        });
     }
 
     private static void AssertIsolation(string methodName, IsolationLevel expected)

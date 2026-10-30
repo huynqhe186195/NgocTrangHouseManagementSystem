@@ -923,10 +923,14 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             var sliceCRates = "/api/slice-c-staging/utility-rates";
             string SliceCRateAt(Guid id) =>
                 sliceCRates + "/" + id.ToString("D");
+            // A bounded historical interval avoids contaminating the
+            // later full financial HTTP scenario (whose valid 2026-08+
+            // tariffs are independently tested). Both still exercise the
+            // same DB exclusion index for overlapping intervals.
             object RateInput(Guid buildingId, decimal price, int utilityType = 1,
-                string effectiveFrom = "2026-12-01T00:00:00Z") =>
+                string effectiveFrom = "2025-12-01T00:00:00Z") =>
                 new { buildingId, utilityType, unitPrice = price,
-                    effectiveFrom, effectiveTo = (string?)null,
+                    effectiveFrom, effectiveTo = "2026-01-31T00:00:00Z",
                     notes = "Staging-only tariff evidence" };
             async Task<(HttpStatusCode Status, string Body)> RatePost(
                 HttpClient who, object payload)

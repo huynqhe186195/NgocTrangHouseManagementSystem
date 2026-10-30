@@ -4152,6 +4152,7 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             context.Services.AddTransient<SliceBStagingFinalInvoiceMutation>();
             context.Services.AddTransient<SliceCStagingUtilityRates>();
             context.Services.AddTransient<SliceCStagingMeterReadings>();
+            context.Services.AddTransient<SliceCStagingUtilityMeters>();
             context.Services.Replace(
                 ServiceDescriptor.Transient<IBuildingScopedWriteBoundary,
                     SliceAStagingWriteBoundary>());

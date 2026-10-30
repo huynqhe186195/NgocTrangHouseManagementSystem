@@ -279,6 +279,59 @@ public sealed class SliceBStagingFinalInvoiceMutation
                         throw Denied();
                 }
 
+                // The invoice row was locked FOR UPDATE above and the
+                // tenant link was validated against the current contract.
+                // A network retry of the EXACT same bank evidence must
+                // return the immutable original receipt/journal instead
+                // of charging the tenant a second time. The global unique
+                // TransactionReference index remains the final DB fence.
+                var normalizedReference = input.TransactionReference.Trim();
+                var normalizedProof = "BANK-PROOF: " +
+                    input.BankEvidenceReference.Trim();
+                var alreadyRecorded = await db.Payments
+                    .IgnoreQueryFilters().AsNoTracking()
+                    .SingleOrDefaultAsync(p =>
+                        p.TransactionReference == normalizedReference);
+                if (alreadyRecorded is not null)
+                {
+                    if (alreadyRecorded.IsDeleted ||
+                        alreadyRecorded.Purpose != PaymentPurpose.InvoicePayment ||
+                        alreadyRecorded.Method != PaymentMethod.BankTransfer ||
+                        alreadyRecorded.Channel != PaymentChannel.Manual ||
+                        alreadyRecorded.Status != PaymentStatus.Completed ||
+                        alreadyRecorded.TenantId != input.TenantId ||
+                        alreadyRecorded.ContractId != contractId ||
+                        alreadyRecorded.InvoiceId != issuedInvoiceId ||
+                        alreadyRecorded.Amount != input.Amount ||
+                        alreadyRecorded.PaidAt != input.PaidAtUtc ||
+                        !StringComparer.Ordinal.Equals(
+                            alreadyRecorded.Notes, normalizedProof) ||
+                        !StringComparer.Ordinal.Equals(
+                            alreadyRecorded.TransactionReference,
+                            normalizedReference))
+                        throw Denied();
+
+                    var recordedJournal = await db.InvoicePaymentAllocationJournal
+                        .AsNoTracking().SingleOrDefaultAsync(x =>
+                            x.PaymentId == alreadyRecorded.Id);
+                    if (recordedJournal is null ||
+                        recordedJournal.IssuedInvoiceId != issuedInvoiceId ||
+                        recordedJournal.ContractId != contractId)
+                        throw Denied();
+
+                    try
+                    {
+                        recordedJournal.VerifySourceReceipt(alreadyRecorded);
+                    }
+                    catch (InvalidOperationException)
+                    {
+                        throw Denied();
+                    }
+                    return new SliceBStagedInvoiceReceiptRead(
+                        alreadyRecorded.Id, recordedJournal.Id, ledger.Id,
+                        alreadyRecorded.Amount);
+                }
+
                 var receiptId = Guid.NewGuid();
                 var receipt = new Payment(
                     receiptId, "FIN-" + receiptId.ToString("N"),
@@ -288,10 +341,9 @@ public sealed class SliceBStagingFinalInvoiceMutation
                     PaymentChannel.Manual,
                     input.Amount, contractId: contractId,
                     invoiceId: issuedInvoiceId,
-                    transactionReference: input.TransactionReference.Trim(),
-                    notes: "BANK-PROOF: " + input.BankEvidenceReference.Trim());
-                receipt.Complete(
-                    input.PaidAtUtc, input.TransactionReference.Trim());
+                    transactionReference: normalizedReference,
+                    notes: normalizedProof);
+                receipt.Complete(input.PaidAtUtc, normalizedReference);
                 db.Payments.Add(receipt);
                 // FK needs its source receipt before immutable journal
                 // INSERT; both SaveChanges occur in SAME enclosing UoW.

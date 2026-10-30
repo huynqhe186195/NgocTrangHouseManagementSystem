@@ -2145,17 +2145,55 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             // One valid PARTIAL payment must lower only the OBSERVED debt.
             // It does not authorize a deposit refund or complete move-out.
             const decimal partialAmount = 500000m;
+            var partialPaidAtUtc = DateTime.UtcNow;
+            var partialEvidence = new {
+                tenantId = tenantB, amount = partialAmount,
+                paidAtUtc = partialPaidAtUtc,
+                transactionReference = "SCRATCH-BANK-PARTIAL-0001",
+                bankEvidenceReference = "SCRATCH-PARTIAL-SIGNED-PROOF-0001"
+            };
+            var partialRoute = financeRoot + "/issued/" +
+                financeIssuedId.ToString("D") + "/manual-receipts";
             using var partiallyPaid = await PostValidFinanceAsync(
-                clientRoot, financeRoot + "/issued/" +
-                    financeIssuedId.ToString("D") + "/manual-receipts",
-                new {
-                    tenantId = tenantB, amount = partialAmount,
-                    paidAtUtc = DateTime.UtcNow,
-                    transactionReference = "SCRATCH-BANK-PARTIAL-0001",
-                    bankEvidenceReference = "SCRATCH-PARTIAL-SIGNED-PROOF-0001"
-                });
+                clientRoot, partialRoute, partialEvidence);
             var partialReceiptId = partiallyPaid.RootElement
                 .GetProperty("paymentId").GetGuid();
+            var partialJournalId = partiallyPaid.RootElement
+                .GetProperty("allocationJournalId").GetGuid();
+
+            // Replaying the *same* bank evidence must return the exact
+            // original IDs. The receipt/journal are append-only and must
+            // not be duplicated, even when the HTTP caller retries.
+            using (var retry = await PostValidFinanceAsync(
+                clientRoot, partialRoute, partialEvidence))
+            {
+                Assert.Equal(partialReceiptId,
+                    retry.RootElement.GetProperty("paymentId").GetGuid());
+                Assert.Equal(partialJournalId,
+                    retry.RootElement.GetProperty("allocationJournalId").GetGuid());
+            }
+
+            // A reused bank reference with changed money, tenant,
+            // timestamp, or evidence is NOT an idempotent retry.
+            var contradictory = await PostFinalAsync(
+                clientRoot, partialRoute, JsonSerializer.Serialize(new {
+                    tenantId = tenantB,
+                    amount = partialAmount + 1m,
+                    paidAtUtc = partialPaidAtUtc,
+                    transactionReference = partialEvidence.transactionReference,
+                    bankEvidenceReference = partialEvidence.bankEvidenceReference
+                }));
+            Assert.Equal(HttpStatusCode.Forbidden, contradictory.Status);
+
+            var changedProof = await PostFinalAsync(
+                clientRoot, partialRoute, JsonSerializer.Serialize(new {
+                    tenantId = tenantB,
+                    amount = partialAmount,
+                    paidAtUtc = partialPaidAtUtc,
+                    transactionReference = partialEvidence.transactionReference,
+                    bankEvidenceReference = "DIFFERENT-SIGNED-RECEIPT-001"
+                }));
+            Assert.Equal(HttpStatusCode.Forbidden, changedProof.Status);
             using (var partialBalance = await clientB.GetAsync(financeBalanceRoute))
             {
                 Assert.Equal(HttpStatusCode.OK, partialBalance.StatusCode);

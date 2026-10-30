@@ -122,9 +122,11 @@ public sealed class Phase2G3AuditedMonthlyAdjustments : Migration
                    OR proposal."InvoiceEvidenceSha256" IS DISTINCT FROM issued."CandidateSha256"
                    OR NEW."ReviewedByUserId" = proposal."ProposedByUserId"
                    OR NEW."ReviewedAtUtc" < proposal."ProposedAtUtc"
-                   OR NEW."ApprovedSignedDeltaAmount" IS DISTINCT FROM
-                      CASE WHEN NEW."Accepted" THEN proposal."SignedDeltaAmount"
-                           ELSE 0::numeric END THEN
+                   OR (NEW."Accepted" = TRUE AND
+                   NEW."ApprovedSignedDeltaAmount" IS DISTINCT FROM
+                       proposal."SignedDeltaAmount")
+               OR (NEW."Accepted" = FALSE AND
+                   NEW."ApprovedSignedDeltaAmount" <> 0::numeric) THEN
                    RAISE EXCEPTION 'Monthly independent adjustment approval invalid'
                        USING ERRCODE = '23514';
                 END IF;

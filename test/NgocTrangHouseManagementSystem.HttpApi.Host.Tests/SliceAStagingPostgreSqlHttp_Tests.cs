@@ -1073,30 +1073,72 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             var sliceCProbeRoomB = await CreateChildAsync(clientB, roomCreate,
                 new { floorId = floorB, roomNumber = "C-READ-B",
                     name = "Meter-reading B", area = 20m, capacity = 1, status = 0 });
-            var sliceCMeterA = Guid.NewGuid();
-            var sliceCMeterB = Guid.NewGuid();
-            using (var readingScope = app.Services.CreateScope())
+            Assert.Contains(actions, action =>
+                action.ControllerTypeInfo.AsType() ==
+                    typeof(SliceCStagingUtilityMeterController) &&
+                action.MethodInfo.Name == "ReplaceAsync");
+            var sliceCMeterPath = "/api/slice-c-staging/utility-meters";
+            string SliceCMeterAt(Guid id) =>
+                sliceCMeterPath + "/" + id.ToString("D");
+            object SliceCMeterInput(Guid roomId, int utilityType,
+                decimal initialReading, string meterCode) =>
+                new { roomId, utilityType, initialReading, meterCode,
+                    installedDate = "2026-01-01T00:00:00Z",
+                    notes = "Internal physical meter note" };
+            async Task<(HttpStatusCode Status, string Body)> SliceCMeterPost(
+                HttpClient who, object input)
             {
-                var services = readingScope.ServiceProvider;
-                using var unit = services.GetRequiredService<IUnitOfWorkManager>()
-                    .Begin(requiresNew: true, isTransactional: true);
-                var ctx = await services.GetRequiredService<
-                    IDbContextProvider<BuildingManagementDbContext>>()
-                    .GetDbContextAsync();
-                ctx.UtilityMeters.AddRange(
-                    new BuildingManagement.Utilities.UtilityMeter(
-                        sliceCMeterA, sliceCProbeRoomA,
-                        BuildingManagement.Utilities.UtilityType.Electricity,
-                        "C-A-" + sliceCMeterA.ToString("N"),
-                        10m, new DateTime(2026, 1, 1)),
-                    new BuildingManagement.Utilities.UtilityMeter(
-                        sliceCMeterB, sliceCProbeRoomB,
-                        BuildingManagement.Utilities.UtilityType.Water,
-                        "C-B-" + sliceCMeterB.ToString("N"),
-                        20m, new DateTime(2026, 1, 1)));
-                await ctx.SaveChangesAsync();
-                await unit.CompleteAsync();
+                using var payload = new StringContent(
+                    JsonSerializer.Serialize(input), Encoding.UTF8,
+                    "application/json");
+                using var response = await who.PostAsync(sliceCMeterPath, payload);
+                return (response.StatusCode,
+                    await response.Content.ReadAsStringAsync());
             }
+            var sliceCCodeA = "C-A-" + Guid.NewGuid().ToString("N");
+            var sliceCCodeB = "C-B-" + Guid.NewGuid().ToString("N");
+            var crossMeterInsert = await SliceCMeterPost(clientB,
+                SliceCMeterInput(sliceCProbeRoomA, 1, 10m, sliceCCodeA));
+            Assert.Equal(HttpStatusCode.Forbidden, crossMeterInsert.Status);
+            var createdMeterA = await SliceCMeterPost(clientRoot,
+                SliceCMeterInput(sliceCProbeRoomA, 1, 10m, sliceCCodeA));
+            Assert.Equal(HttpStatusCode.OK, createdMeterA.Status);
+            using var sliceCMeterDocA = JsonDocument.Parse(createdMeterA.Body);
+            var sliceCMeterA = sliceCMeterDocA.RootElement.GetProperty("id").GetGuid();
+            Assert.Equal(a,
+                sliceCMeterDocA.RootElement.GetProperty("buildingId").GetGuid());
+            Assert.DoesNotContain("notes", createdMeterA.Body,
+                StringComparison.OrdinalIgnoreCase);
+            var createdMeterB = await SliceCMeterPost(clientB,
+                SliceCMeterInput(sliceCProbeRoomB, 2, 20m, sliceCCodeB));
+            Assert.Equal(HttpStatusCode.OK, createdMeterB.Status);
+            using var sliceCMeterDocB = JsonDocument.Parse(createdMeterB.Body);
+            var sliceCMeterB = sliceCMeterDocB.RootElement.GetProperty("id").GetGuid();
+            Assert.Equal(b,
+                sliceCMeterDocB.RootElement.GetProperty("buildingId").GetGuid());
+
+            using (var foreignMeter = await clientB.GetAsync(SliceCMeterAt(sliceCMeterA)))
+                Assert.Equal(HttpStatusCode.Forbidden, foreignMeter.StatusCode);
+            using (var ownMeter = await clientB.GetAsync(SliceCMeterAt(sliceCMeterB)))
+                Assert.Equal(HttpStatusCode.OK, ownMeter.StatusCode);
+            using (var ownMeters = await clientB.GetAsync(
+                sliceCMeterPath + "?maxResultCount=20"))
+            {
+                Assert.Equal(HttpStatusCode.OK, ownMeters.StatusCode);
+                var body = await ownMeters.Content.ReadAsStringAsync();
+                Assert.Contains(sliceCMeterB.ToString("D"), body,
+                    StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain(sliceCMeterA.ToString("D"), body,
+                    StringComparison.OrdinalIgnoreCase);
+            }
+            using (var foreignMeterUpdateBody = new StringContent(
+                JsonSerializer.Serialize(new {
+                    meterCode = sliceCCodeA, initialReading = 10m,
+                    installedDate = "2026-01-01T00:00:00Z" }),
+                Encoding.UTF8, "application/json"))
+            using (var foreignMeterUpdate = await clientB.PutAsync(
+                SliceCMeterAt(sliceCMeterA), foreignMeterUpdateBody))
+                Assert.Equal(HttpStatusCode.Forbidden, foreignMeterUpdate.StatusCode);
             var sliceCReadingPath = "/api/slice-c-staging/meter-readings";
             string SliceCReadingAt(Guid id) =>
                 sliceCReadingPath + "/" + id.ToString("D");

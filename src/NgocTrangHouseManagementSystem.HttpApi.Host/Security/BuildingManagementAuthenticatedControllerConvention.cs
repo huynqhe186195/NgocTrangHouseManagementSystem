@@ -6,6 +6,9 @@ using BuildingManagement.MoveOuts;
 using BuildingManagement.RoomReservations;
 using BuildingManagement.Payments;
 using BuildingManagement.Tenants;
+using BuildingManagement.Buildings;
+using BuildingManagement.Floors;
+using BuildingManagement.Rooms;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc.ApplicationModels;
 using Microsoft.AspNetCore.Mvc.Authorization;
@@ -26,25 +29,24 @@ public sealed class BuildingManagementAuthenticatedControllerConvention
             .RequireAuthenticatedUser()
             .Build());
 
-    // No legacy Slice B contract/tenant/reservation/move-out/payment endpoint has yet
-    // demonstrated current-account + persisted permission + resource-to-
-    // building membership. An authenticated caller MUST NOT fall through
-    // into the existing unscoped services (tenant PII and contract writes).
-    // Explicitly deny at MVC authorization BEFORE model binding or DI.
-    // This is an interim fail-closed boundary, NOT Slice B completion.
-    private static readonly AuthorizeFilter UnscopedSliceBDenied = new(
+    // Default-deny ALL unreviewed conventional BuildingManagement
+    // application services, including Slice C utilities and finance.
+    // Login alone must never disclose meter usage, rates, payment records,
+    // account details, tenant PII or allow inter-building mutations.
+    // Only the 15 already-enforced Building/Floor/Room endpoints keep their
+    // service-level per-building authorization. Explicit isolated staging
+    // adapters live in the host assembly and are NOT unlocked by this.
+    private static readonly AuthorizeFilter UnscopedApplicationDenied = new(
         new AuthorizationPolicyBuilder()
             .RequireAuthenticatedUser()
             .RequireAssertion(_ => false)
             .Build());
 
-    internal static bool RequiresSliceBScope(Type type)
-        => type == typeof(ContractAppService) ||
-           type == typeof(ContractRenewalHoldAppService) ||
-           type == typeof(TenantAppService) ||
-           type == typeof(RoomReservationAppService) ||
-           type == typeof(MoveOutRequestAppService) ||
-           type == typeof(PaymentAppService);
+    internal static bool RequiresUnscopedApplicationDeny(Type type)
+        => type.Assembly == typeof(BuildingManagementApplicationModule).Assembly &&
+           type != typeof(BuildingAppService) &&
+           type != typeof(FloorAppService) &&
+           type != typeof(RoomAppService);
 
     public void Apply(ApplicationModel application)
     {
@@ -90,8 +92,9 @@ public sealed class BuildingManagementAuthenticatedControllerConvention
 
             controller.Filters.Add(AuthenticatedOnly);
 
-            if (RequiresSliceBScope(controller.ControllerType.AsType()))
-                controller.Filters.Add(UnscopedSliceBDenied);
+            if (RequiresUnscopedApplicationDeny(
+                    controller.ControllerType.AsType()))
+                controller.Filters.Add(UnscopedApplicationDenied);
         }
     }
 }

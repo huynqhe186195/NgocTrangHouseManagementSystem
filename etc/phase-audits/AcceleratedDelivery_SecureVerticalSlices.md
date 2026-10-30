@@ -109,3 +109,35 @@ The workflow tests the PR merge checkout after naming the ephemeral local branch
 - Then complete B, C and D using the same single-batch gate and explicit pass/fail evidence.
 
 **Current release state:** BLOCKED on authenticated per-building CRUD authorization and missing real operator/owner grants. The correct response is to finish the functionality, not to label isolated positive tests as a production security pass.
+
+## Slice C — first P0 containment: default-deny unscoped utility/finance APIs
+
+The original host MVC convention denied legacy Contracts/Tenants/
+Reservations/MoveOuts/Payments, but **UtilityRate, UtilityMeter and
+MeterReading application-service controllers remained authentication-only**.
+That is not safe for a multi-building operator because a logged-in actor
+could read global utility data or modify another building's rates. In the
+same category, preview/fee/invoice application services could silently
+become remotely discoverable on later framework changes. The host
+convention now denies **every conventional application-service controller
+from BuildingManagement.Application except the three reviewed services**
+BuildingAppService, FloorAppService, RoomAppService. This is future
+method/service default-deny, not just a list of 26 current actions.
+Existing isolated host-owned scoped controllers remain independent of
+this filter; the old unscoped services are not unlocked by staging.
+
+AUTHMODEL07 explicitly covers three Slice C utility service classes,
+legacy Payment and representative preview/invoice app services, plus
+the unchanged 15 reviewed CRUD entry points. The real PostgreSQL
+authenticated host test discovers the actual three utility list routes
+and rate-create route and rejects both a designated BootstrapOwner and
+a building-scoped operator with **403**, before any utility rate insert.
+No production environment or real database is affected.
+
+**Slice C STATUS: SECURE CONTAINMENT ONLY / remaining utility and finance
+scoped functionality NOT YET IMPLEMENTED.** The next cohesive slice is
+dedicated Utilities.Read/Manage and Payments.Read/Manage permission
+definitions, server-owned resource-to-building joins and PostgreSQL
+concurrency/rollback tests, with explicit host staging adapters. Invoice
+revision/rebuild/issue/debt legacy routes remain disabled. Containment
+does not count as delivery of all 26 utility/financial methods.

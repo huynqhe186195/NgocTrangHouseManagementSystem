@@ -862,6 +862,52 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 "UpdateAsync");
             var roomDelete = ChildRoute(typeof(BuildingManagement.Rooms.RoomAppService),
                 "DeleteAsync");
+            // Slice C FAIL-CLOSED boundary on the ACTUAL MVC-generated
+            // routes. Both BootstrapOwner and a valid building operator
+            // must use only future separately audited scoped utility APIs.
+            // Authentication, Contract permission and Building membership
+            // do not grant the old global utility endpoints.
+            var legacyRateList = ChildRoute(
+                typeof(BuildingManagement.Utilities.UtilityRateAppService),
+                "GetListAsync");
+            var legacyRateCreate = ChildRoute(
+                typeof(BuildingManagement.Utilities.UtilityRateAppService),
+                "CreateAsync");
+            var legacyMeterList = ChildRoute(
+                typeof(BuildingManagement.Utilities.UtilityMeterAppService),
+                "GetListAsync");
+            var legacyReadingList = ChildRoute(
+                typeof(BuildingManagement.Utilities.MeterReadingAppService),
+                "GetListAsync");
+            foreach (var caller in new[] { clientRoot, clientB })
+            {
+                foreach (var route in new[] {
+                    legacyRateList, legacyMeterList, legacyReadingList })
+                {
+                    using var denied = await caller.GetAsync(route);
+                    Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+                }
+                using var payload = new StringContent(
+                    JsonSerializer.Serialize(new {
+                        buildingId = b, utilityType = 1, unitPrice = 3500m,
+                        effectiveFrom = "2026-11-01T00:00:00Z"
+                    }), Encoding.UTF8, "application/json");
+                using var denied = await caller.PostAsync(
+                    legacyRateCreate, payload);
+                Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+            }
+            using (var scope = app.Services.CreateScope())
+            {
+                using var unit = scope.ServiceProvider
+                    .GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var db = await scope.ServiceProvider.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>()
+                    .GetDbContextAsync();
+                Assert.Equal(0, await db.UtilityRates.CountAsync());
+                await unit.CompleteAsync();
+            }
+
             var floorA = await CreateChildAsync(clientRoot, floorCreate,
                 new { buildingId = a, floorNumber = 1, name = "PG Floor A1" });
             var floorB = await CreateChildAsync(clientB, floorCreate,

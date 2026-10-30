@@ -93,7 +93,7 @@ public sealed class BuildingManagementAuthenticatedControllerConvention_Tests
     }
 
     [Fact]
-    public void AUTHMODEL07_SliceB_Requires_DenyAll_Until_Scoped_Authorization()
+    public void AUTHMODEL07_All_Unreviewed_Financial_And_Utility_Services_Fail_Closed()
     {
         var protectedServices = new[]
         {
@@ -102,7 +102,13 @@ public sealed class BuildingManagementAuthenticatedControllerConvention_Tests
             typeof(BuildingManagement.Tenants.TenantAppService),
             typeof(BuildingManagement.RoomReservations.RoomReservationAppService),
             typeof(BuildingManagement.MoveOuts.MoveOutRequestAppService),
-            typeof(BuildingManagement.Payments.PaymentAppService)
+            typeof(BuildingManagement.Payments.PaymentAppService),
+            typeof(BuildingManagement.Utilities.UtilityRateAppService),
+            typeof(BuildingManagement.Utilities.UtilityMeterAppService),
+            typeof(BuildingManagement.Utilities.MeterReadingAppService),
+            typeof(BuildingManagement.Utilities.UtilityChargePreviewAppService),
+            typeof(BuildingManagement.Utilities.UtilityUsagePreviewAppService),
+            typeof(BuildingManagement.Invoices.FinalInvoiceIssuePreflightAppService)
         };
         foreach (var service in protectedServices)
         {
@@ -117,12 +123,18 @@ public sealed class BuildingManagementAuthenticatedControllerConvention_Tests
                         .AssertionRequirement));
         }
 
-        // Existing 15 Slice A CRUD actions retain their own scoped policy,
-        // and unrelated controllers never inherit the Slice B block.
-        var sliceA = ModelFor(typeof(BuildingAppService));
-        new BuildingManagementAuthenticatedControllerConvention()
-            .Apply(AppWith(sliceA));
-        Assert.Single(sliceA.Filters.OfType<AuthorizeFilter>());
+        // Only the reviewed 15 Slice A CRUD actions may rely on their
+        // own enforced permission + building-scoped service boundary.
+        foreach (var service in new[] {
+            typeof(BuildingAppService),
+            typeof(BuildingManagement.Floors.FloorAppService),
+            typeof(BuildingManagement.Rooms.RoomAppService) })
+        {
+            var reviewed = ModelFor(service);
+            new BuildingManagementAuthenticatedControllerConvention()
+                .Apply(AppWith(reviewed));
+            Assert.Single(reviewed.Filters.OfType<AuthorizeFilter>());
+        }
     }
 
     private static ControllerModel ModelFor(Type serviceType)

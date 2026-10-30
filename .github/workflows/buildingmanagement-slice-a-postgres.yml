@@ -237,6 +237,13 @@ jobs:
             --filter "FullyQualifiedName~SliceBFreezeClosedDepositReceiptSourcesPostgreSql_Tests" \
             --logger "console;verbosity=normal"
 
+      - name: Slice B lock both ends of deposit transfers through closeout commit
+        run: |
+          dotnet test modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/BuildingManagement.PostgreSql.Tests.csproj \
+            --no-restore --configuration Release \
+            --filter "FullyQualifiedName~SliceBLockBothDepositSettlementContractsPostgreSql_Tests" \
+            --logger "console;verbosity=normal"
+
       - name: Isolated PostgreSQL ABP authenticated staging HTTP
         run: |
           dotnet test test/NgocTrangHouseManagementSystem.HttpApi.Host.Tests/NgocTrangHouseManagementSystem.HttpApi.Host.Tests.csproj \

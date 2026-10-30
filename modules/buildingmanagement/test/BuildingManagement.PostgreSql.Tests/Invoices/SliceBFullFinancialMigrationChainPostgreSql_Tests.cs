@@ -20,7 +20,7 @@ public sealed class SliceBFullFinancialMigrationChainPostgreSql_Tests
     private const string LastSliceAMigration =
         "20261028190000_SliceAOwnerRecoveryApprovals";
     private const string LastSliceBMigration =
-        "20261029217000_SliceBFreezeClosedDepositReceiptSources";
+        "20261029218000_SliceBLockBothDepositSettlementContracts";
 
     [Fact]
     public async Task SBCHAIN01_Full_Runtime_Migrations_Upgrade_EmptyDown_And_Reupgrade()
@@ -140,6 +140,10 @@ public sealed class SliceBFullFinancialMigrationChainPostgreSql_Tests
                     SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal
                      AND tgrelid='"BuildingManagementContractDepositCloseoutApprovals"'::regclass
                      AND tgname = 'TR_BM_DepositCloseout_01_CheckDepositSources'
+                    """));
+                Assert.Equal(1L, await ScalarAsync(inspect, """
+                    SELECT (position('ORDER BY c."Id" FOR UPDATE'
+                        IN pg_get_functiondef('"BM_GuardFinalizedDepositSettlements"()'::regprocedure)) > 0)::integer
                     """));
                 Assert.Equal(3L, await ScalarAsync(inspect, """
                     SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal

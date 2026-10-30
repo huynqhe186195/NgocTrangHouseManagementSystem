@@ -710,3 +710,22 @@ or an external payment processor. Disposable PostgreSQL tests cover negative
 and positive attribution, over-allocation, closed source rewrites, empty
 rollback and concurrent edits; the isolated HTTP full closeout also attempts
 a forbidden raw SQL rewrite of the originally paid contract deposit.
+
+### Closing the cross-contract deposit transfer TOCTOU lock gap
+
+Source-only migration `20261029218000_SliceBLockBothDepositSettlementContracts`
+replaces the finalized settlement trigger's original
+`COALESCE(SourceContractId, TargetContractId)` locking shortcut. That
+shortcut locks only the source of a transfer and therefore misses a
+receiving contract while its owner signs a terminal deposit closeout.
+INSERT now locks both source and target; DELETE locks the old two;
+UPDATE locks all old and new endpoints. All Contract locks are acquired
+in stable UUID order before checking immutable deposit approvals, which
+also hold a Contract row until commit. The old trigger's financial veto
+conditions remain unchanged. PostgreSQL scratch integration tests apply
+the actual original trigger and then the replacement, reproduce
+two-transaction INSERT/UPDATE/DELETE races, assert rejection after the
+receiving Contract's approval commits, confirm open-contract transfers
+remain legal, and check empty-history downgrade/re-upgrade. The full EF
+runtime migration-chain test checks the deployed function definition.
+No actual funds move, bank services or production database are touched.

@@ -33,6 +33,7 @@ public sealed class SliceBStagingContractQuery
     private readonly FinalInvoiceIssuePreflightAppService _invoicePreflight;
     private readonly ContractDepositLedgerReviewAppService _depositLedger;
     private readonly MonthlyInvoiceBasePreviewAppService _monthlyPreview;
+    private readonly IInvoiceDraftStorageAppService _utilityDrafts;
 
     public SliceBStagingContractQuery(
         IDbContextProvider<BuildingManagementDbContext> provider,
@@ -42,7 +43,8 @@ public sealed class SliceBStagingContractQuery
         MoveOutCompletionReadinessAppService readiness,
         FinalInvoiceIssuePreflightAppService invoicePreflight,
         ContractDepositLedgerReviewAppService depositLedger,
-        MonthlyInvoiceBasePreviewAppService monthlyPreview)
+        MonthlyInvoiceBasePreviewAppService monthlyPreview,
+        IInvoiceDraftStorageAppService utilityDrafts)
     {
         _provider = provider;
         _access = access;
@@ -52,6 +54,7 @@ public sealed class SliceBStagingContractQuery
         _invoicePreflight = invoicePreflight;
         _depositLedger = depositLedger;
         _monthlyPreview = monthlyPreview;
+        _utilityDrafts = utilityDrafts;
     }
 
     public async Task<IReadOnlyList<SliceBScopedContractRead>> GetListAsync(
@@ -735,6 +738,29 @@ public sealed class SliceBStagingContractQuery
         if (report.ContractId != scoped.Id || report.RoomId != scoped.RoomId)
             throw Denied();
         return report;
+    }
+
+    /// <summary>
+    /// Scoped read-back of persisted MONTHLY UTILITY drafts, never an
+    /// issued invoice. Requires current Contracts.Read and membership;
+    /// contract/room/floor/building/grant are locked through the read UoW.
+    /// Cross-contract GUID probes are denied with no returned metadata.
+    /// </summary>
+    public async Task<InvoiceDraftDto> GetMonthlyUtilityDraftAsync(
+        Guid contractId, Guid draftId)
+    {
+        if (contractId == Guid.Empty || draftId == Guid.Empty)
+            throw Denied();
+        var scoped = await GetAsync(contractId);
+        var db = await _provider.GetDbContextAsync();
+        await LockInvoicePreviewScopeAsync(db, scoped, RequireActor());
+        var draft = await _utilityDrafts.GetAsync(draftId);
+        if (draft.ContractId != contractId ||
+            draft.RoomId != scoped.RoomId ||
+            draft.Status != InvoiceStatus.Draft ||
+            draft.IsIssued || draft.HasRecognizedDebt)
+            throw Denied();
+        return draft;
     }
 
     private static async Task LockInvoicePreviewScopeAsync(

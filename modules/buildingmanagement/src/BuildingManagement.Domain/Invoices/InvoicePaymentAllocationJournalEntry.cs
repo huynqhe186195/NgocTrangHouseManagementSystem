@@ -94,7 +94,8 @@ public sealed class InvoicePaymentAllocationJournalEntry : Entity<Guid>
         ArgumentNullException.ThrowIfNull(payment);
         if (PaymentId == Guid.Empty || IssuedInvoiceId == Guid.Empty ||
             ContractId == Guid.Empty || RecordedByUserId == Guid.Empty ||
-            RecordedAtUtc == default ||
+            (RecordedAtUtc == default ||
+             RecordedAtUtc.Kind != DateTimeKind.Utc) ||
             Amount <= 0m || decimal.Truncate(Amount) != Amount ||
             string.IsNullOrWhiteSpace(PaymentNumberSnapshot) ||
             payment.Id != PaymentId ||

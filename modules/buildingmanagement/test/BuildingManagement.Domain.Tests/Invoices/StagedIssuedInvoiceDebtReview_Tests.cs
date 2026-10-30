@@ -108,6 +108,30 @@ public sealed class StagedIssuedInvoiceDebtReview_Tests
     }
 
     [Fact]
+    public void STAGEDEBT08_Allocation_Recorded_After_AsOf_Does_Not_Apply()
+    {
+        var (invoice, contract) = (Guid.NewGuid(), Guid.NewGuid());
+        var payment = Receipt(invoice, contract, 500_000m);
+        payment.Complete(new DateTime(2026, 11, 4, 3, 0, 0, DateTimeKind.Utc));
+        var journal = Entry(payment, invoice);
+        typeof(InvoicePaymentAllocationJournalEntry)
+            .GetProperty(nameof(InvoicePaymentAllocationJournalEntry.RecordedAtUtc))!
+            .SetValue(journal, new DateTime(
+                2026, 11, 7, 0, 0, 0, DateTimeKind.Utc));
+
+        var historical = Assess(invoice, contract, new[] { journal },
+            new[] { payment }, BeforeDue);
+        Assert.True(historical.HasCompleteStagedEvidence);
+        Assert.Equal(1_000_000m,
+            historical.StagedPaymentSummary!.OutstandingBeforeAdjustments);
+        var later = Assess(invoice, contract, new[] { journal },
+            new[] { payment }, new DateOnly(2026, 11, 8));
+        Assert.True(later.HasCompleteStagedEvidence);
+        Assert.Equal(500_000m,
+            later.StagedPaymentSummary!.OutstandingBeforeAdjustments);
+    }
+
+    [Fact]
     public void STAGEDEBT07_Duplicate_Journal_Refuses_Projection()
     {
         var (invoice, contract) = (Guid.NewGuid(), Guid.NewGuid());

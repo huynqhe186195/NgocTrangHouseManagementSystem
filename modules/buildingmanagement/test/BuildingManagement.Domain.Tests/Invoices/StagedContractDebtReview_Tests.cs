@@ -193,6 +193,32 @@ public sealed class StagedContractDebtReview_Tests
     }
 
     [Fact]
+    public void STAGEDCONTRACT12_Receipt_Not_Journaled_AsOf_Is_Not_Allocated()
+    {
+        var contract = Guid.NewGuid();
+        var invoice = Invoice(contract, 500_000m, new DateOnly(2026, 11, 5));
+        var payment = Receipt(contract, invoice.InvoiceId, 500_000m);
+        payment.Complete(new DateTime(2026, 11, 4, 2, 0, 0, DateTimeKind.Utc));
+        var journal = Entry(payment, invoice.InvoiceId);
+        typeof(InvoicePaymentAllocationJournalEntry)
+            .GetProperty(nameof(InvoicePaymentAllocationJournalEntry.RecordedAtUtc))!
+            .SetValue(journal, new DateTime(
+                2026, 11, 7, 1, 0, 0, DateTimeKind.Utc));
+
+        var history = Assess(contract, BeforeDue, new[] { invoice },
+            new[] { journal }, new[] { payment });
+        Assert.True(history.HasCompleteStagedEvidence);
+        Assert.Equal(0m, history.TotalReceivedAsOf);
+        Assert.Equal(500_000m, history.TotalOutstandingAsOf);
+
+        var later = Assess(contract, new DateOnly(2026, 11, 8),
+            new[] { invoice }, new[] { journal }, new[] { payment });
+        Assert.True(later.HasCompleteStagedEvidence);
+        Assert.Equal(500_000m, later.TotalReceivedAsOf);
+        Assert.Equal(0m, later.TotalOutstandingAsOf);
+    }
+
+    [Fact]
     public void STAGEDCONTRACT08_No_Issued_Invoices_Is_Not_Zero_Debt_Proof()
     {
         var contract = Guid.NewGuid();

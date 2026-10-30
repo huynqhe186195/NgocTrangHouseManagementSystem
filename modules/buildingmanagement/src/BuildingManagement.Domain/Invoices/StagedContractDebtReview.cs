@@ -103,8 +103,13 @@ public static class StagedContractDebtEvaluator
             foreach (var invoice in issuedAsOf.OrderBy(x => x.DueDate)
                          .ThenBy(x => x.InvoiceId))
             {
+                // Payment date alone is insufficient for historical
+                // allocation: a receipt journaled AFTER the as-of date
+                // cannot be treated as already reconciled on that date.
                 var applied = journal
-                    .Where(x => x.IssuedInvoiceId == invoice.InvoiceId)
+                    .Where(x => x.IssuedInvoiceId == invoice.InvoiceId &&
+                        DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(
+                            x.RecordedAtUtc, vietnamTimeZone)) <= asOfDate)
                     .Select(x => receipts[x.PaymentId]).ToArray();
                 if (applied.Any(x => x.PaidAt!.Value < invoice.IssuedAtUtc))
                 {

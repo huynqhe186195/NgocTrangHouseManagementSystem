@@ -247,6 +247,24 @@ public sealed class InvoicePaymentAllocationJournal_Tests
     }
 
     [Fact]
+    public void ALLOCJOURNAL18_NonUtc_Recorded_Time_Cannot_Be_Audited()
+    {
+        var (payment, invoice, contract) = Receipt();
+        var entry = Stage(payment, invoice);
+        typeof(InvoicePaymentAllocationJournalEntry)
+            .GetProperty(nameof(InvoicePaymentAllocationJournalEntry.RecordedAtUtc))!
+            .SetValue(entry,
+                DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Unspecified));
+
+        Assert.Throws<InvalidOperationException>(() =>
+            entry.VerifySourceReceipt(payment));
+        var audit = InvoicePaymentAllocationJournalAuditor.Assess(
+            new[] { entry }, new[] { payment }, contract);
+        Assert.Contains("AllocationSourceReceiptMismatch", audit.Blockers);
+        Assert.Null(audit.VerifiedStagedAmount);
+    }
+
+    [Fact]
     public void ALLOCJOURNAL17_Empty_Contract_Id_Is_Not_A_Valid_Scope()
     {
         Assert.Throws<ArgumentException>(() =>

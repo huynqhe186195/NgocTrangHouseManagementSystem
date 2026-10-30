@@ -63,8 +63,12 @@ public static class StagedIssuedInvoiceDebtEvaluator
         // Every selected payment is taken ONLY through a verified journal.
         // Never count a completed receipt merely because it carries InvoiceId.
         var receiptById = allContractInvoiceReceipts.ToDictionary(x => x.Id);
+        var vietnamTimeZone = TimeZoneInfo.FindSystemTimeZoneById(
+            "Asia/Ho_Chi_Minh");
         var invoiceReceipts = allContractJournal
-            .Where(x => x.IssuedInvoiceId == issuedInvoiceId)
+            .Where(x => x.IssuedInvoiceId == issuedInvoiceId &&
+                DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(
+                    x.RecordedAtUtc, vietnamTimeZone)) <= asOfDate)
             .Select(x => receiptById[x.PaymentId]).ToArray();
         try
         {

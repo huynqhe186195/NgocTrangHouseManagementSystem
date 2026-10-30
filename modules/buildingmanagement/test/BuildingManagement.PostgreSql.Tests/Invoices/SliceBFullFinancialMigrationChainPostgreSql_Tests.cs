@@ -185,6 +185,19 @@ public sealed class SliceBFullFinancialMigrationChainPostgreSql_Tests
                     SELECT count(*) FROM pg_indexes WHERE
                     indexname = 'UX_BM_OfficialReceipt_Payment'
                     """));
+                Assert.Equal(1L, await ScalarAsync(inspect,
+                    "SELECT to_regclass('\"BuildingManagementContractDepositSettlementDecisions\"') IS NOT NULL"));
+                Assert.Equal(1L, await ScalarAsync(inspect, """
+                    SELECT count(*) FROM pg_trigger
+                     WHERE NOT tgisinternal AND
+                       tgname = 'TR_BM_DepositDecision_Immutable'
+                    """));
+                Assert.Equal(3L, await ScalarAsync(inspect, """
+                    SELECT count(*) FROM pg_indexes WHERE
+                      indexname IN ('UX_BM_DepositDecision_Contract',
+                                    'UX_BM_DepositDecision_MoveOut',
+                                    'UX_BM_DepositDecision_FinalInvoice')
+                    """));
                 // A completed bank transfer can be allocated only once
                 // across deposits and invoices, ignoring ref casing/spaces.
                 Assert.Equal(1L, await ScalarAsync(inspect, """
@@ -234,6 +247,8 @@ public sealed class SliceBFullFinancialMigrationChainPostgreSql_Tests
                     "SELECT to_regclass('\"BuildingManagementIssuedInvoiceLedger\"') IS NULL"));
                 Assert.Equal(1L, await ScalarAsync(inspect,
                     "SELECT to_regclass('\"BuildingManagementOfficialInvoiceReceivables\"') IS NULL"));
+                Assert.Equal(1L, await ScalarAsync(inspect,
+                    "SELECT to_regclass('\"BuildingManagementContractDepositSettlementDecisions\"') IS NULL"));
                 Assert.Equal(1L, await ScalarAsync(inspect,
                     "SELECT to_regclass('\"BuildingManagementContractDepositCloseoutApprovals\"') IS NULL"));
                 Assert.Equal(1L, await ScalarAsync(inspect,

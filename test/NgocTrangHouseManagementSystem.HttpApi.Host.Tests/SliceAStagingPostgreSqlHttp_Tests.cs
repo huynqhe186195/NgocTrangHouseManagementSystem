@@ -2943,6 +2943,19 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     refundBankEvidenceReference = "SCRATCH-REFUND-SIGNED-PROOF-0001"
                 }));
             Assert.Equal(HttpStatusCode.Forbidden, earlyOfficialCloseout.Status);
+            // 2G.4 cannot approve a refund while official payment review
+            // is missing, even though the staging journal shows paid.
+            var depositApproveRoute = financeRoot + "/move-outs/" +
+                financeMoveOut.ToString("D") +
+                "/deposit-settlement/approve";
+            var depositPlanBody = JsonSerializer.Serialize(new {
+                forfeitAmount = 0m,
+                depositPolicyReference = "SCRATCH-CONTRACT-DEPOSIT-POLICY-2026"
+            });
+            var earlyDepositPlan = await PostFinalAsync(
+                clientRoot, depositApproveRoute, depositPlanBody);
+            Assert.Equal(HttpStatusCode.Forbidden, earlyDepositPlan.Status);
+
             Guid[] finalJournalIds;
             using (var finalScope = app.Services.CreateScope())
             {
@@ -2987,12 +3000,107 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     .GetProperty("isExternallyVerifiedBankTransfer").GetBoolean());
             }
 
+            // Phase 2G.4 is a DISTINCT owner decision before 2G.5.
+            // It records intended refund/forfeit but does not send money,
+            // complete checklists or mutate Room and Contract.
+            var staffDepositDecision = await PostFinalAsync(
+                clientB, depositApproveRoute, depositPlanBody);
+            Assert.Equal(HttpStatusCode.Forbidden, staffDepositDecision.Status);
+            var unjustifiedForfeit = await PostFinalAsync(
+                clientRoot, depositApproveRoute, JsonSerializer.Serialize(new {
+                    forfeitAmount = 250_000m,
+                    depositPolicyReference = "SCRATCH-CONTRACT-DEPOSIT-POLICY-2026"
+                }));
+            Assert.Equal(HttpStatusCode.Forbidden, unjustifiedForfeit.Status);
+            var decisionResponse = await PostFinalAsync(
+                clientRoot, depositApproveRoute, depositPlanBody);
+            Assert.True(decisionResponse.Status is HttpStatusCode.OK or
+                HttpStatusCode.Created,
+                $"Deposit decision: {decisionResponse.Status} {decisionResponse.Body}");
+            Guid decisionId;
+            using (var json = JsonDocument.Parse(decisionResponse.Body))
+            {
+                decisionId = json.RootElement.GetProperty("decisionId").GetGuid();
+                Assert.Equal(monthlyRent, json.RootElement
+                    .GetProperty("approvedRefundAmount").GetDecimal());
+                Assert.Equal(0m, json.RootElement
+                    .GetProperty("approvedDebtOffsetAmount").GetDecimal());
+                Assert.False(json.RootElement
+                    .GetProperty("isRefundExecuted").GetBoolean());
+            }
+            var repeatedDecision = await PostFinalAsync(
+                clientRoot, depositApproveRoute, depositPlanBody);
+            Assert.True(repeatedDecision.Status is HttpStatusCode.OK or
+                HttpStatusCode.Created);
+            using (var json = JsonDocument.Parse(repeatedDecision.Body))
+                Assert.Equal(decisionId,
+                    json.RootElement.GetProperty("decisionId").GetGuid());
+            var conflictingDecision = await PostFinalAsync(
+                clientRoot, depositApproveRoute, JsonSerializer.Serialize(new {
+                    forfeitAmount = 250_000m,
+                    damageReason = "Documented broken window glass",
+                    damageEvidenceReference = "SIGNED-DAMAGE-REPORT-001",
+                    depositPolicyReference = "SCRATCH-CONTRACT-DEPOSIT-POLICY-2026"
+                }));
+            Assert.Equal(HttpStatusCode.Forbidden, conflictingDecision.Status);
+            var readPlanRoute = financeRoot + "/move-outs/" +
+                financeMoveOut.ToString("D") + "/deposit-settlement";
+            using (var readPlan = await clientB.GetAsync(readPlanRoute))
+            {
+                Assert.Equal(HttpStatusCode.OK, readPlan.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await readPlan.Content.ReadAsStringAsync());
+                Assert.Equal(decisionId,
+                    json.RootElement.GetProperty("decisionId").GetGuid());
+            }
+            using (var wrongBuildingPlan = await clientB.GetAsync(
+                FinalInvoices(contractA) + "/move-outs/" +
+                financeMoveOut.ToString("D") + "/deposit-settlement"))
+                Assert.Equal(HttpStatusCode.Forbidden, wrongBuildingPlan.StatusCode);
+            using (var checkDecisionOnly = app.Services.CreateScope())
+            {
+                using var checkUow = checkDecisionOnly.ServiceProvider
+                    .GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var checkDb = await checkDecisionOnly.ServiceProvider
+                    .GetRequiredService<IDbContextProvider<BuildingManagementDbContext>>()
+                    .GetDbContextAsync();
+                Assert.Equal(BuildingManagement.Contracts.ContractStatus.Active,
+                    (await checkDb.Contracts.SingleAsync(x => x.Id == financeContract)).Status);
+                Assert.False(await checkDb.DepositCloseoutApprovals.AsNoTracking()
+                    .AnyAsync(x => x.ContractId == financeContract));
+                Assert.False(await checkDb.DepositSettlements.AsNoTracking()
+                    .AnyAsync(x => x.SourceContractId == financeContract &&
+                        (x.Type == BuildingManagement.DepositSettlements
+                            .DepositSettlementType.Refund ||
+                         x.Type == BuildingManagement.DepositSettlements
+                            .DepositSettlementType.Forfeit)));
+                await checkUow.CompleteAsync();
+            }
+
             // A signed statement must not exist before actual approval.
             var signedCloseoutRoute = scopedContracts + "/" +
                 financeContract.ToString("D") + "/move-out-requests/" +
                 financeMoveOut.ToString("D") + "/closeout";
             using (var beforeCloseout = await clientB.GetAsync(signedCloseoutRoute))
                 Assert.Equal(HttpStatusCode.Forbidden, beforeCloseout.StatusCode);
+
+            var contradictoryComplete = await PostFinalAsync(
+                clientRoot, financeRoot + "/move-outs/" +
+                    financeMoveOut.ToString("D") + "/complete",
+                JsonSerializer.Serialize(new {
+                    forfeitAmount = 250_000m,
+                    damageReason = "Documented broken window glass",
+                    damageEvidenceReference = "SIGNED-DAMAGE-REPORT-001",
+                    inspectionEvidenceReference = "SCRATCH-SIGNED-INSPECTION-0001",
+                    handoverEvidenceReference = "SCRATCH-SIGNED-HANDOVER-0001",
+                    depositPolicyReference = "SCRATCH-CONTRACT-DEPOSIT-POLICY-2026",
+                    confirmManualRefundPaid = true,
+                    refundPaidAtUtc = DateTime.UtcNow,
+                    refundTransactionReference = "SCRATCH-MANUAL-REFUND-0001",
+                    refundBankEvidenceReference = "SCRATCH-REFUND-SIGNED-PROOF-0001"
+                }));
+            Assert.Equal(HttpStatusCode.Forbidden, contradictoryComplete.Status);
 
             using var closeout = await PostValidFinanceAsync(
                 clientRoot,

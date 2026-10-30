@@ -167,3 +167,34 @@ denial of the global conventional controller. The rate CRUD adapter is
 registered **only** under the existing two-isolated-database staging opt-in.
 Production is not enabled. UtilityMeter, MeterReading and Payment scoped
 CRUD remain to be delivered in follow-up Slice C batches.
+
+
+### Slice C isolated MeterReading 4-method vertical — staging only
+
+Four independent scoped HTTP routes under
+`/api/slice-c-staging/meter-readings` implement GET list, GET by ID,
+POST create and PUT latest reading. The original global
+`MeterReadingAppService` conventional controller stays **DENY ALL**.
+The GET queries join physical meter -> room -> floor -> building and
+filter active, persisted per-building grant **before** ordering, paging
+or projection. Payloads expose reading evidence and resolved BuildingId
+but no private Notes or audit/actor metadata. Each transaction holds the
+separately persisted `Utilities.Read` or `Utilities.Manage` ABP Identity
+lease through Building UoW completion. POST and PUT resolve ownership
+from the database rather than the request, acquire a live building-grant
+write fence and then lock Building -> physical meter -> optional reading.
+The original application service remains the authority for monotone
+usage, date, latest-month-only edits and replacement frozen history.
+
+The PostgreSQL authenticated HTTP acceptance fixture now provisions two
+separate physical meters under dedicated rooms, verifies cross-building
+read/write 403, own create/list/detail/update, duplicate-period failure,
+private-note omission and continued legacy-controller denial. The new
+host adapters are registered only on the two-isolated-database staging
+opt-in; both Identity and PostgreSQL CI path filters include their files.
+
+**Status:** Code and integration probes committed; CI result must be
+checked at the final SHA before promoting from REVIEW to PASS. Meter
+lifecycle/replacement, Payment APIs, authenticated negative race testing,
+and comprehensive Slice C acceptance are still outstanding. No
+production or main-branch deployment is authorized.

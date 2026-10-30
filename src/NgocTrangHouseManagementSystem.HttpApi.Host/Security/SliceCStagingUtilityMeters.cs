@@ -131,9 +131,28 @@ public sealed class SliceCStagingUtilityMeters
         var actor = Actor();
         await _identity.AcquireUtilityReadAsync(actor);
         var db = await _provider.GetDbContextAsync();
-        // No fallback to unscoped history if the room has moved/deleted.
-        return await AuthorizedReplacements(db, actor, DateTime.UtcNow, null,
-            roomId).ToListAsync();
+        // A foreign/nonexistent room must be denied even with no
+        // replacement records; a blank list must not bypass ownership.
+        var now = DateTime.UtcNow;
+        var allowedRoom = await (
+            from room in db.Rooms.AsNoTracking()
+            join floor in db.Floors.AsNoTracking()
+                on room.FloorId equals floor.Id
+            join building in db.Buildings.AsNoTracking()
+                on floor.BuildingId equals building.Id
+            where room.Id == roomId && !room.IsDeleted &&
+                  !floor.IsDeleted && !building.IsDeleted &&
+                  db.OperatorBuildingGrants.Any(grant =>
+                      grant.OperatorUserId == actor &&
+                      grant.BuildingId == building.Id &&
+                      grant.RevokedAtUtc == null &&
+                      grant.GrantedAtUtc <= now &&
+                      (grant.ExpiresAtUtc == null ||
+                       grant.ExpiresAtUtc > now))
+            select room.Id).AnyAsync();
+        if (!allowedRoom) throw Denied();
+        return await AuthorizedReplacements(db, actor, now, null, roomId)
+            .ToListAsync();
     }
 
     private async Task<(Guid Building, Guid Room)> ResolveMeterAsync(Guid id)

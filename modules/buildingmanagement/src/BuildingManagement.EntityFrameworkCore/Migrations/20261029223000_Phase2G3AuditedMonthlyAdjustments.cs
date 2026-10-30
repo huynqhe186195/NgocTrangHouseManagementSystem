@@ -36,10 +36,13 @@ public sealed class Phase2G3AuditedMonthlyAdjustments : Migration
                     AND length(btrim("Reason")) BETWEEN 12 AND 500
                     AND length(btrim("SourceEvidenceReference")) BETWEEN 8 AND 200)
             );
+            """);
+        builder.Sql("""
             CREATE UNIQUE INDEX "UX_BM_MonthlyAdjustment_Evidence"
               ON "BuildingManagementMonthlyInvoiceAdjustments"
                 ("IssuedInvoiceId",lower(btrim("SourceEvidenceReference")));
-            
+            """);
+        builder.Sql("""
             CREATE TABLE "BuildingManagementMonthlyInvoiceAdjustmentDecisions" (
                 "Id" uuid NOT NULL PRIMARY KEY,
                 "AdjustmentId" uuid NOT NULL REFERENCES
@@ -55,9 +58,12 @@ public sealed class Phase2G3AuditedMonthlyAdjustments : Migration
                   CHECK (length(btrim("ReviewReason")) BETWEEN 12 AND 500
                     AND ("Accepted" = TRUE OR "ApprovedSignedDeltaAmount" = 0))
             );
+            """);
+        builder.Sql("""
             CREATE UNIQUE INDEX "UX_BM_MonthlyAdjustment_Decision"
               ON "BuildingManagementMonthlyInvoiceAdjustmentDecisions" ("AdjustmentId");
-            
+            """);
+        builder.Sql("""
             CREATE FUNCTION "BM_GuardMonthlyAdjustmentProposal"()
             RETURNS trigger LANGUAGE plpgsql AS $proposal$
             DECLARE issued record;
@@ -80,11 +86,14 @@ public sealed class Phase2G3AuditedMonthlyAdjustments : Migration
                 RETURN NEW;
             END;
             $proposal$;
+            """);
+        builder.Sql("""
             CREATE TRIGGER "TR_BM_MonthlyAdjustmentImmutable"
             BEFORE INSERT OR UPDATE OR DELETE
             ON "BuildingManagementMonthlyInvoiceAdjustments"
             FOR EACH ROW EXECUTE FUNCTION "BM_GuardMonthlyAdjustmentProposal"();
-            
+            """);
+        builder.Sql("""
             CREATE FUNCTION "BM_GuardMonthlyAdjustmentDecision"()
             RETURNS trigger LANGUAGE plpgsql AS $decision$
             DECLARE proposal record;
@@ -138,11 +147,14 @@ public sealed class Phase2G3AuditedMonthlyAdjustments : Migration
                 RETURN NEW;
             END;
             $decision$;
+            """);
+        builder.Sql("""
             CREATE TRIGGER "TR_BM_MonthlyAdjustmentDecisionImmutable"
             BEFORE INSERT OR UPDATE OR DELETE
             ON "BuildingManagementMonthlyInvoiceAdjustmentDecisions"
             FOR EACH ROW EXECUTE FUNCTION "BM_GuardMonthlyAdjustmentDecision"();
-            
+            """);
+        builder.Sql("""
             -- A debit correction may now expand, while credit correction reduces,
             -- the payable ceiling; still serialized on the issued invoice row.
             CREATE OR REPLACE FUNCTION "BM_GuardMonthlyPaymentAllocation"()
@@ -194,7 +206,8 @@ public sealed class Phase2G3AuditedMonthlyAdjustments : Migration
                             RETURN NEW;
                         END;
                         $allocation_guard$;
-            
+            """);
+        builder.Sql("""
             CREATE FUNCTION "BM_RejectMonthlyAdjustmentTruncate"()
             RETURNS trigger LANGUAGE plpgsql AS $adj_truncate$
             BEGIN
@@ -202,9 +215,13 @@ public sealed class Phase2G3AuditedMonthlyAdjustments : Migration
                     USING ERRCODE = '23514';
             END;
             $adj_truncate$;
+            """);
+        builder.Sql("""
             CREATE TRIGGER "TR_BM_MonthlyAdjustmentNoTruncate"
             BEFORE TRUNCATE ON "BuildingManagementMonthlyInvoiceAdjustments"
             FOR EACH STATEMENT EXECUTE FUNCTION "BM_RejectMonthlyAdjustmentTruncate"();
+            """);
+        builder.Sql("""
             CREATE TRIGGER "TR_BM_MonthlyDecisionNoTruncate"
             BEFORE TRUNCATE ON "BuildingManagementMonthlyInvoiceAdjustmentDecisions"
             FOR EACH STATEMENT EXECUTE FUNCTION "BM_RejectMonthlyAdjustmentTruncate"();
@@ -218,6 +235,8 @@ public sealed class Phase2G3AuditedMonthlyAdjustments : Migration
                        "BuildingManagementMonthlyInvoiceAdjustments",
                        "BuildingManagementMonthlyInvoicePaymentAllocation"
             IN ACCESS EXCLUSIVE MODE;
+            """);
+        builder.Sql("""
             DO $adjustment_down$
             BEGIN
               IF EXISTS (SELECT 1 FROM "BuildingManagementMonthlyInvoiceAdjustments" LIMIT 1)
@@ -228,6 +247,8 @@ public sealed class Phase2G3AuditedMonthlyAdjustments : Migration
               END IF;
             END;
             $adjustment_down$;
+            """);
+        builder.Sql("""
             CREATE OR REPLACE FUNCTION "BM_GuardMonthlyPaymentAllocation"()
                         RETURNS trigger LANGUAGE plpgsql AS $allocation_guard$
                         DECLARE invoice record;
@@ -271,18 +292,36 @@ public sealed class Phase2G3AuditedMonthlyAdjustments : Migration
                             RETURN NEW;
                         END;
                         $allocation_guard$;
+            """);
+        builder.Sql("""
             DROP TRIGGER "TR_BM_MonthlyDecisionNoTruncate"
               ON "BuildingManagementMonthlyInvoiceAdjustmentDecisions";
+            """);
+        builder.Sql("""
             DROP TRIGGER "TR_BM_MonthlyAdjustmentNoTruncate"
               ON "BuildingManagementMonthlyInvoiceAdjustments";
+            """);
+        builder.Sql("""
             DROP FUNCTION "BM_RejectMonthlyAdjustmentTruncate"();
+            """);
+        builder.Sql("""
             DROP TRIGGER "TR_BM_MonthlyAdjustmentDecisionImmutable"
               ON "BuildingManagementMonthlyInvoiceAdjustmentDecisions";
+            """);
+        builder.Sql("""
             DROP FUNCTION "BM_GuardMonthlyAdjustmentDecision"();
+            """);
+        builder.Sql("""
             DROP TRIGGER "TR_BM_MonthlyAdjustmentImmutable"
               ON "BuildingManagementMonthlyInvoiceAdjustments";
+            """);
+        builder.Sql("""
             DROP FUNCTION "BM_GuardMonthlyAdjustmentProposal"();
+            """);
+        builder.Sql("""
             DROP TABLE "BuildingManagementMonthlyInvoiceAdjustmentDecisions";
+            """);
+        builder.Sql("""
             DROP TABLE "BuildingManagementMonthlyInvoiceAdjustments";
             """);
     }

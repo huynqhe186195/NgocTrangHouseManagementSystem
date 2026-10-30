@@ -864,6 +864,16 @@ public sealed class SliceBReconciliationBoundaryPostgreSql_Tests
     private static string Sql(Migration migration, bool down)
     {
         var operations = down ? migration.DownOperations : migration.UpOperations;
+        // Audited adjustments deliberately split each DDL statement into
+        // its own EF migration operation, preserving transaction scope
+        // while keeping PostgreSQL syntax errors attributable to a
+        // specific CREATE FUNCTION / INDEX / TRIGGER command.
+        if (migration is Phase2G3AuditedMonthlyAdjustments)
+        {
+            Assert.Equal(12, operations.Count);
+            return string.Join("\n", operations.OfType<SqlOperation>()
+                .Select(x => x.Sql));
+        }
         var sql = Assert.Single(operations.OfType<SqlOperation>());
         Assert.Single(operations);
         if (migration is SliceBInvoiceReconciliationBoundary)

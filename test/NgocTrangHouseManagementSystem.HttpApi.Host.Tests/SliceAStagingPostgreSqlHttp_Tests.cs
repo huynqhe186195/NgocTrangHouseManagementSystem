@@ -2179,6 +2179,17 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 "/monthly-issued/" + monthlyIssuedId.ToString("D") +
                 "/manual-receipts";
             var monthPaidAtUtc = DateTime.UtcNow;
+            // One bank transfer cannot fund a contract deposit and then
+            // be counted as a separate invoice payment via a case variant.
+            var reusedDepositOnMonth = await PostFinalAsync(
+                clientRoot, monthReceiptRoute, JsonSerializer.Serialize(new {
+                    tenantId = tenantB, amount = 10_000m,
+                    paidAtUtc = DateTime.UtcNow,
+                    transactionReference = "scratch-initial-deposit-2026",
+                    bankEvidenceReference = "REUSED-DEPOSIT-BANK-PROOF-MONTH-001"
+                }));
+            Assert.Equal(HttpStatusCode.Forbidden, reusedDepositOnMonth.Status);
+
             var partialMonthEvidence = new {
                 tenantId = tenantB,
                 amount = 500_000m,
@@ -2637,6 +2648,15 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             };
             var partialRoute = financeRoot + "/issued/" +
                 financeIssuedId.ToString("D") + "/manual-receipts";
+            var reusedDepositOnFinal = await PostFinalAsync(
+                clientRoot, partialRoute, JsonSerializer.Serialize(new {
+                    tenantId = tenantB, amount = 10_000m,
+                    paidAtUtc = DateTime.UtcNow,
+                    transactionReference = "scratch-initial-deposit-2026",
+                    bankEvidenceReference = "REUSED-DEPOSIT-BANK-PROOF-FINAL-001"
+                }));
+            Assert.Equal(HttpStatusCode.Forbidden, reusedDepositOnFinal.Status);
+
             using var partiallyPaid = await PostValidFinanceAsync(
                 clientRoot, partialRoute, partialEvidence);
             var partialReceiptId = partiallyPaid.RootElement

@@ -2074,6 +2074,83 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 await uow.CompleteAsync();
             }
 
+            // The MONTHLY issuance workflow requires a different person
+            // from the archive preparer to accept immutable terms.
+            var monthlyReviewRoute = FinalInvoices(monthlyDraftContract) +
+                "/monthly-candidates/" + monthlyCandidateId.ToString("D") +
+                "/review";
+            var monthlyIssueRoute = FinalInvoices(monthlyDraftContract) +
+                "/monthly-candidates/" + monthlyCandidateId.ToString("D") +
+                "/issue";
+            var reviewPayload = new {
+                accept = true,
+                reason = "Independently audited meter readings rent and fees"
+            };
+            var selfReview = await PostFinalAsync(clientRoot,
+                monthlyReviewRoute, JsonSerializer.Serialize(reviewPayload));
+            Assert.Equal(HttpStatusCode.Forbidden, selfReview.Status);
+            var acceptedReview = await PostFinalAsync(clientB,
+                monthlyReviewRoute, JsonSerializer.Serialize(reviewPayload));
+            Assert.True(acceptedReview.Status is HttpStatusCode.OK or
+                HttpStatusCode.Created,
+                $"Monthly approval: {acceptedReview.Status}: {acceptedReview.Body}");
+            Guid monthlyReviewId;
+            using (var json = JsonDocument.Parse(acceptedReview.Body))
+            {
+                monthlyReviewId = json.RootElement.GetProperty("reviewId").GetGuid();
+                Assert.True(json.RootElement.GetProperty("accepted").GetBoolean());
+                Assert.False(json.RootElement.GetProperty("isOfficialReceivable").GetBoolean());
+            }
+            var repeatedReview = await PostFinalAsync(clientB,
+                monthlyReviewRoute, JsonSerializer.Serialize(reviewPayload));
+            Assert.Equal(HttpStatusCode.Forbidden, repeatedReview.Status);
+
+            var staffIssue = await PostFinalAsync(clientB, monthlyIssueRoute, "{}");
+            Assert.Equal(HttpStatusCode.Forbidden, staffIssue.Status);
+            var issuedMonth = await PostFinalAsync(
+                clientRoot, monthlyIssueRoute, "{}");
+            Assert.True(issuedMonth.Status is HttpStatusCode.OK or
+                HttpStatusCode.Created,
+                $"Monthly issuance: {issuedMonth.Status}: {issuedMonth.Body}");
+            Guid monthlyIssuedId;
+            using (var json = JsonDocument.Parse(issuedMonth.Body))
+            {
+                monthlyIssuedId = json.RootElement
+                    .GetProperty("issuedInvoiceId").GetGuid();
+                Assert.Equal(2_583_000m,
+                    json.RootElement.GetProperty("amount").GetDecimal());
+                Assert.False(json.RootElement
+                    .GetProperty("isOfficialReceivable").GetBoolean());
+                Assert.StartsWith("NTM-",
+                    json.RootElement.GetProperty("invoiceNumber").GetString());
+            }
+            var repeatedIssue = await PostFinalAsync(
+                clientRoot, monthlyIssueRoute, "{}");
+            Assert.Equal(HttpStatusCode.Forbidden, repeatedIssue.Status);
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var db = await sp.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>().GetDbContextAsync();
+                var source = await db.MonthlyInvoiceCandidates
+                    .SingleAsync(x => x.Id == monthlyCandidateId);
+                var decision = await db.MonthlyInvoiceReviews
+                    .SingleAsync(x => x.Id == monthlyReviewId);
+                var month = await db.MonthlyIssuedInvoices
+                    .SingleAsync(x => x.Id == monthlyIssuedId);
+                month.VerifyAgainst(source, decision);
+                Assert.Equal(monthlyDraftContract, month.ContractId);
+                Assert.True(month.IsStagingIssued);
+                Assert.False(month.IsOfficialReceivable);
+                Assert.False(await db.IssuedInvoiceLedger.AnyAsync(
+                    x => x.ContractId == monthlyDraftContract));
+                Assert.Equal(0, (int)(await db.Invoices.SingleAsync(
+                    x => x.Id == persistedDraftId)).Status);
+                await uow.CompleteAsync();
+            }
+
             async Task<JsonDocument> PostValidFinanceAsync(
                 HttpClient caller, string route, object payload)
             {

@@ -385,6 +385,151 @@ public sealed class SliceBReconciliationBoundaryPostgreSql_Tests
             """;
     }
 
+    [Fact]
+    public async Task SBRECON09_Independent_Monthly_Issue_Immutable_Duplicates_Rollback()
+    {
+        await InScratchAsync(async (db, tx, _) =>
+        {
+            var draft = Guid.NewGuid();
+            var contract = Guid.NewGuid();
+            var room = Guid.NewGuid();
+            await ExecuteAsync(db, tx, $"""
+                INSERT INTO "BuildingManagementInvoices"
+                  ("Id","ContractId","RoomId","BillingYear","BillingMonth","Status")
+                VALUES ('{draft:D}','{contract:D}','{room:D}',2026,10,0);
+                """);
+            var archive = MonthlyInvoiceCandidateLedgerRecord.Capture(
+                Guid.NewGuid(), MonthlyEvidence(draft, contract, room));
+            await ExecuteAsync(db, tx, Sql(new Phase2G3MonthlyCandidateEvidence(), false));
+            await ExecuteAsync(db, tx, MonthlyInsertSql(archive));
+
+            var migration = new Phase2G3MonthlyIndependentIssuance();
+            await ExecuteAsync(db, tx, Sql(migration, false));
+            var review = MonthlyInvoiceIndependentReviewRecord.Capture(
+                Guid.NewGuid(), archive, Guid.NewGuid(),
+                archive.ReviewedAtUtc.AddHours(1), true,
+                "Independent full-month rent and meter review");
+            await ExecuteAsync(db, tx, MonthlyReviewInsertSql(review));
+
+            var issued = MonthlyIssuedInvoiceRecord.Issue(
+                Guid.NewGuid(), "NTM-TEST-" + Guid.NewGuid().ToString("N"),
+                archive.ReviewedByUserId, review.ReviewedAtUtc.AddHours(1),
+                archive, review);
+            await ExecuteAsync(db, tx, MonthlyIssuedInsertSql(issued));
+            Assert.Equal(1L, await ScalarAsync(db, tx, """
+                SELECT count(*) FROM "BuildingManagementMonthlyIssuedInvoiceLedger"
+                """));
+
+            await ExpectFailureAsync(db, tx,
+                MonthlyIssuedInsertSql(MonthlyIssuedInvoiceRecord.Issue(
+                    Guid.NewGuid(), "NTM-TEST-" + Guid.NewGuid().ToString("N"),
+                    archive.ReviewedByUserId, review.ReviewedAtUtc.AddHours(2),
+                    archive, review)), "23505");
+            await ExpectFailureAsync(db, tx, $"""
+                UPDATE "BuildingManagementMonthlyIssuedInvoiceLedger"
+                   SET "TotalAmount" = 1 WHERE "Id" = '{issued.Id:D}';
+                """, "23514");
+            await ExpectFailureAsync(db, tx, $"""
+                DELETE FROM "BuildingManagementMonthlyInvoiceReviews"
+                 WHERE "Id" = '{review.Id:D}';
+                """, "23514");
+            await ExpectFailureAsync(db, tx, """
+                TRUNCATE "BuildingManagementMonthlyIssuedInvoiceLedger"
+                """, "23514");
+            await ExpectFailureAsync(db, tx, Sql(migration, true), "23514");
+        });
+    }
+
+    [Fact]
+    public async Task SBRECON10_Rejected_Or_SelfReviewed_Monthly_Cannot_Issue()
+    {
+        await InScratchAsync(async (db, tx, _) =>
+        {
+            var draft = Guid.NewGuid();
+            var contract = Guid.NewGuid();
+            var room = Guid.NewGuid();
+            await ExecuteAsync(db, tx, $"""
+                INSERT INTO "BuildingManagementInvoices"
+                  ("Id","ContractId","RoomId","BillingYear","BillingMonth","Status")
+                VALUES ('{draft:D}','{contract:D}','{room:D}',2026,10,0);
+                """);
+            var archive = MonthlyInvoiceCandidateLedgerRecord.Capture(
+                Guid.NewGuid(), MonthlyEvidence(draft, contract, room));
+            await ExecuteAsync(db, tx, Sql(new Phase2G3MonthlyCandidateEvidence(), false));
+            await ExecuteAsync(db, tx, MonthlyInsertSql(archive));
+            var migration = new Phase2G3MonthlyIndependentIssuance();
+            await ExecuteAsync(db, tx, Sql(migration, false));
+
+            var deniedReview = MonthlyInvoiceIndependentReviewRecord.Capture(
+                Guid.NewGuid(), archive, Guid.NewGuid(),
+                archive.ReviewedAtUtc.AddHours(1), false,
+                "Archived sources failed independent pricing review");
+            await ExecuteAsync(db, tx, MonthlyReviewInsertSql(deniedReview));
+
+            var altered = MonthlyReviewInsertSql(deniedReview)
+                .Replace($"'{deniedReview.Id:D}'", $"'{Guid.NewGuid():D}'",
+                    StringComparison.Ordinal)
+                .Replace($"'{deniedReview.ReviewedByUserId:D}'",
+                    $"'{archive.ReviewedByUserId:D}'", StringComparison.Ordinal);
+            await ExpectFailureAsync(db, tx, altered, "23514");
+
+            // A forged or stale INSERT bypassing the DOMAIN factory still
+            // cannot turn a rejected independent review into an invoice.
+            var unsafeSql = $"""
+                INSERT INTO "BuildingManagementMonthlyIssuedInvoiceLedger"
+                    ("Id","CandidateId","ReviewId","DraftInvoiceId","ContractId",
+                     "RoomId","BuildingId","BillingYear","BillingMonth",
+                     "InvoiceNumber","IssuedByUserId","IssuedAtUtc","DueDate",
+                     "TotalAmount","CandidateSha256")
+                VALUES ('{Guid.NewGuid():D}','{archive.Id:D}',
+                    '{deniedReview.Id:D}','{draft:D}','{contract:D}',
+                    '{room:D}','{archive.BuildingId:D}',2026,10,
+                    'NTM-UNSAFE-{Guid.NewGuid():N}',
+                    '{archive.ReviewedByUserId:D}',
+                    '{deniedReview.ReviewedAtUtc.AddHours(1):O}',
+                    '{archive.DueDate:yyyy-MM-dd}',{archive.TotalAmount},
+                    '{archive.FrozenEvidenceSha256}');
+                """;
+            await ExpectFailureAsync(db, tx, unsafeSql, "23514");
+            Assert.Equal(0L, await ScalarAsync(db, tx, """
+                SELECT count(*) FROM "BuildingManagementMonthlyIssuedInvoiceLedger"
+                """));
+            await ExpectFailureAsync(db, tx, Sql(migration, true), "23514");
+        });
+    }
+
+    private static string MonthlyReviewInsertSql(
+        MonthlyInvoiceIndependentReviewRecord x)
+        => $"""
+           INSERT INTO "BuildingManagementMonthlyInvoiceReviews"
+               ("Id","CandidateId","ContractId","BuildingId",
+                "CandidateSha256","PreparedByUserId","ReviewedByUserId",
+                "ReviewedAtUtc","Accepted","Reason")
+           VALUES ('{x.Id:D}','{x.CandidateId:D}',
+                   '{x.ContractId:D}','{x.BuildingId:D}',
+                   '{x.CandidateSha256}','{x.PreparedByUserId:D}',
+                   '{x.ReviewedByUserId:D}','{x.ReviewedAtUtc:O}',
+                   {(x.Accepted ? "TRUE" : "FALSE")},
+                   '{x.Reason.Replace("'", "''", StringComparison.Ordinal)}');
+           """;
+
+    private static string MonthlyIssuedInsertSql(MonthlyIssuedInvoiceRecord x)
+        => $"""
+           INSERT INTO "BuildingManagementMonthlyIssuedInvoiceLedger"
+               ("Id","CandidateId","ReviewId","DraftInvoiceId","ContractId",
+                "RoomId","BuildingId","BillingYear","BillingMonth",
+                "InvoiceNumber","IssuedByUserId","IssuedAtUtc","DueDate",
+                "TotalAmount","CandidateSha256")
+           VALUES ('{x.Id:D}','{x.CandidateId:D}','{x.ReviewId:D}',
+                   '{x.DraftInvoiceId:D}','{x.ContractId:D}',
+                   '{x.RoomId:D}','{x.BuildingId:D}',{x.BillingYear},
+                   {x.BillingMonth},'{x.InvoiceNumber}',
+                   '{x.IssuedByUserId:D}','{x.IssuedAtUtc:O}',
+                   '{x.DueDate:yyyy-MM-dd}',
+                   {x.TotalAmount.ToString(CultureInfo.InvariantCulture)},
+                   '{x.CandidateSha256}');
+           """;
+
     private static async Task AssertBalanceAsync(
         NpgsqlConnection db, NpgsqlTransaction tx, Guid issuedId,
         decimal staged, decimal remaining, long count, bool allStaged)

@@ -1,5 +1,6 @@
 using System;
 using System.Data.Common;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using BuildingManagement.Contracts;
@@ -203,6 +204,156 @@ public sealed class SliceBStagingFinalInvoiceMutation
                     archived.TotalAmount, archived.DueDate,
                     archived.FrozenEvidenceSha256,
                     IsOfficialReceivable: false);
+            });
+
+    /// <summary>
+    /// Independently accept or reject the immutable monthly candidate.
+    /// The reviewer MUST be a different building-scoped operator from
+    /// the preparer; rejection is durable and cannot issue.
+    /// </summary>
+    public Task<SliceBStagedMonthlyReviewRead> ReviewMonthlyCandidateAsync(
+        Guid contractId, Guid candidateId, bool accept, string reason)
+        => ExecuteScopedAsync(contractId, requireBootstrapOwner: false,
+            async (db, actor, building, roomId) =>
+            {
+                if (candidateId == Guid.Empty)
+                    throw Denied();
+                await using (var cmd = Command(db, """
+                    SELECT "Id" FROM "BuildingManagementMonthlyInvoiceCandidates"
+                     WHERE "Id" = @id AND "ContractId" = @contract
+                       AND "RoomId" = @room AND "BuildingId" = @building
+                     FOR SHARE
+                    """))
+                {
+                    Add(cmd, "id", candidateId);
+                    Add(cmd, "contract", contractId);
+                    Add(cmd, "room", roomId);
+                    Add(cmd, "building", building);
+                    if (await cmd.ExecuteScalarAsync() is not Guid)
+                        throw Denied();
+                }
+                var archived = await db.MonthlyInvoiceCandidates
+                    .AsNoTracking().SingleOrDefaultAsync(x => x.Id == candidateId);
+                if (archived is null ||
+                    await db.MonthlyInvoiceReviews.AsNoTracking()
+                        .AnyAsync(x => x.CandidateId == candidateId))
+                    throw Denied();
+                MonthlyInvoiceIndependentReviewRecord record;
+                try
+                {
+                    record = MonthlyInvoiceIndependentReviewRecord.Capture(
+                        Guid.NewGuid(), archived, actor,
+                        DateTime.UtcNow, accept, reason);
+                }
+                catch (Exception ex) when (ex is InvalidDataException or
+                    InvalidOperationException or ArgumentException)
+                {
+                    throw Denied();
+                }
+                db.MonthlyInvoiceReviews.Add(record);
+                return new SliceBStagedMonthlyReviewRead(
+                    record.Id, record.CandidateId, record.ContractId,
+                    record.Accepted, IsOfficialReceivable: false);
+            });
+
+    /// <summary>
+    /// Root-only, independently approved MONTHLY issuance on isolated
+    /// staging. Fresh original rent/rates/meter evidence is REQUIRED here,
+    /// not only at candidate preparation. The issued event is immutable
+    /// and cross-ledger unique, but it is NOT an official posted debt.
+    /// </summary>
+    public Task<SliceBStagedMonthlyIssuedRead> IssueMonthlyAsync(
+        Guid contractId, Guid candidateId)
+        => ExecuteScopedAsync(contractId, requireBootstrapOwner: true,
+            async (db, actor, building, roomId) =>
+            {
+                if (candidateId == Guid.Empty ||
+                    db.Database.CurrentTransaction?.GetDbTransaction()
+                        .IsolationLevel != System.Data.IsolationLevel.RepeatableRead)
+                    throw Denied();
+                await LockOriginalInvoiceSourcesAsync(db);
+
+                await using (var cmd = Command(db, """
+                    SELECT "Id" FROM "BuildingManagementMonthlyInvoiceCandidates"
+                     WHERE "Id" = @id AND "ContractId" = @contract
+                       AND "RoomId" = @room AND "BuildingId" = @building
+                     FOR SHARE
+                    """))
+                {
+                    Add(cmd, "id", candidateId);
+                    Add(cmd, "contract", contractId);
+                    Add(cmd, "room", roomId);
+                    Add(cmd, "building", building);
+                    if (await cmd.ExecuteScalarAsync() is not Guid)
+                        throw Denied();
+                }
+                var archived = await db.MonthlyInvoiceCandidates
+                    .AsNoTracking().SingleOrDefaultAsync(x => x.Id == candidateId);
+                if (archived is null)
+                    throw Denied();
+
+                await using (var cmd = Command(db, """
+                    SELECT "Id" FROM "BuildingManagementInvoices"
+                     WHERE "Id" = @id AND "ContractId" = @contract
+                       AND "RoomId" = @room AND "Status" = 0
+                     FOR UPDATE
+                    """))
+                {
+                    Add(cmd, "id", archived.DraftInvoiceId);
+                    Add(cmd, "contract", contractId);
+                    Add(cmd, "room", roomId);
+                    if (await cmd.ExecuteScalarAsync() is not Guid)
+                        throw Denied();
+                }
+
+                var review = await db.MonthlyInvoiceReviews.AsNoTracking()
+                    .SingleOrDefaultAsync(x =>
+                        x.CandidateId == candidateId && x.Accepted);
+                if (review is null || actor == review.ReviewedByUserId ||
+                    await db.MonthlyIssuedInvoices.AsNoTracking().AnyAsync(x =>
+                        x.CandidateId == candidateId ||
+                        (x.RoomId == roomId &&
+                         x.BillingYear == archived.BillingYear &&
+                         x.BillingMonth == archived.BillingMonth)) ||
+                    await db.IssuedInvoiceLedger.AsNoTracking().AnyAsync(x =>
+                        x.RoomId == roomId &&
+                        x.BillingYear == archived.BillingYear &&
+                        x.BillingMonth == archived.BillingMonth))
+                    throw Denied();
+
+                try
+                {
+                    var frozen = archived.VerifyStoredEvidence();
+                    review.VerifyAgainst(archived);
+                    if (!await _utilityDrafts.HasCurrentSourceSnapshotAsync(
+                            archived.DraftInvoiceId))
+                        throw Denied();
+                    var live = await _monthlyPreview.GetAsync(
+                        contractId, archived.BillingYear, archived.BillingMonth);
+                    if (live.ProvisionalRentAndUtilitiesAmount is null ||
+                        live.KnownFullMonthRentAmount != frozen.RentAmount ||
+                        live.ProvisionalElectricityAmount != frozen.ElectricityAmount ||
+                        live.ProvisionalWaterAmount != frozen.WaterAmount ||
+                        live.ProvisionalRentAndUtilitiesAmount != checked(
+                            frozen.RentAmount + frozen.ElectricityAmount +
+                            frozen.WaterAmount))
+                        throw Denied();
+
+                    var id = Guid.NewGuid();
+                    var issued = MonthlyIssuedInvoiceRecord.Issue(
+                        id, "NTM-" + id.ToString("N"), actor, DateTime.UtcNow,
+                        archived, review);
+                    db.MonthlyIssuedInvoices.Add(issued);
+                    return new SliceBStagedMonthlyIssuedRead(
+                        issued.Id, issued.CandidateId, issued.ContractId,
+                        issued.InvoiceNumber, issued.TotalAmount,
+                        issued.DueDate, issued.IsOfficialReceivable);
+                }
+                catch (Exception ex) when (ex is InvalidDataException or
+                    InvalidOperationException or ArgumentException or OverflowException)
+                {
+                    throw Denied();
+                }
             });
 
     /// <summary>
@@ -1004,6 +1155,15 @@ public sealed class SliceBStagingFinalInvoiceMutation
         => new("Final invoice requires a live, locked building grant, " +
                "current source evidence, independent review and explicit policy.");
 }
+
+public sealed record SliceBStagedMonthlyReviewRead(
+    Guid ReviewId, Guid CandidateId, Guid ContractId,
+    bool Accepted, bool IsOfficialReceivable);
+
+public sealed record SliceBStagedMonthlyIssuedRead(
+    Guid IssuedInvoiceId, Guid CandidateId, Guid ContractId,
+    string InvoiceNumber, decimal Amount, DateOnly DueDate,
+    bool IsOfficialReceivable);
 
 public sealed record SliceBStagedMonthlyInvoiceCandidateRead(
     Guid CandidateId, Guid DraftInvoiceId, Guid ContractId,

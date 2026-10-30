@@ -53,6 +53,29 @@ public sealed class SliceBStagingFinalInvoiceController : ControllerBase
             .PrepareMonthlyCandidateAsync(contractId, draftId, input);
     }
 
+    [HttpPost("contracts/{contractId:guid}/monthly-candidates/{candidateId:guid}/review")]
+    [UnitOfWork(true, System.Data.IsolationLevel.RepeatableRead)]
+    public Task<SliceBStagedMonthlyReviewRead> ReviewMonthlyCandidateAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid candidateId,
+        [FromBody] SliceBMonthlyReviewInput input)
+    {
+        RequireIsolatedStaging();
+        if (input is null)
+            throw Denied();
+        return (_mutation ?? throw Denied()).ReviewMonthlyCandidateAsync(
+            contractId, candidateId, input.Accept, input.Reason);
+    }
+
+    [HttpPost("contracts/{contractId:guid}/monthly-candidates/{candidateId:guid}/issue")]
+    [UnitOfWork(true, System.Data.IsolationLevel.RepeatableRead)]
+    public Task<SliceBStagedMonthlyIssuedRead> IssueMonthlyAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid candidateId)
+    {
+        RequireIsolatedStaging();
+        return (_mutation ?? throw Denied()).IssueMonthlyAsync(
+            contractId, candidateId);
+    }
+
     [HttpPost("contracts/{contractId:guid}/move-outs/{requestId:guid}/prepare")]
     [UnitOfWork(true)]
     public Task<SliceBStagedInvoiceEvidenceRead> PrepareAsync(
@@ -166,5 +189,11 @@ public sealed class SliceBInvoiceReviewSubmission
 public sealed class SliceBInvoiceReviewDecision
 {
     public bool AcceptForDesign { get; set; }
+    public string Reason { get; set; } = string.Empty;
+}
+
+public sealed class SliceBMonthlyReviewInput
+{
+    public bool Accept { get; set; }
     public string Reason { get; set; } = string.Empty;
 }

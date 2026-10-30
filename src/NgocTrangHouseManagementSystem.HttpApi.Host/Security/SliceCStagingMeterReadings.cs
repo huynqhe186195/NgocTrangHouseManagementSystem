@@ -119,8 +119,8 @@ public sealed class SliceCStagingMeterReadings
                 // building. Deleted or moved source rows must fail closed.
                 await using (var meterLock = Command(db, """
                     SELECT m."Id" FROM "BuildingManagementUtilityMeters" AS m
-                      JOIN "Rooms" AS r ON r."Id" = m."RoomId"
-                      JOIN "Floors" AS f ON f."Id" = r."FloorId"
+                      JOIN "BuildingManagementRooms" AS r ON r."Id" = m."RoomId"
+                      JOIN "BuildingManagementFloors" AS f ON f."Id" = r."FloorId"
                      WHERE m."Id"=@meter AND f."BuildingId"=@building
                        AND m."IsDeleted"=FALSE AND r."IsDeleted"=FALSE
                        AND f."IsDeleted"=FALSE

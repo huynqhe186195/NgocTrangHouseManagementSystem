@@ -28,6 +28,10 @@ public class BuildingManagementPermissionDefinitionProvider : PermissionDefiniti
         myGroup.AddPermission(BuildingManagementPermissions.Rooms.Manage, L("Permission:Rooms.Manage"));
         myGroup.AddPermission(BuildingManagementPermissions.Contracts.Read, L("Permission:Contracts.Read"));
         myGroup.AddPermission(BuildingManagementPermissions.Contracts.Manage, L("Permission:Contracts.Manage"));
+        // Independently persisted utility permissions, not implied by
+        // Contracts.Manage, Rooms.Manage or root membership alone.
+        myGroup.AddPermission(BuildingManagementPermissions.Utilities.Read, L("Permission:Utilities.Read"));
+        myGroup.AddPermission(BuildingManagementPermissions.Utilities.Manage, L("Permission:Utilities.Manage"));
 
         myGroup.AddPermission(
             BuildingManagementPermissions.Invoices.RebuildDraft,

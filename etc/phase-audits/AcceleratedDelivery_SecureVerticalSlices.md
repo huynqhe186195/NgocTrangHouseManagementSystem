@@ -141,3 +141,29 @@ definitions, server-owned resource-to-building joins and PostgreSQL
 concurrency/rollback tests, with explicit host staging adapters. Invoice
 revision/rebuild/issue/debt legacy routes remain disabled. Containment
 does not count as delivery of all 26 utility/financial methods.
+
+### Slice C isolated UtilityRate CRUD — actual scoped vertical
+
+The first functional Slice C group exposes five staging-only rate endpoints
+at \`/api/slice-c-staging/utility-rates\`, while **legacy global utility
+controllers remain DENY ALL**. Each read requires a live, persisted
+\`BuildingManagement.Utilities.Read\` ABP user/role permission under the
+commit-bound Identity lease, and SQL applies current building grants *before*
+paging and projection. The response omits private Notes. Each write instead
+requires \`Utilities.Manage\`, fences a live building grant through its
+Building database commit, locks the Building row FOR UPDATE and locks an
+existing UtilityRate row afterwards. The old app service remains the single
+authority for overlap, precision and period validation. All same-building
+writes serialize on the Building row, preventing two simultaneous overlapping
+rates from both passing a non-atomic AnyAsync check. UPDATE cannot transfer
+the rate to a different building, even if the root can manage both.
+DELETE soft-deletes through the original validated service. Neither read nor
+manage permission is implied by Contracts.Manage or Buildings.Manage.
+
+The actual authenticated PostgreSQL HTTP test exercises A/B list and direct
+ID isolation, cross-building write refusal, transfer refusal, successful
+create/update/delete, overlap refusal, non-PII response and continued
+denial of the global conventional controller. The rate CRUD adapter is
+registered **only** under the existing two-isolated-database staging opt-in.
+Production is not enabled. UtilityMeter, MeterReading and Payment scoped
+CRUD remain to be delivered in follow-up Slice C batches.

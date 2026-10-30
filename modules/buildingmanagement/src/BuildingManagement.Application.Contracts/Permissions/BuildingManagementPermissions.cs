@@ -41,6 +41,12 @@ public class BuildingManagementPermissions
         public const string Manage = GroupName + ".Contracts.Manage";
     }
 
+    public static class Utilities
+    {
+        public const string Read = GroupName + ".Utilities.Read";
+        public const string Manage = GroupName + ".Utilities.Manage";
+    }
+
     public static class Invoices
     {
         public const string RebuildDraft = GroupName + ".Invoices.RebuildDraft";

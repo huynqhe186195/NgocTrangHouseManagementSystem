@@ -133,6 +133,17 @@ public sealed class SliceAStagingIdentityCommitLease
         => AcquirePermissionAsync(authenticatedOperatorId,
             BuildingManagementPermissions.Contracts.Manage, null);
 
+    // Slice C requires distinct, persisted operation grants. These
+    // permissions are held on the Identity database through the
+    // transactional Building read/write UnitOfWork completion.
+    public Task AcquireUtilityReadAsync(Guid authenticatedOperatorId)
+        => AcquirePermissionAsync(authenticatedOperatorId,
+            BuildingManagementPermissions.Utilities.Read, null);
+
+    public Task AcquireUtilityManageAsync(Guid authenticatedOperatorId)
+        => AcquirePermissionAsync(authenticatedOperatorId,
+            BuildingManagementPermissions.Utilities.Manage, null);
+
     public Task AcquireAsync(
         Guid trustedUserId, BuildingBusinessCapability capability)
         => AcquirePermissionAsync(trustedUserId, capability switch

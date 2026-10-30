@@ -211,6 +211,10 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                         BuildingManagementPermissions.Rooms.Read, true);
                     await permissions.SetForUserAsync(id,
                         BuildingManagementPermissions.Rooms.Manage, true);
+                    await permissions.SetForUserAsync(id,
+                        BuildingManagementPermissions.Utilities.Read, true);
+                    await permissions.SetForUserAsync(id,
+                        BuildingManagementPermissions.Utilities.Manage, true);
                 }
                 await unit.CompleteAsync();
             }
@@ -907,6 +911,118 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 Assert.Equal(0, await db.UtilityRates.CountAsync());
                 await unit.CompleteAsync();
             }
+
+            // Slice C first usable vertical: ACTUAL separate Utilities.Read
+            // and Utilities.Manage, original business validation, and
+            // server-locked per-building scope. Legacy global rate endpoints
+            // remain denied even after these grants are added.
+            Assert.Contains(actions, action =>
+                action.ControllerTypeInfo.AsType() ==
+                    typeof(SliceCStagingUtilityRateController) &&
+                action.MethodInfo.Name == "CreateAsync");
+            var sliceCRates = "/api/slice-c-staging/utility-rates";
+            string SliceCRateAt(Guid id) =>
+                sliceCRates + "/" + id.ToString("D");
+            object RateInput(Guid buildingId, decimal price, int utilityType = 1,
+                string effectiveFrom = "2026-12-01T00:00:00Z") =>
+                new { buildingId, utilityType, unitPrice = price,
+                    effectiveFrom, effectiveTo = (string?)null,
+                    notes = "Staging-only tariff evidence" };
+            async Task<(HttpStatusCode Status, string Body)> RatePost(
+                HttpClient who, object payload)
+            {
+                using var content = new StringContent(
+                    JsonSerializer.Serialize(payload), Encoding.UTF8,
+                    "application/json");
+                using var response = await who.PostAsync(sliceCRates, content);
+                return (response.StatusCode,
+                    await response.Content.ReadAsStringAsync());
+            }
+            var noGrantRate = await RatePost(clientB,
+                RateInput(a, 3000m));
+            Assert.Equal(HttpStatusCode.Forbidden, noGrantRate.Status);
+            var createdRateB = await RatePost(clientB,
+                RateInput(b, 3400m));
+            Assert.Equal(HttpStatusCode.OK, createdRateB.Status);
+            using var rateBDocument = JsonDocument.Parse(createdRateB.Body);
+            var sliceCRateB = rateBDocument.RootElement.GetProperty("id").GetGuid();
+            Assert.Equal(b,
+                rateBDocument.RootElement.GetProperty("buildingId").GetGuid());
+            Assert.DoesNotContain("notes", createdRateB.Body,
+                StringComparison.OrdinalIgnoreCase);
+
+            var createdRateA = await RatePost(clientRoot,
+                RateInput(a, 3700m));
+            Assert.Equal(HttpStatusCode.OK, createdRateA.Status);
+            using var rateADocument = JsonDocument.Parse(createdRateA.Body);
+            var sliceCRateA = rateADocument.RootElement.GetProperty("id").GetGuid();
+            using (var deniedForeignRate = await clientB.GetAsync(SliceCRateAt(sliceCRateA)))
+                Assert.Equal(HttpStatusCode.Forbidden, deniedForeignRate.StatusCode);
+            using (var allowedOwnRate = await clientB.GetAsync(SliceCRateAt(sliceCRateB)))
+                Assert.Equal(HttpStatusCode.OK, allowedOwnRate.StatusCode);
+
+            using (var ratesB = await clientB.GetAsync(sliceCRates + "?maxResultCount=20"))
+            {
+                Assert.Equal(HttpStatusCode.OK, ratesB.StatusCode);
+                var body = await ratesB.Content.ReadAsStringAsync();
+                Assert.Contains(sliceCRateB.ToString("D"), body,
+                    StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain(sliceCRateA.ToString("D"), body,
+                    StringComparison.OrdinalIgnoreCase);
+            }
+            using (var ratesRoot = await clientRoot.GetAsync(sliceCRates))
+            {
+                Assert.Equal(HttpStatusCode.OK, ratesRoot.StatusCode);
+                var body = await ratesRoot.Content.ReadAsStringAsync();
+                Assert.Contains(sliceCRateA.ToString("D"), body,
+                    StringComparison.OrdinalIgnoreCase);
+                Assert.Contains(sliceCRateB.ToString("D"), body,
+                    StringComparison.OrdinalIgnoreCase);
+            }
+            using (var forbiddenUpdateBody = new StringContent(
+                JsonSerializer.Serialize(RateInput(b, 4000m)),
+                Encoding.UTF8, "application/json"))
+            using (var forbiddenUpdate = await clientB.PutAsync(
+                SliceCRateAt(sliceCRateA), forbiddenUpdateBody))
+                Assert.Equal(HttpStatusCode.Forbidden, forbiddenUpdate.StatusCode);
+
+            // A transfer to a new building must NOT be possible through
+            // UPDATE even for a root authorized in both buildings.
+            using (var transferBody = new StringContent(
+                JsonSerializer.Serialize(RateInput(a, 5000m)),
+                Encoding.UTF8, "application/json"))
+            using (var deniedTransfer = await clientRoot.PutAsync(
+                SliceCRateAt(sliceCRateB), transferBody))
+                Assert.Equal(HttpStatusCode.Forbidden, deniedTransfer.StatusCode);
+
+            var duplicateRate = await RatePost(clientB, RateInput(b, 3600m));
+            Assert.NotEqual(HttpStatusCode.OK, duplicateRate.Status);
+            using (var updateBody = new StringContent(
+                JsonSerializer.Serialize(RateInput(b, 3550m)),
+                Encoding.UTF8, "application/json"))
+            using (var updated = await clientB.PutAsync(
+                SliceCRateAt(sliceCRateB), updateBody))
+                Assert.Equal(HttpStatusCode.OK, updated.StatusCode);
+            using (var current = await clientB.GetAsync(SliceCRateAt(sliceCRateB)))
+            {
+                Assert.Equal(HttpStatusCode.OK, current.StatusCode);
+                using var parsedRate = JsonDocument.Parse(
+                    await current.Content.ReadAsStringAsync());
+                Assert.Equal(3550m,
+                    parsedRate.RootElement.GetProperty("unitPrice").GetDecimal());
+            }
+            using (var foreignDelete = await clientB.DeleteAsync(
+                SliceCRateAt(sliceCRateA)))
+                Assert.Equal(HttpStatusCode.Forbidden, foreignDelete.StatusCode);
+            using (var ownDelete = await clientB.DeleteAsync(
+                SliceCRateAt(sliceCRateB)))
+                Assert.Equal(HttpStatusCode.OK, ownDelete.StatusCode);
+            using (var afterDelete = await clientB.GetAsync(SliceCRateAt(sliceCRateB)))
+                Assert.Equal(HttpStatusCode.Forbidden, afterDelete.StatusCode);
+            // The unscoped conventional routes stay forbidden regardless
+            // of distinct utility permissions issued by ABP Identity.
+            using (var oldRateList = await clientRoot.GetAsync(legacyRateList))
+                Assert.Equal(HttpStatusCode.Forbidden, oldRateList.StatusCode);
 
             var floorA = await CreateChildAsync(clientRoot, floorCreate,
                 new { buildingId = a, floorNumber = 1, name = "PG Floor A1" });
@@ -3910,6 +4026,7 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             // Explicitly exercise the same Slice B financial adapter that
             // the real Host wires ONLY on two isolated staging databases.
             context.Services.AddTransient<SliceBStagingFinalInvoiceMutation>();
+            context.Services.AddTransient<SliceCStagingUtilityRates>();
             context.Services.Replace(
                 ServiceDescriptor.Transient<IBuildingScopedWriteBoundary,
                     SliceAStagingWriteBoundary>());

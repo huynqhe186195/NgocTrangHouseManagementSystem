@@ -265,6 +265,50 @@ public sealed class SliceBReconciliationBoundaryPostgreSql_Tests
     }
 
     [Fact]
+    public async Task SBRECON08_Persisted_Utc_Review_Time_Matches_Frozen_Monthly_Evidence()
+    {
+        await InScratchAsync(async (db, tx, _) =>
+        {
+            var draft = Guid.NewGuid();
+            var contract = Guid.NewGuid();
+            var room = Guid.NewGuid();
+            await ExecuteAsync(db, tx, $"""
+                INSERT INTO "BuildingManagementInvoices"
+                  ("Id","ContractId","RoomId","BillingYear","BillingMonth","Status")
+                VALUES ('{draft:D}','{contract:D}','{room:D}',2026,10,0);
+                """);
+            var snapshot = MonthlyEvidence(draft, contract, room);
+            var unusual = snapshot with
+            {
+                ReviewedAtUtc = snapshot.ReviewedAtUtc.AddTicks(7)
+            };
+            var archived = MonthlyInvoiceCandidateLedgerRecord.Capture(
+                Guid.NewGuid(), unusual);
+            await ExecuteAsync(db, tx,
+                Sql(new Phase2G3MonthlyCandidateEvidence(), false));
+            await ExecuteAsync(db, tx, MonthlyInsertSql(archived));
+
+            await using var cmd = new NpgsqlCommand("""
+                SELECT "ReviewedAtUtc"
+                  FROM "BuildingManagementMonthlyInvoiceCandidates"
+                 WHERE "Id" = @id
+                """, db, tx);
+            cmd.Parameters.AddWithValue("id", archived.Id);
+            var storedTime = (DateTime)(await cmd.ExecuteScalarAsync()
+                ?? throw new InvalidOperationException("No monthly evidence saved."));
+            Assert.Equal(DateTimeKind.Utc, storedTime.Kind);
+            Assert.Equal(archived.ReviewedAtUtc, storedTime);
+
+            // The actual persisted timestamp is still consistent with the
+            // archived SHA-256 snapshot, not just the original object graph.
+            typeof(MonthlyInvoiceCandidateLedgerRecord)
+                .GetProperty(nameof(MonthlyInvoiceCandidateLedgerRecord.ReviewedAtUtc))!
+                .SetValue(archived, storedTime);
+            Assert.Equal(storedTime, archived.VerifyStoredEvidence().ReviewedAtUtc);
+        });
+    }
+
+    [Fact]
     public async Task SBRECON07_Monthly_Candidate_Refuses_Issued_Draft_Period()
     {
         await InScratchAsync(async (db, tx, _) =>

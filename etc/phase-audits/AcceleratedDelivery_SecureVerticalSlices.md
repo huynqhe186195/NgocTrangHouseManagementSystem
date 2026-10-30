@@ -198,3 +198,35 @@ checked at the final SHA before promoting from REVIEW to PASS. Meter
 lifecycle/replacement, Payment APIs, authenticated negative race testing,
 and comprehensive Slice C acceptance are still outstanding. No
 production or main-branch deployment is authorized.
+
+
+### Slice C isolated UtilityMeter 9-method vertical — staging only
+
+All nine meter/replacement methods are now represented by the dedicated
+`/api/slice-c-staging/utility-meters` host controller. Read/list and
+replacement-history queries join meter/replacement -> room -> floor ->
+building and filter live building grants before projecting. Room-specific
+history refuses even an EMPTY foreign room. The returned records exclude
+private Notes and replacement Reason. Creating/updating/deactivating/deleting
+a meter or replacing it requires the separate persisted Utilities.Manage
+permission plus a fenced live building grant. In the *same* Building
+transaction it locks building -> room -> existing physical meter before
+delegating to the original application service. Its original soft-deleted
+reading checks, replacement atomicity, immutable month history and
+integrity/uniqueness constraints stay authoritative.
+
+The PostgreSQL authenticated HTTP fixture exercises the real meter routes
+on two buildings: foreign create/read/update/replace/delete refusal;
+authorized create/list/detail; replacement invalid-closing-index rollback;
+successful atomic replacement; read-only replacement history with no private
+metadata; old monthly history preservation and post-replacement freeze;
+deactivate newly installed meter, reject deletion of replacement-linked
+meter, update and delete unbilled standalone meter, and retain legacy API
+DENY ALL. The same fixture now creates the physical meters through the
+scoped HTTP API rather than directly inserting test records, and then
+exercises four scoped MeterReading routes against them.
+
+**Review gate:** verify the final GitHub Actions Identity/PostgreSQL/Full
+regression runs after these changes. A green historical workflow at an
+earlier commit is not enough. Payment scope and cross-database revocation
+race tests remain outstanding. No production/main deployment.

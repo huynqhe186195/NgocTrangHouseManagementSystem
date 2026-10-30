@@ -1672,6 +1672,33 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 Assert.Equal("23514", depositDenied.SqlState);
             }
 
+            // Historical closeout remains readable even after the room
+            // enters a NEW, legitimate lifecycle state. Live RoomStatus is
+            // NOT the original signed handover state.
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var db = await sp.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>()
+                    .GetDbContextAsync();
+                var oldRoom = await db.Rooms.SingleAsync(x => x.Id == financeRoom);
+                oldRoom.ChangeStatus(BuildingManagement.Rooms.RoomStatus.Maintenance);
+                await db.SaveChangesAsync();
+                await uow.CompleteAsync();
+            }
+            using (var later = await clientB.GetAsync(signedCloseoutRoute))
+            {
+                Assert.Equal(HttpStatusCode.OK, later.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await later.Content.ReadAsStringAsync());
+                Assert.Equal((int)BuildingManagement.Rooms.RoomStatus.Available,
+                    json.RootElement.GetProperty("roomStatusAtCloseout").GetInt32());
+                Assert.Equal((int)BuildingManagement.Rooms.RoomStatus.Maintenance,
+                    json.RootElement.GetProperty("currentRoomStatus").GetInt32());
+            }
+
             string Members(Guid contractId) => scopedContracts + "/" +
                 contractId.ToString("D") + "/tenants";
             using (var response = await clientB.GetAsync(Members(contractB)))

@@ -498,6 +498,99 @@ public sealed class SliceBReconciliationBoundaryPostgreSql_Tests
         });
     }
 
+    [Fact]
+    public async Task SBRECON11_Monthly_Receipt_Journal_Bounds_Cash_And_Freezes_Source()
+    {
+        await InScratchAsync(async (db, tx, _) =>
+        {
+            var draft = Guid.NewGuid();
+            var contract = Guid.NewGuid();
+            var room = Guid.NewGuid();
+            await ExecuteAsync(db, tx, $"""
+                INSERT INTO "BuildingManagementInvoices"
+                  ("Id","ContractId","RoomId","BillingYear","BillingMonth","Status")
+                VALUES ('{draft:D}','{contract:D}','{room:D}',2026,10,0);
+                """);
+            var archive = MonthlyInvoiceCandidateLedgerRecord.Capture(
+                Guid.NewGuid(), MonthlyEvidence(draft, contract, room));
+            await ExecuteAsync(db, tx, Sql(new Phase2G3MonthlyCandidateEvidence(), false));
+            await ExecuteAsync(db, tx, MonthlyInsertSql(archive));
+            await ExecuteAsync(db, tx, Sql(new Phase2G3MonthlyIndependentIssuance(), false));
+            var review = MonthlyInvoiceIndependentReviewRecord.Capture(
+                Guid.NewGuid(), archive, Guid.NewGuid(),
+                archive.ReviewedAtUtc.AddHours(1), true,
+                "Independent acceptance of exact meter and rent rates");
+            await ExecuteAsync(db, tx, MonthlyReviewInsertSql(review));
+            var issued = MonthlyIssuedInvoiceRecord.Issue(
+                Guid.NewGuid(), "NTM-PG-" + Guid.NewGuid().ToString("N"),
+                archive.ReviewedByUserId, review.ReviewedAtUtc.AddHours(1),
+                archive, review);
+            await ExecuteAsync(db, tx, MonthlyIssuedInsertSql(issued));
+            var migration = new Phase2G3MonthlyReceiptAllocation();
+            await ExecuteAsync(db, tx, Sql(migration, false));
+
+            var first = Guid.NewGuid();
+            await ExecuteAsync(db, tx, MonthlyPaymentInsertSql(
+                first, issued, 500_000m));
+            await ExecuteAsync(db, tx, MonthlyAllocationInsertSql(
+                first, issued, 500_000m));
+            Assert.Equal(500_000L, await ScalarAsync(db, tx, """
+                SELECT sum("Amount") FROM
+                    "BuildingManagementMonthlyInvoicePaymentAllocation"
+                """));
+
+            await ExpectFailureAsync(db, tx,
+                MonthlyAllocationInsertSql(first, issued, 500_000m), "23505");
+            await ExpectFailureAsync(db, tx, $"""
+                UPDATE "BuildingManagementPayments" SET "Amount" = 1
+                 WHERE "Id" = '{first:D}';
+                """, "23514");
+            await ExpectFailureAsync(db, tx, $"""
+                DELETE FROM "BuildingManagementMonthlyInvoicePaymentAllocation"
+                 WHERE "PaymentId" = '{first:D}';
+                """, "23514");
+            await ExpectFailureAsync(db, tx, """
+                TRUNCATE "BuildingManagementMonthlyInvoicePaymentAllocation"
+                """, "23514");
+
+            var excess = Guid.NewGuid();
+            await ExecuteAsync(db, tx,
+                MonthlyPaymentInsertSql(excess, issued, 2_550_001m));
+            await ExpectFailureAsync(db, tx,
+                MonthlyAllocationInsertSql(excess, issued, 2_550_001m),
+                "23514");
+            await ExpectFailureAsync(db, tx, Sql(migration, true), "23514");
+        });
+    }
+
+    private static string MonthlyPaymentInsertSql(
+        Guid paymentId, MonthlyIssuedInvoiceRecord issued, decimal amount)
+        => $"""
+           INSERT INTO "BuildingManagementPayments"
+             ("Id","Purpose","Status","ContractId","InvoiceId",
+              "Amount","PaymentNumber","PaidAt","TransactionReference","IsDeleted")
+           VALUES ('{paymentId:D}',3,2,'{issued.ContractId:D}','{issued.Id:D}',
+             {amount.ToString(CultureInfo.InvariantCulture)},
+             'MONTH-{paymentId:N}','2026-10-30T11:00:00Z',
+             'BANK-{paymentId:N}',FALSE);
+           """;
+
+    private static string MonthlyAllocationInsertSql(
+        Guid paymentId, MonthlyIssuedInvoiceRecord issued, decimal amount)
+        => $"""
+           INSERT INTO "BuildingManagementMonthlyInvoicePaymentAllocation"
+             ("Id","PaymentId","IssuedInvoiceId","ContractId","Amount",
+              "PaymentNumberSnapshot","PaidAtUtc",
+              "BankTransactionReferenceSnapshot","RecordedByUserId",
+              "RecordedAtUtc")
+           VALUES ('{Guid.NewGuid():D}','{paymentId:D}','{issued.Id:D}',
+             '{issued.ContractId:D}',
+             {amount.ToString(CultureInfo.InvariantCulture)},
+             'MONTH-{paymentId:N}','2026-10-30T11:00:00Z',
+             'BANK-{paymentId:N}','{Guid.NewGuid():D}',
+             '2026-10-30T12:00:00Z');
+           """;
+
     private static string MonthlyReviewInsertSql(
         MonthlyInvoiceIndependentReviewRecord x)
         => $"""

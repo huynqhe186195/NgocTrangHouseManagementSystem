@@ -2151,6 +2151,104 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 await uow.CompleteAsync();
             }
 
+            // Month-specific staged receipts use their own immutable
+            // journal, not the FINAL invoice allocation table.
+            var monthReceiptRoute = FinalInvoices(monthlyDraftContract) +
+                "/monthly-issued/" + monthlyIssuedId.ToString("D") +
+                "/manual-receipts";
+            var monthPaidAtUtc = DateTime.UtcNow;
+            var partialMonthEvidence = new {
+                tenantId = tenantB,
+                amount = 500_000m,
+                paidAtUtc = monthPaidAtUtc,
+                transactionReference = "SCRATCH-MONTH-RECEIPT-001",
+                bankEvidenceReference = "MONTHLY-SIGNED-BANK-EVIDENCE-001"
+            };
+            var unauthorizedMonthReceipt = await PostFinalAsync(
+                clientB, monthReceiptRoute,
+                JsonSerializer.Serialize(partialMonthEvidence));
+            Assert.Equal(HttpStatusCode.Forbidden, unauthorizedMonthReceipt.Status);
+
+            var monthPartial = await PostFinalAsync(
+                clientRoot, monthReceiptRoute,
+                JsonSerializer.Serialize(partialMonthEvidence));
+            Assert.True(monthPartial.Status is HttpStatusCode.OK or
+                HttpStatusCode.Created,
+                $"Monthly receipt: {monthPartial.Status}: {monthPartial.Body}");
+            Guid monthPaymentId;
+            Guid monthAllocationId;
+            using (var json = JsonDocument.Parse(monthPartial.Body))
+            {
+                monthPaymentId = json.RootElement.GetProperty("paymentId").GetGuid();
+                monthAllocationId = json.RootElement
+                    .GetProperty("allocationJournalId").GetGuid();
+                Assert.Equal(500_000m,
+                    json.RootElement.GetProperty("stagedAmount").GetDecimal());
+                Assert.False(json.RootElement
+                    .GetProperty("isOfficialReceivableSettled").GetBoolean());
+            }
+            var repeatedMonth = await PostFinalAsync(
+                clientRoot, monthReceiptRoute,
+                JsonSerializer.Serialize(partialMonthEvidence));
+            Assert.True(repeatedMonth.Status is HttpStatusCode.OK or
+                HttpStatusCode.Created);
+            using (var json = JsonDocument.Parse(repeatedMonth.Body))
+            {
+                Assert.Equal(monthPaymentId,
+                    json.RootElement.GetProperty("paymentId").GetGuid());
+                Assert.Equal(monthAllocationId,
+                    json.RootElement.GetProperty("allocationJournalId").GetGuid());
+            }
+            var alteredMonth = await PostFinalAsync(
+                clientRoot, monthReceiptRoute, JsonSerializer.Serialize(new {
+                    tenantId = tenantB,
+                    amount = 500_001m, paidAtUtc = monthPaidAtUtc,
+                    transactionReference = partialMonthEvidence.transactionReference,
+                    bankEvidenceReference = partialMonthEvidence.bankEvidenceReference
+                }));
+            Assert.Equal(HttpStatusCode.Forbidden, alteredMonth.Status);
+
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var db = await sp.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>().GetDbContextAsync();
+                var payment = await db.Payments.SingleAsync(x => x.Id == monthPaymentId);
+                var journal = await db.MonthlyInvoicePaymentAllocations
+                    .SingleAsync(x => x.Id == monthAllocationId);
+                journal.VerifySource(payment);
+                Assert.Equal(monthlyIssuedId, journal.IssuedInvoiceId);
+                Assert.False(journal.IsPostedDebtSettlement);
+                Assert.False(await db.InvoicePaymentAllocationJournal.AnyAsync(
+                    x => x.PaymentId == monthPaymentId));
+                var summary = BuildingManagement.Invoices
+                    .IssuedInvoicePaymentReconciler.Assess(
+                        monthlyIssuedId, monthlyDraftContract,
+                        2_583_000m, DateOnly.FromDateTime(
+                            TimeZoneInfo.ConvertTimeFromUtc(
+                                DateTime.UtcNow.AddDays(7),
+                                TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh"))),
+                        DateOnly.FromDateTime(
+                            TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow,
+                                TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh"))),
+                        new[] { payment });
+                Assert.Equal(500_000m, summary.CompletedPaymentsAmount);
+                Assert.Equal(2_083_000m, summary.OutstandingBeforeAdjustments);
+                Assert.Equal(BuildingManagement.Invoices.IssuedInvoicePaymentStatus.PartiallyPaid,
+                    summary.Status);
+                await uow.CompleteAsync();
+            }
+            var overMonth = await PostFinalAsync(
+                clientRoot, monthReceiptRoute, JsonSerializer.Serialize(new {
+                    tenantId = tenantB, amount = 2_083_001m,
+                    paidAtUtc = DateTime.UtcNow,
+                    transactionReference = "SCRATCH-MONTH-OVERPAY-001",
+                    bankEvidenceReference = "MONTHLY-BANK-OVERPAY-EVIDENCE-001"
+                }));
+            Assert.Equal(HttpStatusCode.Forbidden, overMonth.Status);
+
             async Task<JsonDocument> PostValidFinanceAsync(
                 HttpClient caller, string route, object payload)
             {

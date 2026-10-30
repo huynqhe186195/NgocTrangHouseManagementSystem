@@ -2,6 +2,8 @@ using System;
 using System.IO;
 using System.Linq;
 using BuildingManagement.Invoices;
+using BuildingManagement.Payments;
+using BuildingManagement.Payments.BuildingManagement.Payments;
 using BuildingManagement.Utilities;
 using Xunit;
 
@@ -123,6 +125,78 @@ public sealed class MonthlyInvoiceIssuance_Tests
             PreparedAt.AddHours(2).AddTicks(7), archive, review);
         Assert.Equal(0L, issued.IssuedAtUtc.Ticks % 10L);
         issued.VerifyAgainst(archive, review);
+    }
+
+    [Fact]
+    public void MONTISS09_Completed_Exact_Receipt_Can_Be_Staged_Once()
+    {
+        var archive = Archive();
+        var review = Review(archive);
+        var issued = MonthlyIssuedInvoiceRecord.Issue(Guid.NewGuid(),
+            "NTM-202610-009", archive.ReviewedByUserId,
+            PreparedAt.AddHours(2), archive, review);
+        var receipt = Receipt(issued);
+        var allocation = MonthlyInvoicePaymentAllocationRecord.Capture(
+            Guid.NewGuid(), issued, receipt, archive.ReviewedByUserId,
+            PreparedAt.AddHours(4));
+        allocation.VerifySource(receipt);
+
+        Assert.Equal(issued.Id, allocation.IssuedInvoiceId);
+        Assert.Equal(500_000m, allocation.Amount);
+        Assert.False(allocation.IsIndependentlyVerifiedBankPayment);
+        Assert.False(allocation.IsPostedDebtSettlement);
+        Assert.False(allocation.CanOffsetDeposit);
+    }
+
+    [Fact]
+    public void MONTISS10_Foreign_Invoice_Or_Contract_Payment_Is_Rejected()
+    {
+        var archive = Archive();
+        var review = Review(archive);
+        var issued = MonthlyIssuedInvoiceRecord.Issue(Guid.NewGuid(),
+            "NTM-202610-010", archive.ReviewedByUserId,
+            PreparedAt.AddHours(2), archive, review);
+        var foreign = new Payment(
+            Guid.NewGuid(), "MONTH-PAY-FOREIGN", Guid.NewGuid(),
+            PaymentPurpose.InvoicePayment, PaymentMethod.BankTransfer,
+            PaymentChannel.Manual, 500_000m, contractId: issued.ContractId,
+            invoiceId: Guid.NewGuid(),
+            transactionReference: "BANK-MONTH-FOREIGN-001");
+        foreign.Complete(PreparedAt.AddHours(3), "BANK-MONTH-FOREIGN-001");
+        Assert.Throws<InvalidOperationException>(() =>
+            MonthlyInvoicePaymentAllocationRecord.Capture(
+                Guid.NewGuid(), issued, foreign, Guid.NewGuid(),
+                PreparedAt.AddHours(4)));
+    }
+
+    [Fact]
+    public void MONTISS11_Mutated_Original_Receipt_Invalidates_Monthly_Allocation()
+    {
+        var archive = Archive();
+        var review = Review(archive);
+        var issued = MonthlyIssuedInvoiceRecord.Issue(Guid.NewGuid(),
+            "NTM-202610-011", archive.ReviewedByUserId,
+            PreparedAt.AddHours(2), archive, review);
+        var receipt = Receipt(issued);
+        var allocation = MonthlyInvoicePaymentAllocationRecord.Capture(
+            Guid.NewGuid(), issued, receipt, Guid.NewGuid(),
+            PreparedAt.AddHours(4));
+        typeof(Payment).GetProperty(nameof(Payment.Amount))!
+            .SetValue(receipt, 499_999m);
+        Assert.Throws<InvalidOperationException>(() =>
+            allocation.VerifySource(receipt));
+    }
+
+    private static Payment Receipt(MonthlyIssuedInvoiceRecord issued)
+    {
+        var receipt = new Payment(
+            Guid.NewGuid(), "MONTH-PAY-EXACT", Guid.NewGuid(),
+            PaymentPurpose.InvoicePayment, PaymentMethod.BankTransfer,
+            PaymentChannel.Manual, 500_000m,
+            contractId: issued.ContractId, invoiceId: issued.Id,
+            transactionReference: "BANK-MONTH-EXACT-001");
+        receipt.Complete(PreparedAt.AddHours(3), "BANK-MONTH-EXACT-001");
+        return receipt;
     }
 
     private static MonthlyInvoiceIndependentReviewRecord Review(

@@ -57,6 +57,7 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
     public DbSet<MonthlyInvoiceCandidateLedgerRecord> MonthlyInvoiceCandidates { get; set; } = default!;
     public DbSet<MonthlyInvoiceIndependentReviewRecord> MonthlyInvoiceReviews { get; set; } = default!;
     public DbSet<MonthlyIssuedInvoiceRecord> MonthlyIssuedInvoices { get; set; } = default!;
+    public DbSet<MonthlyInvoicePaymentAllocationRecord> MonthlyInvoicePaymentAllocations { get; set; } = default!;
     // Source-only explicit root deposit disposition approval; no automatic refund.
     public DbSet<ContractDepositCloseoutApprovalRecord> DepositCloseoutApprovals { get; set; } = default!;
 
@@ -102,6 +103,8 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.MonthlyInvoiceIndependentReviewRecordConfiguration());
         builder.ApplyConfiguration(
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.MonthlyIssuedInvoiceRecordConfiguration());
+        builder.ApplyConfiguration(
+            new BuildingManagement.EntityFrameworkCore.EntityConfigurations.MonthlyInvoicePaymentAllocationRecordConfiguration());
         builder.ApplyConfiguration(
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.ContractDepositCloseoutApprovalRecordConfiguration());
     }

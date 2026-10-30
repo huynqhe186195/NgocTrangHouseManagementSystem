@@ -357,6 +357,142 @@ public sealed class SliceBStagingFinalInvoiceMutation
             });
 
     /// <summary>
+    /// Manual bank evidence for one independently reviewed MONTHLY invoice.
+    /// Original Payment and monthly allocation journal commit atomically.
+    /// Identical HTTP retries return original IDs; contradictory bank refs
+    /// are rejected. A bank attestation is NOT external bank verification.
+    /// </summary>
+    public Task<SliceBStagedMonthlyReceiptRead> RecordMonthlyReceiptAsync(
+        Guid contractId, Guid monthlyIssuedId,
+        SliceBFinalInvoiceManualReceiptInput input)
+        => ExecuteScopedAsync(contractId, requireBootstrapOwner: true,
+            async (db, actor, building, roomId) =>
+            {
+                if (monthlyIssuedId == Guid.Empty || input is null ||
+                    input.TenantId == Guid.Empty || input.Amount <= 0m ||
+                    decimal.Truncate(input.Amount) != input.Amount ||
+                    input.PaidAtUtc == default ||
+                    input.PaidAtUtc.Kind != DateTimeKind.Utc ||
+                    input.PaidAtUtc > DateTime.UtcNow ||
+                    string.IsNullOrWhiteSpace(input.TransactionReference) ||
+                    input.TransactionReference.Trim().Length is < 8 or > 128 ||
+                    string.IsNullOrWhiteSpace(input.BankEvidenceReference) ||
+                    input.BankEvidenceReference.Trim().Length is < 8 or > 200)
+                    throw Denied();
+
+                await using (var cmd = Command(db, """
+                    SELECT "Id" FROM "BuildingManagementMonthlyIssuedInvoiceLedger"
+                     WHERE "Id" = @id AND "ContractId" = @contract
+                       AND "RoomId" = @room AND "BuildingId" = @building
+                     FOR UPDATE
+                    """))
+                {
+                    Add(cmd, "id", monthlyIssuedId);
+                    Add(cmd, "contract", contractId);
+                    Add(cmd, "room", roomId);
+                    Add(cmd, "building", building);
+                    if (await cmd.ExecuteScalarAsync() is not Guid)
+                        throw Denied();
+                }
+                var issued = await db.MonthlyIssuedInvoices.AsNoTracking()
+                    .SingleOrDefaultAsync(x => x.Id == monthlyIssuedId);
+                if (issued is null || issued.ContractId != contractId ||
+                    issued.RoomId != roomId ||
+                    issued.BuildingId != building)
+                    throw Denied();
+
+                // Tenant attribution and source lock cannot be delegated
+                // to an untrusted tenant ID in the request payload.
+                await using (var cmd = Command(db, """
+                    SELECT ct."Id" FROM "BuildingManagementContractTenants" ct
+                      JOIN "BuildingManagementTenants" t
+                        ON t."Id" = ct."TenantId"
+                     WHERE ct."ContractId" = @contract
+                       AND ct."TenantId" = @tenant
+                       AND ct."IsDeleted" = FALSE
+                       AND t."IsDeleted" = FALSE
+                     FOR SHARE OF ct, t
+                    """))
+                {
+                    Add(cmd, "contract", contractId);
+                    Add(cmd, "tenant", input.TenantId);
+                    if (await cmd.ExecuteScalarAsync() is not Guid)
+                        throw Denied();
+                }
+
+                var paidAt = input.PaidAtUtc.AddTicks(
+                    -(input.PaidAtUtc.Ticks % 10L));
+                if (paidAt < issued.IssuedAtUtc)
+                    throw Denied();
+                var reference = input.TransactionReference.Trim();
+                var proof = "BANK-PROOF: " + input.BankEvidenceReference.Trim();
+
+                // The normalized global bank reference is unique for ALL
+                // invoice receipts, both recurring and final.
+                var existing = await db.Payments.IgnoreQueryFilters()
+                    .AsNoTracking().SingleOrDefaultAsync(x =>
+                        x.Purpose == PaymentPurpose.InvoicePayment &&
+                        x.TransactionReference != null &&
+                        x.TransactionReference.Trim().ToLower() ==
+                            reference.ToLowerInvariant());
+                if (existing is not null)
+                {
+                    if (existing.IsDeleted ||
+                        existing.Purpose != PaymentPurpose.InvoicePayment ||
+                        existing.Method != PaymentMethod.BankTransfer ||
+                        existing.Channel != PaymentChannel.Manual ||
+                        existing.Status != PaymentStatus.Completed ||
+                        existing.ContractId != contractId ||
+                        existing.InvoiceId != monthlyIssuedId ||
+                        existing.TenantId != input.TenantId ||
+                        existing.Amount != input.Amount ||
+                        existing.PaidAt != paidAt ||
+                        !StringComparer.Ordinal.Equals(existing.Notes, proof))
+                        throw Denied();
+                    var journal = await db.MonthlyInvoicePaymentAllocations
+                        .AsNoTracking().SingleOrDefaultAsync(x =>
+                            x.PaymentId == existing.Id);
+                    if (journal is null ||
+                        journal.IssuedInvoiceId != issued.Id ||
+                        journal.ContractId != contractId)
+                        throw Denied();
+                    journal.VerifySource(existing);
+                    return new SliceBStagedMonthlyReceiptRead(
+                        existing.Id, journal.Id, issued.Id, existing.Amount,
+                        IsOfficialReceivableSettled: false);
+                }
+
+                var already = await db.MonthlyInvoicePaymentAllocations
+                    .AsNoTracking().Where(x => x.IssuedInvoiceId == issued.Id)
+                    .SumAsync(x => x.Amount);
+                if (already + input.Amount > issued.TotalAmount)
+                    throw Denied();
+
+                var receiptId = Guid.NewGuid();
+                var receipt = new Payment(
+                    receiptId, "MONTH-" + receiptId.ToString("N"),
+                    input.TenantId, PaymentPurpose.InvoicePayment,
+                    PaymentMethod.BankTransfer, PaymentChannel.Manual,
+                    input.Amount, contractId: contractId,
+                    invoiceId: monthlyIssuedId,
+                    transactionReference: reference, notes: proof);
+                receipt.Complete(paidAt, reference);
+                db.Payments.Add(receipt);
+                await db.SaveChangesAsync();
+                var entry = db.Entry(receipt);
+                if (entry.State != EntityState.Unchanged)
+                    throw Denied();
+                entry.State = EntityState.Detached;
+
+                var allocation = MonthlyInvoicePaymentAllocationRecord.Capture(
+                    Guid.NewGuid(), issued, receipt, actor, DateTime.UtcNow);
+                db.MonthlyInvoicePaymentAllocations.Add(allocation);
+                return new SliceBStagedMonthlyReceiptRead(
+                    receipt.Id, allocation.Id, issued.Id, receipt.Amount,
+                    IsOfficialReceivableSettled: false);
+            });
+
+    /// <summary>
     /// Archive a verified current Draft and source graph. A prepared
     /// archive can NEVER itself be issued or produce a receivable.
     /// </summary>
@@ -1164,6 +1300,10 @@ public sealed record SliceBStagedMonthlyIssuedRead(
     Guid IssuedInvoiceId, Guid CandidateId, Guid ContractId,
     string InvoiceNumber, decimal Amount, DateOnly DueDate,
     bool IsOfficialReceivable);
+
+public sealed record SliceBStagedMonthlyReceiptRead(
+    Guid PaymentId, Guid AllocationJournalId, Guid IssuedInvoiceId,
+    decimal StagedAmount, bool IsOfficialReceivableSettled);
 
 public sealed record SliceBStagedMonthlyInvoiceCandidateRead(
     Guid CandidateId, Guid DraftInvoiceId, Guid ContractId,

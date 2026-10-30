@@ -108,10 +108,72 @@ public sealed class Phase2G4ContractDepositSettlementDecisions : Migration
                     RAISE EXCEPTION 'Deposit has existing outgoing disposition'
                         USING ERRCODE = '23514';
                 END IF;
-                -- The official issue and all manually reviewed bank
-                -- receipts are checked under contract fence in application.
-                -- Source table and cross-contract double-spend invariants
-                -- also remain enforced by existing SQL deposit triggers.
+                -- Reject stale-snapshot direct SQL approvals. One
+                -- approval must see a serializable, complete debt ledger.
+                IF current_setting('transaction_isolation') <> 'serializable' THEN
+                    RAISE EXCEPTION 'Deposit decision requires SERIALIZABLE'
+                      USING ERRCODE = '23514';
+                END IF;
+                IF EXISTS (
+                    SELECT 1 FROM "BuildingManagementIssuedInvoiceLedger" i
+                     WHERE i."ContractId" = NEW."ContractId" AND NOT EXISTS (
+                         SELECT 1 FROM "BuildingManagementOfficialInvoiceReceivables" p
+                          WHERE p."Kind" = 2 AND p."IssuedInvoiceId" = i."Id"
+                            AND p."ContractId" = NEW."ContractId")
+                ) OR EXISTS (
+                    SELECT 1 FROM "BuildingManagementMonthlyIssuedInvoiceLedger" i
+                     WHERE i."ContractId" = NEW."ContractId" AND NOT EXISTS (
+                         SELECT 1 FROM "BuildingManagementOfficialInvoiceReceivables" p
+                          WHERE p."Kind" = 1 AND p."IssuedInvoiceId" = i."Id"
+                            AND p."ContractId" = NEW."ContractId")
+                ) THEN
+                    RAISE EXCEPTION 'Every issued invoice must be officially posted'
+                      USING ERRCODE = '23514';
+                END IF;
+                IF EXISTS (
+                    SELECT 1 FROM "BuildingManagementOfficialInvoiceReceivables" p
+                     WHERE p."ContractId" = NEW."ContractId"
+                       AND (
+                         (SELECT count(*) FROM
+                           "BuildingManagementOfficialInvoiceReceiptReviews" r
+                          WHERE r."ReceivablePostingId" = p."Id"
+                            AND r."Accepted" = TRUE)
+                         <>
+                         CASE WHEN p."Kind" = 1 THEN
+                           (SELECT count(*) FROM
+                             "BuildingManagementMonthlyInvoicePaymentAllocation" a
+                            WHERE a."IssuedInvoiceId" = p."IssuedInvoiceId")
+                         ELSE
+                           (SELECT count(*) FROM
+                             "BuildingManagementInvoicePaymentAllocationJournal" a
+                            WHERE a."IssuedInvoiceId" = p."IssuedInvoiceId")
+                         END
+                         OR
+                         p."OriginalAmount" +
+                           CASE WHEN p."Kind" = 1 THEN
+                             (SELECT COALESCE(sum(d."ApprovedSignedDeltaAmount"),0)
+                                FROM "BuildingManagementMonthlyInvoiceAdjustmentDecisions" d
+                               WHERE d."IssuedInvoiceId" = p."IssuedInvoiceId"
+                                 AND d."Accepted" = TRUE)
+                           ELSE 0 END
+                         <>
+                         (SELECT COALESCE(sum(r."Amount"),0)
+                            FROM "BuildingManagementOfficialInvoiceReceiptReviews" r
+                           WHERE r."ReceivablePostingId" = p."Id"
+                             AND r."Accepted" = TRUE)
+                         OR EXISTS (
+                             SELECT 1 FROM "BuildingManagementOfficialInvoiceReceiptReviews" r
+                              WHERE r."ReceivablePostingId" = p."Id"
+                                AND r."ReviewedAtUtc" > NEW."ApprovedAtUtc"
+                         )
+                       )
+                ) THEN
+                    RAISE EXCEPTION
+                      'Deposit decision requires every official receivable fully independently reconciled'
+                      USING ERRCODE = '23514';
+                END IF;
+                -- Source amount/provenance and cross-contract double-spend
+                -- checks remain enforced by existing financial triggers.
                 RETURN NEW;
             END;
             $decision$;
@@ -231,6 +293,34 @@ public sealed class Phase2G4ContractDepositSettlementDecisions : Migration
               FOR EACH ROW
               EXECUTE FUNCTION "BM_RequireDepositDecisionForOutgoing"();
             """);
+        builder.Sql("""
+            -- Freeze the fully reconciled invoice graph once the owner
+            -- signs the deposit plan. New billing/credit notes must not
+            -- silently invalidate that immutable closeout decision.
+            CREATE FUNCTION "BM_BlockNewFinancialEventsAfterDepositDecision"()
+            RETURNS trigger LANGUAGE plpgsql AS $after_decision$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM "BuildingManagementContractDepositSettlementDecisions" d
+                     WHERE d."ContractId" = NEW."ContractId"
+                ) THEN
+                    RAISE EXCEPTION
+                      'Financial issuance and adjustment cannot follow deposit decision'
+                      USING ERRCODE = '23514';
+                END IF;
+                RETURN NEW;
+            END;
+            $after_decision$;
+            CREATE TRIGGER "TR_BM_00_NoFinalIssueAfterDepositDecision"
+              BEFORE INSERT ON "BuildingManagementIssuedInvoiceLedger"
+              FOR EACH ROW EXECUTE FUNCTION "BM_BlockNewFinancialEventsAfterDepositDecision"();
+            CREATE TRIGGER "TR_BM_00_NoMonthlyIssueAfterDepositDecision"
+              BEFORE INSERT ON "BuildingManagementMonthlyIssuedInvoiceLedger"
+              FOR EACH ROW EXECUTE FUNCTION "BM_BlockNewFinancialEventsAfterDepositDecision"();
+            CREATE TRIGGER "TR_BM_00_NoAdjustmentAfterDepositDecision"
+              BEFORE INSERT ON "BuildingManagementMonthlyInvoiceAdjustmentDecisions"
+              FOR EACH ROW EXECUTE FUNCTION "BM_BlockNewFinancialEventsAfterDepositDecision"();
+            """);
     }
 
     protected override void Down(MigrationBuilder builder)
@@ -247,6 +337,13 @@ public sealed class Phase2G4ContractDepositSettlementDecisions : Migration
                 END IF;
             END;
             $down$;
+            DROP TRIGGER "TR_BM_00_NoAdjustmentAfterDepositDecision"
+              ON "BuildingManagementMonthlyInvoiceAdjustmentDecisions";
+            DROP TRIGGER "TR_BM_00_NoMonthlyIssueAfterDepositDecision"
+              ON "BuildingManagementMonthlyIssuedInvoiceLedger";
+            DROP TRIGGER "TR_BM_00_NoFinalIssueAfterDepositDecision"
+              ON "BuildingManagementIssuedInvoiceLedger";
+            DROP FUNCTION "BM_BlockNewFinancialEventsAfterDepositDecision"();
             DROP TRIGGER "TR_BM_00_RequireDepositDecisionForOutgoing"
               ON "BuildingManagementDepositSettlements";
             DROP FUNCTION "BM_RequireDepositDecisionForOutgoing"();

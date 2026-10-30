@@ -207,6 +207,38 @@ public sealed class SliceBFullFinancialMigrationChainPostgreSql_Tests
                            '"BuildingManagementDepositSettlements"'::regclass
                     """));
                 Assert.Equal(3L, await ScalarAsync(inspect, """
+                    SELECT count(*) FROM pg_trigger
+                     WHERE NOT tgisinternal
+                       AND tgname IN (
+                         'TR_BM_00_NoFinalIssueAfterDepositDecision',
+                         'TR_BM_00_NoMonthlyIssueAfterDepositDecision',
+                         'TR_BM_00_NoAdjustmentAfterDepositDecision')
+                    """));
+                // Even with plausible amount/decision JSON, an unrelated
+                // direct Read Committed SQL connection cannot create a
+                // deposit decision or bypass the required posting service.
+                await using (var unisolated = new NpgsqlCommand($"""
+                    INSERT INTO "BuildingManagementContractDepositSettlementDecisions"
+                      ("Id","ContractId","MoveOutRequestId","FinalIssuedInvoiceId",
+                       "BuildingId","ApprovedByUserId","ApprovedAtUtc",
+                       "VerifiedHeldAmount","ApprovedForfeitAmount",
+                       "ApprovedRefundAmount","ApprovedDebtOffsetAmount",
+                       "ExplicitDepositPolicyReference","ApprovalJson","ApprovalSha256")
+                    VALUES ('{Guid.NewGuid():D}','{Guid.NewGuid():D}',
+                            '{Guid.NewGuid():D}','{Guid.NewGuid():D}',
+                            '{Guid.NewGuid():D}','{Guid.NewGuid():D}',
+                            '2026-10-30T10:00:00Z',
+                            3000000,0,3000000,0,
+                            'SIGNED-EXPLICIT-DEPOSIT-POLICY',
+                            '{{}}',repeat('a',64))
+                    """, inspect))
+                {
+                    var rejected = await Assert.ThrowsAsync<PostgresException>(
+                        async () => await unisolated.ExecuteNonQueryAsync());
+                    Assert.Equal("23514", rejected.SqlState);
+                }
+
+                Assert.Equal(3L, await ScalarAsync(inspect, """
                     SELECT count(*) FROM pg_indexes WHERE
                       indexname IN ('UX_BM_DepositDecision_Contract',
                                     'UX_BM_DepositDecision_MoveOut',

@@ -297,6 +297,19 @@ public sealed class SliceBStagingContractsController : ControllerBase
             id, requestId);
     }
 
+    // Phase 2G.3: observed issued-invoice balance only, verified against
+    // immutable source ledger and completed payment allocation evidence.
+    // It never posts debt, applies deposits, or verifies external banks.
+    [HttpGet("{id:guid}/issued-invoices/{issuedId:guid}/balance")]
+    [UnitOfWork(true)]
+    public Task<SliceBScopedIssuedInvoiceBalanceRead> GetIssuedInvoiceBalanceAsync(
+        [FromRoute] Guid id, [FromRoute] Guid issuedId)
+    {
+        RequireIsolatedStaging();
+        return (_query ?? throw Denied())
+            .GetIssuedInvoiceBalanceAsync(id, issuedId);
+    }
+
     // A durable signed closeout is read from the immutable ledger, not
     // inferred from preflight flags. No bank/tenant personal data exposed.
     [HttpGet("{id:guid}/move-out-requests/{requestId:guid}/closeout")]

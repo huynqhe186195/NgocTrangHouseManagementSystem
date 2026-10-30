@@ -46,3 +46,44 @@
 6. **2H** implement only after OI-07 decisions, then TRF scenarios, deposit exclusivity and atomic source/destination updates.
 
 **Acceptance labels:** IMPLEMENTED (code exists), STAGING VERIFIED (actual current-SHA tests pass), BUSINESS ACCEPTED (source rules satisfied, open decisions closed), PRODUCTION ENABLED (separate authorization, not part of current mandate). These are not interchangeable.
+
+## Phase 2G.3 continuation — 30 October 2026
+
+**User-provided delivery rule:** Phase 2G.1 and 2G.2 were already accepted
+in previous conversations. Do not restart their implementation/tests or
+reopen completed work merely because the October 22 document contains an
+older status. Any genuinely new cross-phase regression is still a defect to
+address in the currently edited phase, without rewriting accepted features.
+
+**Current work branch and changes (NOT a claim of full Phase 2G.3 completion):**
+
+- `572c2854`: `IssuedInvoicePaymentReconciler` computes completed
+  receipts **as of the Vietnam business date**, not from future receipts,
+  and rejects ambiguous non-UTC completion timestamps. Four new domain cases.
+- `64d031d5`: `IssuedInvoiceLedgerRecord.VerifyStoredTerms` checks
+  archived auxiliary fee line totals, multiplication, valid categories,
+  evidence references and per-service uniqueness. Existing EF test now
+  covers tampered archived terms with recalculated SHA-256.
+- `cb8551aa`: read-only staged invoice-debt evaluator and application
+  reader. It loads the persisted issued ledger + original evidence/review,
+  all contract invoice receipts (including soft-deleted), and allocation
+  journal under a consistent transaction; blocks any missing/mismatched
+  evidence. Seven domain scenarios were added.
+- `97aa4fac`: regression checks assert the new reader is **not remote**
+  and declares `RepeatableRead`. This is an internal/staging calculator;
+  even a clean mathematical balance is **not posted debt**, a bank
+  verification, deposit offset or refund permission.
+
+**Verification:** `64d031d5` completed GitHub CI successfully.
+The follow-up changes require CI verification at their **new final SHA**;
+do not claim them PASS from the older run. No PostgreSQL test database
+migration, production release, or full financial issuance acceptance
+follows from these changes.
+
+**Still required for Phase 2G.3 BUSINESS ACCEPTED:** a complete recurring
+invoice issuance path, pricing approval for ancillary charges, audited
+post-issuance corrections, authorized debt/payment posting, and tests of
+all official invoice states with current-SHA PostgreSQL security/concurrency.
+Only after resolving those prerequisites should 2G.4 deposit offset and
+2G.5 final closeout depend on the official debt ledger. Phase 2H requires
+the source §8 contract/transfer policy decisions before its orchestration.

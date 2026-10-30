@@ -597,6 +597,168 @@ public sealed class SliceBStagingContractQuery
             BankTransferIndependentlyVerified: false);
     }
 
+    /// <summary>
+    /// Phase 2G.3 contract-level OBSERVED debt portfolio on isolated staging.
+    /// All invoices are obtained from the server-side immutable issued ledger
+    /// with the live Contract -> Room -> Floor -> Building membership path.
+    /// No caller-supplied total, rate, payment ID, tenant ID or building scope.
+    /// It never posts debt, modifies payments, offsets deposits, or issues bills.
+    /// </summary>
+    public async Task<SliceBScopedContractIssuedDebtRead>
+        GetIssuedDebtPortfolioAsync(Guid contractId)
+    {
+        if (contractId == Guid.Empty)
+            throw Denied();
+        var scoped = await GetAsync(contractId);
+        var actor = RequireActor();
+        var db = await _provider.GetDbContextAsync();
+        if (!db.Database.IsNpgsql())
+            throw Denied();
+        var transaction = db.Database.CurrentTransaction?.GetDbTransaction()
+            ?? throw Denied();
+
+        // Keep the resource graph and grant rows locked through the
+        // transactional HTTP read. Concurrent membership revocation,
+        // room reassignment and contract deletion must wait until this
+        // evidence is delivered; the Identity lease is already acquired
+        // by GetAsync and held through the same UnitOfWork.
+        await using (var command = db.Database.GetDbConnection().CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = """
+                SELECT contract."Id"
+                  FROM "BuildingManagementContracts" contract
+                  JOIN "BuildingManagementRooms" room
+                    ON room."Id" = contract."RoomId"
+                  JOIN "BuildingManagementFloors" floor
+                    ON floor."Id" = room."FloorId"
+                  JOIN "Buildings" building
+                    ON building."Id" = floor."BuildingId"
+                  JOIN "BuildingManagementOperatorBuildingGrants" membership
+                    ON membership."BuildingId" = building."Id"
+                 WHERE contract."Id" = @contract
+                   AND building."Id" = @building
+                   AND membership."OperatorUserId" = @actor
+                   AND membership."RevokedAtUtc" IS NULL
+                   AND membership."GrantedAtUtc" <= NOW()
+                   AND (membership."ExpiresAtUtc" IS NULL OR
+                        membership."ExpiresAtUtc" > NOW())
+                   AND NOT contract."IsDeleted" AND NOT room."IsDeleted"
+                   AND NOT floor."IsDeleted" AND NOT building."IsDeleted"
+                 FOR SHARE OF contract, room, floor, building, membership
+                """;
+            foreach (var (key, value) in new[]
+            {
+                ("contract", contractId),
+                ("building", scoped.BuildingId),
+                ("actor", actor)
+            })
+            {
+                var parameter = command.CreateParameter();
+                parameter.ParameterName = key;
+                parameter.Value = value;
+                command.Parameters.Add(parameter);
+            }
+            if (await command.ExecuteScalarAsync() is not Guid)
+                throw Denied();
+        }
+
+        var invoices = await db.IssuedInvoiceLedger.AsNoTracking()
+            .Where(x => x.ContractId == contractId &&
+                x.RoomId == scoped.RoomId &&
+                x.BuildingId == scoped.BuildingId)
+            .OrderBy(x => x.DueDate).ThenBy(x => x.Id)
+            .Take(251).ToArrayAsync();
+        // A summary must be complete; never silently truncate owed money.
+        if (invoices.Length > 250)
+            throw Denied();
+        var invoiceIds = invoices.Select(x => x.Id).ToHashSet();
+        var journals = await db.InvoicePaymentAllocationJournal.AsNoTracking()
+            .Where(x => x.ContractId == contractId).ToArrayAsync();
+        var payments = await db.Payments.IgnoreQueryFilters().AsNoTracking()
+            .Where(x => x.ContractId == contractId &&
+                x.Purpose == PaymentPurpose.InvoicePayment)
+            .ToArrayAsync();
+
+        // Fail closed for stale/cross-contract allocations and completed
+        // payments without a matching immutable invoice and journal.
+        if (journals.Any(x => !invoiceIds.Contains(x.IssuedInvoiceId)) ||
+            payments.Any(x => x.Status == PaymentStatus.Completed &&
+                (!x.InvoiceId.HasValue ||
+                 !invoiceIds.Contains(x.InvoiceId.Value))))
+            throw Denied();
+        var audit = InvoicePaymentAllocationJournalAuditor.Assess(
+            journals, payments, contractId);
+        if (audit.Blockers.Any(x =>
+            x != "IssuedInvoiceLedgerAndAllocationAuthorizationMissing"))
+            throw Denied();
+
+        var now = DateTime.UtcNow;
+        var today = DateOnly.FromDateTime(
+            TimeZoneInfo.ConvertTimeFromUtc(now,
+                TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh")));
+        var details = new List<SliceBScopedIssuedInvoiceBalanceRead>(
+            invoices.Length);
+        foreach (var invoice in invoices)
+        {
+            var archive = await db.FinalInvoiceIssueEvidence.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.Id == invoice.StagedEvidenceId)
+                ?? throw Denied();
+            var review = await db.InvoiceIssuanceReviews.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.Id == invoice.ReviewTicketId)
+                ?? throw Denied();
+            IssuedInvoicePaymentSummary amount;
+            try
+            {
+                invoice.VerifyStoredTerms(archive, review);
+                amount = IssuedInvoicePaymentReconciler.Assess(
+                    invoice.Id, contractId, invoice.TotalAmount, invoice.DueDate,
+                    today, payments.Where(x => x.InvoiceId == invoice.Id).ToArray());
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or
+                ArgumentException or OverflowException)
+            {
+                throw Denied();
+            }
+
+            if (amount.UnresolvedOverpayment != 0m ||
+                journals.Where(x => x.IssuedInvoiceId == invoice.Id)
+                    .Sum(x => x.Amount) != amount.CompletedPaymentsAmount)
+                throw Denied();
+
+            details.Add(new SliceBScopedIssuedInvoiceBalanceRead(
+                invoice.Id, contractId, scoped.BuildingId,
+                invoice.InvoiceNumber, invoice.DueDate, invoice.TotalAmount,
+                amount.CompletedPaymentsAmount,
+                amount.OutstandingBeforeAdjustments,
+                amount.CompletedPaymentCount, amount.Status,
+                IsObservedStagingLedger: true,
+                IsOfficialDebtPosted: false,
+                BankTransferIndependentlyVerified: false));
+        }
+
+        // The original, live authorization is still required at the end.
+        // The SHARE lock above prevents grant revocation until commit.
+        if (!await db.OperatorBuildingGrants.AsNoTracking().AnyAsync(grant =>
+            grant.OperatorUserId == actor &&
+            grant.BuildingId == scoped.BuildingId &&
+            grant.RevokedAtUtc == null &&
+            grant.GrantedAtUtc <= now &&
+            (grant.ExpiresAtUtc == null || grant.ExpiresAtUtc > now)))
+            throw Denied();
+
+        return new SliceBScopedContractIssuedDebtRead(
+            contractId, scoped.BuildingId, details.Count,
+            details.Sum(x => x.IssuedAmount),
+            details.Sum(x => x.ObservedCompletedPaymentsAmount),
+            details.Sum(x => x.ObservedOutstandingBeforeAdjustments),
+            details.Count(x =>
+                x.ObservedPaymentStatus == IssuedInvoicePaymentStatus.Overdue),
+            details,
+            IsOfficialDebtPosted: false,
+            BankTransferIndependentlyVerified: false);
+    }
+
     private Guid RequireActor()
     {
         if (!_currentUser.IsAuthenticated || _currentUser.Id is not Guid id ||
@@ -717,3 +879,11 @@ public sealed record SliceBScopedIssuedInvoiceBalanceRead(
     IssuedInvoicePaymentStatus ObservedPaymentStatus,
     bool IsObservedStagingLedger, bool IsOfficialDebtPosted,
     bool BankTransferIndependentlyVerified);
+
+/** The observed, validated issued-invoice debt portfolio for ONE contract. */
+public sealed record SliceBScopedContractIssuedDebtRead(
+    Guid ContractId, Guid BuildingId, int IssuedInvoiceCount,
+    decimal ObservedIssuedAmount, decimal ObservedCompletedPaymentsAmount,
+    decimal ObservedOutstandingBeforeAdjustments, int OverdueInvoiceCount,
+    IReadOnlyList<SliceBScopedIssuedInvoiceBalanceRead> Invoices,
+    bool IsOfficialDebtPosted, bool BankTransferIndependentlyVerified);

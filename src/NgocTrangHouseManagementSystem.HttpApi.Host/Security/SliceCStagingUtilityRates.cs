@@ -59,8 +59,8 @@ public sealed class SliceCStagingUtilityRates
         var actor = Actor();
         await _identity.AcquireUtilityReadAsync(actor);
         var db = await _provider.GetDbContextAsync();
-        return await AuthorizedRates(db, actor, DateTime.UtcNow)
-            .SingleOrDefaultAsync(x => x.Id == id) ?? throw Denied();
+        return await AuthorizedRates(db, actor, DateTime.UtcNow, id)
+            .SingleOrDefaultAsync() ?? throw Denied();
     }
 
     public Task<SliceCUtilityRateRead> CreateAsync(CreateUtilityRateDto input)
@@ -145,11 +145,16 @@ public sealed class SliceCStagingUtilityRates
     }
 
     private static IQueryable<SliceCUtilityRateRead> AuthorizedRates(
-        BuildingManagementDbContext db, Guid actor, DateTime now)
+        BuildingManagementDbContext db, Guid actor, DateTime now,
+        Guid? onlyRateId = null)
         => from rate in db.UtilityRates.AsNoTracking()
            join building in db.Buildings.AsNoTracking()
              on rate.BuildingId equals building.Id
-           where !rate.IsDeleted && !building.IsDeleted &&
+           // Filter the actual entity BEFORE constructing the record.
+           // Post-projection .Where(x => x.Id == id) cannot be
+           // translated by EF Core for positional record constructors.
+           where (!onlyRateId.HasValue || rate.Id == onlyRateId.Value) &&
+             !rate.IsDeleted && !building.IsDeleted &&
              db.OperatorBuildingGrants.Any(membership =>
                membership.OperatorUserId == actor &&
                membership.BuildingId == building.Id &&

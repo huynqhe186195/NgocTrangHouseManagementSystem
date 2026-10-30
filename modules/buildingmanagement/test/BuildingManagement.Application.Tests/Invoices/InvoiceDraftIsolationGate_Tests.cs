@@ -19,6 +19,7 @@ public sealed class InvoiceDraftIsolationGate_Tests
     [InlineData(typeof(InvoiceDraftStorageAppService), nameof(InvoiceDraftStorageAppService.HasCurrentSourceSnapshotAsync))]
     [InlineData(typeof(InvoiceDraftStorageAppService), nameof(InvoiceDraftStorageAppService.PreviewRebuildAsync))]
     [InlineData(typeof(InvoiceDraftCandidateAppService), nameof(InvoiceDraftCandidateAppService.GetMonthlyCandidateAsync))]
+    [InlineData(typeof(StagedIssuedInvoiceDebtReviewAppService), nameof(StagedIssuedInvoiceDebtReviewAppService.GetAsync))]
     public void Invoice_draft_capture_requires_repeatable_read_root_uow(
         Type serviceType, string methodName)
     {

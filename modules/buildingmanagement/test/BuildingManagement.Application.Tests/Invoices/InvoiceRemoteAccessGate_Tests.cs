@@ -14,6 +14,7 @@ public sealed class InvoiceRemoteAccessGate_Tests
     [Theory]
     [InlineData(typeof(InvoiceDraftCandidateAppService))]
     [InlineData(typeof(InvoiceDraftStorageAppService))]
+    [InlineData(typeof(StagedIssuedInvoiceDebtReviewAppService))]
     public void Invoice_services_remain_internal_until_operator_permissions_exist(Type serviceType)
     {
         var remote = (RemoteServiceAttribute?)Attribute.GetCustomAttribute(

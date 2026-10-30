@@ -56,7 +56,13 @@ public sealed class EfBuildingScopedWriteFenceCandidate
             var tx = _db.Database.CurrentTransaction ?? ownedTx
                 ?? throw Denied();
             var isolation = tx.GetDbTransaction().IsolationLevel;
+            // REPEATABLE READ is required for invoice meter/rate snapshots.
+            // SELECT FOR SHARE still obtains a write-conflicting row lock;
+            // if a concurrent revocation updated the grant after this
+            // transaction's snapshot, PostgreSQL refuses the stale lock
+            // with a serialization failure instead of granting access.
             if (isolation != IsolationLevel.ReadCommitted &&
+                isolation != IsolationLevel.RepeatableRead &&
                 isolation != IsolationLevel.Serializable)
                 throw Denied();
             var connection = _db.Database.GetDbConnection();

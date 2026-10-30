@@ -131,6 +131,47 @@ public sealed class Phase2G4ContractDepositSettlementDecisions : Migration
               BEFORE TRUNCATE ON "BuildingManagementContractDepositSettlementDecisions"
               FOR EACH STATEMENT EXECUTE FUNCTION "BM_NoTruncateDepositDecision"();
             """);
+        builder.Sql("""
+            -- A direct SQL caller must not bypass the separately approved
+            -- 2G.4 decision by inserting only a legacy 2G.5 closeout row.
+            CREATE FUNCTION "BM_RequireApprovedDepositDecisionAtCloseout"()
+            RETURNS trigger LANGUAGE plpgsql AS $closeout_decision$
+            DECLARE approved record;
+            BEGIN
+                SELECT * INTO approved
+                  FROM "BuildingManagementContractDepositSettlementDecisions"
+                 WHERE "ContractId" = NEW."ContractId"
+                   AND "MoveOutRequestId" = NEW."MoveOutRequestId"
+                 FOR SHARE;
+                IF approved."Id" IS NULL OR
+                   approved."FinalIssuedInvoiceId" IS DISTINCT FROM
+                       NEW."IssuedInvoiceId" OR
+                   approved."BuildingId" IS DISTINCT FROM NEW."BuildingId" OR
+                   approved."VerifiedHeldAmount" IS DISTINCT FROM
+                       NEW."VerifiedHeldAmount" OR
+                   approved."ApprovedForfeitAmount" IS DISTINCT FROM
+                       NEW."ApprovedForfeitAmount" OR
+                   approved."ApprovedRefundAmount" IS DISTINCT FROM
+                       NEW."ApprovedRefundAmount" OR
+                   approved."ApprovedDebtOffsetAmount" <> 0 OR
+                   approved."DamageReason" IS DISTINCT FROM NEW."DamageReason" OR
+                   approved."DamageEvidenceReference" IS DISTINCT FROM
+                       NEW."DamageEvidenceReference" OR
+                   approved."ExplicitDepositPolicyReference" IS DISTINCT FROM
+                       NEW."ExplicitDepositPolicyReference" OR
+                   approved."ApprovedAtUtc" > NEW."ApprovedAtUtc" THEN
+                    RAISE EXCEPTION
+                      'Closeout must match previously approved deposit settlement decision'
+                      USING ERRCODE = '23514';
+                END IF;
+                RETURN NEW;
+            END;
+            $closeout_decision$;
+            CREATE TRIGGER "TR_BM_00_RequireApprovedDepositDecision"
+              BEFORE INSERT ON "BuildingManagementContractDepositCloseoutApprovals"
+              FOR EACH ROW
+              EXECUTE FUNCTION "BM_RequireApprovedDepositDecisionAtCloseout"();
+            """);
     }
 
     protected override void Down(MigrationBuilder builder)
@@ -147,6 +188,9 @@ public sealed class Phase2G4ContractDepositSettlementDecisions : Migration
                 END IF;
             END;
             $down$;
+            DROP TRIGGER "TR_BM_00_RequireApprovedDepositDecision"
+              ON "BuildingManagementContractDepositCloseoutApprovals";
+            DROP FUNCTION "BM_RequireApprovedDepositDecisionAtCloseout"();
             DROP TRIGGER "TR_BM_DepositDecision_NoTruncate"
               ON "BuildingManagementContractDepositSettlementDecisions";
             DROP TRIGGER "TR_BM_DepositDecision_Immutable"

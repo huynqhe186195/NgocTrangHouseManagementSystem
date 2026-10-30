@@ -1214,16 +1214,21 @@ public sealed class SliceBStagingFinalInvoiceMutation
                         x.MoveOutRequestId == requestId &&
                         x.BuildingId == building) ?? throw Denied();
                 decision.VerifyStoredDecision();
-                return DepositDecisionRead(decision);
+                var completed = await db.DepositCloseoutApprovals.AsNoTracking()
+                    .AnyAsync(x => x.ContractId == contractId &&
+                        x.MoveOutRequestId == requestId &&
+                        x.RefundSettlementId.HasValue);
+                return DepositDecisionRead(decision, completed);
             }, permitEndedContract: true);
 
     private static SliceBDepositSettlementDecisionRead DepositDecisionRead(
-        ContractDepositSettlementDecisionRecord decision)
+        ContractDepositSettlementDecisionRecord decision,
+        bool refundExecuted = false)
         => new(decision.Id, decision.ContractId, decision.MoveOutRequestId,
             decision.FinalIssuedInvoiceId, decision.VerifiedHeldAmount,
             decision.ApprovedForfeitAmount, decision.ApprovedRefundAmount,
             decision.ApprovedDebtOffsetAmount, decision.ApprovedAtUtc,
-            IsRefundExecuted: false, IsAutomaticDebtOffset: false);
+            IsRefundExecuted: refundExecuted, IsAutomaticDebtOffset: false);
 
     /// <summary>
     /// Explicit root-only, isolated staging final handover. A MANUAL refund

@@ -49,8 +49,10 @@ public sealed class ContractDepositSettlementDecisionRecord : Entity<Guid>
         string? damageReason, string? damageEvidenceReference,
         string explicitDepositPolicyReference)
     {
-        var reason = damageReason?.Trim();
-        var evidence = damageEvidenceReference?.Trim();
+        var reason = string.IsNullOrWhiteSpace(damageReason)
+            ? null : damageReason.Trim();
+        var evidence = string.IsNullOrWhiteSpace(damageEvidenceReference)
+            ? null : damageEvidenceReference.Trim();
         var policy = explicitDepositPolicyReference?.Trim() ?? string.Empty;
         if (id == Guid.Empty || contractId == Guid.Empty ||
             moveOutRequestId == Guid.Empty || finalIssuedInvoiceId == Guid.Empty ||
@@ -175,8 +177,10 @@ public sealed class ContractDepositSettlementDecisionRecord : Entity<Guid>
         if (ContractId != contractId || MoveOutRequestId != requestId ||
             FinalIssuedInvoiceId != finalInvoiceId || BuildingId != buildingId ||
             VerifiedHeldAmount != held || ApprovedForfeitAmount != forfeit ||
-            !StringComparer.Ordinal.Equals(DamageReason, reason?.Trim()) ||
-            !StringComparer.Ordinal.Equals(DamageEvidenceReference, evidence?.Trim()) ||
+            !StringComparer.Ordinal.Equals(DamageReason,
+                string.IsNullOrWhiteSpace(reason) ? null : reason.Trim()) ||
+            !StringComparer.Ordinal.Equals(DamageEvidenceReference,
+                string.IsNullOrWhiteSpace(evidence) ? null : evidence.Trim()) ||
             !StringComparer.Ordinal.Equals(ExplicitDepositPolicyReference, policy?.Trim()))
             throw new InvalidOperationException(
                 "Final closeout must exactly match the independently committed deposit decision.");

@@ -192,6 +192,13 @@ public sealed class SliceBFullFinancialMigrationChainPostgreSql_Tests
                      WHERE NOT tgisinternal AND
                        tgname = 'TR_BM_DepositDecision_Immutable'
                     """));
+                Assert.Equal(1L, await ScalarAsync(inspect, """
+                    SELECT count(*) FROM pg_trigger
+                     WHERE NOT tgisinternal AND
+                       tgname = 'TR_BM_00_RequireApprovedDepositDecision'
+                       AND tgrelid =
+                           '"BuildingManagementContractDepositCloseoutApprovals"'::regclass
+                    """));
                 Assert.Equal(3L, await ScalarAsync(inspect, """
                     SELECT count(*) FROM pg_indexes WHERE
                       indexname IN ('UX_BM_DepositDecision_Contract',

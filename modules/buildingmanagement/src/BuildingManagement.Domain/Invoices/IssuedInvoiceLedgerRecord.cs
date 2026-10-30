@@ -255,7 +255,8 @@ public sealed class IssuedInvoiceLedgerRecord : Entity<Guid>
                 DateOnly.ParseExact(
                     root.GetProperty("DueDate").GetString()!, "yyyy-MM-dd") != DueDate ||
                 root.GetProperty("DraftInvoiceId").GetGuid() != DraftInvoiceId ||
-                root.GetProperty("EvidenceSha256").GetString() != EvidenceSha256)
+                root.GetProperty("EvidenceSha256").GetString() != EvidenceSha256 ||
+                !ArchivedAuxiliaryChargesMatch(charges, AuxiliaryAmount))
                 throw new InvalidDataException(
                     "Financial terms JSON does not match immutable ledger fields.");
         }
@@ -266,5 +267,46 @@ public sealed class IssuedInvoiceLedgerRecord : Entity<Guid>
             throw new InvalidDataException(
                 "Financial terms archive is unreadable or incomplete.", ex);
         }
+    }
+
+    /// <summary>
+    /// Independent read-side verification of itemized fee amounts archived
+    /// inside issued financial terms. This NEVER grants fee approval or
+    /// issuance: it only detects inconsistent or corrupted stored evidence.
+    /// </summary>
+    private static bool ArchivedAuxiliaryChargesMatch(
+        JsonElement charges, decimal expectedTotal)
+    {
+        var seen = new HashSet<(int Kind, string ServiceCode)>();
+        var sum = 0m;
+        foreach (var charge in charges.EnumerateArray())
+        {
+            if (charge.ValueKind != JsonValueKind.Object)
+                return false;
+
+            var kind = charge.GetProperty("Kind").GetInt32();
+            var code = charge.GetProperty("ServiceCode").GetString();
+            var reference = charge.GetProperty("ContractOrRateReference").GetString();
+            var description = charge.GetProperty("Description").GetString();
+            var quantity = charge.GetProperty("Quantity").GetDecimal();
+            var unitPrice = charge.GetProperty("UnitPrice").GetDecimal();
+            var amount = charge.GetProperty("Amount").GetDecimal();
+
+            if (!Enum.IsDefined(typeof(FinalInvoiceAuxiliaryFeeKind), kind) ||
+                string.IsNullOrWhiteSpace(code) || code.Trim().Length > 64 ||
+                string.IsNullOrWhiteSpace(reference) ||
+                reference.Trim().Length > 200 ||
+                string.IsNullOrWhiteSpace(description) ||
+                description.Trim().Length > 500 ||
+                quantity <= 0m || unitPrice <= 0m || amount <= 0m ||
+                decimal.Truncate(amount) != amount ||
+                quantity * unitPrice != amount ||
+                !seen.Add((kind, code.Trim().ToUpperInvariant())))
+                return false;
+
+            sum += amount;
+        }
+
+        return sum == expectedTotal;
     }
 }

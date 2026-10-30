@@ -2020,6 +2020,55 @@ public sealed class InvoicePersistenceIntegration_Tests
                     drift, provenance));
             Assert.Equal(InvoiceStatus.Draft,
                 (await _invoices.GetAsync(seeded.DraftId)).Status);
+
+            // A rewritten hash alone must not make tampered financial terms
+            // look coherent: every archived fee line must sum to the ledger
+            // header and satisfy quantity * unit price == amount.
+            var damagedTerms = JsonNode.Parse(candidate.FinancialTermsJson)!
+                .AsObject();
+            damagedTerms["AuxiliaryFeeDecision"] =
+                (int)AuxiliaryFeeAssessmentDecision.ItemizedCharges;
+            damagedTerms["AuxiliaryAmount"] = 100m;
+            damagedTerms["TotalAmount"] = candidate.BaseAmount + 100m;
+            var internetFee = new FinalInvoiceAuxiliaryChargeProposal(
+                FinalInvoiceAuxiliaryFeeKind.Internet, "INTERNET", 1m,
+                50m, 50m, "CONTRACT-INTERNET-PRICE", "Internet service");
+            damagedTerms["AuxiliaryCharges"] =
+                JsonSerializer.SerializeToNode(new[] { internetFee });
+            typeof(IssuedInvoiceLedgerRecord)
+                .GetProperty(nameof(IssuedInvoiceLedgerRecord.AuxiliaryAmount))!
+                .SetValue(candidate, 100m);
+            typeof(IssuedInvoiceLedgerRecord)
+                .GetProperty(nameof(IssuedInvoiceLedgerRecord.TotalAmount))!
+                .SetValue(candidate, candidate.BaseAmount + 100m);
+
+            void ReplaceTerms()
+            {
+                var json = damagedTerms.ToJsonString();
+                typeof(IssuedInvoiceLedgerRecord)
+                    .GetProperty(nameof(IssuedInvoiceLedgerRecord.FinancialTermsJson))!
+                    .SetValue(candidate, json);
+                typeof(IssuedInvoiceLedgerRecord)
+                    .GetProperty(nameof(IssuedInvoiceLedgerRecord.FinancialTermsSha256))!
+                    .SetValue(candidate, Convert.ToHexString(
+                        SHA256.HashData(Encoding.UTF8.GetBytes(json)))
+                        .ToLowerInvariant());
+            }
+
+            ReplaceTerms();
+            Assert.Throws<InvalidDataException>(() =>
+                candidate.VerifyStoredTerms(archive, review));
+
+            // Even when the line total matches the header, its multiplication
+            // evidence must not silently disagree.
+            damagedTerms["AuxiliaryCharges"] =
+                JsonSerializer.SerializeToNode(new[]
+                {
+                    internetFee with { Amount = 100m }
+                });
+            ReplaceTerms();
+            Assert.Throws<InvalidDataException>(() =>
+                candidate.VerifyStoredTerms(archive, review));
         });
     }
 

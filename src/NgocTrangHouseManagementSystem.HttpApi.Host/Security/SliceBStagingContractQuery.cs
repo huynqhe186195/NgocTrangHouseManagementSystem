@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using BuildingManagement.Contracts;
 using BuildingManagement.MoveOuts;
+using BuildingManagement.Rooms;
 using BuildingManagement.DepositSettlements;
 using BuildingManagement.Invoices;
 using BuildingManagement.Payments;
@@ -461,15 +462,15 @@ public sealed class SliceBStagingContractQuery
         var sha = reader.GetString(6);
         if ((ContractStatus)reader.GetInt32(7) != ContractStatus.Ended ||
             (MoveOutRequestStatus)reader.GetInt32(8) != MoveOutRequestStatus.Completed ||
-            (Rooms.RoomStatus)reader.GetInt32(9) is not
-                (Rooms.RoomStatus.Available or Rooms.RoomStatus.Maintenance) ||
+            (RoomStatus)reader.GetInt32(9) is not
+                (RoomStatus.Available or RoomStatus.Maintenance) ||
             deposit <= 0m || refund < 0m || forfeit < 0m ||
             refund + forfeit != deposit || sha.Length != 64)
             throw Denied();
         return new SliceBScopedSignedCloseoutRead(
             approvedId, contractId, requestId, issuedId,
             approvedAt, deposit, refund, forfeit,
-            (Rooms.RoomStatus)reader.GetInt32(9), sha,
+            (RoomStatus)reader.GetInt32(9), sha,
             RefundManuallyAttested: refund > 0m,
             BankTransferIndependentlyVerified: false);
     }
@@ -523,7 +524,7 @@ public sealed record SliceBScopedSignedCloseoutRead(
     Guid ApprovalId, Guid ContractId, Guid MoveOutRequestId,
     Guid IssuedInvoiceId, DateTime ApprovedAtUtc,
     decimal VerifiedHeldAmount, decimal RefundAmount,
-    decimal ForfeitAmount, BuildingManagement.Rooms.RoomStatus RoomStatus,
+    decimal ForfeitAmount, BuildingManagement.RoomStatus RoomStatus,
     string ApprovalSha256, bool RefundManuallyAttested,
     bool BankTransferIndependentlyVerified);
 

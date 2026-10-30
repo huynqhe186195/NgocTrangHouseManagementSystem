@@ -297,6 +297,19 @@ public sealed class SliceBStagingContractsController : ControllerBase
             id, requestId);
     }
 
+    // Draft-only utility persistence. Do NOT accept client-supplied prices,
+    // meter evidence, draft totals, or an unscoped ContractId.
+    [HttpPost("{id:guid}/monthly-utility-drafts/{year:int}/{month:int}")]
+    [UnitOfWork(true, System.Data.IsolationLevel.RepeatableRead)]
+    public Task<BuildingManagement.Invoices.InvoiceDraftDto>
+        CreateMonthlyUtilityDraftAsync(
+            [FromRoute] Guid id, [FromRoute] int year, [FromRoute] int month)
+    {
+        RequireIsolatedStaging();
+        return (_mutation ?? throw Denied())
+            .CreateMonthlyUtilityDraftAsync(id, year, month);
+    }
+
     // Full-month provisional rent and utilities; service fees require
     // independent policy review. Never issues or posts an Invoice.
     [HttpGet("{id:guid}/monthly-invoice-preview/{year:int}/{month:int}")]

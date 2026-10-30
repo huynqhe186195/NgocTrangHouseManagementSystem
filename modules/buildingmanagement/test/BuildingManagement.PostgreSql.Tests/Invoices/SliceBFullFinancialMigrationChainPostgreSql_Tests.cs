@@ -230,7 +230,7 @@ public sealed class SliceBFullFinancialMigrationChainPostgreSql_Tests
                             '2026-10-30T10:00:00Z',
                             3000000,0,3000000,0,
                             'SIGNED-EXPLICIT-DEPOSIT-POLICY',
-                            '{{}}',repeat('a',64))
+                            '[]',repeat('a',64))
                     """, inspect))
                 {
                     var rejected = await Assert.ThrowsAsync<PostgresException>(

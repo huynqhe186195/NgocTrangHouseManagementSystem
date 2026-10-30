@@ -210,8 +210,8 @@ public sealed class SliceCStagingUtilityMeters
                         throw Denied();
                 }
                 await using (var roomLock = Command(db, """
-                    SELECT r."Id" FROM "Rooms" AS r
-                      JOIN "Floors" AS f ON f."Id" = r."FloorId"
+                    SELECT r."Id" FROM "BuildingManagementRooms" AS r
+                      JOIN "BuildingManagementFloors" AS f ON f."Id" = r."FloorId"
                      WHERE r."Id"=@room AND f."BuildingId"=@building
                        AND r."IsDeleted"=FALSE AND f."IsDeleted"=FALSE
                      FOR UPDATE OF r

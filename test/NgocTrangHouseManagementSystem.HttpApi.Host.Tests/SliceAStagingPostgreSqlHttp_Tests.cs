@@ -1067,11 +1067,19 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 action.ControllerTypeInfo.AsType() ==
                     typeof(SliceCStagingMeterReadingController) &&
                 action.MethodInfo.Name == "CreateAsync");
+            // Dedicated physical floors ensure meter history cannot pollute
+            // the pre-existing Slice A test which deletes its original A1
+            // floor after clearing only Room A101. The new meter histories
+            // must remain intact to exercise their own integrity rules.
+            var sliceCMeterFloorA = await CreateChildAsync(clientRoot, floorCreate,
+                new { buildingId = a, floorNumber = 2, name = "Meter probes A2" });
+            var sliceCMeterFloorB = await CreateChildAsync(clientB, floorCreate,
+                new { buildingId = b, floorNumber = 2, name = "Meter probes B2" });
             var sliceCProbeRoomA = await CreateChildAsync(clientRoot, roomCreate,
-                new { floorId = floorA, roomNumber = "106",
+                new { floorId = sliceCMeterFloorA, roomNumber = "206",
                     name = "Meter-reading A", area = 20m, capacity = 1, status = 0 });
             var sliceCProbeRoomB = await CreateChildAsync(clientB, roomCreate,
-                new { floorId = floorB, roomNumber = "107",
+                new { floorId = sliceCMeterFloorB, roomNumber = "207",
                     name = "Meter-reading B", area = 20m, capacity = 1, status = 0 });
             Assert.Contains(actions, action =>
                 action.ControllerTypeInfo.AsType() ==

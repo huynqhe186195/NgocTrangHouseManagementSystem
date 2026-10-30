@@ -1060,6 +1060,126 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 Assert.Contains(roomB.ToString("D"), body, StringComparison.OrdinalIgnoreCase);
                 Assert.DoesNotContain(roomA.ToString("D"), body, StringComparison.OrdinalIgnoreCase);
             }
+            // Slice C meter-reading vertical, against two independent physical
+            // meters in dedicated rooms. This does not pollute the existing
+            // move-out and final-invoice metering fixtures.
+            Assert.Contains(actions, action =>
+                action.ControllerTypeInfo.AsType() ==
+                    typeof(SliceCStagingMeterReadingController) &&
+                action.MethodInfo.Name == "CreateAsync");
+            var sliceCProbeRoomA = await CreateChildAsync(clientRoot, roomCreate,
+                new { floorId = floorA, roomNumber = "C-READ-A",
+                    name = "Meter-reading A", area = 20m, capacity = 1, status = 0 });
+            var sliceCProbeRoomB = await CreateChildAsync(clientB, roomCreate,
+                new { floorId = floorB, roomNumber = "C-READ-B",
+                    name = "Meter-reading B", area = 20m, capacity = 1, status = 0 });
+            var sliceCMeterA = Guid.NewGuid();
+            var sliceCMeterB = Guid.NewGuid();
+            using (var readingScope = app.Services.CreateScope())
+            {
+                var services = readingScope.ServiceProvider;
+                using var unit = services.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var ctx = await services.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>()
+                    .GetDbContextAsync();
+                ctx.UtilityMeters.AddRange(
+                    new BuildingManagement.Utilities.UtilityMeter(
+                        sliceCMeterA, sliceCProbeRoomA,
+                        BuildingManagement.Utilities.UtilityType.Electricity,
+                        "C-A-" + sliceCMeterA.ToString("N"),
+                        10m, new DateTime(2026, 1, 1)),
+                    new BuildingManagement.Utilities.UtilityMeter(
+                        sliceCMeterB, sliceCProbeRoomB,
+                        BuildingManagement.Utilities.UtilityType.Water,
+                        "C-B-" + sliceCMeterB.ToString("N"),
+                        20m, new DateTime(2026, 1, 1)));
+                await ctx.SaveChangesAsync();
+                await unit.CompleteAsync();
+            }
+            var sliceCReadingPath = "/api/slice-c-staging/meter-readings";
+            string SliceCReadingAt(Guid id) =>
+                sliceCReadingPath + "/" + id.ToString("D");
+            object SliceCReadingInput(Guid meterId, decimal value, int month = 2) =>
+                new { utilityMeterId = meterId, billingYear = 2026,
+                    billingMonth = month, currentReading = value,
+                    readingDate = $"2026-{month:00}-15T00:00:00Z",
+                    notes = "Internal-only meter audit notes" };
+            async Task<(HttpStatusCode Status, string Body)> SliceCReadingPost(
+                HttpClient who, object input)
+            {
+                using var payload = new StringContent(
+                    JsonSerializer.Serialize(input), Encoding.UTF8,
+                    "application/json");
+                using var response = await who.PostAsync(sliceCReadingPath, payload);
+                return (response.StatusCode,
+                    await response.Content.ReadAsStringAsync());
+            }
+            var crossMeterCreate = await SliceCReadingPost(clientB,
+                SliceCReadingInput(sliceCMeterA, 12m));
+            Assert.Equal(HttpStatusCode.Forbidden, crossMeterCreate.Status);
+            var createdReadingA = await SliceCReadingPost(clientRoot,
+                SliceCReadingInput(sliceCMeterA, 12m));
+            Assert.Equal(HttpStatusCode.OK, createdReadingA.Status);
+            using var sliceCReadDocA = JsonDocument.Parse(createdReadingA.Body);
+            var sliceCReadingA = sliceCReadDocA.RootElement.GetProperty("id").GetGuid();
+            Assert.Equal(a,
+                sliceCReadDocA.RootElement.GetProperty("buildingId").GetGuid());
+            Assert.DoesNotContain("notes", createdReadingA.Body,
+                StringComparison.OrdinalIgnoreCase);
+            var createdReadingB = await SliceCReadingPost(clientB,
+                SliceCReadingInput(sliceCMeterB, 24m));
+            Assert.Equal(HttpStatusCode.OK, createdReadingB.Status);
+            using var sliceCReadDocB = JsonDocument.Parse(createdReadingB.Body);
+            var sliceCReadingB = sliceCReadDocB.RootElement.GetProperty("id").GetGuid();
+            Assert.Equal(b,
+                sliceCReadDocB.RootElement.GetProperty("buildingId").GetGuid());
+
+            using (var foreignRead = await clientB.GetAsync(
+                SliceCReadingAt(sliceCReadingA)))
+                Assert.Equal(HttpStatusCode.Forbidden, foreignRead.StatusCode);
+            using (var ownRead = await clientB.GetAsync(
+                SliceCReadingAt(sliceCReadingB)))
+                Assert.Equal(HttpStatusCode.OK, ownRead.StatusCode);
+            using (var onlyB = await clientB.GetAsync(
+                sliceCReadingPath + "?maxResultCount=10"))
+            {
+                Assert.Equal(HttpStatusCode.OK, onlyB.StatusCode);
+                var body = await onlyB.Content.ReadAsStringAsync();
+                Assert.Contains(sliceCReadingB.ToString("D"), body,
+                    StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain(sliceCReadingA.ToString("D"), body,
+                    StringComparison.OrdinalIgnoreCase);
+            }
+            var duplicateReading = await SliceCReadingPost(clientB,
+                SliceCReadingInput(sliceCMeterB, 25m));
+            Assert.NotEqual(HttpStatusCode.OK, duplicateReading.Status);
+            using (var foreignReadingUpdate = new StringContent(
+                JsonSerializer.Serialize(new {
+                    currentReading = 14m, readingDate = "2026-02-16T00:00:00Z" }),
+                Encoding.UTF8, "application/json"))
+            using (var forbidden = await clientB.PutAsync(
+                SliceCReadingAt(sliceCReadingA), foreignReadingUpdate))
+                Assert.Equal(HttpStatusCode.Forbidden, forbidden.StatusCode);
+            using (var ownReadingUpdate = new StringContent(
+                JsonSerializer.Serialize(new {
+                    currentReading = 27m, readingDate = "2026-02-16T00:00:00Z",
+                    notes = "Another internal note" }),
+                Encoding.UTF8, "application/json"))
+            using (var updated = await clientB.PutAsync(
+                SliceCReadingAt(sliceCReadingB), ownReadingUpdate))
+            {
+                Assert.Equal(HttpStatusCode.OK, updated.StatusCode);
+                var body = await updated.Content.ReadAsStringAsync();
+                Assert.DoesNotContain("notes", body,
+                    StringComparison.OrdinalIgnoreCase);
+                using var parsed = JsonDocument.Parse(body);
+                Assert.Equal(27m,
+                    parsed.RootElement.GetProperty("currentReading").GetDecimal());
+            }
+            using (var legacyReading = await clientRoot.GetAsync(legacyReadingList))
+                Assert.Equal(HttpStatusCode.Forbidden, legacyReading.StatusCode);
+
             // Slice B first functional vertical: authenticated contract
             // reads filtered in SQL by current Building membership. The
             // legacy ContractAppService remains HTTP deny-all.

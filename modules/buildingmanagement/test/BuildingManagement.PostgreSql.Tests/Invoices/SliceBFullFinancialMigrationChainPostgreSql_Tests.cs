@@ -171,6 +171,25 @@ public sealed class SliceBFullFinancialMigrationChainPostgreSql_Tests
                                     'TR_BM_SignedMoveOut_Extras',
                                     'TR_BM_SignedChecklist_Extras')
                     """));
+                // Both aggregate-ceiling writers must enforce SSI even
+                // for direct SQL callers that bypass the staging HTTP gate.
+                Assert.Equal(2L, await ScalarAsync(inspect, """
+                    SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal
+                     AND tgname = 'TR_BM_00_RequireSerializableMonthlyFinance'
+                     AND tgrelid IN (
+                       '"BuildingManagementMonthlyInvoicePaymentAllocation"'::regclass,
+                       '"BuildingManagementMonthlyInvoiceAdjustmentDecisions"'::regclass)
+                    """));
+                await using (var wrongIsolation = new NpgsqlCommand(
+                    "INSERT INTO \"BuildingManagementMonthlyInvoiceAdjustmentDecisions\" DEFAULT VALUES",
+                    inspect))
+                {
+                    var failure = await Assert.ThrowsAsync<PostgresException>(
+                        async () => { await wrongIsolation.ExecuteNonQueryAsync(); });
+                    Assert.Equal("23514", failure.SqlState);
+                    Assert.Contains("SERIALIZABLE", failure.MessageText,
+                        StringComparison.Ordinal);
+                }
             }
 
             // All financial sources are empty: reversible source-only

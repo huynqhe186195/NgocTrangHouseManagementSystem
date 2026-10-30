@@ -32,6 +32,7 @@ public sealed class SliceBStagingContractQuery
     private readonly MoveOutCompletionReadinessAppService _readiness;
     private readonly FinalInvoiceIssuePreflightAppService _invoicePreflight;
     private readonly ContractDepositLedgerReviewAppService _depositLedger;
+    private readonly MonthlyInvoiceBasePreviewAppService _monthlyPreview;
 
     public SliceBStagingContractQuery(
         IDbContextProvider<BuildingManagementDbContext> provider,
@@ -40,7 +41,8 @@ public sealed class SliceBStagingContractQuery
         SliceAStagingIdentityCommitLease identityLease,
         MoveOutCompletionReadinessAppService readiness,
         FinalInvoiceIssuePreflightAppService invoicePreflight,
-        ContractDepositLedgerReviewAppService depositLedger)
+        ContractDepositLedgerReviewAppService depositLedger,
+        MonthlyInvoiceBasePreviewAppService monthlyPreview)
     {
         _provider = provider;
         _access = access;
@@ -49,6 +51,7 @@ public sealed class SliceBStagingContractQuery
         _readiness = readiness;
         _invoicePreflight = invoicePreflight;
         _depositLedger = depositLedger;
+        _monthlyPreview = monthlyPreview;
     }
 
     public async Task<IReadOnlyList<SliceBScopedContractRead>> GetListAsync(
@@ -617,51 +620,8 @@ public sealed class SliceBStagingContractQuery
         var transaction = db.Database.CurrentTransaction?.GetDbTransaction()
             ?? throw Denied();
 
-        // Keep the resource graph and grant rows locked through the
-        // transactional HTTP read. Concurrent membership revocation,
-        // room reassignment and contract deletion must wait until this
-        // evidence is delivered; the Identity lease is already acquired
-        // by GetAsync and held through the same UnitOfWork.
-        await using (var command = db.Database.GetDbConnection().CreateCommand())
-        {
-            command.Transaction = transaction;
-            command.CommandText = """
-                SELECT contract."Id"
-                  FROM "BuildingManagementContracts" contract
-                  JOIN "BuildingManagementRooms" room
-                    ON room."Id" = contract."RoomId"
-                  JOIN "BuildingManagementFloors" floor
-                    ON floor."Id" = room."FloorId"
-                  JOIN "Buildings" building
-                    ON building."Id" = floor."BuildingId"
-                  JOIN "BuildingManagementOperatorBuildingGrants" membership
-                    ON membership."BuildingId" = building."Id"
-                 WHERE contract."Id" = @contract
-                   AND building."Id" = @building
-                   AND membership."OperatorUserId" = @actor
-                   AND membership."RevokedAtUtc" IS NULL
-                   AND membership."GrantedAtUtc" <= NOW()
-                   AND (membership."ExpiresAtUtc" IS NULL OR
-                        membership."ExpiresAtUtc" > NOW())
-                   AND NOT contract."IsDeleted" AND NOT room."IsDeleted"
-                   AND NOT floor."IsDeleted" AND NOT building."IsDeleted"
-                 FOR SHARE OF contract, room, floor, building, membership
-                """;
-            foreach (var (key, value) in new[]
-            {
-                ("contract", contractId),
-                ("building", scoped.BuildingId),
-                ("actor", actor)
-            })
-            {
-                var parameter = command.CreateParameter();
-                parameter.ParameterName = key;
-                parameter.Value = value;
-                command.Parameters.Add(parameter);
-            }
-            if (await command.ExecuteScalarAsync() is not Guid)
-                throw Denied();
-        }
+        // Hold exact current contract/building/membership rows until commit.
+        await LockInvoicePreviewScopeAsync(db, scoped, actor);
 
         var invoices = await db.IssuedInvoiceLedger.AsNoTracking()
             .Where(x => x.ContractId == contractId &&
@@ -757,6 +717,81 @@ public sealed class SliceBStagingContractQuery
             details,
             IsOfficialDebtPosted: false,
             BankTransferIndependentlyVerified: false);
+    }
+
+    /// <summary>
+    /// Full-month rent plus physically evidenced utility amounts only.
+    /// Service fees are intentionally unknown, not implicitly VND 0.
+    /// The HTTP action owns a REPEATABLE READ UnitOfWork and live Identity
+    /// permission lease. This read never generates or issues an Invoice.
+    /// </summary>
+    public async Task<MonthlyInvoiceBasePreviewDto> GetMonthlyInvoicePreviewAsync(
+        Guid contractId, int billingYear, int billingMonth)
+    {
+        if (contractId == Guid.Empty ||
+            billingYear is < 1 or > 9999 || billingMonth is < 1 or > 12)
+            throw Denied();
+        var scoped = await GetAsync(contractId);
+        var actor = RequireActor();
+        var db = await _provider.GetDbContextAsync();
+        await LockInvoicePreviewScopeAsync(db, scoped, actor);
+        var report = await _monthlyPreview.GetAsync(
+            contractId, billingYear, billingMonth);
+        if (report.ContractId != scoped.Id || report.RoomId != scoped.RoomId)
+            throw Denied();
+        return report;
+    }
+
+    private static async Task LockInvoicePreviewScopeAsync(
+        BuildingManagementDbContext db,
+        SliceBScopedContractRead scoped, Guid actor)
+    {
+        if (!db.Database.IsNpgsql())
+            throw Denied();
+        var transaction = db.Database.CurrentTransaction?.GetDbTransaction()
+            ?? throw Denied();
+                await using (var command = db.Database.GetDbConnection().CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = """
+                SELECT contract."Id"
+                  FROM "BuildingManagementContracts" contract
+                  JOIN "BuildingManagementRooms" room
+                    ON room."Id" = contract."RoomId"
+                  JOIN "BuildingManagementFloors" floor
+                    ON floor."Id" = room."FloorId"
+                  JOIN "Buildings" building
+                    ON building."Id" = floor."BuildingId"
+                  JOIN "BuildingManagementOperatorBuildingGrants" membership
+                    ON membership."BuildingId" = building."Id"
+                 WHERE contract."Id" = @contract
+                   AND building."Id" = @building
+                   AND membership."OperatorUserId" = @actor
+                   AND membership."RevokedAtUtc" IS NULL
+                   AND membership."GrantedAtUtc" <= NOW()
+                   AND (membership."ExpiresAtUtc" IS NULL OR
+                        membership."ExpiresAtUtc" > NOW())
+                   AND NOT contract."IsDeleted" AND NOT room."IsDeleted"
+                   AND NOT floor."IsDeleted" AND NOT building."IsDeleted"
+                 FOR SHARE OF contract, room, floor, building, membership
+                """;
+            foreach (var (key, value) in new[]
+            {
+                ("contract", contractId),
+                ("building", scoped.BuildingId),
+                ("actor", actor)
+            })
+            {
+                var parameter = command.CreateParameter();
+                parameter.ParameterName = key;
+                parameter.Value = value;
+                command.Parameters.Add(parameter);
+            }
+            if (await command.ExecuteScalarAsync() is not Guid)
+                throw Denied();
+        }
+
+
     }
 
     private Guid RequireActor()

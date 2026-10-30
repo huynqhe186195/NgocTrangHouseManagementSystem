@@ -563,7 +563,7 @@ public sealed class SliceAGrantEfMigrationPostgreSql_Tests
     }
 
     [Fact]
-    public async Task EFMEMBER11_Unsupported_Ambient_Isolation_Fails_Closed_Without_Callback()
+    public async Task EFMEMBER11_RepeatableRead_Fence_Respects_Ambient_Rollback()
     {
         await InScratchAsync(async cs =>
         {
@@ -576,21 +576,29 @@ public sealed class SliceAGrantEfMigrationPostgreSql_Tests
                     .CreateWithOwnerAtomicallyAsync(
                         actor, "Before", "PG scratch", null)).Id;
             }
-            await using var scope = OpenGrantDb(cs);
-            await using var outer = await scope.Database
-                .BeginTransactionAsync(System.Data.IsolationLevel.RepeatableRead);
-            var fence = new EfBuildingScopedWriteFenceCandidate(
-                scope, TimeProvider.System);
-            var reached = false;
-            await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
-                fence.ExecuteAsync(actor, building, () =>
+            await using (var scope = OpenGrantDb(cs))
+            {
+                await using var outer = await scope.Database
+                    .BeginTransactionAsync(System.Data.IsolationLevel.RepeatableRead);
+                var fence = new EfBuildingScopedWriteFenceCandidate(
+                    scope, TimeProvider.System);
+                var reached = false;
+                var result = await fence.ExecuteAsync(actor, building, async () =>
                 {
                     reached = true;
-                    return Task.FromResult(true);
-                }));
-            Assert.False(reached);
-            Assert.NotNull(scope.Database.CurrentTransaction);
-            await outer.RollbackAsync();
+                    await scope.Database.ExecuteSqlInterpolatedAsync(
+                        $"UPDATE \"Buildings\" SET \"Name\" = {"Uncommitted"} WHERE \"Id\" = {building}");
+                    return true;
+                });
+                Assert.True(reached);
+                Assert.True(result);
+                Assert.NotNull(scope.Database.CurrentTransaction);
+                // Fence must NOT commit an ambient REPEATABLE READ UoW.
+                await outer.RollbackAsync();
+            }
+            await using var check = OpenGrantDb(cs);
+            Assert.Equal("Before",
+                (await check.Buildings.SingleAsync(x => x.Id == building)).Name);
         });
     }
 

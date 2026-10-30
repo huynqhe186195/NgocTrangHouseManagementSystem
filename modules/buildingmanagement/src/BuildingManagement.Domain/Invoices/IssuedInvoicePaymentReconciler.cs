@@ -39,7 +39,8 @@ public static class IssuedInvoicePaymentReconciler
             x.Amount <= 0 ||
             x.IsDeleted ||
             !Enum.IsDefined(x.Status) ||
-            (x.Status == PaymentStatus.Completed && !x.PaidAt.HasValue) ||
+            (x.Status == PaymentStatus.Completed &&
+             (!x.PaidAt.HasValue || x.PaidAt.Value.Kind != DateTimeKind.Utc)) ||
             (x.Status != PaymentStatus.Completed && x.PaidAt.HasValue)))
             throw new InvalidOperationException(
                 "Invoice allocation contains invalid, deleted, deposit, or misattributed receipts.");
@@ -58,8 +59,16 @@ public static class IssuedInvoicePaymentReconciler
 
         // Pending / Cancelled / Failed do not reduce what is owed.
         // A single completed payment is counted ONCE, by Payment.Id.
+        // Historical receivables must not be settled by money received
+        // after the requested as-of business date. UTC receipt timestamps
+        // are interpreted in the same Vietnam calendar as billing dates.
+        // This is a READ-SIDE projection only, not an allocation write.
+        var businessTimeZone = TimeZoneInfo.FindSystemTimeZoneById(
+            "Asia/Ho_Chi_Minh");
         var completed = payments
-            .Where(x => x.Status == PaymentStatus.Completed)
+            .Where(x => x.Status == PaymentStatus.Completed &&
+                DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(
+                    x.PaidAt!.Value, businessTimeZone)) <= asOfDate)
             .ToArray();
         var received = completed.Sum(x => x.Amount);
         var stillOwed = Math.Max(0m, issuedInvoiceAmount - received);

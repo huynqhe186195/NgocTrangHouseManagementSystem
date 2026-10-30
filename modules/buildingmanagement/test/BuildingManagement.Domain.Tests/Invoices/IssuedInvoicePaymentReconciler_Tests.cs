@@ -169,6 +169,78 @@ public sealed class IssuedInvoicePaymentReconciler_Tests
                 Array.Empty<Payment>()).Status);
     }
 
+    [Fact]
+    public void INVDEBT12_Future_Receipt_Does_Not_Reduce_Historical_Debt()
+    {
+        var (invoiceId, contractId) = Ids();
+        var payment = Create(invoiceId, contractId, 1_000_000m);
+        payment.Complete(new DateTime(2026, 11, 5, 0, 0, 0, DateTimeKind.Utc));
+
+        var historical = Assess(invoiceId, contractId, 1_000_000m,
+            BeforeDue, new[] { payment });
+        Assert.Equal(IssuedInvoicePaymentStatus.Unpaid, historical.Status);
+        Assert.Equal(1_000_000m, historical.OutstandingBeforeAdjustments);
+        Assert.Equal(0, historical.CompletedPaymentCount);
+
+        var current = Assess(invoiceId, contractId, 1_000_000m,
+            Due, new[] { payment });
+        Assert.Equal(IssuedInvoicePaymentStatus.Paid, current.Status);
+        Assert.Equal(0m, current.OutstandingBeforeAdjustments);
+        Assert.Equal(1, current.CompletedPaymentCount);
+    }
+
+    [Fact]
+    public void INVDEBT13_Vietnam_Calendar_Determines_AsOf_Cutoff()
+    {
+        var (invoiceId, contractId) = Ids();
+        // 16:59 UTC = 23:59 on 04/11 in Vietnam.
+        var beforeMidnight = Create(invoiceId, contractId, 200_000m);
+        beforeMidnight.Complete(
+            new DateTime(2026, 11, 4, 16, 59, 0, DateTimeKind.Utc));
+        // 18:00 UTC is already 01:00 on 05/11 in Vietnam.
+        var afterMidnight = Create(invoiceId, contractId, 300_000m);
+        afterMidnight.Complete(
+            new DateTime(2026, 11, 4, 18, 0, 0, DateTimeKind.Utc));
+
+        var historical = Assess(invoiceId, contractId, 1_000_000m,
+            BeforeDue, new[] { beforeMidnight, afterMidnight });
+        Assert.Equal(IssuedInvoicePaymentStatus.PartiallyPaid, historical.Status);
+        Assert.Equal(200_000m, historical.CompletedPaymentsAmount);
+        Assert.Equal(800_000m, historical.OutstandingBeforeAdjustments);
+        Assert.Equal(1, historical.CompletedPaymentCount);
+    }
+
+    [Fact]
+    public void INVDEBT14_NonUtc_Completed_Receipt_Cannot_Be_DateClassified()
+    {
+        var (invoiceId, contractId) = Ids();
+        var payment = Create(invoiceId, contractId, 100_000m);
+        payment.Complete(
+            new DateTime(2026, 11, 4, 12, 0, 0, DateTimeKind.Unspecified));
+
+        Assert.Throws<InvalidOperationException>(() =>
+            Assess(invoiceId, contractId, 1_000_000m,
+                BeforeDue, new[] { payment }));
+    }
+
+    [Fact]
+    public void INVDEBT15_Future_Receipt_Does_Not_Clear_Overdue_Balance()
+    {
+        var (invoiceId, contractId) = Ids();
+        var payment = Create(invoiceId, contractId, 1_000_000m);
+        payment.Complete(new DateTime(2026, 11, 7, 0, 0, 0, DateTimeKind.Utc));
+
+        var overdue = Assess(invoiceId, contractId, 1_000_000m,
+            AfterDue, new[] { payment });
+        Assert.Equal(IssuedInvoicePaymentStatus.Overdue, overdue.Status);
+        Assert.Equal(1_000_000m, overdue.OutstandingBeforeAdjustments);
+
+        var paid = Assess(invoiceId, contractId, 1_000_000m,
+            new DateOnly(2026, 11, 8), new[] { payment });
+        Assert.Equal(IssuedInvoicePaymentStatus.Paid, paid.Status);
+        Assert.Equal(0m, paid.OutstandingBeforeAdjustments);
+    }
+
     private static IssuedInvoicePaymentSummary Assess(
         Guid invoiceId, Guid contractId, decimal amount,
         DateOnly asOfDate, Payment[] payments)

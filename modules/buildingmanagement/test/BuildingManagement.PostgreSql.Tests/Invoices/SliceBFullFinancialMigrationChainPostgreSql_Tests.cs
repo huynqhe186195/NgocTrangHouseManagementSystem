@@ -3,6 +3,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using BuildingManagement.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 using Xunit;
 
@@ -53,8 +54,16 @@ public sealed class SliceBFullFinancialMigrationChainPostgreSql_Tests
             {
                 Database = dbName, Pooling = false, CommandTimeout = 120
             }.ConnectionString;
+            // Capture only the failed command text from disposable SQL.
+            string lastFailedCommand = string.Empty;
             var options = new DbContextOptionsBuilder<BuildingManagementDbContext>()
-                .UseNpgsql(scoped).Options;
+                .UseNpgsql(scoped)
+                .LogTo(message =>
+                {
+                    if (message.Contains("Failed executing DbCommand",
+                        StringComparison.OrdinalIgnoreCase))
+                        lastFailedCommand = message;
+                }, LogLevel.Error).Options;
             await using var db = new BuildingManagementDbContext(options);
 
             var all = db.Database.GetMigrations().ToArray();
@@ -62,7 +71,18 @@ public sealed class SliceBFullFinancialMigrationChainPostgreSql_Tests
             Assert.True(Array.IndexOf(all, LastSliceBMigration) >
                 Array.IndexOf(all, LastSliceAMigration));
 
-            await db.Database.MigrateAsync();
+            try
+            {
+                await db.Database.MigrateAsync();
+            }
+            catch (PostgresException ex)
+            {
+                var commandPreview = lastFailedCommand.Length > 5500
+                    ? lastFailedCommand[^5500..] : lastFailedCommand;
+                throw new InvalidOperationException(
+                    $"Full-chain migration failed SQLSTATE {ex.SqlState}, " +
+                    $"position {ex.Position}; statement: {commandPreview}", ex);
+            }
             Assert.Equal(all,
                 (await db.Database.GetAppliedMigrationsAsync()).ToArray());
 

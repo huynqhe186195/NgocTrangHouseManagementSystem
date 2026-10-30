@@ -125,6 +125,62 @@ public sealed class SliceBStagingFinalInvoiceController : ControllerBase
             contractId, adjustmentId, input);
     }
 
+    /// <summary>Post a durable monthly receivable; requires root, archived
+    /// independent approval and a SERIALIZABLE isolated staging UoW.</summary>
+    [HttpPost("contracts/{contractId:guid}/monthly-issued/{issuedId:guid}/post-receivable")]
+    [UnitOfWork(true, System.Data.IsolationLevel.Serializable)]
+    public Task<OfficialInvoicePostingRead> PostMonthlyReceivableAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid issuedId)
+    {
+        RequireIsolatedStaging();
+        return (_mutation ?? throw Denied()).PostOfficialReceivableAsync(
+            contractId, issuedId, OfficialInvoiceKind.Monthly);
+    }
+
+    [HttpPost("contracts/{contractId:guid}/issued/{issuedId:guid}/post-receivable")]
+    [UnitOfWork(true, System.Data.IsolationLevel.Serializable)]
+    public Task<OfficialInvoicePostingRead> PostFinalReceivableAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid issuedId)
+    {
+        RequireIsolatedStaging();
+        return (_mutation ?? throw Denied()).PostOfficialReceivableAsync(
+            contractId, issuedId, OfficialInvoiceKind.Final);
+    }
+
+    [HttpPost("contracts/{contractId:guid}/receivables/{postingId:guid}/allocations/{allocationId:guid}/review")]
+    [UnitOfWork(true, System.Data.IsolationLevel.Serializable)]
+    public Task<OfficialInvoiceReceiptReviewRead> ReviewOfficialReceiptAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid postingId,
+        [FromRoute] Guid allocationId,
+        [FromBody] OfficialInvoiceReceiptReviewInput input)
+    {
+        RequireIsolatedStaging();
+        if (input is null) throw Denied();
+        return (_mutation ?? throw Denied()).ReviewOfficialReceiptAsync(
+            contractId, postingId, allocationId, input);
+    }
+
+    [HttpGet("contracts/{contractId:guid}/receivables/{postingId:guid}/balance")]
+    [UnitOfWork(true, System.Data.IsolationLevel.RepeatableRead)]
+    public Task<OfficialInvoiceReceivableBalance> GetOfficialBalanceAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid postingId,
+        [FromQuery] DateOnly? asOfDate = null)
+    {
+        RequireIsolatedStaging();
+        return (_mutation ?? throw Denied()).GetOfficialBalanceAsync(
+            contractId, postingId, asOfDate);
+    }
+
+    [HttpGet("contracts/{contractId:guid}/official-debt")]
+    [UnitOfWork(true, System.Data.IsolationLevel.RepeatableRead)]
+    public Task<OfficialContractDebtPortfolioRead> GetOfficialDebtPortfolioAsync(
+        [FromRoute] Guid contractId, [FromQuery] DateOnly? asOfDate = null)
+    {
+        RequireIsolatedStaging();
+        return (_mutation ?? throw Denied()).GetOfficialDebtPortfolioAsync(
+            contractId, asOfDate);
+    }
+
     [HttpPost("contracts/{contractId:guid}/move-outs/{requestId:guid}/prepare")]
     [UnitOfWork(true)]
     public Task<SliceBStagedInvoiceEvidenceRead> PrepareAsync(

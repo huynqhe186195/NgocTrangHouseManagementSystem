@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Data.Common;
 using System.IO;
 using System.Linq;
@@ -1325,6 +1326,365 @@ public sealed class SliceBStagingFinalInvoiceMutation
                     room.Status);
             });
 
+    /// <summary>
+    /// Explicit root authorization converts one independently reviewed,
+    /// immutable issued bill (monthly OR final) into a posted receivable.
+    /// Idempotent retries preserve the original posting identity.
+    /// </summary>
+    public Task<OfficialInvoicePostingRead> PostOfficialReceivableAsync(
+        Guid contractId, Guid issuedInvoiceId, OfficialInvoiceKind kind)
+        => ExecuteScopedAsync(contractId, requireBootstrapOwner: true,
+            async (db, actor, building, roomId) =>
+            {
+                if (issuedInvoiceId == Guid.Empty || !Enum.IsDefined(kind) ||
+                    db.Database.CurrentTransaction?.GetDbTransaction()
+                        .IsolationLevel != System.Data.IsolationLevel.Serializable)
+                    throw Denied();
+                var table = kind == OfficialInvoiceKind.Monthly
+                    ? "\"BuildingManagementMonthlyIssuedInvoiceLedger\""
+                    : "\"BuildingManagementIssuedInvoiceLedger\"";
+                await using (var cmd = Command(db,
+                    "SELECT \"Id\" FROM " + table +
+                    " WHERE \"Id\" = @id AND \"ContractId\" = @contract" +
+                    " AND \"RoomId\" = @room AND \"BuildingId\" = @building FOR UPDATE"))
+                {
+                    Add(cmd, "id", issuedInvoiceId);
+                    Add(cmd, "contract", contractId);
+                    Add(cmd, "room", roomId);
+                    Add(cmd, "building", building);
+                    if (await cmd.ExecuteScalarAsync() is not Guid)
+                        throw Denied();
+                }
+
+                OfficialInvoiceReceivablePostingRecord posted;
+                try
+                {
+                    if (kind == OfficialInvoiceKind.Monthly)
+                    {
+                        var issued = await db.MonthlyIssuedInvoices.AsNoTracking()
+                            .SingleAsync(x => x.Id == issuedInvoiceId);
+                        var source = await db.MonthlyInvoiceCandidates.AsNoTracking()
+                            .SingleAsync(x => x.Id == issued.CandidateId);
+                        var review = await db.MonthlyInvoiceReviews.AsNoTracking()
+                            .SingleAsync(x => x.Id == issued.ReviewId);
+                        posted = OfficialInvoiceReceivablePostingRecord.PostMonthly(
+                            Guid.NewGuid(), issued, source, review, actor, DateTime.UtcNow);
+                    }
+                    else
+                    {
+                        var issued = await db.IssuedInvoiceLedger.AsNoTracking()
+                            .SingleAsync(x => x.Id == issuedInvoiceId);
+                        var source = await db.FinalInvoiceIssueEvidence.AsNoTracking()
+                            .SingleAsync(x => x.Id == issued.StagedEvidenceId);
+                        var review = await db.InvoiceIssuanceReviews.AsNoTracking()
+                            .SingleAsync(x => x.Id == issued.ReviewTicketId);
+                        posted = OfficialInvoiceReceivablePostingRecord.PostFinal(
+                            Guid.NewGuid(), issued, source, review, actor, DateTime.UtcNow);
+                    }
+                }
+                catch (Exception ex) when (ex is InvalidDataException or
+                    InvalidOperationException or ArgumentException or OverflowException)
+                { throw Denied(); }
+
+                var existing = await db.OfficialInvoiceReceivables.AsNoTracking()
+                    .SingleOrDefaultAsync(x => x.Kind == kind &&
+                        x.IssuedInvoiceId == issuedInvoiceId);
+                if (existing is not null)
+                {
+                    if (existing.ContractId != posted.ContractId ||
+                        existing.RoomId != posted.RoomId ||
+                        existing.BuildingId != posted.BuildingId ||
+                        existing.BillingYear != posted.BillingYear ||
+                        existing.BillingMonth != posted.BillingMonth ||
+                        existing.OriginalAmount != posted.OriginalAmount ||
+                        existing.DueDate != posted.DueDate ||
+                        existing.SourceEvidenceSha256 != posted.SourceEvidenceSha256)
+                        throw Denied();
+                    posted = existing;
+                }
+                else
+                {
+                    db.OfficialInvoiceReceivables.Add(posted);
+                }
+                return new OfficialInvoicePostingRead(posted.Id,
+                    posted.IssuedInvoiceId, posted.ContractId, posted.Kind,
+                    posted.OriginalAmount, posted.DueDate,
+                    IsOfficialDebtPosted: true);
+            });
+
+    /// <summary>
+    /// A different authenticated operator audits the original completed
+    /// manual transfer, its immutable allocation, and a bank-statement
+    /// reference before it can reduce OFFICIAL debt. External bank APIs
+    /// are neither called nor claimed verified.
+    /// </summary>
+    public Task<OfficialInvoiceReceiptReviewRead> ReviewOfficialReceiptAsync(
+        Guid contractId, Guid postingId, Guid allocationId,
+        OfficialInvoiceReceiptReviewInput input)
+        => ExecuteScopedAsync(contractId, requireBootstrapOwner: false,
+            async (db, actor, building, roomId) =>
+            {
+                if (postingId == Guid.Empty || allocationId == Guid.Empty ||
+                    input is null ||
+                    db.Database.CurrentTransaction?.GetDbTransaction()
+                        .IsolationLevel != System.Data.IsolationLevel.Serializable)
+                    throw Denied();
+                var posting = await LockOfficialPostingAsync(
+                    db, contractId, postingId, building, roomId);
+                var evidence = await LoadOfficialReceiptEvidenceAsync(
+                    db, posting, allocationId);
+                OfficialInvoiceReceiptReviewRecord candidate;
+                try
+                {
+                    candidate = OfficialInvoiceReceiptReviewRecord.Review(
+                        Guid.NewGuid(), posting, evidence, actor, DateTime.UtcNow,
+                        input.Accept, input.BankStatementEvidenceReference,
+                        input.Reason);
+                }
+                catch (Exception ex) when (ex is InvalidDataException or
+                    InvalidOperationException or ArgumentException)
+                { throw Denied(); }
+
+                var already = await db.OfficialInvoiceReceiptReviews.AsNoTracking()
+                    .SingleOrDefaultAsync(x =>
+                        x.ReceiptAllocationId == allocationId &&
+                        x.ReceivablePostingId == posting.Id);
+                if (already is not null)
+                {
+                    if (already.ReviewedByUserId != actor ||
+                        already.Accepted != input.Accept ||
+                        already.BankStatementEvidenceReference !=
+                            candidate.BankStatementEvidenceReference ||
+                        already.ReviewReason != candidate.ReviewReason)
+                        throw Denied();
+                    already.Verify(posting, evidence);
+                    return new OfficialInvoiceReceiptReviewRead(
+                        already.Id, posting.Id, already.ReceiptAllocationId,
+                        already.Accepted, already.Amount,
+                        IsExternallyVerifiedBankTransfer: false);
+                }
+
+                // Same SERIALIZABLE invoice snapshot as PostgreSQL trigger.
+                // A competing receipt approval/credit cannot both commit
+                // if their aggregate sums would violate the posted total.
+                if (candidate.Accepted)
+                {
+                    var alreadyVerified = await db.OfficialInvoiceReceiptReviews
+                        .AsNoTracking().Where(x =>
+                            x.ReceivablePostingId == posting.Id && x.Accepted)
+                        .SumAsync(x => x.Amount);
+                    var delta = posting.Kind == OfficialInvoiceKind.Monthly
+                        ? await db.MonthlyInvoiceAdjustmentDecisions.AsNoTracking()
+                            .Where(x => x.IssuedInvoiceId ==
+                                posting.IssuedInvoiceId && x.Accepted)
+                            .SumAsync(x => x.ApprovedSignedDeltaAmount)
+                        : 0m;
+                    if (checked(alreadyVerified + candidate.Amount) >
+                        checked(posting.OriginalAmount + delta))
+                        throw Denied();
+                }
+                db.OfficialInvoiceReceiptReviews.Add(candidate);
+                return new OfficialInvoiceReceiptReviewRead(
+                    candidate.Id, posting.Id, candidate.ReceiptAllocationId,
+                    candidate.Accepted, candidate.Amount,
+                    IsExternallyVerifiedBankTransfer: false);
+            });
+
+    public Task<OfficialInvoiceReceivableBalance> GetOfficialBalanceAsync(
+        Guid contractId, Guid postingId, DateOnly? asOfDate)
+        => ExecuteScopedAsync(contractId, requireBootstrapOwner: false,
+            async (db, actor, building, roomId) =>
+            {
+                var asOf = OfficialAsOf(asOfDate);
+                var posted = await db.OfficialInvoiceReceivables.AsNoTracking()
+                    .SingleOrDefaultAsync(x => x.Id == postingId &&
+                        x.ContractId == contractId && x.RoomId == roomId &&
+                        x.BuildingId == building) ?? throw Denied();
+                return await AssessOfficialBalanceAsync(db, posted, asOf);
+            }, permitEndedContract: true);
+
+    /// <summary>
+    /// Contract-wide official debt. An issued invoice missing a posting
+    /// makes the portfolio INCOMPLETE, never an invented zero balance.
+    /// </summary>
+    public Task<OfficialContractDebtPortfolioRead> GetOfficialDebtPortfolioAsync(
+        Guid contractId, DateOnly? asOfDate)
+        => ExecuteScopedAsync(contractId, requireBootstrapOwner: false,
+            async (db, actor, building, roomId) =>
+            {
+                var asOf = OfficialAsOf(asOfDate);
+                var postings = await db.OfficialInvoiceReceivables.AsNoTracking()
+                    .Where(x => x.ContractId == contractId &&
+                        x.RoomId == roomId && x.BuildingId == building)
+                    .OrderBy(x => x.BillingYear).ThenBy(x => x.BillingMonth)
+                    .ToArrayAsync();
+                var issuedCount =
+                    await db.MonthlyIssuedInvoices.AsNoTracking().CountAsync(x =>
+                        x.ContractId == contractId && x.RoomId == roomId) +
+                    await db.IssuedInvoiceLedger.AsNoTracking().CountAsync(x =>
+                        x.ContractId == contractId && x.RoomId == roomId);
+                if (issuedCount == 0 || issuedCount != postings.Length ||
+                    postings.Length > 250)
+                    throw Denied();
+                var rows = new OfficialInvoiceReceivableBalance[postings.Length];
+                decimal amount = 0m, receipts = 0m, outstanding = 0m;
+                for (var i = 0; i < postings.Length; i++)
+                {
+                    rows[i] = await AssessOfficialBalanceAsync(
+                        db, postings[i], asOf);
+                    amount = checked(amount + rows[i].AdjustedAmount);
+                    receipts = checked(receipts +
+                        rows[i].IndependentlyReviewedManualPayments);
+                    outstanding = checked(outstanding + rows[i].OutstandingAmount);
+                }
+                return new OfficialContractDebtPortfolioRead(contractId,
+                    building, asOf, rows.Length, amount, receipts, outstanding,
+                    rows.Count(x => x.Status == IssuedInvoicePaymentStatus.Overdue),
+                    rows, IsOfficialDebtPosted: true,
+                    IsExternallyVerifiedBankTransfer: false);
+            }, permitEndedContract: true);
+
+    private static DateOnly OfficialAsOf(DateOnly? requested)
+    {
+        var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(
+            DateTime.UtcNow, TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh")));
+        var asOf = requested ?? today;
+        return asOf == default || asOf > today ? throw Denied() : asOf;
+    }
+
+    private static async Task<OfficialInvoiceReceivablePostingRecord>
+        LockOfficialPostingAsync(BuildingManagementDbContext db,
+            Guid contractId, Guid postingId, Guid buildingId, Guid roomId)
+    {
+        await using (var cmd = Command(db, """
+            SELECT "Id" FROM "BuildingManagementOfficialInvoiceReceivables"
+             WHERE "Id" = @id AND "ContractId" = @contract
+               AND "RoomId" = @room AND "BuildingId" = @building FOR UPDATE
+            """))
+        {
+            Add(cmd, "id", postingId);
+            Add(cmd, "contract", contractId);
+            Add(cmd, "room", roomId);
+            Add(cmd, "building", buildingId);
+            if (await cmd.ExecuteScalarAsync() is not Guid)
+                throw Denied();
+        }
+        return await db.OfficialInvoiceReceivables.AsNoTracking()
+            .SingleAsync(x => x.Id == postingId);
+    }
+
+    private static async Task<OfficialInvoiceReceiptEvidence>
+        LoadOfficialReceiptEvidenceAsync(BuildingManagementDbContext db,
+            OfficialInvoiceReceivablePostingRecord posting, Guid allocationId)
+    {
+        try
+        {
+            if (posting.Kind == OfficialInvoiceKind.Monthly)
+            {
+                var journal = await db.MonthlyInvoicePaymentAllocations
+                    .AsNoTracking().SingleAsync(x =>
+                        x.Id == allocationId &&
+                        x.IssuedInvoiceId == posting.IssuedInvoiceId);
+                var receipt = await db.Payments.IgnoreQueryFilters()
+                    .AsNoTracking().SingleAsync(x => x.Id == journal.PaymentId);
+                return OfficialInvoiceReceiptEvidence.FromMonthly(journal, receipt);
+            }
+            else
+            {
+                var journal = await db.InvoicePaymentAllocationJournal
+                    .AsNoTracking().SingleAsync(x =>
+                        x.Id == allocationId &&
+                        x.IssuedInvoiceId == posting.IssuedInvoiceId);
+                var receipt = await db.Payments.IgnoreQueryFilters()
+                    .AsNoTracking().SingleAsync(x => x.Id == journal.PaymentId);
+                return OfficialInvoiceReceiptEvidence.FromFinal(journal, receipt);
+            }
+        }
+        catch (Exception ex) when (ex is InvalidDataException or
+            InvalidOperationException or ArgumentException)
+        { throw Denied(); }
+    }
+
+    private static async Task<OfficialInvoiceReceivableBalance>
+        AssessOfficialBalanceAsync(BuildingManagementDbContext db,
+            OfficialInvoiceReceivablePostingRecord posted, DateOnly asOf)
+    {
+        if (posted.Id == Guid.Empty ||
+            posted.PostedAtUtc.Kind != DateTimeKind.Utc ||
+            DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(
+                posted.PostedAtUtc,
+                TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh"))) > asOf)
+            throw Denied();
+        try
+        {
+            decimal signedDelta = 0m;
+            if (posted.Kind == OfficialInvoiceKind.Monthly)
+            {
+                var issued = await db.MonthlyIssuedInvoices.AsNoTracking()
+                    .SingleAsync(x => x.Id == posted.IssuedInvoiceId);
+                var archive = await db.MonthlyInvoiceCandidates.AsNoTracking()
+                    .SingleAsync(x => x.Id == issued.CandidateId);
+                var review = await db.MonthlyInvoiceReviews.AsNoTracking()
+                    .SingleAsync(x => x.Id == issued.ReviewId);
+                posted.VerifyMonthly(issued, archive, review);
+                var proposals = await db.MonthlyInvoiceAdjustments.AsNoTracking()
+                    .Where(x => x.IssuedInvoiceId == posted.IssuedInvoiceId)
+                    .ToArrayAsync();
+                var decisions = await db.MonthlyInvoiceAdjustmentDecisions
+                    .AsNoTracking().Where(x =>
+                        x.IssuedInvoiceId == posted.IssuedInvoiceId)
+                    .ToArrayAsync();
+                signedDelta = MonthlyInvoiceAdjustmentEvaluator.Assess(
+                    issued, proposals, decisions, asOf, 0m).ApprovedSignedAdjustment;
+            }
+            else
+            {
+                var issued = await db.IssuedInvoiceLedger.AsNoTracking()
+                    .SingleAsync(x => x.Id == posted.IssuedInvoiceId);
+                var archive = await db.FinalInvoiceIssueEvidence.AsNoTracking()
+                    .SingleAsync(x => x.Id == issued.StagedEvidenceId);
+                var review = await db.InvoiceIssuanceReviews.AsNoTracking()
+                    .SingleAsync(x => x.Id == issued.ReviewTicketId);
+                posted.VerifyFinal(issued, archive, review);
+            }
+
+            var journals = posted.Kind == OfficialInvoiceKind.Monthly
+                ? (await db.MonthlyInvoicePaymentAllocations.AsNoTracking()
+                    .Where(x => x.IssuedInvoiceId == posted.IssuedInvoiceId)
+                    .ToArrayAsync()).Select(x => (x.Id, x.PaymentId)).ToArray()
+                : (await db.InvoicePaymentAllocationJournal.AsNoTracking()
+                    .Where(x => x.IssuedInvoiceId == posted.IssuedInvoiceId)
+                    .ToArrayAsync()).Select(x => (x.Id, x.PaymentId)).ToArray();
+            var originalPayments = await db.Payments.IgnoreQueryFilters()
+                .AsNoTracking().Where(x =>
+                    x.InvoiceId == posted.IssuedInvoiceId &&
+                    x.ContractId == posted.ContractId &&
+                    x.Purpose == PaymentPurpose.InvoicePayment).ToArrayAsync();
+            if (originalPayments.Length != journals.Length ||
+                journals.Select(x => x.PaymentId).Distinct().Count() != journals.Length ||
+                originalPayments.Select(x => x.Id).Distinct().Count() !=
+                    originalPayments.Length)
+                throw Denied();
+            var map = originalPayments.ToDictionary(x => x.Id);
+            var evidence = new OfficialInvoiceReceiptEvidence[journals.Length];
+            for (var i = 0; i < journals.Length; i++)
+            {
+                if (!map.ContainsKey(journals[i].PaymentId))
+                    throw Denied();
+                evidence[i] = await LoadOfficialReceiptEvidenceAsync(
+                    db, posted, journals[i].Id);
+            }
+            var reviews = await db.OfficialInvoiceReceiptReviews.AsNoTracking()
+                .Where(x => x.ReceivablePostingId == posted.Id)
+                .ToArrayAsync();
+            return OfficialInvoiceReceivableBalanceEvaluator.Assess(
+                posted, asOf, signedDelta, evidence, reviews);
+        }
+        catch (Exception ex) when (ex is InvalidDataException or
+            InvalidOperationException or ArgumentException or OverflowException)
+        { throw Denied(); }
+    }
+
     private static bool ValidProof(string? text)
         => !string.IsNullOrWhiteSpace(text) &&
            text.Trim().Length >= 8 &&
@@ -1332,7 +1692,8 @@ public sealed class SliceBStagingFinalInvoiceMutation
 
     private async Task<T> ExecuteScopedAsync<T>(
         Guid contractId, bool requireBootstrapOwner,
-        Func<BuildingManagementDbContext, Guid, Guid, Guid, Task<T>> work)
+        Func<BuildingManagementDbContext, Guid, Guid, Guid, Task<T>> work,
+        bool permitEndedContract = false)
     {
         if (contractId == Guid.Empty)
             throw Denied();
@@ -1360,7 +1721,10 @@ public sealed class SliceBStagingFinalInvoiceMutation
                 var contract = await db.Contracts.AsNoTracking()
                     .SingleOrDefaultAsync(x =>
                         x.Id == contractId && !x.IsDeleted);
-                if (contract is null || contract.Status != ContractStatus.Active ||
+                if (contract is null ||
+                    (contract.Status != ContractStatus.Active &&
+                     !(permitEndedContract &&
+                       contract.Status == ContractStatus.Ended)) ||
                     contract.RoomId != roomId)
                     throw Denied();
                 return await work(db, actor, building, roomId);
@@ -1650,3 +2014,27 @@ public sealed record SliceBStagedMoveOutCloseoutRead(
     Guid CloseoutApprovalId, Guid IssuedInvoiceId,
     decimal VerifiedHeldDeposit, decimal RefundAmount,
     decimal ForfeitAmount, RoomStatus RoomStatus);
+
+public sealed record OfficialInvoicePostingRead(
+    Guid PostingId, Guid IssuedInvoiceId, Guid ContractId,
+    OfficialInvoiceKind Kind, decimal OriginalAmount, DateOnly DueDate,
+    bool IsOfficialDebtPosted);
+
+public sealed class OfficialInvoiceReceiptReviewInput
+{
+    public bool Accept { get; set; }
+    public string BankStatementEvidenceReference { get; set; } = string.Empty;
+    public string Reason { get; set; } = string.Empty;
+}
+
+public sealed record OfficialInvoiceReceiptReviewRead(
+    Guid ReviewId, Guid ReceivablePostingId, Guid ReceiptAllocationId,
+    bool Accepted, decimal Amount, bool IsExternallyVerifiedBankTransfer);
+
+public sealed record OfficialContractDebtPortfolioRead(
+    Guid ContractId, Guid BuildingId, DateOnly AsOfDate, int InvoiceCount,
+    decimal TotalAdjustedReceivables,
+    decimal IndependentlyReviewedManualPayments,
+    decimal OutstandingAmount, int OverdueInvoiceCount,
+    IReadOnlyList<OfficialInvoiceReceivableBalance> Invoices,
+    bool IsOfficialDebtPosted, bool IsExternallyVerifiedBankTransfer);

@@ -10,6 +10,7 @@ using BuildingManagement.Tenants;
 using BuildingManagement.RoomReservations;
 using BuildingManagement.Payments;
 using BuildingManagement.MoveOuts;
+using BuildingManagement.Invoices;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Volo.Abp;
@@ -41,6 +42,7 @@ public sealed class SliceBStagingContractMutation
     private readonly IMoveOutRequestAppService _moveOuts;
     private readonly IPaymentAppService _payments;
     private readonly MoveOutFinalMeterSignoffAppService _meterSignoff;
+    private readonly IInvoiceDraftStorageAppService _invoiceDrafts;
 
     public SliceBStagingContractMutation(
         IDbContextProvider<BuildingManagementDbContext> provider,
@@ -53,7 +55,8 @@ public sealed class SliceBStagingContractMutation
         IRoomReservationAppService reservations,
         IMoveOutRequestAppService moveOuts,
         IPaymentAppService payments,
-        MoveOutFinalMeterSignoffAppService meterSignoff)
+        MoveOutFinalMeterSignoffAppService meterSignoff,
+        IInvoiceDraftStorageAppService invoiceDrafts)
     {
         _provider = provider;
         _policy = policy;
@@ -67,6 +70,7 @@ public sealed class SliceBStagingContractMutation
         _moveOuts = moveOuts;
         _payments = payments;
         _meterSignoff = meterSignoff;
+        _invoiceDrafts = invoiceDrafts;
     }
 
     /// <summary>
@@ -493,6 +497,45 @@ public sealed class SliceBStagingContractMutation
                 throw Denied();
             return await change();
         });
+    }
+
+    /// <summary>
+    /// Phase 2G.3: persist a historical UTILITY-ONLY draft from the original
+    /// meter/rate source records. Caller selects ONLY the billing period;
+    /// contract/room, counters, prices and amounts always come from server.
+    /// The HTTP action must supply a REPEATABLE READ PostgreSQL UnitOfWork.
+    /// This never issues an invoice, posts debt or moves deposits.
+    /// </summary>
+    public async Task<InvoiceDraftDto> CreateMonthlyUtilityDraftAsync(
+        Guid contractId, int billingYear, int billingMonth)
+    {
+        if (contractId == Guid.Empty ||
+            billingYear is < 1 or > 9999 || billingMonth is < 1 or > 12)
+            throw Denied();
+        var actor = RequireActor();
+        var building = await ResolveAsync(
+            BuildingBusinessResourceKind.Contract, contractId);
+        await _policy.EnsureResourceAsync(
+            BuildingBusinessResourceKind.Contract, contractId,
+            BuildingBusinessCapability.ManageContract);
+        await _identity.AcquireContractManageAsync(actor);
+        var db = await _provider.GetDbContextAsync();
+        return await Fence(db).ExecuteAsync(actor, building, async () =>
+        {
+            // The shared Contract FOR UPDATE gate serializes with move-out,
+            // reservation/renewal and any concurrent draft creation.
+            var roomId = await LockContractRoomAsync(db, contractId);
+            if (await LockRoomBuildingAsync(db, roomId) != building)
+                throw Denied();
+            return await _invoiceDrafts.CreateAsync(new CreateInvoiceDraftDto
+            {
+                ContractId = contractId,
+                BillingYear = billingYear,
+                BillingMonth = billingMonth
+            });
+        }, () => _policy.EnsureResourceAsync(
+            BuildingBusinessResourceKind.Contract, contractId,
+            BuildingBusinessCapability.ManageContract));
     }
 
     public async Task<ContractDto> CreateAsync(CreateContractDto input)

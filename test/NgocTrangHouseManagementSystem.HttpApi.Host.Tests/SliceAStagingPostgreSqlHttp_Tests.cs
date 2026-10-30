@@ -4031,6 +4031,7 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             // the real Host wires ONLY on two isolated staging databases.
             context.Services.AddTransient<SliceBStagingFinalInvoiceMutation>();
             context.Services.AddTransient<SliceCStagingUtilityRates>();
+            context.Services.AddTransient<SliceCStagingMeterReadings>();
             context.Services.Replace(
                 ServiceDescriptor.Transient<IBuildingScopedWriteBoundary,
                     SliceAStagingWriteBoundary>());

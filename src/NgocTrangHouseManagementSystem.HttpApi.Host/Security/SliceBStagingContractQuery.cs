@@ -615,11 +615,6 @@ public sealed class SliceBStagingContractQuery
         var scoped = await GetAsync(contractId);
         var actor = RequireActor();
         var db = await _provider.GetDbContextAsync();
-        if (!db.Database.IsNpgsql())
-            throw Denied();
-        var transaction = db.Database.CurrentTransaction?.GetDbTransaction()
-            ?? throw Denied();
-
         // Hold exact current contract/building/membership rows until commit.
         await LockInvoicePreviewScopeAsync(db, scoped, actor);
 
@@ -750,7 +745,7 @@ public sealed class SliceBStagingContractQuery
             throw Denied();
         var transaction = db.Database.CurrentTransaction?.GetDbTransaction()
             ?? throw Denied();
-                await using (var command = db.Database.GetDbConnection().CreateCommand())
+        await using (var command = db.Database.GetDbConnection().CreateCommand())
         {
             command.Transaction = transaction;
             command.CommandText = """
@@ -777,7 +772,7 @@ public sealed class SliceBStagingContractQuery
                 """;
             foreach (var (key, value) in new[]
             {
-                ("contract", contractId),
+                ("contract", scoped.Id),
                 ("building", scoped.BuildingId),
                 ("actor", actor)
             })

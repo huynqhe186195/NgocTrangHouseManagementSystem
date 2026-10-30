@@ -2134,13 +2134,13 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     .Begin(requiresNew: true, isTransactional: true);
                 var db = await sp.GetRequiredService<
                     IDbContextProvider<BuildingManagementDbContext>>().GetDbContextAsync();
-                var source = await db.MonthlyInvoiceCandidates
+                var monthlySourceArchive = await db.MonthlyInvoiceCandidates
                     .SingleAsync(x => x.Id == monthlyCandidateId);
                 var decision = await db.MonthlyInvoiceReviews
                     .SingleAsync(x => x.Id == monthlyReviewId);
                 var month = await db.MonthlyIssuedInvoices
                     .SingleAsync(x => x.Id == monthlyIssuedId);
-                month.VerifyAgainst(source, decision);
+                month.VerifyAgainst(monthlySourceArchive, decision);
                 Assert.Equal(monthlyDraftContract, month.ContractId);
                 Assert.True(month.IsStagingIssued);
                 Assert.False(month.IsOfficialReceivable);

@@ -1222,6 +1222,134 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             using (var legacyReading = await clientRoot.GetAsync(legacyReadingList))
                 Assert.Equal(HttpStatusCode.Forbidden, legacyReading.StatusCode);
 
+            // Physical meter replacement and closing usage retain the
+            // previous monthly history in one transactional operation.
+            object SliceCReplacement(decimal closing, string newCode) =>
+                new { newMeterCode = newCode, oldFinalReading = closing,
+                    newInitialReading = 5m,
+                    replacementDate = "2026-03-01T00:00:00Z",
+                    reason = "Staging test: exchanged physical water meter",
+                    notes = "Private handover note" };
+            async Task<(HttpStatusCode Status, string Body)> SliceCReplace(
+                HttpClient who, Guid meter, object replacement)
+            {
+                using var payload = new StringContent(
+                    JsonSerializer.Serialize(replacement), Encoding.UTF8,
+                    "application/json");
+                using var response = await who.PostAsync(
+                    SliceCMeterAt(meter) + "/replace", payload);
+                return (response.StatusCode,
+                    await response.Content.ReadAsStringAsync());
+            }
+            var newSliceCCode = "C-B-NEW-" + Guid.NewGuid().ToString("N");
+            var crossMeterReplace = await SliceCReplace(clientB,
+                sliceCMeterA, SliceCReplacement(30m, newSliceCCode));
+            Assert.Equal(HttpStatusCode.Forbidden, crossMeterReplace.Status);
+            var invalidSliceCReplacement = await SliceCReplace(clientB,
+                sliceCMeterB, SliceCReplacement(21m, newSliceCCode));
+            Assert.NotEqual(HttpStatusCode.OK, invalidSliceCReplacement.Status);
+            using (var oldStillActive = await clientB.GetAsync(
+                SliceCMeterAt(sliceCMeterB)))
+            {
+                Assert.Equal(HttpStatusCode.OK, oldStillActive.StatusCode);
+                using var parsed = JsonDocument.Parse(
+                    await oldStillActive.Content.ReadAsStringAsync());
+                Assert.True(parsed.RootElement.GetProperty("isActive").GetBoolean());
+            }
+            var replacedC = await SliceCReplace(clientB,
+                sliceCMeterB, SliceCReplacement(30m, newSliceCCode));
+            Assert.Equal(HttpStatusCode.OK, replacedC.Status);
+            using var replacementDoc = JsonDocument.Parse(replacedC.Body);
+            var sliceCReplacementId = replacementDoc.RootElement
+                .GetProperty("id").GetGuid();
+            var sliceCNewMeterId = replacementDoc.RootElement
+                .GetProperty("newMeterId").GetGuid();
+            Assert.Equal(27m, replacementDoc.RootElement
+                .GetProperty("oldPreviousReading").GetDecimal());
+            Assert.DoesNotContain("notes", replacedC.Body,
+                StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("reason", replacedC.Body,
+                StringComparison.OrdinalIgnoreCase);
+            using (var ownReplacement = await clientB.GetAsync(
+                sliceCMeterPath + "/replacements/" + sliceCReplacementId))
+                Assert.Equal(HttpStatusCode.OK, ownReplacement.StatusCode);
+            using (var ownReplacementList = await clientB.GetAsync(
+                sliceCMeterPath + "/rooms/" + sliceCProbeRoomB + "/replacements"))
+            {
+                Assert.Equal(HttpStatusCode.OK, ownReplacementList.StatusCode);
+                var body = await ownReplacementList.Content.ReadAsStringAsync();
+                Assert.Contains(sliceCReplacementId.ToString("D"), body,
+                    StringComparison.OrdinalIgnoreCase);
+            }
+            using (var deniedReplacementList = await clientB.GetAsync(
+                sliceCMeterPath + "/rooms/" + sliceCProbeRoomA + "/replacements"))
+                Assert.Equal(HttpStatusCode.Forbidden,
+                    deniedReplacementList.StatusCode);
+            using (var oldAfterReplacement = await clientB.GetAsync(
+                SliceCMeterAt(sliceCMeterB)))
+            {
+                Assert.Equal(HttpStatusCode.OK, oldAfterReplacement.StatusCode);
+                using var parsed = JsonDocument.Parse(
+                    await oldAfterReplacement.Content.ReadAsStringAsync());
+                Assert.False(parsed.RootElement.GetProperty("isActive").GetBoolean());
+            }
+            using (var historicalReading = await clientB.GetAsync(
+                SliceCReadingAt(sliceCReadingB)))
+            {
+                Assert.Equal(HttpStatusCode.OK, historicalReading.StatusCode);
+                using var parsed = JsonDocument.Parse(
+                    await historicalReading.Content.ReadAsStringAsync());
+                Assert.Equal(27m,
+                    parsed.RootElement.GetProperty("currentReading").GetDecimal());
+            }
+            using (var postReplacementEdit = new StringContent(
+                JsonSerializer.Serialize(new {
+                    currentReading = 29m, readingDate = "2026-02-17T00:00:00Z" }),
+                Encoding.UTF8, "application/json"))
+            using (var frozen = await clientB.PutAsync(
+                SliceCReadingAt(sliceCReadingB), postReplacementEdit))
+                Assert.NotEqual(HttpStatusCode.OK, frozen.StatusCode);
+            using (var deactivateNew = await clientB.PostAsync(
+                SliceCMeterAt(sliceCNewMeterId) + "/deactivate", null))
+            {
+                Assert.Equal(HttpStatusCode.OK, deactivateNew.StatusCode);
+                using var parsed = JsonDocument.Parse(
+                    await deactivateNew.Content.ReadAsStringAsync());
+                Assert.False(parsed.RootElement.GetProperty("isActive").GetBoolean());
+            }
+            using (var linkedDelete = await clientB.DeleteAsync(
+                SliceCMeterAt(sliceCNewMeterId)))
+                Assert.NotEqual(HttpStatusCode.OK, linkedDelete.StatusCode);
+
+            // Editing/deleting an unbilled standalone meter still works,
+            // but cannot bypass cross-building authorization.
+            var sliceCOrphanCode = "C-ORPHAN-" + Guid.NewGuid().ToString("N");
+            var orphanC = await SliceCMeterPost(clientB,
+                SliceCMeterInput(sliceCProbeRoomB, 1, 0m, sliceCOrphanCode));
+            Assert.Equal(HttpStatusCode.OK, orphanC.Status);
+            using var orphanDoc = JsonDocument.Parse(orphanC.Body);
+            var sliceCOrphanId = orphanDoc.RootElement.GetProperty("id").GetGuid();
+            using (var updateOrphan = new StringContent(
+                JsonSerializer.Serialize(new {
+                    meterCode = "C-EDIT-" + Guid.NewGuid().ToString("N"),
+                    initialReading = 0m,
+                    installedDate = "2026-01-01T00:00:00Z" }),
+                Encoding.UTF8, "application/json"))
+            using (var update = await clientB.PutAsync(
+                SliceCMeterAt(sliceCOrphanId), updateOrphan))
+                Assert.Equal(HttpStatusCode.OK, update.StatusCode);
+            using (var crossDelete = await clientB.DeleteAsync(
+                SliceCMeterAt(sliceCMeterA)))
+                Assert.Equal(HttpStatusCode.Forbidden, crossDelete.StatusCode);
+            using (var ownDelete = await clientB.DeleteAsync(
+                SliceCMeterAt(sliceCOrphanId)))
+                Assert.Equal(HttpStatusCode.OK, ownDelete.StatusCode);
+            using (var deleted = await clientB.GetAsync(
+                SliceCMeterAt(sliceCOrphanId)))
+                Assert.Equal(HttpStatusCode.Forbidden, deleted.StatusCode);
+            using (var unscopedMeter = await clientRoot.GetAsync(legacyMeterList))
+                Assert.Equal(HttpStatusCode.Forbidden, unscopedMeter.StatusCode);
+
             // Slice B first functional vertical: authenticated contract
             // reads filtered in SQL by current Building membership. The
             // legacy ContractAppService remains HTTP deny-all.

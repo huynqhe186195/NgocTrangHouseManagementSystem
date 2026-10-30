@@ -297,6 +297,17 @@ public sealed class SliceBStagingContractsController : ControllerBase
             id, requestId);
     }
 
+    // A durable signed closeout is read from the immutable ledger, not
+    // inferred from preflight flags. No bank/tenant personal data exposed.
+    [HttpGet("{id:guid}/move-out-requests/{requestId:guid}/closeout")]
+    [UnitOfWork(true)]
+    public Task<SliceBScopedSignedCloseoutRead> GetSignedCloseoutAsync(
+        [FromRoute] Guid id, [FromRoute] Guid requestId)
+    {
+        RequireIsolatedStaging();
+        return (_query ?? throw Denied()).GetSignedCloseoutAsync(id, requestId);
+    }
+
     [HttpPost("{id:guid}/move-out-requests/{requestId:guid}/verify-final-meters")]
     [UnitOfWork(true)]
     public Task<MoveOutChecklistTaskDto> VerifyFinalMetersAsync(

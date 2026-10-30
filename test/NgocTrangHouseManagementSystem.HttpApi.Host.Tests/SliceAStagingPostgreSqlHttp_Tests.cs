@@ -1456,6 +1456,13 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 }));
             Assert.NotEqual(HttpStatusCode.OK, duplicate.Status);
 
+            // A signed statement must not exist before actual approval.
+            var signedCloseoutRoute = scopedContracts + "/" +
+                financeContract.ToString("D") + "/move-out-requests/" +
+                financeMoveOut.ToString("D") + "/closeout";
+            using (var beforeCloseout = await clientB.GetAsync(signedCloseoutRoute))
+                Assert.Equal(HttpStatusCode.Forbidden, beforeCloseout.StatusCode);
+
             using var closeout = await PostValidFinanceAsync(
                 clientRoot,
                 financeRoot + "/move-outs/" + financeMoveOut.ToString("D") +
@@ -1476,6 +1483,51 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 closeout.RootElement.GetProperty("refundAmount").GetDecimal());
             Assert.Equal((int)BuildingManagement.Rooms.RoomStatus.Available,
                 closeout.RootElement.GetProperty("roomStatus").GetInt32());
+
+            // Authenticated building-scoped retrieval AFTER commit:
+            // permanent approval and money totals are visible, but the
+            // raw manual transfer reference and tenant identity are not.
+            using (var signed = await clientB.GetAsync(signedCloseoutRoute))
+            {
+                Assert.Equal(HttpStatusCode.OK, signed.StatusCode);
+                var body = await signed.Content.ReadAsStringAsync();
+                using var json = JsonDocument.Parse(body);
+                var record = json.RootElement;
+                Assert.Equal(financeContract,
+                    record.GetProperty("contractId").GetGuid());
+                Assert.Equal(financeMoveOut,
+                    record.GetProperty("moveOutRequestId").GetGuid());
+                Assert.Equal(financeIssuedId,
+                    record.GetProperty("issuedInvoiceId").GetGuid());
+                Assert.Equal(monthlyRent,
+                    record.GetProperty("verifiedHeldAmount").GetDecimal());
+                Assert.Equal(monthlyRent,
+                    record.GetProperty("refundAmount").GetDecimal());
+                Assert.Equal(0m,
+                    record.GetProperty("forfeitAmount").GetDecimal());
+                Assert.True(record.GetProperty(
+                    "refundManuallyAttested").GetBoolean());
+                Assert.False(record.GetProperty(
+                    "bankTransferIndependentlyVerified").GetBoolean());
+                Assert.Equal(64,
+                    record.GetProperty("approvalSha256").GetString()!.Length);
+                Assert.DoesNotContain("SCRATCH-MANUAL-REFUND-0001", body);
+                Assert.DoesNotContain("SCRATCH-REFUND-SIGNED-PROOF-0001", body);
+                Assert.DoesNotContain(tenantB.ToString("D"), body,
+                    StringComparison.OrdinalIgnoreCase);
+            }
+            using (var rootSigned = await clientRoot.GetAsync(signedCloseoutRoute))
+                Assert.Equal(HttpStatusCode.OK, rootSigned.StatusCode);
+            using (var foreign = await clientB.GetAsync(
+                scopedContracts + "/" + contractA.ToString("D") +
+                "/move-out-requests/" + financeMoveOut.ToString("D") +
+                "/closeout"))
+                Assert.Equal(HttpStatusCode.Forbidden, foreign.StatusCode);
+            using (var missing = await clientB.GetAsync(
+                scopedContracts + "/" + financeContract.ToString("D") +
+                "/move-out-requests/" + Guid.NewGuid().ToString("D") +
+                "/closeout"))
+                Assert.Equal(HttpStatusCode.Forbidden, missing.StatusCode);
 
             var repeatedCloseout = await PostFinalAsync(
                 clientRoot,

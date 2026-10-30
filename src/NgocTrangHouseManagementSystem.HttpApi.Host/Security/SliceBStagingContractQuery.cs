@@ -383,6 +383,97 @@ public sealed class SliceBStagingContractQuery
             false, false, false, false);
     }
 
+    /// <summary>
+    /// Final handover history is an immutable, already-committed financial
+    /// event, NOT a preflight prediction. Keep live Contracts.Read, Identity
+    /// and building grant checks in the same transactional read, and return
+    /// only a non-PII summary (never bank references or damage notes).
+    /// </summary>
+    public async Task<SliceBScopedSignedCloseoutRead> GetSignedCloseoutAsync(
+        Guid contractId, Guid requestId)
+    {
+        if (contractId == Guid.Empty || requestId == Guid.Empty)
+            throw Denied();
+        var scoped = await GetAsync(contractId);
+        var actor = RequireActor();
+        var db = await _provider.GetDbContextAsync();
+        if (!db.Database.IsNpgsql())
+            throw Denied();
+        var transaction = db.Database.CurrentTransaction?.GetDbTransaction()
+            ?? throw Denied();
+        await using var command = db.Database.GetDbConnection().CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            SELECT approval."Id", approval."IssuedInvoiceId",
+                   approval."ApprovedAtUtc", approval."VerifiedHeldAmount",
+                   approval."ApprovedRefundAmount",
+                   approval."ApprovedForfeitAmount", approval."ApprovalSha256",
+                   contract."Status", req."Status", room."Status"
+              FROM "BuildingManagementContractDepositCloseoutApprovals" approval
+              JOIN "BuildingManagementMoveOutRequests" req
+                ON req."Id" = approval."MoveOutRequestId"
+              JOIN "BuildingManagementContracts" contract
+                ON contract."Id" = approval."ContractId"
+              JOIN "BuildingManagementRooms" room
+                ON room."Id" = contract."RoomId"
+              JOIN "BuildingManagementFloors" floor
+                ON floor."Id" = room."FloorId"
+              JOIN "Buildings" building
+                ON building."Id" = floor."BuildingId"
+              JOIN "BuildingManagementOperatorBuildingGrants" grant
+                ON grant."BuildingId" = building."Id"
+             WHERE approval."ContractId" = @contract
+               AND approval."MoveOutRequestId" = @request
+               AND approval."BuildingId" = @building
+               AND req."ContractId" = contract."Id"
+               AND req."RoomId" = contract."RoomId"
+               AND grant."OperatorUserId" = @actor
+               AND grant."RevokedAtUtc" IS NULL
+               AND grant."GrantedAtUtc" <= NOW()
+               AND (grant."ExpiresAtUtc" IS NULL OR
+                    grant."ExpiresAtUtc" > NOW())
+               AND NOT req."IsDeleted" AND NOT contract."IsDeleted"
+               AND NOT room."IsDeleted" AND NOT floor."IsDeleted"
+               AND NOT building."IsDeleted"
+             FOR SHARE OF approval, req, contract, room, floor, building, grant
+            """;
+        foreach (var (key, value) in new[]
+        {
+            ("contract", contractId), ("request", requestId),
+            ("building", scoped.BuildingId), ("actor", actor)
+        })
+        {
+            var parameter = command.CreateParameter();
+            parameter.ParameterName = key;
+            parameter.Value = value;
+            command.Parameters.Add(parameter);
+        }
+        await using var reader = await command.ExecuteReaderAsync();
+        if (!await reader.ReadAsync())
+            throw Denied();
+
+        var approvedId = reader.GetGuid(0);
+        var issuedId = reader.GetGuid(1);
+        var approvedAt = reader.GetDateTime(2);
+        var deposit = reader.GetDecimal(3);
+        var refund = reader.GetDecimal(4);
+        var forfeit = reader.GetDecimal(5);
+        var sha = reader.GetString(6);
+        if ((ContractStatus)reader.GetInt32(7) != ContractStatus.Ended ||
+            (MoveOutRequestStatus)reader.GetInt32(8) != MoveOutRequestStatus.Completed ||
+            (Rooms.RoomStatus)reader.GetInt32(9) is not
+                (Rooms.RoomStatus.Available or Rooms.RoomStatus.Maintenance) ||
+            deposit <= 0m || refund < 0m || forfeit < 0m ||
+            refund + forfeit != deposit || sha.Length != 64)
+            throw Denied();
+        return new SliceBScopedSignedCloseoutRead(
+            approvedId, contractId, requestId, issuedId,
+            approvedAt, deposit, refund, forfeit,
+            (Rooms.RoomStatus)reader.GetInt32(9), sha,
+            RefundManuallyAttested: refund > 0m,
+            BankTransferIndependentlyVerified: false);
+    }
+
     private Guid RequireActor()
     {
         if (!_currentUser.IsAuthenticated || _currentUser.Id is not Guid id ||
@@ -423,6 +514,18 @@ public sealed class SliceBStagingContractQuery
     private static AbpAuthorizationException Denied()
         => new("No active building-scoped Contracts.Read authorization.");
 }
+
+/// <summary>
+/// Read-only signed finance handover. Approval ID and checksum are archival
+/// proof; there is NO bank verification, account number or tenant PII.
+/// </summary>
+public sealed record SliceBScopedSignedCloseoutRead(
+    Guid ApprovalId, Guid ContractId, Guid MoveOutRequestId,
+    Guid IssuedInvoiceId, DateTime ApprovedAtUtc,
+    decimal VerifiedHeldAmount, decimal RefundAmount,
+    decimal ForfeitAmount, BuildingManagement.Rooms.RoomStatus RoomStatus,
+    string ApprovalSha256, bool RefundManuallyAttested,
+    bool BankTransferIndependentlyVerified);
 
 public sealed record SliceBScopedContractRead(
     Guid Id, Guid RoomId, Guid BuildingId, string ContractNumber,

@@ -740,3 +740,24 @@ expected scoped 200. This was **not** a deposit lock regression. The fixture
 now selects the first day of next month in Vietnam time, staying inside
 the existing validated move-in window across month boundaries. The
 production reservation validation is unchanged.
+
+### Signed closeout can be read after completion (staging acceptance)
+
+The immutable financial closeout had only an immediate POST return and no
+authorized, durable read path after a later session. The isolated-staging
+contract controller now exposes
+`GET /api/slice-b-staging/contracts/{contractId}/move-out-requests/{requestId}/closeout`.
+It checks current Contracts.Read and the persisted Identity permission lease;
+a **single** SQL query rechecks live Building membership, joins the exact
+approval/contract/request/room graph, and holds all evidence rows FOR SHARE
+through its transactional read. Only a signed, Ended contract with a Completed
+move-out and an available/maintenance room is returned. The summary carries
+immutable approval ID, issued-invoice ID, approval SHA, final amounts and
+room disposition, not tenant PII, damage narrative, or bank transaction refs.
+`RefundManuallyAttested` is not proof of bank transfer:
+`BankTransferIndependentlyVerified` is always FALSE. Missing/cross-building
+and pre-closeout reads fail closed. The real authenticated disposable-PostgreSQL
+HTTP scenario exercises before/after commit, owner/operator reads, mismatch,
+privacy and false-bank-verification rejection. Old `financial-readiness`
+remains a **preflight** only; the signed ledger read is authoritative for
+a terminal handover. No production route activation occurs.

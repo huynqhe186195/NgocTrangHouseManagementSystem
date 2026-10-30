@@ -515,17 +515,31 @@ public sealed class SliceBStagingContractMutation
         var actor = RequireActor();
         var building = await ResolveAsync(
             BuildingBusinessResourceKind.Contract, contractId);
+        var db = await _provider.GetDbContextAsync();
+        var initialRoom = await db.Contracts.AsNoTracking()
+            .Where(x => x.Id == contractId && !x.IsDeleted)
+            .Select(x => x.RoomId).SingleOrDefaultAsync();
+        if (initialRoom == Guid.Empty ||
+            await ResolveAsync(BuildingBusinessResourceKind.Room, initialRoom)
+                != building)
+            throw Denied();
+
+        // The existing scoped Contract mutation path authorizes the Room
+        // resource with Contracts.Manage, then pins its immutable association
+        // to this exact Contract in the transaction. Do not rely on a stale
+        // initial contract-scope lookup as a write authority.
         await _policy.EnsureResourceAsync(
-            BuildingBusinessResourceKind.Contract, contractId,
+            BuildingBusinessResourceKind.Room, initialRoom,
             BuildingBusinessCapability.ManageContract);
         await _identity.AcquireContractManageAsync(actor);
-        var db = await _provider.GetDbContextAsync();
         return await Fence(db).ExecuteAsync(actor, building, async () =>
         {
-            // The shared Contract FOR UPDATE gate serializes with move-out,
-            // reservation/renewal and any concurrent draft creation.
-            var roomId = await LockContractRoomAsync(db, contractId);
-            if (await LockRoomBuildingAsync(db, roomId) != building)
+            // Contract FOR UPDATE serializes concurrent month draft creation,
+            // move-out and contract/room mutation. A raced room reassignment
+            // must be denied rather than redirecting billing.
+            var lockedRoom = await LockContractRoomAsync(db, contractId);
+            if (lockedRoom != initialRoom ||
+                await LockRoomBuildingAsync(db, lockedRoom) != building)
                 throw Denied();
             return await _invoiceDrafts.CreateAsync(new CreateInvoiceDraftDto
             {
@@ -534,7 +548,7 @@ public sealed class SliceBStagingContractMutation
                 BillingMonth = billingMonth
             });
         }, () => _policy.EnsureResourceAsync(
-            BuildingBusinessResourceKind.Contract, contractId,
+            BuildingBusinessResourceKind.Room, initialRoom,
             BuildingBusinessCapability.ManageContract));
     }
 

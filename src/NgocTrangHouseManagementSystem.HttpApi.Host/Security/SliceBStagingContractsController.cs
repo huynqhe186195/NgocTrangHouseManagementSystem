@@ -297,6 +297,19 @@ public sealed class SliceBStagingContractsController : ControllerBase
             id, requestId);
     }
 
+    // Historical snapshot read only; never exposes drafts from a foreign
+    // contract or building and never treats provisional prices as debt.
+    [HttpGet("{id:guid}/monthly-utility-drafts/{draftId:guid}")]
+    [UnitOfWork(true)]
+    public Task<BuildingManagement.Invoices.InvoiceDraftDto>
+        GetMonthlyUtilityDraftAsync(
+            [FromRoute] Guid id, [FromRoute] Guid draftId)
+    {
+        RequireIsolatedStaging();
+        return (_query ?? throw Denied())
+            .GetMonthlyUtilityDraftAsync(id, draftId);
+    }
+
     // Draft-only utility persistence. Do NOT accept client-supplied prices,
     // meter evidence, draft totals, or an unscoped ContractId.
     [HttpPost("{id:guid}/monthly-utility-drafts/{year:int}/{month:int}")]

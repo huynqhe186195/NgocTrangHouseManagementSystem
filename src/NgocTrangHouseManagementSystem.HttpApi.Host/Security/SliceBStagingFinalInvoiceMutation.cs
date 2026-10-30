@@ -1200,6 +1200,51 @@ public sealed class SliceBStagingFinalInvoiceMutation
                     invoice.VerifyStoredTerms(evidence, review);
                 }
 
+                // Once the contract has an official receivable, never
+                // complete move-out using only staging receipt totals.
+                // Lock every posting, each original monthly issue and
+                // independently reviewed payment aggregate to the commit.
+                var official = await db.OfficialInvoiceReceivables.AsNoTracking()
+                    .Where(x => x.ContractId == contractId)
+                    .OrderBy(x => x.Id).ToArrayAsync();
+                if (official.Length > 0)
+                {
+                    var monthlyCount = await db.MonthlyIssuedInvoices.AsNoTracking()
+                        .CountAsync(x => x.ContractId == contractId);
+                    if (official.Length != invoices.Length + monthlyCount)
+                        throw Denied();
+                    var asOf = OfficialAsOf(null);
+                    foreach (var posting in official)
+                    {
+                        if (posting.BuildingId != building ||
+                            posting.RoomId != roomId)
+                            throw Denied();
+                        await using (var lockPosting = Command(db, """
+                            SELECT "Id" FROM "BuildingManagementOfficialInvoiceReceivables"
+                             WHERE "Id" = @id FOR UPDATE
+                            """))
+                        {
+                            Add(lockPosting, "id", posting.Id);
+                            if (await lockPosting.ExecuteScalarAsync() is not Guid)
+                                throw Denied();
+                        }
+                        if (posting.Kind == OfficialInvoiceKind.Monthly)
+                        {
+                            await using var lockMonthly = Command(db, """
+                                SELECT "Id" FROM "BuildingManagementMonthlyIssuedInvoiceLedger"
+                                 WHERE "Id" = @id FOR UPDATE
+                                """);
+                            Add(lockMonthly, "id", posting.IssuedInvoiceId);
+                            if (await lockMonthly.ExecuteScalarAsync() is not Guid)
+                                throw Denied();
+                        }
+                        var balance = await AssessOfficialBalanceAsync(
+                            db, posting, asOf);
+                        if (balance.OutstandingAmount != 0m)
+                            throw Denied();
+                    }
+                }
+
                 var journals = await db.InvoicePaymentAllocationJournal
                     .AsNoTracking().Where(x => x.ContractId == contractId)
                     .ToArrayAsync();

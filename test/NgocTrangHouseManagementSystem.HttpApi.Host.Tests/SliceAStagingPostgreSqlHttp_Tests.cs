@@ -2925,6 +2925,24 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 Assert.Equal(finalBill, json.RootElement
                     .GetProperty("outstandingAmount").GetDecimal());
             }
+            // Fully staged payments do not suffice for CLOSEOUT once
+            // an official receivable exists. Independent manual review is
+            // required before the final bill is considered settled.
+            var earlyOfficialCloseout = await PostFinalAsync(
+                clientRoot,
+                financeRoot + "/move-outs/" + financeMoveOut.ToString("D") +
+                    "/complete",
+                JsonSerializer.Serialize(new {
+                    forfeitAmount = 0m,
+                    inspectionEvidenceReference = "SCRATCH-SIGNED-INSPECTION-0001",
+                    handoverEvidenceReference = "SCRATCH-SIGNED-HANDOVER-0001",
+                    depositPolicyReference = "SCRATCH-CONTRACT-DEPOSIT-POLICY-2026",
+                    confirmManualRefundPaid = true,
+                    refundPaidAtUtc = DateTime.UtcNow,
+                    refundTransactionReference = "SCRATCH-MANUAL-REFUND-0001",
+                    refundBankEvidenceReference = "SCRATCH-REFUND-SIGNED-PROOF-0001"
+                }));
+            Assert.Equal(HttpStatusCode.Forbidden, earlyOfficialCloseout.Status);
             Guid[] finalJournalIds;
             using (var finalScope = app.Services.CreateScope())
             {

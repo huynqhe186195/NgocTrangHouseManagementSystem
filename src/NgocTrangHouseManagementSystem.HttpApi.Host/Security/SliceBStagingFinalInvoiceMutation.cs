@@ -285,13 +285,23 @@ public sealed class SliceBStagingFinalInvoiceMutation
                 // return the immutable original receipt/journal instead
                 // of charging the tenant a second time. The global unique
                 // TransactionReference index remains the final DB fence.
+                // PostgreSQL timestamptz has microsecond precision,
+                // while .NET DateTime carries 100-nanosecond ticks.
+                // Canonicalize BEFORE both persistence and replay checks
+                // or an unchanged request can be mistaken for a new bank
+                // payment after EF materializes the stored receipt.
+                var normalizedPaidAtUtc = input.PaidAtUtc.AddTicks(
+                    -(input.PaidAtUtc.Ticks % 10L));
                 var normalizedReference = input.TransactionReference.Trim();
                 var normalizedProof = "BANK-PROOF: " +
                     input.BankEvidenceReference.Trim();
                 var alreadyRecorded = await db.Payments
                     .IgnoreQueryFilters().AsNoTracking()
                     .SingleOrDefaultAsync(p =>
-                        p.TransactionReference == normalizedReference);
+                        p.Purpose == PaymentPurpose.InvoicePayment &&
+                        p.TransactionReference != null &&
+                        p.TransactionReference.Trim().ToLower() ==
+                            normalizedReference.ToLowerInvariant());
                 if (alreadyRecorded is not null)
                 {
                     if (alreadyRecorded.IsDeleted ||
@@ -303,11 +313,11 @@ public sealed class SliceBStagingFinalInvoiceMutation
                         alreadyRecorded.ContractId != contractId ||
                         alreadyRecorded.InvoiceId != issuedInvoiceId ||
                         alreadyRecorded.Amount != input.Amount ||
-                        alreadyRecorded.PaidAt != input.PaidAtUtc ||
+                        alreadyRecorded.PaidAt != normalizedPaidAtUtc ||
                         !StringComparer.Ordinal.Equals(
                             alreadyRecorded.Notes, normalizedProof) ||
-                        !StringComparer.Ordinal.Equals(
-                            alreadyRecorded.TransactionReference,
+                        !StringComparer.OrdinalIgnoreCase.Equals(
+                            alreadyRecorded.TransactionReference?.Trim(),
                             normalizedReference))
                         throw Denied();
 
@@ -343,7 +353,7 @@ public sealed class SliceBStagingFinalInvoiceMutation
                     invoiceId: issuedInvoiceId,
                     transactionReference: normalizedReference,
                     notes: normalizedProof);
-                receipt.Complete(input.PaidAtUtc, normalizedReference);
+                receipt.Complete(normalizedPaidAtUtc, normalizedReference);
                 db.Payments.Add(receipt);
                 // FK needs its source receipt before immutable journal
                 // INSERT; both SaveChanges occur in SAME enclosing UoW.

@@ -146,6 +146,78 @@ public sealed class SliceBReconciliationBoundaryPostgreSql_Tests
         });
     }
 
+    [Fact]
+    public async Task SBRECON04_Case_And_Whitespace_Ref_Replay_Is_Unique_In_Database()
+    {
+        await InScratchAsync(async (db, tx, _) =>
+        {
+            var f = await SeedIssuedAsync(db, tx);
+            var first = Guid.NewGuid();
+            var second = Guid.NewGuid();
+            await SeedPaymentAsync(db, tx, f, first, 100_000m);
+            await SeedPaymentAsync(db, tx, f, second, 200_000m);
+
+            // Before the migration, the two receipts are deliberately
+            // distinct objects with colliding normalized bank references.
+            await ExecuteAsync(db, tx, $"""
+                UPDATE "BuildingManagementPayments"
+                   SET "TransactionReference" = 'BANK-REPLAY-001'
+                 WHERE "Id" = '{first:D}';
+                UPDATE "BuildingManagementPayments"
+                   SET "TransactionReference" = ' bank-replay-001 '
+                 WHERE "Id" = '{second:D}';
+                """);
+            var migration = new SliceBNormalizedInvoiceReceiptReferences();
+            await ExpectFailureAsync(db, tx, Sql(migration, false), "23505");
+
+            await ExecuteAsync(db, tx, $"""
+                UPDATE "BuildingManagementPayments"
+                   SET "TransactionReference" = 'UNRELATED-BANK-REF-001'
+                 WHERE "Id" = '{second:D}';
+                """);
+            await ExecuteAsync(db, tx, Sql(migration, false));
+
+            // Normalized uniqueness must be enforced by PostgreSQL,
+            // including direct UPDATEs that bypass any HTTP preflight.
+            await ExpectFailureAsync(db, tx, $"""
+                UPDATE "BuildingManagementPayments"
+                   SET "TransactionReference" = '  bank-replay-001  '
+                 WHERE "Id" = '{second:D}';
+                """, "23505");
+            Assert.Equal(2L, await ScalarAsync(db, tx,
+                "SELECT count(*) FROM \"BuildingManagementPayments\""));
+
+            await ExecuteAsync(db, tx, Sql(migration, true));
+            await ExecuteAsync(db, tx, $"""
+                UPDATE "BuildingManagementPayments"
+                   SET "TransactionReference" = ' bank-replay-001 '
+                 WHERE "Id" = '{second:D}';
+                """);
+        });
+    }
+
+    [Fact]
+    public async Task SBRECON05_Nonempty_Journal_Refuses_ReceiptIndex_Rollback()
+    {
+        await InScratchAsync(async (db, tx, _) =>
+        {
+            var f = await SeedIssuedAsync(db, tx);
+            var payment = Guid.NewGuid();
+            await SeedPaymentAsync(db, tx, f, payment, 100_000m);
+            await InsertAllocationAsync(db, tx, f, payment, 100_000m);
+
+            var migration = new SliceBNormalizedInvoiceReceiptReferences();
+            await ExecuteAsync(db, tx, Sql(migration, false));
+            await ExpectFailureAsync(db, tx, Sql(migration, true), "23514");
+            Assert.Equal(1L, await ScalarAsync(db, tx, """
+                SELECT count(*)
+                  FROM pg_indexes
+                 WHERE schemaname = current_schema()
+                   AND indexname = 'UX_BM_InvoicePayment_NormalizedBankReference'
+                """));
+        });
+    }
+
     private static async Task AssertBalanceAsync(
         NpgsqlConnection db, NpgsqlTransaction tx, Guid issuedId,
         decimal staged, decimal remaining, long count, bool allStaged)

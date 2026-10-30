@@ -2173,6 +2173,23 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     retry.RootElement.GetProperty("allocationJournalId").GetGuid());
             }
 
+            // PostgreSQL enforces unique bank evidence after trimming
+            // and case folding, and the staging adapter resolves the
+            // historical original rather than inserting a second receipt.
+            using (var caseVariant = await PostValidFinanceAsync(
+                clientRoot, partialRoute, new {
+                    tenantId = tenantB, amount = partialAmount,
+                    paidAtUtc = partialPaidAtUtc,
+                    transactionReference = "  scratch-bank-partial-0001  ",
+                    bankEvidenceReference = partialEvidence.bankEvidenceReference
+                }))
+            {
+                Assert.Equal(partialReceiptId,
+                    caseVariant.RootElement.GetProperty("paymentId").GetGuid());
+                Assert.Equal(partialJournalId,
+                    caseVariant.RootElement.GetProperty("allocationJournalId").GetGuid());
+            }
+
             // A reused bank reference with changed money, tenant,
             // timestamp, or evidence is NOT an idempotent retry.
             var contradictory = await PostFinalAsync(

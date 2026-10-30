@@ -2103,6 +2103,22 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             // show the same unpaid issued invoice, and never leak Tenant PII.
             var portfolioRoute = scopedContracts + "/" +
                 financeContract.ToString("D") + "/issued-invoices/debt";
+            // Historical debt must not include an invoice which had not
+            // yet been issued. A future as-of query must never invent
+            // forecasts or disclose unrestricted ledger information.
+            var localBusinessToday = DateOnly.FromDateTime(
+                TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow,
+                    TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh")));
+            var previousBusinessDay = localBusinessToday.AddDays(-1);
+            using (var beforeIssuance = await clientB.GetAsync(
+                portfolioRoute + "?asOfDate=" +
+                    previousBusinessDay.ToString("yyyy-MM-dd")))
+                Assert.Equal(HttpStatusCode.Forbidden, beforeIssuance.StatusCode);
+            using (var futureDebt = await clientB.GetAsync(
+                portfolioRoute + "?asOfDate=" +
+                    localBusinessToday.AddDays(1).ToString("yyyy-MM-dd")))
+                Assert.Equal(HttpStatusCode.Forbidden, futureDebt.StatusCode);
+
             using (var unpaidPortfolio = await clientB.GetAsync(portfolioRoute))
             {
                 Assert.Equal(HttpStatusCode.OK, unpaidPortfolio.StatusCode);

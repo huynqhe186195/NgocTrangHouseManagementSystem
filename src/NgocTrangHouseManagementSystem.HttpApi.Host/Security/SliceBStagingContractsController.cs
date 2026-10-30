@@ -339,19 +339,20 @@ public sealed class SliceBStagingContractsController : ControllerBase
     // Phase 2G.3: complete contract-level observed invoice/debt portfolio.
     // All amounts come from immutable issued evidence and journaled receipts.
     [HttpGet("{id:guid}/issued-invoices/debt")]
-    [UnitOfWork(true)]
+    [UnitOfWork(true, System.Data.IsolationLevel.RepeatableRead)]
     public Task<SliceBScopedContractIssuedDebtRead> GetIssuedDebtPortfolioAsync(
-        [FromRoute] Guid id)
+        [FromRoute] Guid id, [FromQuery] DateOnly? asOfDate = null)
     {
         RequireIsolatedStaging();
-        return (_query ?? throw Denied()).GetIssuedDebtPortfolioAsync(id);
+        return (_query ?? throw Denied())
+            .GetIssuedDebtPortfolioAsync(id, asOfDate);
     }
 
     // Phase 2G.3: observed issued-invoice balance only, verified against
     // immutable source ledger and completed payment allocation evidence.
     // It never posts debt, applies deposits, or verifies external banks.
     [HttpGet("{id:guid}/issued-invoices/{issuedId:guid}/balance")]
-    [UnitOfWork(true)]
+    [UnitOfWork(true, System.Data.IsolationLevel.RepeatableRead)]
     public Task<SliceBScopedIssuedInvoiceBalanceRead> GetIssuedInvoiceBalanceAsync(
         [FromRoute] Guid id, [FromRoute] Guid issuedId)
     {

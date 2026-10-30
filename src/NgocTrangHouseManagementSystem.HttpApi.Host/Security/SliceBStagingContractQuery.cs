@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using BuildingManagement.Contracts;
@@ -499,6 +500,10 @@ public sealed class SliceBStagingContractQuery
         var authorizedContract = await GetAsync(contractId);
         var actor = RequireActor();
         var db = await _provider.GetDbContextAsync();
+        // Hold the contract/room/building and live membership SHARE locks
+        // until the HTTP read transaction commits. An unprotected second
+        // lookup may otherwise race a concurrent building-grant revocation.
+        await LockInvoicePreviewScopeAsync(db, authorizedContract, actor);
         var now = DateTime.UtcNow;
 
         var invoice = await (
@@ -538,8 +543,8 @@ public sealed class SliceBStagingContractQuery
         {
             invoice.VerifyStoredTerms(archive, review);
         }
-        catch (Exception error) when (error is InvalidOperationException or
-            ArgumentException)
+        catch (Exception error) when (error is InvalidDataException or
+            InvalidOperationException or ArgumentException)
         {
             throw Denied();
         }
@@ -611,15 +616,24 @@ public sealed class SliceBStagingContractQuery
     /// It never posts debt, modifies payments, offsets deposits, or issues bills.
     /// </summary>
     public async Task<SliceBScopedContractIssuedDebtRead>
-        GetIssuedDebtPortfolioAsync(Guid contractId)
+        GetIssuedDebtPortfolioAsync(Guid contractId, DateOnly? asOfDate = null)
     {
         if (contractId == Guid.Empty)
             throw Denied();
         var scoped = await GetAsync(contractId);
         var actor = RequireActor();
         var db = await _provider.GetDbContextAsync();
-        // Hold exact current contract/building/membership rows until commit.
+        // All source reads share the HTTP REPEATABLE READ snapshot. Hold
+        // physical contract/building/membership locks through commit.
         await LockInvoicePreviewScopeAsync(db, scoped, actor);
+
+        var now = DateTime.UtcNow;
+        var today = DateOnly.FromDateTime(
+            TimeZoneInfo.ConvertTimeFromUtc(now,
+                TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh")));
+        var requestedDate = asOfDate ?? today;
+        if (requestedDate == default || requestedDate > today)
+            throw Denied();
 
         var invoices = await db.IssuedInvoiceLedger.AsNoTracking()
             .Where(x => x.ContractId == contractId &&
@@ -627,10 +641,10 @@ public sealed class SliceBStagingContractQuery
                 x.BuildingId == scoped.BuildingId)
             .OrderBy(x => x.DueDate).ThenBy(x => x.Id)
             .Take(251).ToArrayAsync();
-        // A summary must be complete; never silently truncate owed money.
-        if (invoices.Length > 250)
+        // No issuance is NOT proof of zero debt. Never silently truncate.
+        if (invoices.Length is 0 or > 250)
             throw Denied();
-        var invoiceIds = invoices.Select(x => x.Id).ToHashSet();
+
         var journals = await db.InvoicePaymentAllocationJournal.AsNoTracking()
             .Where(x => x.ContractId == contractId).ToArrayAsync();
         var payments = await db.Payments.IgnoreQueryFilters().AsNoTracking()
@@ -638,25 +652,9 @@ public sealed class SliceBStagingContractQuery
                 x.Purpose == PaymentPurpose.InvoicePayment)
             .ToArrayAsync();
 
-        // Fail closed for stale/cross-contract allocations and completed
-        // payments without a matching immutable invoice and journal.
-        if (journals.Any(x => !invoiceIds.Contains(x.IssuedInvoiceId)) ||
-            payments.Any(x => x.Status == PaymentStatus.Completed &&
-                (!x.InvoiceId.HasValue ||
-                 !invoiceIds.Contains(x.InvoiceId.Value))))
-            throw Denied();
-        var audit = InvoicePaymentAllocationJournalAuditor.Assess(
-            journals, payments, contractId);
-        if (audit.Blockers.Any(x =>
-            x != "IssuedInvoiceLedgerAndAllocationAuthorizationMissing"))
-            throw Denied();
-
-        var now = DateTime.UtcNow;
-        var today = DateOnly.FromDateTime(
-            TimeZoneInfo.ConvertTimeFromUtc(now,
-                TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh")));
-        var details = new List<SliceBScopedIssuedInvoiceBalanceRead>(
-            invoices.Length);
+        // Original immutable sources must validate before any balances are
+        // exposed. Invalid hashes, forged line items, or changed reviews
+        // are authorization failures, not a 500 with leaked source details.
         foreach (var invoice in invoices)
         {
             var archive = await db.FinalInvoiceIssueEvidence.AsNoTracking()
@@ -665,38 +663,49 @@ public sealed class SliceBStagingContractQuery
             var review = await db.InvoiceIssuanceReviews.AsNoTracking()
                 .SingleOrDefaultAsync(x => x.Id == invoice.ReviewTicketId)
                 ?? throw Denied();
-            IssuedInvoicePaymentSummary amount;
             try
             {
                 invoice.VerifyStoredTerms(archive, review);
-                amount = IssuedInvoicePaymentReconciler.Assess(
-                    invoice.Id, contractId, invoice.TotalAmount, invoice.DueDate,
-                    today, payments.Where(x => x.InvoiceId == invoice.Id).ToArray());
             }
-            catch (Exception ex) when (ex is InvalidOperationException or
-                ArgumentException or OverflowException)
+            catch (Exception ex) when (ex is InvalidDataException or
+                InvalidOperationException or ArgumentException)
             {
                 throw Denied();
             }
-
-            if (amount.UnresolvedOverpayment != 0m ||
-                journals.Where(x => x.IssuedInvoiceId == invoice.Id)
-                    .Sum(x => x.Amount) != amount.CompletedPaymentsAmount)
-                throw Denied();
-
-            details.Add(new SliceBScopedIssuedInvoiceBalanceRead(
-                invoice.Id, contractId, scoped.BuildingId,
-                invoice.InvoiceNumber, invoice.DueDate, invoice.TotalAmount,
-                amount.CompletedPaymentsAmount,
-                amount.OutstandingBeforeAdjustments,
-                amount.CompletedPaymentCount, amount.Status,
-                IsObservedStagingLedger: true,
-                IsOfficialDebtPosted: false,
-                BankTransferIndependentlyVerified: false));
         }
 
-        // The original, live authorization is still required at the end.
-        // The SHARE lock above prevents grant revocation until commit.
+        var audit = StagedContractDebtEvaluator.Assess(
+            contractId, requestedDate,
+            invoices.Select(x => new StagedContractInvoiceDebtFacts(
+                x.Id, x.ContractId, x.TotalAmount, x.IssuedAtUtc,
+                x.DueDate)).ToArray(),
+            journals, payments);
+        if (!audit.HasCompleteStagedEvidence ||
+            audit.TotalInvoiced is null ||
+            audit.TotalReceivedAsOf is null ||
+            audit.TotalOutstandingAsOf is null)
+            throw Denied();
+
+        // Map ONLY the invoices issued by the requested historical date.
+        // Never count future invoices, or future receipts against current
+        // invoices, in historical balances.
+        var indexedInvoices = invoices.ToDictionary(x => x.Id);
+        var details = audit.Invoices.Select(summary =>
+        {
+            var invoice = indexedInvoices[summary.InvoiceId];
+            return new SliceBScopedIssuedInvoiceBalanceRead(
+                invoice.Id, contractId, scoped.BuildingId,
+                invoice.InvoiceNumber, invoice.DueDate, invoice.TotalAmount,
+                summary.CompletedPaymentsAmount,
+                summary.OutstandingBeforeAdjustments,
+                summary.CompletedPaymentCount, summary.Status,
+                IsObservedStagingLedger: true,
+                IsOfficialDebtPosted: false,
+                BankTransferIndependentlyVerified: false);
+        }).ToList();
+
+        // Revalidate the live membership just before responding. The SHARE
+        // lock also serializes concurrent revocation until the UoW commit.
         if (!await db.OperatorBuildingGrants.AsNoTracking().AnyAsync(grant =>
             grant.OperatorUserId == actor &&
             grant.BuildingId == scoped.BuildingId &&
@@ -707,9 +716,8 @@ public sealed class SliceBStagingContractQuery
 
         return new SliceBScopedContractIssuedDebtRead(
             contractId, scoped.BuildingId, details.Count,
-            details.Sum(x => x.IssuedAmount),
-            details.Sum(x => x.ObservedCompletedPaymentsAmount),
-            details.Sum(x => x.ObservedOutstandingBeforeAdjustments),
+            audit.TotalInvoiced.Value, audit.TotalReceivedAsOf.Value,
+            audit.TotalOutstandingAsOf.Value,
             details.Count(x =>
                 x.ObservedPaymentStatus == IssuedInvoicePaymentStatus.Overdue),
             details,

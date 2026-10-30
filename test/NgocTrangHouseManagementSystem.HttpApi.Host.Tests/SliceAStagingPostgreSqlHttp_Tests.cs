@@ -2006,6 +2006,74 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 await uow.CompleteAsync();
             }
 
+            // Regular recurring month: from a physically verified utility
+            // draft to ONE immutable, root-reviewed financial candidate.
+            // A candidate never changes draft Status or posts official debt.
+            var monthlyCandidateRoute = FinalInvoices(monthlyDraftContract) +
+                "/monthly-drafts/" + persistedDraftId.ToString("D") +
+                "/candidate";
+            var monthlyCandidatePayload = new
+            {
+                contractId = monthlyDraftContract,
+                roomId = monthlyDraftRoom,
+                billingYear = 2026,
+                billingMonth = 9,
+                paymentDueDate = DateOnly.FromDateTime(
+                    TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow,
+                        TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh")))
+                    .AddDays(7),
+                dueDatePolicyReference = "APPROVED-MONTHLY-DUE-REVIEW",
+                auxiliaryFeeDecision = 1,
+                auxiliaryFeePolicyReference = "APPROVED-EXPLICIT-NO-MONTHLY-FEES",
+                auxiliaryFeeReviewerId = root,
+                auxiliaryCharges = Array.Empty<object>()
+            };
+            var foreignCandidate = await PostFinalAsync(
+                clientB, monthlyCandidateRoute,
+                JsonSerializer.Serialize(monthlyCandidatePayload));
+            Assert.Equal(HttpStatusCode.Forbidden, foreignCandidate.Status);
+            var candidateCreated = await PostFinalAsync(
+                clientRoot, monthlyCandidateRoute,
+                JsonSerializer.Serialize(monthlyCandidatePayload));
+            Assert.True(candidateCreated.Status is HttpStatusCode.OK or
+                HttpStatusCode.Created,
+                $"Monthly candidate: {candidateCreated.Status}: {candidateCreated.Body}");
+            Guid monthlyCandidateId;
+            using (var json = JsonDocument.Parse(candidateCreated.Body))
+            {
+                monthlyCandidateId = json.RootElement.GetProperty("candidateId").GetGuid();
+                Assert.Equal(persistedDraftId,
+                    json.RootElement.GetProperty("draftInvoiceId").GetGuid());
+                Assert.Equal(2_583_000m,
+                    json.RootElement.GetProperty("frozenCandidateAmount").GetDecimal());
+                Assert.False(json.RootElement.GetProperty("isOfficialReceivable").GetBoolean());
+            }
+            var duplicateCandidate = await PostFinalAsync(
+                clientRoot, monthlyCandidateRoute,
+                JsonSerializer.Serialize(monthlyCandidatePayload));
+            Assert.Equal(HttpStatusCode.Forbidden, duplicateCandidate.Status);
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var db = await sp.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>().GetDbContextAsync();
+                var stored = await db.MonthlyInvoiceCandidates
+                    .SingleAsync(x => x.Id == monthlyCandidateId);
+                var proof = stored.VerifyStoredEvidence();
+                Assert.Equal(2, proof.UtilityLines.Count);
+                Assert.Equal(2_583_000m, stored.TotalAmount);
+                Assert.False(stored.IsOfficialReceivable);
+                Assert.Equal(1, await db.MonthlyInvoiceCandidates.CountAsync(
+                    x => x.ContractId == monthlyDraftContract));
+                Assert.False(await db.IssuedInvoiceLedger.AnyAsync(
+                    x => x.ContractId == monthlyDraftContract));
+                Assert.Equal(0, (int)(await db.Invoices.SingleAsync(
+                    x => x.Id == persistedDraftId)).Status);
+                await uow.CompleteAsync();
+            }
+
             async Task<JsonDocument> PostValidFinanceAsync(
                 HttpClient caller, string route, object payload)
             {

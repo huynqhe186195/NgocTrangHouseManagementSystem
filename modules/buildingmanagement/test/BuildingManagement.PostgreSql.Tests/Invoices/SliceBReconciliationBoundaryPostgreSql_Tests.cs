@@ -1,5 +1,8 @@
 using System;
 using System.Linq;
+using System.Globalization;
+using BuildingManagement.Invoices;
+using BuildingManagement.Utilities;
 using System.Text.Json;
 using System.Threading.Tasks;
 using BuildingManagement.Migrations;
@@ -216,6 +219,126 @@ public sealed class SliceBReconciliationBoundaryPostgreSql_Tests
                    AND indexname = 'UX_BM_InvoicePayment_NormalizedBankReference'
                 """));
         });
+    }
+
+    [Fact]
+    public async Task SBRECON06_Monthly_Candidate_Is_Immutable_Duplicates_And_Down_Refused()
+    {
+        await InScratchAsync(async (db, tx, _) =>
+        {
+            var draft = Guid.NewGuid();
+            var contract = Guid.NewGuid();
+            var room = Guid.NewGuid();
+            await ExecuteAsync(db, tx, $"""
+                INSERT INTO "BuildingManagementInvoices"
+                  ("Id","ContractId","RoomId","BillingYear","BillingMonth","Status")
+                VALUES ('{draft:D}','{contract:D}','{room:D}',2026,10,0);
+                """);
+            var source = MonthlyEvidence(draft, contract, room);
+            var candidate = MonthlyInvoiceCandidateLedgerRecord.Capture(
+                Guid.NewGuid(), source);
+            var migration = new Phase2G3MonthlyCandidateEvidence();
+            await ExecuteAsync(db, tx, Sql(migration, false));
+
+            await ExecuteAsync(db, tx, MonthlyInsertSql(candidate));
+            Assert.Equal(1L, await ScalarAsync(db, tx, """
+                SELECT count(*) FROM "BuildingManagementMonthlyInvoiceCandidates"
+                """));
+
+            await ExpectFailureAsync(db, tx,
+                MonthlyInsertSql(MonthlyInvoiceCandidateLedgerRecord.Capture(
+                    Guid.NewGuid(), source)), "23505");
+            await ExpectFailureAsync(db, tx, $"""
+                UPDATE "BuildingManagementMonthlyInvoiceCandidates"
+                   SET "RentAmount" = 1
+                 WHERE "Id" = '{candidate.Id:D}';
+                """, "23514");
+            await ExpectFailureAsync(db, tx, $"""
+                DELETE FROM "BuildingManagementMonthlyInvoiceCandidates"
+                 WHERE "Id" = '{candidate.Id:D}';
+                """, "23514");
+            await ExpectFailureAsync(db, tx, """
+                TRUNCATE "BuildingManagementMonthlyInvoiceCandidates"
+                """, "23514");
+            await ExpectFailureAsync(db, tx, Sql(migration, true), "23514");
+        });
+    }
+
+    [Fact]
+    public async Task SBRECON07_Monthly_Candidate_Refuses_Issued_Draft_Period()
+    {
+        await InScratchAsync(async (db, tx, _) =>
+        {
+            var issued = await SeedIssuedAsync(db, tx);
+            var candidate = MonthlyInvoiceCandidateLedgerRecord.Capture(
+                Guid.NewGuid(), MonthlyEvidence(
+                    issued.Draft, issued.Contract, issued.Room));
+            var migration = new Phase2G3MonthlyCandidateEvidence();
+            await ExecuteAsync(db, tx, Sql(migration, false));
+            await ExpectFailureAsync(
+                db, tx, MonthlyInsertSql(candidate), "23514");
+            Assert.Equal(0L, await ScalarAsync(db, tx, """
+                SELECT count(*) FROM "BuildingManagementMonthlyInvoiceCandidates"
+                """));
+            await ExecuteAsync(db, tx, Sql(migration, true));
+        });
+    }
+
+    private static MonthlyInvoiceCandidateSnapshot MonthlyEvidence(
+        Guid draft, Guid contract, Guid room)
+    {
+        var lines = new[]
+        {
+            new MonthlyInvoiceCandidateUtilityLine(
+                UtilityType.Electricity, Guid.NewGuid(), 10m,
+                3_500m, 35_000m,
+                new[] { new MonthlyInvoiceCandidateMeterSource(
+                    Guid.NewGuid(), Guid.NewGuid(),
+                    MeterUsageSourceType.MonthlyReading,
+                    new DateTime(2026, 10, 31), 100m, 110m) }),
+            new MonthlyInvoiceCandidateUtilityLine(
+                UtilityType.Water, Guid.NewGuid(), 1m,
+                15_000m, 15_000m,
+                new[] { new MonthlyInvoiceCandidateMeterSource(
+                    Guid.NewGuid(), Guid.NewGuid(),
+                    MeterUsageSourceType.MonthlyReading,
+                    new DateTime(2026, 10, 31), 50m, 51m) })
+        };
+        return new MonthlyInvoiceCandidateSnapshot(
+            draft, contract, room, Guid.NewGuid(), 2026, 10,
+            Guid.NewGuid(), new DateTime(2026, 10, 30, 8, 0, 0, DateTimeKind.Utc),
+            new DateOnly(2026, 11, 5), "MONTHLY-APPROVED-DUE",
+            3_000_000m, 35_000m, 15_000m,
+            AuxiliaryFeeAssessmentDecision.ExplicitlyNoCharges,
+            "MONTHLY-APPROVED-NO-SERVICE-FEES",
+            Array.Empty<FinalInvoiceAuxiliaryChargeProposal>(),
+            0m, 3_050_000m, lines);
+    }
+
+    private static string MonthlyInsertSql(
+        MonthlyInvoiceCandidateLedgerRecord x)
+    {
+        var quotedJson = x.FrozenEvidenceJson.Replace("'", "''", StringComparison.Ordinal);
+        return $"""
+            INSERT INTO "BuildingManagementMonthlyInvoiceCandidates"
+              ("Id","DraftInvoiceId","ContractId","RoomId","BuildingId",
+               "BillingYear","BillingMonth","ReviewedByUserId","ReviewedAtUtc",
+               "DueDate","RentAmount","ElectricityAmount","WaterAmount",
+               "AuxiliaryAmount","TotalAmount",
+               "FrozenEvidenceJson","FrozenEvidenceSha256")
+            VALUES
+              ('{x.Id:D}','{x.DraftInvoiceId:D}','{x.ContractId:D}',
+               '{x.RoomId:D}','{x.BuildingId:D}',
+               {x.BillingYear},{x.BillingMonth},
+               '{x.ReviewedByUserId:D}','{x.ReviewedAtUtc:O}',
+               '{x.DueDate:yyyy-MM-dd}',
+               {x.RentAmount.ToString(CultureInfo.InvariantCulture)},
+               {x.ElectricityAmount.ToString(CultureInfo.InvariantCulture)},
+               {x.WaterAmount.ToString(CultureInfo.InvariantCulture)},
+               {x.AuxiliaryAmount.ToString(CultureInfo.InvariantCulture)},
+               {x.TotalAmount.ToString(CultureInfo.InvariantCulture)},
+               '{quotedJson}','{x.FrozenEvidenceSha256}');
+            """;
     }
 
     private static async Task AssertBalanceAsync(

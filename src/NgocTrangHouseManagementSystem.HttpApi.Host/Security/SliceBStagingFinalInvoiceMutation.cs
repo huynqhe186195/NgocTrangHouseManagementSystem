@@ -13,6 +13,7 @@ using BuildingManagement.Payments;
 using BuildingManagement.Payments.BuildingManagement.Payments;
 using BuildingManagement.Rooms;
 using BuildingManagement.Security;
+using BuildingManagement.Utilities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Volo.Abp.Authorization;
@@ -38,6 +39,8 @@ public sealed class SliceBStagingFinalInvoiceMutation
     private readonly FinalInvoiceIssueEvidenceDriftAppService _drift;
     private readonly FinalInvoiceSourceProvenanceAppService _provenance;
     private readonly ContractDepositLedgerReviewAppService _depositAudit;
+    private readonly MonthlyInvoiceBasePreviewAppService _monthlyPreview;
+    private readonly IInvoiceDraftStorageAppService _utilityDrafts;
 
     public SliceBStagingFinalInvoiceMutation(
         IDbContextProvider<BuildingManagementDbContext> provider,
@@ -48,7 +51,9 @@ public sealed class SliceBStagingFinalInvoiceMutation
         FinalInvoiceIssuePreflightAppService preflight,
         FinalInvoiceIssueEvidenceDriftAppService drift,
         FinalInvoiceSourceProvenanceAppService provenance,
-        ContractDepositLedgerReviewAppService depositAudit)
+        ContractDepositLedgerReviewAppService depositAudit,
+        MonthlyInvoiceBasePreviewAppService monthlyPreview,
+        IInvoiceDraftStorageAppService utilityDrafts)
     {
         _provider = provider;
         _policy = policy;
@@ -59,7 +64,146 @@ public sealed class SliceBStagingFinalInvoiceMutation
         _drift = drift;
         _provenance = provenance;
         _depositAudit = depositAudit;
+        _monthlyPreview = monthlyPreview;
+        _utilityDrafts = utilityDrafts;
     }
+
+    /// <summary>
+    /// Monthly (non-move-out) recurring invoice CANDIDATE, staged only.
+    /// Re-reads live utility/rent sources under the authenticated building
+    /// fence and RepeatableRead UOW; freezes the original draft, rate and
+    /// physical meter-source values into a durable checksum-protected row.
+    /// This does NOT issue an invoice, recognize debt or accept payment.
+    /// </summary>
+    public Task<SliceBStagedMonthlyInvoiceCandidateRead>
+        PrepareMonthlyCandidateAsync(
+            Guid contractId, Guid draftId,
+            MonthlyInvoiceFinancialTermsProposal terms)
+        => ExecuteScopedAsync(contractId, requireBootstrapOwner: true,
+            async (db, actor, building, roomId) =>
+            {
+                if (draftId == Guid.Empty || terms is null ||
+                    terms.AuxiliaryFeeReviewerId != actor ||
+                    db.Database.CurrentTransaction?.GetDbTransaction()
+                        .IsolationLevel != System.Data.IsolationLevel.RepeatableRead)
+                    throw Denied();
+
+                // Protect original meters, replacement closings, rates and
+                // the saved draft until the entire staging UoW commits.
+                await LockOriginalInvoiceSourcesAsync(db);
+                await using (var command = Command(db, """
+                    SELECT "Id" FROM "BuildingManagementInvoices"
+                     WHERE "Id" = @draft AND "ContractId" = @contract
+                       AND "RoomId" = @room AND "Status" = 0
+                     FOR UPDATE
+                    """))
+                {
+                    Add(command, "draft", draftId);
+                    Add(command, "contract", contractId);
+                    Add(command, "room", roomId);
+                    if (await command.ExecuteScalarAsync() is not Guid)
+                        throw Denied();
+                }
+
+                var saved = await _utilityDrafts.GetAsync(draftId);
+                if (saved.ContractId != contractId ||
+                    saved.RoomId != roomId ||
+                    saved.Status != InvoiceStatus.Draft ||
+                    saved.Items.Count != 2 ||
+                    saved.ProvisionalUtilityTotal is null ||
+                    !await _utilityDrafts.HasCurrentSourceSnapshotAsync(draftId))
+                    throw Denied();
+
+                var preview = await _monthlyPreview.GetAsync(
+                    contractId, saved.BillingYear, saved.BillingMonth);
+                var evaluated = MonthlyInvoiceFinancialTermsEvaluator.Assess(
+                    preview, terms);
+                if (evaluated.Blockers.Any(x =>
+                        x != "MonthlyInvoiceIssuanceNotAuthorized") ||
+                    evaluated.Blockers.Count != 1 ||
+                    evaluated.VerifiedBaseAmount is null ||
+                    evaluated.ReviewedAuxiliaryAmount is not decimal auxiliary ||
+                    evaluated.ReviewedGrandTotal is not decimal total ||
+                    evaluated.DocumentedDueDate is not DateOnly due)
+                    throw Denied();
+
+                var localToday = DateOnly.FromDateTime(
+                    TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow,
+                        TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh")));
+                if (due < localToday ||
+                    await db.MonthlyInvoiceCandidates.AsNoTracking().AnyAsync(
+                        x => x.DraftInvoiceId == draftId ||
+                        (x.RoomId == roomId &&
+                         x.BillingYear == saved.BillingYear &&
+                         x.BillingMonth == saved.BillingMonth)) ||
+                    await db.IssuedInvoiceLedger.AsNoTracking().AnyAsync(
+                        x => x.RoomId == roomId &&
+                        x.BillingYear == saved.BillingYear &&
+                        x.BillingMonth == saved.BillingMonth))
+                    throw Denied();
+
+                var originalLines = saved.Items.Select(line =>
+                {
+                    if (line.UtilityRateId is not Guid rateId ||
+                        rateId == Guid.Empty ||
+                        line.RateStatus != "SingleRateWholeMonth" ||
+                        line.UnitPrice is not decimal price ||
+                        line.ProvisionalAmount is not decimal amount ||
+                        line.CoverageIssues.Count != 0 ||
+                        line.Sources.Count == 0)
+                        throw Denied();
+
+                    return new MonthlyInvoiceCandidateUtilityLine(
+                        line.UtilityType, rateId, line.Quantity, price,
+                        amount, line.Sources.Select(source =>
+                        {
+                            if (!Enum.TryParse<MeterUsageSourceType>(
+                                    source.SourceType, out var kind) ||
+                                !Enum.IsDefined(kind))
+                                throw Denied();
+                            return new MonthlyInvoiceCandidateMeterSource(
+                                source.SourceId, source.UtilityMeterId, kind,
+                                source.RecordedDate, source.PreviousReading,
+                                source.CurrentReading);
+                        }).ToArray());
+                }).ToArray();
+
+                // Service charge references are reviewed evidence, NOT
+                // independently verified billing rules. Even this durable
+                // archive is never an official receivable or final bill.
+                var evidence = new MonthlyInvoiceCandidateSnapshot(
+                    draftId, contractId, roomId, building,
+                    saved.BillingYear, saved.BillingMonth,
+                    actor, DateTime.UtcNow, due,
+                    terms.DueDatePolicyReference!,
+                    preview.KnownFullMonthRentAmount,
+                    preview.ProvisionalElectricityAmount!.Value,
+                    preview.ProvisionalWaterAmount!.Value,
+                    terms.AuxiliaryFeeDecision,
+                    terms.AuxiliaryFeePolicyReference!,
+                    terms.AuxiliaryCharges!.ToArray(),
+                    auxiliary, total, originalLines);
+
+                MonthlyInvoiceCandidateLedgerRecord archived;
+                try
+                {
+                    archived = MonthlyInvoiceCandidateLedgerRecord.Capture(
+                        Guid.NewGuid(), evidence);
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or
+                    ArgumentException or OverflowException)
+                {
+                    throw Denied();
+                }
+
+                db.MonthlyInvoiceCandidates.Add(archived);
+                return new SliceBStagedMonthlyInvoiceCandidateRead(
+                    archived.Id, draftId, contractId,
+                    archived.BillingYear, archived.BillingMonth,
+                    archived.TotalAmount, archived.DueDate,
+                    archived.FrozenEvidenceSha256,
+                    IsOfficialReceivable: false);
+            });
 
     /// <summary>
     /// Archive a verified current Draft and source graph. A prepared
@@ -860,6 +1004,12 @@ public sealed class SliceBStagingFinalInvoiceMutation
         => new("Final invoice requires a live, locked building grant, " +
                "current source evidence, independent review and explicit policy.");
 }
+
+public sealed record SliceBStagedMonthlyInvoiceCandidateRead(
+    Guid CandidateId, Guid DraftInvoiceId, Guid ContractId,
+    int BillingYear, int BillingMonth,
+    decimal FrozenCandidateAmount, DateOnly DocumentedDueDate,
+    string EvidenceSha256, bool IsOfficialReceivable);
 
 public sealed record SliceBStagedInvoiceEvidenceRead(
     Guid Id, Guid DraftInvoiceId, Guid MoveOutRequestId,

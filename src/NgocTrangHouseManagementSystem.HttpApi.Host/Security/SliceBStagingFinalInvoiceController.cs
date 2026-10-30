@@ -35,6 +35,24 @@ public sealed class SliceBStagingFinalInvoiceController : ControllerBase
         _mutation = mutation;
     }
 
+    /// <summary>
+    /// Root-reviewed recurring monthly evidence. Explicit opt-in staging
+    /// only; a candidate is not an issued invoice or posted debt.
+    /// </summary>
+    [HttpPost("contracts/{contractId:guid}/monthly-drafts/{draftId:guid}/candidate")]
+    [UnitOfWork(true, System.Data.IsolationLevel.RepeatableRead)]
+    public Task<SliceBStagedMonthlyInvoiceCandidateRead>
+        PrepareMonthlyCandidateAsync(
+            [FromRoute] Guid contractId, [FromRoute] Guid draftId,
+            [FromBody] MonthlyInvoiceFinancialTermsProposal input)
+    {
+        RequireIsolatedStaging();
+        if (input is null)
+            throw Denied();
+        return (_mutation ?? throw Denied())
+            .PrepareMonthlyCandidateAsync(contractId, draftId, input);
+    }
+
     [HttpPost("contracts/{contractId:guid}/move-outs/{requestId:guid}/prepare")]
     [UnitOfWork(true)]
     public Task<SliceBStagedInvoiceEvidenceRead> PrepareAsync(

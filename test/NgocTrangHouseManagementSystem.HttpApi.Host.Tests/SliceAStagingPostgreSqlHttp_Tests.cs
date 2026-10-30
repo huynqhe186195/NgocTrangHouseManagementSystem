@@ -2215,10 +2215,20 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             // Reservation creation is scoped to existing tenant provenance:
             // operator B may reserve only a B room for a B-linked tenant.
             var reservationRoute = scopedContracts + "/reservations";
+            // Reservation dates follow the domain's Vietnam-local calendar.
+            // A hardcoded 2026-10-29 becomes invalid the next day, making
+            // otherwise unrelated PostgreSQL finance regression fail.
+            // First day of next month is inside the supported window even
+            // when CI runs at month-end or just after midnight in Vietnam.
+            var localToday = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(7));
+            var firstNextMonth = new DateOnly(
+                localToday.Year, localToday.Month, 1).AddMonths(1);
+            var reservationMoveIn = firstNextMonth.ToString("yyyy-MM-dd") +
+                "T00:00:00Z";
             string ReservationJson(Guid roomId, Guid tenantId) =>
                 JsonSerializer.Serialize(new {
                     reservationNumber = "RES-STAGE-" + Guid.NewGuid().ToString("N"),
-                    roomId, tenantId, expectedMoveInDate = "2026-10-29T00:00:00Z",
+                    roomId, tenantId, expectedMoveInDate = reservationMoveIn,
                     quotedMonthlyRent = 2800000m,
                     requiredDepositAmount = 3000000m,
                     minimumReservationDepositAmount = 500000m

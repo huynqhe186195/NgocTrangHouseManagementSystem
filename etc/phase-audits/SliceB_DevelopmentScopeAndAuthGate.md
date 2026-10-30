@@ -729,3 +729,14 @@ receiving Contract's approval commits, confirm open-contract transfers
 remain legal, and check empty-history downgrade/re-upgrade. The full EF
 runtime migration-chain test checks the deployed function definition.
 No actual funds move, bank services or production database are touched.
+
+### CI reservation-date fixture correction (2026-10-30)
+
+The complete authenticated HTTP rehearsal revealed a preexisting hardcoded
+`expectedMoveInDate=2026-10-29` in an unrelated reservation-provenance
+test. On October 30 that date became invalid under the actual
+Asia/Ho_Chi_Minh business-date policy and produced 403 instead of the
+expected scoped 200. This was **not** a deposit lock regression. The fixture
+now selects the first day of next month in Vietnam time, staying inside
+the existing validated move-in window across month boundaries. The
+production reservation validation is unchanged.

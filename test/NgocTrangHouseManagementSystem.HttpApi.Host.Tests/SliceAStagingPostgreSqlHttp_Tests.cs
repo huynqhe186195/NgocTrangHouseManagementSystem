@@ -1831,6 +1831,48 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 await uow.CompleteAsync();
             }
 
+            // Phase 2G.3 regular billing preview: a scoped, repeatable-read
+            // calculation uses only the known full-month rent and source-
+            // backed utilities. Other service fees are explicitly UNKNOWN.
+            var monthlyPreviewRoute = scopedContracts + "/" +
+                financeContract.ToString("D") +
+                "/monthly-invoice-preview/2026/9";
+            using (var previewResponse = await clientB.GetAsync(monthlyPreviewRoute))
+            {
+                Assert.Equal(HttpStatusCode.OK, previewResponse.StatusCode);
+                var body = await previewResponse.Content.ReadAsStringAsync();
+                using var json = JsonDocument.Parse(body);
+                Assert.Equal(financeContract,
+                    json.RootElement.GetProperty("contractId").GetGuid());
+                Assert.Equal(financeRoom,
+                    json.RootElement.GetProperty("roomId").GetGuid());
+                Assert.Equal(monthlyRent,
+                    json.RootElement.GetProperty("knownFullMonthRentAmount").GetDecimal());
+                Assert.False(json.RootElement.GetProperty("otherServiceFeesReviewed").GetBoolean());
+                Assert.False(json.RootElement.GetProperty("canIssue").GetBoolean());
+                Assert.False(json.RootElement.GetProperty("isOfficialReceivable").GetBoolean());
+                Assert.Contains("OtherServiceFeesRequireReviewBeforeIssuance", body);
+                Assert.DoesNotContain(tenantB.ToString("D"), body,
+                    StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain("SCRATCH-INITIAL-DEPOSIT-2026", body);
+                // If historical period coverage is ambiguous, refuse to
+                // manufacture a definitive total rather than guessing.
+                if (json.RootElement.TryGetProperty(
+                    "provisionalRentAndUtilitiesAmount", out var amount) &&
+                    amount.ValueKind == JsonValueKind.Number)
+                    Assert.Equal(finalBill, amount.GetDecimal());
+                else
+                    Assert.Contains("MonthlyUtilitiesNotFullyVerified", body);
+            }
+            using (var foreignPreview = await clientB.GetAsync(
+                scopedContracts + "/" + contractA.ToString("D") +
+                "/monthly-invoice-preview/2026/9"))
+                Assert.Equal(HttpStatusCode.Forbidden, foreignPreview.StatusCode);
+            using (var invalidPreview = await clientB.GetAsync(
+                scopedContracts + "/" + financeContract.ToString("D") +
+                "/monthly-invoice-preview/2026/13"))
+                Assert.Equal(HttpStatusCode.Forbidden, invalidPreview.StatusCode);
+
             async Task<JsonDocument> PostValidFinanceAsync(
                 HttpClient caller, string route, object payload)
             {

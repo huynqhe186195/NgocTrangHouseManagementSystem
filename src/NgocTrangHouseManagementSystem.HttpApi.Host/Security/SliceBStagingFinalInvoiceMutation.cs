@@ -1186,12 +1186,18 @@ public sealed class SliceBStagingFinalInvoiceMutation
                         x.MoveOutRequestId == requestId);
                 if (previous is not null)
                 {
-                    previous.VerifyStoredDecision();
-                    previous.RequireForCloseout(
-                        contractId, requestId, final.Id, building, held,
-                        input.ForfeitAmount, input.DamageReason,
-                        input.DamageEvidenceReference,
-                        input.DepositPolicyReference);
+                    try
+                    {
+                        previous.VerifyStoredDecision();
+                        previous.RequireForCloseout(
+                            contractId, requestId, final.Id, building, held,
+                            input.ForfeitAmount, input.DamageReason,
+                            input.DamageEvidenceReference,
+                            input.DepositPolicyReference);
+                    }
+                    catch (Exception ex) when (ex is InvalidDataException or
+                        InvalidOperationException or ArgumentException)
+                    { throw Denied(); }
                     return DepositDecisionRead(previous);
                 }
                 if (await db.DepositCloseoutApprovals.AsNoTracking()
@@ -1213,7 +1219,10 @@ public sealed class SliceBStagingFinalInvoiceMutation
                         x.ContractId == contractId &&
                         x.MoveOutRequestId == requestId &&
                         x.BuildingId == building) ?? throw Denied();
-                decision.VerifyStoredDecision();
+                try { decision.VerifyStoredDecision(); }
+                catch (Exception ex) when (ex is InvalidDataException or
+                    InvalidOperationException or ArgumentException)
+                { throw Denied(); }
                 var completed = await db.DepositCloseoutApprovals.AsNoTracking()
                     .AnyAsync(x => x.ContractId == contractId &&
                         x.MoveOutRequestId == requestId &&

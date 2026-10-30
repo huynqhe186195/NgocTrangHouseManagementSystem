@@ -2151,6 +2151,28 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 await uow.CompleteAsync();
             }
 
+            var monthlyBalanceRoute = FinalInvoices(monthlyDraftContract) +
+                "/monthly-issued/" + monthlyIssuedId.ToString("D") +
+                "/balance";
+            using (var balance = await clientB.GetAsync(monthlyBalanceRoute))
+            {
+                Assert.Equal(HttpStatusCode.OK, balance.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await balance.Content.ReadAsStringAsync());
+                Assert.Equal(2_583_000m, json.RootElement
+                    .GetProperty("outstandingBeforeAdjustments").GetDecimal());
+                Assert.Equal(0m, json.RootElement
+                    .GetProperty("completedPaymentsAmount").GetDecimal());
+                Assert.Equal((int)BuildingManagement.Invoices
+                    .IssuedInvoicePaymentStatus.Unpaid,
+                    json.RootElement.GetProperty("paymentStatus").GetInt32());
+                Assert.False(json.RootElement.GetProperty("isOfficialDebtPosted").GetBoolean());
+            }
+            using (var foreignBalance = await clientB.GetAsync(
+                FinalInvoices(contractA) + "/monthly-issued/" +
+                monthlyIssuedId.ToString("D") + "/balance"))
+                Assert.Equal(HttpStatusCode.Forbidden, foreignBalance.StatusCode);
+
             // Month-specific staged receipts use their own immutable
             // journal, not the FINAL invoice allocation table.
             var monthReceiptRoute = FinalInvoices(monthlyDraftContract) +
@@ -2199,6 +2221,29 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 Assert.Equal(monthAllocationId,
                     json.RootElement.GetProperty("allocationJournalId").GetGuid());
             }
+            using (var partialBalance = await clientB.GetAsync(monthlyBalanceRoute))
+            {
+                Assert.Equal(HttpStatusCode.OK, partialBalance.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await partialBalance.Content.ReadAsStringAsync());
+                Assert.Equal(500_000m, json.RootElement
+                    .GetProperty("completedPaymentsAmount").GetDecimal());
+                Assert.Equal(2_083_000m, json.RootElement
+                    .GetProperty("outstandingBeforeAdjustments").GetDecimal());
+                Assert.Equal((int)BuildingManagement.Invoices
+                    .IssuedInvoicePaymentStatus.PartiallyPaid,
+                    json.RootElement.GetProperty("paymentStatus").GetInt32());
+                Assert.False(json.RootElement
+                    .GetProperty("bankTransferIndependentlyVerified").GetBoolean());
+            }
+            var futureMonthlyDebt = await clientB.GetAsync(
+                monthlyBalanceRoute + "?asOfDate=" +
+                    DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(
+                        DateTime.UtcNow.AddDays(1),
+                        TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh")))
+                    .ToString("yyyy-MM-dd"));
+            Assert.Equal(HttpStatusCode.Forbidden, futureMonthlyDebt.StatusCode);
+
             var alteredMonth = await PostFinalAsync(
                 clientRoot, monthReceiptRoute, JsonSerializer.Serialize(new {
                     tenantId = tenantB,
@@ -2240,6 +2285,37 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     summary.Status);
                 await uow.CompleteAsync();
             }
+            // Full payment uses a SECOND bank reference; the balance
+            // becomes paid but this remains an observed staging amount,
+            // not independent bank confirmation or legal debt clearance.
+            var monthRemaining = await PostFinalAsync(
+                clientRoot, monthReceiptRoute, JsonSerializer.Serialize(new {
+                    tenantId = tenantB, amount = 2_083_000m,
+                    paidAtUtc = DateTime.UtcNow,
+                    transactionReference = "SCRATCH-MONTH-FULL-REMAINING-001",
+                    bankEvidenceReference = "MONTHLY-SIGNED-REMAINDER-PROOF-001"
+                }));
+            Assert.True(monthRemaining.Status is HttpStatusCode.OK or
+                HttpStatusCode.Created,
+                $"Monthly final receipt: {monthRemaining.Status}: {monthRemaining.Body}");
+            using (var finalMonthlyBalance = await clientB.GetAsync(monthlyBalanceRoute))
+            {
+                Assert.Equal(HttpStatusCode.OK, finalMonthlyBalance.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await finalMonthlyBalance.Content.ReadAsStringAsync());
+                Assert.Equal(2_583_000m, json.RootElement
+                    .GetProperty("completedPaymentsAmount").GetDecimal());
+                Assert.Equal(0m, json.RootElement
+                    .GetProperty("outstandingBeforeAdjustments").GetDecimal());
+                Assert.Equal(2, json.RootElement
+                    .GetProperty("completedPaymentCount").GetInt32());
+                Assert.Equal((int)BuildingManagement.Invoices
+                    .IssuedInvoicePaymentStatus.Paid,
+                    json.RootElement.GetProperty("paymentStatus").GetInt32());
+                Assert.False(json.RootElement
+                    .GetProperty("isOfficialDebtPosted").GetBoolean());
+            }
+
             var overMonth = await PostFinalAsync(
                 clientRoot, monthReceiptRoute, JsonSerializer.Serialize(new {
                     tenantId = tenantB, amount = 2_083_001m,

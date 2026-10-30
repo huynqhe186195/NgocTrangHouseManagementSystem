@@ -89,6 +89,17 @@ public sealed class SliceBStagingFinalInvoiceController : ControllerBase
             contractId, issuedId, input);
     }
 
+    [HttpGet("contracts/{contractId:guid}/monthly-issued/{issuedId:guid}/balance")]
+    [UnitOfWork(true, System.Data.IsolationLevel.RepeatableRead)]
+    public Task<SliceBStagedMonthlyBalanceRead> GetMonthlyBalanceAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid issuedId,
+        [FromQuery] DateOnly? asOfDate = null)
+    {
+        RequireIsolatedStaging();
+        return (_mutation ?? throw Denied()).GetMonthlyBalanceAsync(
+            contractId, issuedId, asOfDate);
+    }
+
     [HttpPost("contracts/{contractId:guid}/move-outs/{requestId:guid}/prepare")]
     [UnitOfWork(true)]
     public Task<SliceBStagedInvoiceEvidenceRead> PrepareAsync(

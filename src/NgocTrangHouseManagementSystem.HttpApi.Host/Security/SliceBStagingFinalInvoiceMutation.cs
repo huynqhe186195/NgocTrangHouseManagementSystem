@@ -493,6 +493,98 @@ public sealed class SliceBStagingFinalInvoiceMutation
             });
 
     /// <summary>
+    /// Scoped read-side balance for an already-issued MONTHLY staging bill.
+    /// Re-audits the original monthly archive, independent review, every
+    /// original receipt (including soft-deleted), and its allocation journal.
+    /// Historical status uses BOTH the payment date and journal date, in
+    /// Asia/Ho_Chi_Minh; this is NOT posted debt or bank verification.
+    /// </summary>
+    public Task<SliceBStagedMonthlyBalanceRead> GetMonthlyBalanceAsync(
+        Guid contractId, Guid monthlyIssuedId, DateOnly? asOfDate)
+        => ExecuteScopedAsync(contractId, requireBootstrapOwner: false,
+            async (db, actor, building, roomId) =>
+            {
+                if (monthlyIssuedId == Guid.Empty ||
+                    db.Database.CurrentTransaction?.GetDbTransaction()
+                        .IsolationLevel != System.Data.IsolationLevel.RepeatableRead)
+                    throw Denied();
+                var now = DateTime.UtcNow;
+                var tz = TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh");
+                var today = DateOnly.FromDateTime(
+                    TimeZoneInfo.ConvertTimeFromUtc(now, tz));
+                var asOf = asOfDate ?? today;
+                if (asOf == default || asOf > today)
+                    throw Denied();
+
+                var issued = await db.MonthlyIssuedInvoices.AsNoTracking()
+                    .SingleOrDefaultAsync(x =>
+                        x.Id == monthlyIssuedId &&
+                        x.ContractId == contractId &&
+                        x.RoomId == roomId &&
+                        x.BuildingId == building);
+                if (issued is null ||
+                    DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(
+                        issued.IssuedAtUtc, tz)) > asOf)
+                    throw Denied();
+                var archive = await db.MonthlyInvoiceCandidates.AsNoTracking()
+                    .SingleOrDefaultAsync(x => x.Id == issued.CandidateId);
+                var review = await db.MonthlyInvoiceReviews.AsNoTracking()
+                    .SingleOrDefaultAsync(x => x.Id == issued.ReviewId);
+                if (archive is null || review is null)
+                    throw Denied();
+                try { issued.VerifyAgainst(archive, review); }
+                catch (Exception ex) when (ex is InvalidDataException or
+                    ArgumentException or InvalidOperationException)
+                { throw Denied(); }
+
+                var journals = await db.MonthlyInvoicePaymentAllocations
+                    .AsNoTracking().Where(x => x.IssuedInvoiceId == issued.Id)
+                    .ToArrayAsync();
+                var receipts = await db.Payments.IgnoreQueryFilters()
+                    .AsNoTracking().Where(x =>
+                        x.InvoiceId == issued.Id &&
+                        x.Purpose == PaymentPurpose.InvoicePayment)
+                    .ToArrayAsync();
+                if (journals.Length != receipts.Length ||
+                    receipts.Select(x => x.Id).Distinct().Count() != receipts.Length ||
+                    journals.Select(x => x.PaymentId).Distinct().Count() != journals.Length)
+                    throw Denied();
+                var byId = receipts.ToDictionary(x => x.Id);
+                try
+                {
+                    foreach (var journal in journals)
+                    {
+                        if (!byId.TryGetValue(journal.PaymentId, out var payment))
+                            throw Denied();
+                        journal.VerifySource(payment);
+                    }
+                    var eligiblePayments = journals
+                        .Where(x => DateOnly.FromDateTime(
+                            TimeZoneInfo.ConvertTimeFromUtc(
+                                x.RecordedAtUtc, tz)) <= asOf)
+                        .Select(x => byId[x.PaymentId]).ToArray();
+                    var debt = IssuedInvoicePaymentReconciler.Assess(
+                        issued.Id, issued.ContractId, issued.TotalAmount,
+                        issued.DueDate, asOf, eligiblePayments);
+                    if (debt.HasUnresolvedOverpayment)
+                        throw Denied();
+                    return new SliceBStagedMonthlyBalanceRead(
+                        issued.Id, contractId, building,
+                        issued.InvoiceNumber, issued.DueDate, asOf,
+                        debt.IssuedAmount, debt.CompletedPaymentsAmount,
+                        debt.OutstandingBeforeAdjustments,
+                        debt.CompletedPaymentCount, debt.Status,
+                        IsOfficialDebtPosted: false,
+                        BankTransferIndependentlyVerified: false);
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or
+                    ArgumentException or OverflowException)
+                {
+                    throw Denied();
+                }
+            });
+
+    /// <summary>
     /// Archive a verified current Draft and source graph. A prepared
     /// archive can NEVER itself be issued or produce a receivable.
     /// </summary>
@@ -1300,6 +1392,14 @@ public sealed record SliceBStagedMonthlyIssuedRead(
     Guid IssuedInvoiceId, Guid CandidateId, Guid ContractId,
     string InvoiceNumber, decimal Amount, DateOnly DueDate,
     bool IsOfficialReceivable);
+
+public sealed record SliceBStagedMonthlyBalanceRead(
+    Guid IssuedInvoiceId, Guid ContractId, Guid BuildingId,
+    string InvoiceNumber, DateOnly DueDate, DateOnly AsOfDate,
+    decimal IssuedAmount, decimal CompletedPaymentsAmount,
+    decimal OutstandingBeforeAdjustments, int CompletedPaymentCount,
+    IssuedInvoicePaymentStatus PaymentStatus,
+    bool IsOfficialDebtPosted, bool BankTransferIndependentlyVerified);
 
 public sealed record SliceBStagedMonthlyReceiptRead(
     Guid PaymentId, Guid AllocationJournalId, Guid IssuedInvoiceId,

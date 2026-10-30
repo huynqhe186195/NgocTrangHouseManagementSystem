@@ -1068,10 +1068,10 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     typeof(SliceCStagingMeterReadingController) &&
                 action.MethodInfo.Name == "CreateAsync");
             var sliceCProbeRoomA = await CreateChildAsync(clientRoot, roomCreate,
-                new { floorId = floorA, roomNumber = "201",
+                new { floorId = floorA, roomNumber = "102",
                     name = "Meter-reading A", area = 20m, capacity = 1, status = 0 });
             var sliceCProbeRoomB = await CreateChildAsync(clientB, roomCreate,
-                new { floorId = floorB, roomNumber = "202",
+                new { floorId = floorB, roomNumber = "103",
                     name = "Meter-reading B", area = 20m, capacity = 1, status = 0 });
             Assert.Contains(actions, action =>
                 action.ControllerTypeInfo.AsType() ==

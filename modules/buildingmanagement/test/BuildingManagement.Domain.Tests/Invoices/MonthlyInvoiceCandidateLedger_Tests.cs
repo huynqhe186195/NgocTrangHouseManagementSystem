@@ -162,6 +162,23 @@ public sealed class MonthlyInvoiceCandidateLedger_Tests
     }
 
     [Fact]
+    public void MONTHLYARCH10_SubMicrosecond_Utc_Ticks_Are_Canonical_Before_Hashing()
+    {
+        var source = Snapshot();
+        var unusual = source with
+        {
+            ReviewedAtUtc = source.ReviewedAtUtc.AddTicks(9)
+        };
+        var record = MonthlyInvoiceCandidateLedgerRecord.Capture(
+            Guid.NewGuid(), unusual);
+
+        Assert.Equal(source.ReviewedAtUtc, record.ReviewedAtUtc);
+        Assert.Equal(source.ReviewedAtUtc,
+            record.VerifyStoredEvidence().ReviewedAtUtc);
+        Assert.Contains("2026-10-30T08:00:00Z", record.FrozenEvidenceJson);
+    }
+
+    [Fact]
     public void MONTHLYARCH09_Manipulated_Meter_Price_Does_Not_Pass()
     {
         var original = Snapshot();

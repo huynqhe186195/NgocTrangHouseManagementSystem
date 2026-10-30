@@ -53,6 +53,18 @@ public sealed class MonthlyInvoiceCandidateLedgerRecord : Entity<Guid>
     {
         if (id == Guid.Empty || evidence is null)
             throw new ArgumentException("Candidate id and evidence required.");
+        // PostgreSQL timestamptz stores microseconds; .NET ticks measure
+        // 100-nanosecond intervals. Canonicalize BEFORE serializing AND
+        // hashing the audit evidence, not merely before the SQL insert.
+        // Otherwise a perfectly valid archived row disagrees with its own
+        // ReviewedAtUtc after EF materializes it from PostgreSQL.
+        if (evidence.ReviewedAtUtc.Kind != DateTimeKind.Utc)
+            throw new InvalidOperationException("Monthly review time must be UTC.");
+        evidence = evidence with
+        {
+            ReviewedAtUtc = evidence.ReviewedAtUtc.AddTicks(
+                -(evidence.ReviewedAtUtc.Ticks % 10L))
+        };
         Validate(evidence);
         var json = JsonSerializer.Serialize(evidence);
         if (json.Length > 1_000_000)

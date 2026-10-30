@@ -428,7 +428,7 @@ public sealed class SliceBStagingFinalInvoiceMutation
             {
                 if (adjustmentId == Guid.Empty || input is null ||
                     db.Database.CurrentTransaction?.GetDbTransaction()
-                        .IsolationLevel != System.Data.IsolationLevel.RepeatableRead)
+                        .IsolationLevel != System.Data.IsolationLevel.Serializable)
                     throw Denied();
                 var proposal = await db.MonthlyInvoiceAdjustments.AsNoTracking()
                     .SingleOrDefaultAsync(x =>
@@ -500,6 +500,11 @@ public sealed class SliceBStagingFinalInvoiceMutation
             async (db, actor, building, roomId) =>
             {
                 if (monthlyIssuedId == Guid.Empty || input is null ||
+                    // Financial sum and insertion must share a SERIALIZABLE
+                    // snapshot so concurrent credit approvals and receipts
+                    // cannot both commit against stale outstanding balances.
+                    db.Database.CurrentTransaction?.GetDbTransaction()
+                        .IsolationLevel != System.Data.IsolationLevel.Serializable ||
                     input.TenantId == Guid.Empty || input.Amount <= 0m ||
                     decimal.Truncate(input.Amount) != input.Amount ||
                     input.PaidAtUtc == default ||

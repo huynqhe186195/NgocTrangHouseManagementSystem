@@ -75,8 +75,8 @@ public static class MonthlyInvoiceFinancialTermsEvaluator
             electricity < 0m || water < 0m ||
             decimal.Truncate(electricity) != electricity ||
             decimal.Truncate(water) != water ||
-            baseAmount != basePreview.KnownFullMonthRentAmount +
-                electricity + water)
+            !MatchesVerifiedBase(baseAmount,
+                basePreview.KnownFullMonthRentAmount, electricity, water))
             result.Blockers.Add("VerifiedMonthlyRentAndUtilitiesRequired");
         else
             result.VerifiedBaseAmount = baseAmount;
@@ -129,9 +129,12 @@ public static class MonthlyInvoiceFinancialTermsEvaluator
         {
             if (charges.Any(x => !ValidServiceLine(x)))
                 result.Blockers.Add("MonthlyServiceLineInvalid");
-            if (charges.Where(x => x is not null)
-                .GroupBy(x => (x.Kind, x.ServiceCode.Trim().ToUpperInvariant()))
-                .Any(g => g.Count() > 1))
+            // Invalid/null service codes must never crash the duplicate
+            // check or be treated as a valid fee approval.
+            if (!result.Blockers.Contains("MonthlyServiceLineInvalid") &&
+                charges.GroupBy(x =>
+                    (x.Kind, x.ServiceCode.Trim().ToUpperInvariant()))
+                    .Any(g => g.Count() > 1))
                 result.Blockers.Add("DuplicateMonthlyServiceCharge");
             if (!result.Blockers.Any(x => x is
                     "MonthlyServiceLineInvalid" or
@@ -149,6 +152,19 @@ public static class MonthlyInvoiceFinancialTermsEvaluator
         }
 
         return Stop(result);
+    }
+
+    private static bool MatchesVerifiedBase(
+        decimal actual, decimal monthlyRent, decimal electricity, decimal water)
+    {
+        try
+        {
+            return actual == checked(monthlyRent + electricity + water);
+        }
+        catch (OverflowException)
+        {
+            return false;
+        }
     }
 
     private static bool ValidServiceLine(FinalInvoiceAuxiliaryChargeProposal? line)

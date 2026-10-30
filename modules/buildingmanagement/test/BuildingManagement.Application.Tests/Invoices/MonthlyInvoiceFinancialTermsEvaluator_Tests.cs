@@ -109,6 +109,33 @@ public sealed class MonthlyInvoiceFinancialTermsEvaluator_Tests
     }
 
     [Fact]
+    public void MONTHLYFIN09_Null_Service_Code_And_Amount_Overflow_Fail_Closed()
+    {
+        var basis = Base();
+        var invalid = MonthlyInvoiceFinancialTermsEvaluator.Assess(
+            basis, Terms(basis) with
+            {
+                AuxiliaryFeeDecision = AuxiliaryFeeAssessmentDecision.ItemizedCharges,
+                AuxiliaryCharges = new[]
+                {
+                    Fee(FinalInvoiceAuxiliaryFeeKind.Internet, "INTERNET", 100m)
+                        with { ServiceCode = null! }
+                }
+            });
+        Assert.Contains("MonthlyServiceLineInvalid", invalid.Blockers);
+        Assert.Null(invalid.ReviewedGrandTotal);
+
+        basis.KnownFullMonthRentAmount = decimal.MaxValue;
+        basis.ProvisionalElectricityAmount = 1m;
+        basis.ProvisionalWaterAmount = 1m;
+        basis.ProvisionalRentAndUtilitiesAmount = decimal.MaxValue;
+        var overflow = MonthlyInvoiceFinancialTermsEvaluator.Assess(
+            basis, Terms(basis));
+        Assert.Contains("VerifiedMonthlyRentAndUtilitiesRequired", overflow.Blockers);
+        Assert.Null(overflow.ReviewedGrandTotal);
+    }
+
+    [Fact]
     public void MONTHLYFIN08_Service_Fee_Cannot_Represent_Damage_Deduction()
     {
         var basis = Base();

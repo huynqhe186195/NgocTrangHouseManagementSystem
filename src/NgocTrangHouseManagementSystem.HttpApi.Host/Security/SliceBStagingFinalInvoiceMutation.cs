@@ -1079,6 +1079,153 @@ public sealed class SliceBStagingFinalInvoiceMutation
             });
 
     /// <summary>
+    /// Phase 2G.4: the OWNER explicitly approves an auditable deposit
+    /// refund/forfeit plan. The only permitted debt offset is ZERO.
+    /// This action NEVER transfers money or ends the contract.
+    /// </summary>
+    public Task<SliceBDepositSettlementDecisionRead> ApproveDepositSettlementAsync(
+        Guid contractId, Guid requestId, SliceBDepositSettlementApprovalInput input)
+        => ExecuteScopedAsync(contractId, requireBootstrapOwner: true,
+            async (db, actor, building, roomId) =>
+            {
+                if (input is null ||
+                    db.Database.CurrentTransaction?.GetDbTransaction()
+                        .IsolationLevel != System.Data.IsolationLevel.Serializable)
+                    throw Denied();
+                var request = await LockRequestAsync(
+                    db, requestId, contractId, roomId);
+                var contract = await db.Contracts.AsNoTracking()
+                    .SingleOrDefaultAsync(x => x.Id == contractId &&
+                        x.RoomId == roomId && !x.IsDeleted);
+                if (contract is null || contract.Status != ContractStatus.Active)
+                    throw Denied();
+
+                var invoices = await db.IssuedInvoiceLedger.AsNoTracking()
+                    .Where(x => x.ContractId == contractId &&
+                        x.RoomId == roomId).ToArrayAsync();
+                var final = invoices.SingleOrDefault(x =>
+                    x.MoveOutRequestId == requestId &&
+                    x.BuildingId == building);
+                if (final is null)
+                    throw Denied();
+                await using (var cmd = Command(db, """
+                    SELECT "Id" FROM "BuildingManagementIssuedInvoiceLedger"
+                     WHERE "Id" = @id AND "ContractId" = @contract
+                       AND "RoomId" = @room AND "BuildingId" = @building
+                     FOR SHARE
+                    """))
+                {
+                    Add(cmd, "id", final.Id);
+                    Add(cmd, "contract", contractId);
+                    Add(cmd, "room", roomId);
+                    Add(cmd, "building", building);
+                    if (await cmd.ExecuteScalarAsync() is not Guid)
+                        throw Denied();
+                }
+                try
+                {
+                    var archive = await db.FinalInvoiceIssueEvidence.AsNoTracking()
+                        .SingleAsync(x => x.Id == final.StagedEvidenceId);
+                    var review = await db.InvoiceIssuanceReviews.AsNoTracking()
+                        .SingleAsync(x => x.Id == final.ReviewTicketId);
+                    final.VerifyStoredTerms(archive, review);
+                }
+                catch (Exception ex) when (ex is InvalidDataException or
+                    InvalidOperationException or ArgumentException)
+                { throw Denied(); }
+
+                // Official debt must cover every issued invoice, including
+                // recurring monthly bills. Partial/staged manual evidence
+                // cannot be treated as payment of a receivable.
+                var postings = await db.OfficialInvoiceReceivables.AsNoTracking()
+                    .Where(x => x.ContractId == contractId &&
+                        x.RoomId == roomId &&
+                        x.BuildingId == building).ToArrayAsync();
+                var monthlyCount = await db.MonthlyIssuedInvoices.AsNoTracking()
+                    .CountAsync(x => x.ContractId == contractId &&
+                        x.RoomId == roomId);
+                if (postings.Length == 0 ||
+                    postings.Length != invoices.Length + monthlyCount ||
+                    !postings.Any(x => x.Kind == OfficialInvoiceKind.Final &&
+                        x.IssuedInvoiceId == final.Id))
+                    throw Denied();
+                var asOf = OfficialAsOf(null);
+                foreach (var posted in postings)
+                {
+                    var balance = await AssessOfficialBalanceAsync(
+                        db, posted, asOf);
+                    if (balance.OutstandingAmount != 0m ||
+                        balance.PendingOrRejectedPaymentCount != 0)
+                        throw Denied();
+                }
+
+                var depositAudit = await _depositAudit.GetAsync(requestId);
+                if (depositAudit.VerifiedIncomingAllocationTotal is not decimal held ||
+                    held <= 0m || held != contract.DepositAmount ||
+                    depositAudit.RecordedCompletedOutgoingTotal != 0m ||
+                    depositAudit.Blockers.Any(x => x is not
+                        "FinalInvoiceDebtNotReconciled" and
+                        not "DepositDeductionPolicyNotApproved" and
+                        not "RefundAuthorizationAndHandoverMissing"))
+                    throw Denied();
+                ContractDepositSettlementDecisionRecord candidate;
+                try
+                {
+                    candidate = ContractDepositSettlementDecisionRecord.Approve(
+                        Guid.NewGuid(), contractId, requestId, final.Id,
+                        building, actor, DateTime.UtcNow, final.IssuedAtUtc,
+                        held, 0m, input.ForfeitAmount,
+                        input.DamageReason, input.DamageEvidenceReference,
+                        input.DepositPolicyReference);
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or
+                    ArgumentException or OverflowException)
+                { throw Denied(); }
+                var previous = await db.DepositSettlementDecisions.AsNoTracking()
+                    .SingleOrDefaultAsync(x => x.ContractId == contractId ||
+                        x.MoveOutRequestId == requestId);
+                if (previous is not null)
+                {
+                    previous.VerifyStoredDecision();
+                    previous.RequireForCloseout(
+                        contractId, requestId, final.Id, building, held,
+                        input.ForfeitAmount, input.DamageReason,
+                        input.DamageEvidenceReference,
+                        input.DepositPolicyReference);
+                    return DepositDecisionRead(previous);
+                }
+                if (await db.DepositCloseoutApprovals.AsNoTracking()
+                    .AnyAsync(x => x.ContractId == contractId ||
+                        x.MoveOutRequestId == requestId))
+                    throw Denied();
+                db.DepositSettlementDecisions.Add(candidate);
+                return DepositDecisionRead(candidate);
+            });
+
+    public Task<SliceBDepositSettlementDecisionRead> GetDepositSettlementAsync(
+        Guid contractId, Guid requestId)
+        => ExecuteScopedAsync(contractId, requireBootstrapOwner: false,
+            async (db, actor, building, roomId) =>
+            {
+                if (requestId == Guid.Empty) throw Denied();
+                var decision = await db.DepositSettlementDecisions.AsNoTracking()
+                    .SingleOrDefaultAsync(x =>
+                        x.ContractId == contractId &&
+                        x.MoveOutRequestId == requestId &&
+                        x.BuildingId == building) ?? throw Denied();
+                decision.VerifyStoredDecision();
+                return DepositDecisionRead(decision);
+            }, permitEndedContract: true);
+
+    private static SliceBDepositSettlementDecisionRead DepositDecisionRead(
+        ContractDepositSettlementDecisionRecord decision)
+        => new(decision.Id, decision.ContractId, decision.MoveOutRequestId,
+            decision.FinalIssuedInvoiceId, decision.VerifiedHeldAmount,
+            decision.ApprovedForfeitAmount, decision.ApprovedRefundAmount,
+            decision.ApprovedDebtOffsetAmount, decision.ApprovedAtUtc,
+            IsRefundExecuted: false, IsAutomaticDebtOffset: false);
+
+    /// <summary>
     /// Explicit root-only, isolated staging final handover. A MANUAL refund
     /// bank reference is a human attestation, not automatic bank verification.
     /// Never deduct deposit from invoice debt: every issued invoice MUST be
@@ -1264,6 +1411,31 @@ public sealed class SliceBStagingFinalInvoiceMutation
                     held <= 0m || held != contract.DepositAmount ||
                     input.ForfeitAmount > held)
                     throw Denied();
+
+                // The separately approved Phase 2G.4 decision is an
+                // absolute precondition, not something Complete may invent.
+                var decision = await db.DepositSettlementDecisions.AsNoTracking()
+                    .SingleOrDefaultAsync(x => x.ContractId == contractId &&
+                        x.MoveOutRequestId == requestId) ?? throw Denied();
+                await using (var lockDecision = Command(db, """
+                    SELECT "Id" FROM "BuildingManagementContractDepositSettlementDecisions"
+                     WHERE "Id" = @id FOR SHARE
+                    """))
+                {
+                    Add(lockDecision, "id", decision.Id);
+                    if (await lockDecision.ExecuteScalarAsync() is not Guid)
+                        throw Denied();
+                }
+                try
+                {
+                    decision.RequireForCloseout(contractId, requestId, final.Id,
+                        building, held, input.ForfeitAmount,
+                        input.DamageReason, input.DamageEvidenceReference,
+                        input.DepositPolicyReference);
+                }
+                catch (Exception ex) when (ex is InvalidDataException or
+                    InvalidOperationException or ArgumentException)
+                { throw Denied(); }
 
                 decimal refundAmount = held - input.ForfeitAmount;
                 if (refundAmount > 0m &&
@@ -2083,3 +2255,18 @@ public sealed record OfficialContractDebtPortfolioRead(
     decimal OutstandingAmount, int OverdueInvoiceCount,
     IReadOnlyList<OfficialInvoiceReceivableBalance> Invoices,
     bool IsOfficialDebtPosted, bool IsExternallyVerifiedBankTransfer);
+
+public sealed class SliceBDepositSettlementApprovalInput
+{
+    public decimal ForfeitAmount { get; set; }
+    public string? DamageReason { get; set; }
+    public string? DamageEvidenceReference { get; set; }
+    public string DepositPolicyReference { get; set; } = string.Empty;
+}
+
+public sealed record SliceBDepositSettlementDecisionRead(
+    Guid DecisionId, Guid ContractId, Guid MoveOutRequestId,
+    Guid FinalIssuedInvoiceId, decimal VerifiedHeldAmount,
+    decimal ApprovedForfeitAmount, decimal ApprovedRefundAmount,
+    decimal ApprovedDebtOffsetAmount, DateTime ApprovedAtUtc,
+    bool IsRefundExecuted, bool IsAutomaticDebtOffset);

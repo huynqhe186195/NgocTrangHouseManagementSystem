@@ -243,6 +243,32 @@ public sealed class SliceBStagingFinalInvoiceController : ControllerBase
             .RecordManualReceiptAsync(contractId, issuedId, input);
     }
 
+    /// <summary>
+    /// Phase 2G.4: approve refund/forfeiture amounts BEFORE final move-out.
+    /// Does not execute a refund or offset debt. Root-only staging action.
+    /// </summary>
+    [HttpPost("contracts/{contractId:guid}/move-outs/{requestId:guid}/deposit-settlement/approve")]
+    [UnitOfWork(true, System.Data.IsolationLevel.Serializable)]
+    public Task<SliceBDepositSettlementDecisionRead> ApproveDepositSettlementAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid requestId,
+        [FromBody] SliceBDepositSettlementApprovalInput input)
+    {
+        RequireIsolatedStaging();
+        if (input is null) throw Denied();
+        return (_mutation ?? throw Denied()).ApproveDepositSettlementAsync(
+            contractId, requestId, input);
+    }
+
+    [HttpGet("contracts/{contractId:guid}/move-outs/{requestId:guid}/deposit-settlement")]
+    [UnitOfWork(true, System.Data.IsolationLevel.RepeatableRead)]
+    public Task<SliceBDepositSettlementDecisionRead> GetDepositSettlementAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid requestId)
+    {
+        RequireIsolatedStaging();
+        return (_mutation ?? throw Denied()).GetDepositSettlementAsync(
+            contractId, requestId);
+    }
+
     [HttpPost("contracts/{contractId:guid}/move-outs/{requestId:guid}/complete")]
     [UnitOfWork(true)]
     public Task<SliceBStagedMoveOutCloseoutRead> CompleteMoveOutAsync(

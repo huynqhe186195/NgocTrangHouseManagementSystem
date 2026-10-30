@@ -479,6 +479,124 @@ public sealed class SliceBStagingContractQuery
             BankTransferIndependentlyVerified: false);
     }
 
+    /// <summary>
+    /// Phase 2G.3 staging-only, current-contract issued-invoice balance.
+    /// This is a verifiable OBSERVED receipt ledger, NOT a declaration that
+    /// official receivables, bank payments or deposits have been posted.
+    /// Never trust a client-supplied BuildingId, TenantId or amount.
+    /// </summary>
+    public async Task<SliceBScopedIssuedInvoiceBalanceRead> GetIssuedInvoiceBalanceAsync(
+        Guid contractId, Guid issuedInvoiceId)
+    {
+        if (contractId == Guid.Empty || issuedInvoiceId == Guid.Empty)
+            throw Denied();
+        var authorizedContract = await GetAsync(contractId);
+        var actor = RequireActor();
+        var db = await _provider.GetDbContextAsync();
+        var now = DateTime.UtcNow;
+
+        var invoice = await (
+            from issued in db.IssuedInvoiceLedger.AsNoTracking()
+            join contract in db.Contracts.AsNoTracking()
+                on issued.ContractId equals contract.Id
+            join room in db.Rooms.AsNoTracking()
+                on contract.RoomId equals room.Id
+            join floor in db.Floors.AsNoTracking()
+                on room.FloorId equals floor.Id
+            join building in db.Buildings.AsNoTracking()
+                on floor.BuildingId equals building.Id
+            where issued.Id == issuedInvoiceId &&
+                issued.ContractId == contractId &&
+                issued.RoomId == room.Id &&
+                issued.BuildingId == building.Id &&
+                issued.BuildingId == authorizedContract.BuildingId &&
+                !contract.IsDeleted && !room.IsDeleted &&
+                !floor.IsDeleted && !building.IsDeleted &&
+                db.OperatorBuildingGrants.Any(grant =>
+                    grant.OperatorUserId == actor &&
+                    grant.BuildingId == building.Id &&
+                    grant.RevokedAtUtc == null &&
+                    grant.GrantedAtUtc <= now &&
+                    (grant.ExpiresAtUtc == null || grant.ExpiresAtUtc > now))
+            select issued).SingleOrDefaultAsync() ?? throw Denied();
+
+        // An indexed total alone is not proof: verify the signed invoice
+        // against its persisted source archive and independent review.
+        var archive = await db.FinalInvoiceIssueEvidence.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.Id == invoice.StagedEvidenceId)
+            ?? throw Denied();
+        var review = await db.InvoiceIssuanceReviews.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.Id == invoice.ReviewTicketId)
+            ?? throw Denied();
+        try
+        {
+            invoice.VerifyStoredTerms(archive, review);
+        }
+        catch (Exception error) when (error is InvalidOperationException or
+            ArgumentException)
+        {
+            throw Denied();
+        }
+
+        // Include every invoice receipt for this contract, not merely
+        // journal rows linked to the requested invoice. Otherwise a
+        // completed but unjournaled receipt can be silently omitted.
+        var journals = await db.InvoicePaymentAllocationJournal.AsNoTracking()
+            .Where(x => x.ContractId == contractId).ToArrayAsync();
+        var payments = await db.Payments.IgnoreQueryFilters().AsNoTracking()
+            .Where(x => x.ContractId == contractId &&
+                x.Purpose == PaymentPurpose.InvoicePayment)
+            .ToArrayAsync();
+        var audit = InvoicePaymentAllocationJournalAuditor.Assess(
+            journals, payments, contractId);
+        if (audit.Blockers.Any(x =>
+            x != "IssuedInvoiceLedgerAndAllocationAuthorizationMissing"))
+            throw Denied();
+
+        var asOfVietnam = DateOnly.FromDateTime(
+            TimeZoneInfo.ConvertTimeFromUtc(
+                now, TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh")));
+        IssuedInvoicePaymentSummary summary;
+        try
+        {
+            summary = IssuedInvoicePaymentReconciler.Assess(
+                invoice.Id, contractId, invoice.TotalAmount, invoice.DueDate,
+                asOfVietnam,
+                payments.Where(x => x.InvoiceId == invoice.Id).ToArray());
+        }
+        catch (Exception error) when (error is InvalidOperationException or
+            ArgumentException or OverflowException)
+        {
+            throw Denied();
+        }
+        if (summary.UnresolvedOverpayment != 0m ||
+            journals.Where(x => x.IssuedInvoiceId == invoice.Id)
+                .Sum(x => x.Amount) != summary.CompletedPaymentsAmount)
+            throw Denied();
+
+        // A membership removal between the initial SELECT and the final
+        // aggregation must also deny the result. Identity lease is held
+        // for the enclosing transactional HTTP UnitOfWork.
+        if (!await db.OperatorBuildingGrants.AsNoTracking().AnyAsync(grant =>
+            grant.OperatorUserId == actor &&
+            grant.BuildingId == authorizedContract.BuildingId &&
+            grant.RevokedAtUtc == null &&
+            grant.GrantedAtUtc <= DateTime.UtcNow &&
+            (grant.ExpiresAtUtc == null ||
+             grant.ExpiresAtUtc > DateTime.UtcNow)))
+            throw Denied();
+
+        return new SliceBScopedIssuedInvoiceBalanceRead(
+            invoice.Id, contractId, authorizedContract.BuildingId,
+            invoice.InvoiceNumber, invoice.DueDate, invoice.TotalAmount,
+            summary.CompletedPaymentsAmount,
+            summary.OutstandingBeforeAdjustments,
+            summary.CompletedPaymentCount, summary.Status,
+            IsObservedStagingLedger: true,
+            IsOfficialDebtPosted: false,
+            BankTransferIndependentlyVerified: false);
+    }
+
     private Guid RequireActor()
     {
         if (!_currentUser.IsAuthenticated || _currentUser.Id is not Guid id ||
@@ -585,3 +703,17 @@ public sealed record SliceBScopedMoveOutFinancialRead(
 public sealed record SliceBScopedDepositPaymentRead(
     Guid Id, decimal Amount, PaymentStatus Status, DateTime? PaidAt,
     PaymentPurpose Purpose);
+
+/// <summary>
+/// Explicitly observed staging balance; does not constitute an approved
+/// production debt posting, bank statement, or deposit offset.
+/// No tenant PII, transfer references, or payment numbers are returned.
+/// </summary>
+public sealed record SliceBScopedIssuedInvoiceBalanceRead(
+    Guid IssuedInvoiceId, Guid ContractId, Guid BuildingId,
+    string InvoiceNumber, DateOnly DueDate, decimal IssuedAmount,
+    decimal ObservedCompletedPaymentsAmount,
+    decimal ObservedOutstandingBeforeAdjustments, int CompletedPaymentCount,
+    IssuedInvoicePaymentStatus ObservedPaymentStatus,
+    bool IsObservedStagingLedger, bool IsOfficialDebtPosted,
+    bool BankTransferIndependentlyVerified);

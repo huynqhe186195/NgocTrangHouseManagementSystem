@@ -884,17 +884,17 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 foreach (var route in new[] {
                     legacyRateList, legacyMeterList, legacyReadingList })
                 {
-                    using var denied = await caller.GetAsync(route);
-                    Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+                    using var utilityReadBlocked = await caller.GetAsync(route);
+                    Assert.Equal(HttpStatusCode.Forbidden, utilityReadBlocked.StatusCode);
                 }
                 using var payload = new StringContent(
                     JsonSerializer.Serialize(new {
                         buildingId = b, utilityType = 1, unitPrice = 3500m,
                         effectiveFrom = "2026-11-01T00:00:00Z"
                     }), Encoding.UTF8, "application/json");
-                using var denied = await caller.PostAsync(
+                using var utilityWriteBlocked = await caller.PostAsync(
                     legacyRateCreate, payload);
-                Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
+                Assert.Equal(HttpStatusCode.Forbidden, utilityWriteBlocked.StatusCode);
             }
             using (var scope = app.Services.CreateScope())
             {

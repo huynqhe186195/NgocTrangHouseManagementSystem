@@ -77,7 +77,7 @@ public sealed class SliceBStagingFinalInvoiceController : ControllerBase
     }
 
     [HttpPost("contracts/{contractId:guid}/monthly-issued/{issuedId:guid}/manual-receipts")]
-    [UnitOfWork(true, System.Data.IsolationLevel.RepeatableRead)]
+    [UnitOfWork(true, System.Data.IsolationLevel.Serializable)]
     public Task<SliceBStagedMonthlyReceiptRead> RecordMonthlyReceiptAsync(
         [FromRoute] Guid contractId, [FromRoute] Guid issuedId,
         [FromBody] SliceBFinalInvoiceManualReceiptInput input)
@@ -113,7 +113,7 @@ public sealed class SliceBStagingFinalInvoiceController : ControllerBase
     }
 
     [HttpPost("contracts/{contractId:guid}/monthly-adjustments/{adjustmentId:guid}/review")]
-    [UnitOfWork(true, System.Data.IsolationLevel.RepeatableRead)]
+    [UnitOfWork(true, System.Data.IsolationLevel.Serializable)]
     public Task<SliceBStagedMonthlyAdjustmentDecisionRead>
         ReviewMonthlyAdjustmentAsync(
             [FromRoute] Guid contractId, [FromRoute] Guid adjustmentId,

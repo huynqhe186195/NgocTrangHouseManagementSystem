@@ -1873,6 +1873,111 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 "/monthly-invoice-preview/2026/13"))
                 Assert.Equal(HttpStatusCode.Forbidden, invalidPreview.StatusCode);
 
+            // Phase 2G.3 true PostgreSQL persisted utility draft via scoped
+            // HTTP Contracts.Manage; rent/services are intentionally NOT in
+            // this draft and no debt may be recognized from its creation.
+            var monthlyDraftRoom = await CreateChildAsync(clientB, roomCreate,
+                new { floorId = floorB, roomNumber = "110",
+                    name = "Monthly utility draft B110", area = 22m,
+                    capacity = 2, status = (int)BuildingManagement.Rooms.RoomStatus.Occupied });
+            var monthlyDraftContract = Guid.NewGuid();
+            var monthlyElectricMeter = Guid.NewGuid();
+            var monthlyWaterMeter = Guid.NewGuid();
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var db = await sp.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>().GetDbContextAsync();
+                var contract = new BuildingManagement.Contracts.Contract(
+                    monthlyDraftContract, "MONTH-DRAFT-" + monthlyDraftContract.ToString("N"),
+                    monthlyDraftRoom, new DateTime(2026, 8, 1), null, 2500000m);
+                contract.Activate();
+                db.Contracts.Add(contract);
+                db.ContractTenants.Add(new BuildingManagement.Contracts.ContractTenant(
+                    Guid.NewGuid(), monthlyDraftContract, tenantB,
+                    BuildingManagement.Contracts.ContractTenantRole.PrimaryTenant));
+                db.UtilityMeters.AddRange(
+                    new BuildingManagement.Utilities.UtilityMeter(
+                        monthlyElectricMeter, monthlyDraftRoom,
+                        BuildingManagement.Utilities.UtilityType.Electricity,
+                        "MD-E-" + monthlyElectricMeter.ToString("N"), 0m,
+                        new DateTime(2026, 7, 1)),
+                    new BuildingManagement.Utilities.UtilityMeter(
+                        monthlyWaterMeter, monthlyDraftRoom,
+                        BuildingManagement.Utilities.UtilityType.Water,
+                        "MD-W-" + monthlyWaterMeter.ToString("N"), 0m,
+                        new DateTime(2026, 7, 1)));
+                db.MeterReadings.AddRange(
+                    new BuildingManagement.Utilities.MeterReading(
+                        Guid.NewGuid(), monthlyElectricMeter, 2026, 8,
+                        0m, 10m, new DateTime(2026, 8, 31)),
+                    new BuildingManagement.Utilities.MeterReading(
+                        Guid.NewGuid(), monthlyWaterMeter, 2026, 8,
+                        0m, 15m, new DateTime(2026, 8, 31)),
+                    new BuildingManagement.Utilities.MeterReading(
+                        Guid.NewGuid(), monthlyElectricMeter, 2026, 9,
+                        10m, 20m, new DateTime(2026, 9, 30)),
+                    new BuildingManagement.Utilities.MeterReading(
+                        Guid.NewGuid(), monthlyWaterMeter, 2026, 9,
+                        15m, 19m, new DateTime(2026, 9, 30)));
+                await db.SaveChangesAsync();
+                await uow.CompleteAsync();
+            }
+            var draftCreateRoute = scopedContracts + "/" +
+                monthlyDraftContract.ToString("D") +
+                "/monthly-utility-drafts/2026/9";
+            using (var foreignDraft = await clientB.PostAsync(
+                scopedContracts + "/" + contractA.ToString("D") +
+                "/monthly-utility-drafts/2026/9", null))
+                Assert.Equal(HttpStatusCode.Forbidden, foreignDraft.StatusCode);
+            using (var invalidPeriodDraft = await clientB.PostAsync(
+                scopedContracts + "/" + monthlyDraftContract.ToString("D") +
+                "/monthly-utility-drafts/2026/13", null))
+                Assert.Equal(HttpStatusCode.Forbidden, invalidPeriodDraft.StatusCode);
+            Guid persistedDraftId;
+            using (var persistedDraft = await clientB.PostAsync(draftCreateRoute, null))
+            {
+                var jsonText = await persistedDraft.Content.ReadAsStringAsync();
+                Assert.True(persistedDraft.StatusCode is HttpStatusCode.OK or
+                    HttpStatusCode.Created,
+                    $"2G.3 persisted monthly utility draft: {persistedDraft.StatusCode}: {jsonText}");
+                using var json = JsonDocument.Parse(jsonText);
+                persistedDraftId = json.RootElement.GetProperty("id").GetGuid();
+                Assert.Equal(monthlyDraftContract,
+                    json.RootElement.GetProperty("contractId").GetGuid());
+                Assert.Equal(monthlyDraftRoom,
+                    json.RootElement.GetProperty("roomId").GetGuid());
+                Assert.Equal(83000m,
+                    json.RootElement.GetProperty("provisionalUtilityTotal").GetDecimal());
+                Assert.Equal(2,
+                    json.RootElement.GetProperty("items").GetArrayLength());
+                Assert.False(json.RootElement.GetProperty("isIssued").GetBoolean());
+                Assert.False(json.RootElement.GetProperty("hasRecognizedDebt").GetBoolean());
+                Assert.DoesNotContain(tenantB.ToString("D"), jsonText,
+                    StringComparison.OrdinalIgnoreCase);
+            }
+            using (var duplicateDraft = await clientB.PostAsync(draftCreateRoute, null))
+                Assert.NotEqual(HttpStatusCode.OK, duplicateDraft.StatusCode);
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var db = await sp.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>().GetDbContextAsync();
+                Assert.Equal(1, await db.Invoices.CountAsync(x =>
+                    x.Id == persistedDraftId &&
+                    x.ContractId == monthlyDraftContract &&
+                    x.BillingYear == 2026 && x.BillingMonth == 9));
+                Assert.Equal(2, await db.InvoiceItems.CountAsync(x =>
+                    x.InvoiceId == persistedDraftId));
+                Assert.False(await db.IssuedInvoiceLedger.AnyAsync(x =>
+                    x.ContractId == monthlyDraftContract));
+                await uow.CompleteAsync();
+            }
+
             async Task<JsonDocument> PostValidFinanceAsync(
                 HttpClient caller, string route, object payload)
             {

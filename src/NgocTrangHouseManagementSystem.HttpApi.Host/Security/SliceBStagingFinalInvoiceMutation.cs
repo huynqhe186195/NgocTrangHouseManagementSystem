@@ -563,14 +563,18 @@ public sealed class SliceBStagingFinalInvoiceMutation
                 var reference = input.TransactionReference.Trim();
                 var proof = "BANK-PROOF: " + input.BankEvidenceReference.Trim();
 
-                // The normalized global bank reference is unique for ALL
-                // invoice receipts, both recurring and final.
-                var existing = await db.Payments.IgnoreQueryFilters()
-                    .AsNoTracking().SingleOrDefaultAsync(x =>
-                        x.Purpose == PaymentPurpose.InvoicePayment &&
+                // Any payment purpose may already claim this bank transfer.
+                // The normalized invoice-only unique index cannot catch an
+                // older deposit whose reference differs in case/whitespace.
+                // Reject such cross-purpose reuse before writing a receipt.
+                var matches = await db.Payments.IgnoreQueryFilters()
+                    .AsNoTracking().Where(x =>
                         x.TransactionReference != null &&
                         x.TransactionReference.Trim().ToLower() ==
-                            reference.ToLowerInvariant());
+                            reference.ToLowerInvariant())
+                    .Take(2).ToArrayAsync();
+                if (matches.Length > 1) throw Denied();
+                var existing = matches.SingleOrDefault();
                 if (existing is not null)
                 {
                     if (existing.IsDeleted ||
@@ -986,13 +990,16 @@ public sealed class SliceBStagingFinalInvoiceMutation
                 var normalizedReference = input.TransactionReference.Trim();
                 var normalizedProof = "BANK-PROOF: " +
                     input.BankEvidenceReference.Trim();
-                var alreadyRecorded = await db.Payments
+                var matchingPayments = await db.Payments
                     .IgnoreQueryFilters().AsNoTracking()
-                    .SingleOrDefaultAsync(p =>
-                        p.Purpose == PaymentPurpose.InvoicePayment &&
-                        p.TransactionReference != null &&
+                    .Where(p => p.TransactionReference != null &&
                         p.TransactionReference.Trim().ToLower() ==
-                            normalizedReference.ToLowerInvariant());
+                            normalizedReference.ToLowerInvariant())
+                    .Take(2).ToArrayAsync();
+                if (matchingPayments.Length > 1) throw Denied();
+                // A matching reservation/contract deposit can NEVER also be
+                // treated as a final invoice receipt, even if case differs.
+                var alreadyRecorded = matchingPayments.SingleOrDefault();
                 if (alreadyRecorded is not null)
                 {
                     if (alreadyRecorded.IsDeleted ||

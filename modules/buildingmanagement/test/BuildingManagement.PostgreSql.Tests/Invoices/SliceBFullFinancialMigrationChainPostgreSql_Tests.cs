@@ -171,6 +171,13 @@ public sealed class SliceBFullFinancialMigrationChainPostgreSql_Tests
                                     'TR_BM_SignedMoveOut_Extras',
                                     'TR_BM_SignedChecklist_Extras')
                     """));
+                // A completed bank transfer can be allocated only once
+                // across deposits and invoices, ignoring ref casing/spaces.
+                Assert.Equal(1L, await ScalarAsync(inspect, """
+                    SELECT count(*) FROM pg_indexes
+                     WHERE indexname =
+                       'UX_BM_CompletedBankTransfer_NormalizedReference'
+                    """));
                 // Both aggregate-ceiling writers must enforce SSI even
                 // for direct SQL callers that bypass the staging HTTP gate.
                 Assert.Equal(2L, await ScalarAsync(inspect, """

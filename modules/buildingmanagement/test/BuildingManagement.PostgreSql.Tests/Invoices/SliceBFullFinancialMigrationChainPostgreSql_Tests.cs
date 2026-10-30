@@ -234,7 +234,7 @@ public sealed class SliceBFullFinancialMigrationChainPostgreSql_Tests
                     """, inspect))
                 {
                     var rejected = await Assert.ThrowsAsync<PostgresException>(
-                        async () => await unisolated.ExecuteNonQueryAsync());
+                        async () => { await unisolated.ExecuteNonQueryAsync(); });
                     Assert.Equal("23514", rejected.SqlState);
                 }
 

@@ -2754,9 +2754,9 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                         journalId.ToString("N"),
                     reason = "Bank statement manually checked against immutable receipt"
                 });
-                var selfReview = await PostFinalAsync(
+                var selfOfficialReceiptReview = await PostFinalAsync(
                     clientRoot, reviewRoute, reviewBody);
-                Assert.Equal(HttpStatusCode.Forbidden, selfReview.Status);
+                Assert.Equal(HttpStatusCode.Forbidden, selfOfficialReceiptReview.Status);
                 var approved = await PostFinalAsync(
                     clientB, reviewRoute, reviewBody);
                 Assert.True(approved.Status is HttpStatusCode.OK or

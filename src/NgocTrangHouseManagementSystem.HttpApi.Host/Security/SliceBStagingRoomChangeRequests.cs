@@ -679,9 +679,10 @@ public sealed class SliceBStagingRoomChangeRequests
             // The signed full-month lane settles the last source month
             // through the officially posted monthly ledger; a second final
             // invoice is not mandatory and would double-bill those charges.
-            var sourceMonthPosted = monthly.Any(x =>
-                x.BillingYear == request.RequestedDate.Year &&
-                x.BillingMonth == request.RequestedDate.Month);
+            var sourceMonthPosted = await db.MonthlyIssuedInvoices.AsNoTracking()
+                .AnyAsync(x => x.ContractId == contractId &&
+                    x.BillingYear == request.RequestedDate.Year &&
+                    x.BillingMonth == request.RequestedDate.Month);
             var allPaid = sourceMonthPosted &&
                 postings.Length == issuedFinal + issuedMonthly;
             if (allPaid)

@@ -7,7 +7,8 @@ namespace BuildingManagement.DomainTests.RoomChanges;
 public sealed class RoomChangeExecutionReadiness_Tests
 {
     private static RoomChangeExecutionFacts Clean() => new(
-        true, true, true, false, true, true, true, true, true);
+        true, true, true, false, true, true, true, true, true,
+        true, true, false);
 
     [Fact]
     public void TRF44_Missing_Source_Facts_Deny()
@@ -25,6 +26,23 @@ public sealed class RoomChangeExecutionReadiness_Tests
         Assert.Single(status.Blockers);
         Assert.Equal("AtomicRoomChangeExecutionNotImplemented",
             status.Blockers[0]);
+    }
+
+    [Fact]
+    public void TRF52_Only_Supported_Server_Proven_Lane_Is_Eligible_For_Root_Commit()
+    {
+        var result = RoomChangeExecutionReadiness.Assess(
+            Clean() with { AtomicWriterRegistered = true });
+        Assert.True(result.CanExecuteTransfer);
+        Assert.Empty(result.Blockers);
+        Assert.Contains("UnsupportedOI07ExecutionPolicyLane",
+            RoomChangeExecutionReadiness.Assess(
+                Clean() with { ExplicitSupportedOI07PolicyLane = false })
+                .Blockers);
+        Assert.Contains("TransferMonthOriginalMetersNotBilled",
+            RoomChangeExecutionReadiness.Assess(
+                Clean() with { TransferMonthPhysicallyBilled = false })
+                .Blockers);
     }
 
     [Fact]

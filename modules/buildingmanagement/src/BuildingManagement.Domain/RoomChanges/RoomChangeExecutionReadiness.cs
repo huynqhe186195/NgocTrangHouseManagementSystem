@@ -38,10 +38,14 @@ public static class RoomChangeExecutionReadiness
         if (!facts.TargetCommitmentsClear)
             blocked.Add("TargetRoomCommitmentUnresolved");
 
-        // Even a perfect preflight cannot authorize a nonexistent atomic
-        // writer or invent a future transfer-billing/deposit settlement.
-        blocked.Add("AtomicRoomChangeExecutionNotImplemented");
-        return new(false, blocked.Distinct().ToArray());
+        if (!facts.ExplicitSupportedOI07PolicyLane)
+            blocked.Add("UnsupportedOI07ExecutionPolicyLane");
+        if (!facts.TransferMonthPhysicallyBilled)
+            blocked.Add("TransferMonthOriginalMetersNotBilled");
+        if (!facts.AtomicWriterRegistered)
+            blocked.Add("AtomicRoomChangeExecutionNotImplemented");
+        var distinct = blocked.Distinct().ToArray();
+        return new(distinct.Length == 0, distinct);
     }
 }
 
@@ -54,7 +58,10 @@ public sealed record RoomChangeExecutionFacts(
     bool AllSourceInvoicesOfficiallyPostedAndReviewed,
     bool DepositOriginalPaymentsFullyProven,
     bool NoPendingOrOutgoingDepositDisposition,
-    bool TargetCommitmentsClear);
+    bool TargetCommitmentsClear,
+    bool ExplicitSupportedOI07PolicyLane = false,
+    bool TransferMonthPhysicallyBilled = false,
+    bool AtomicWriterRegistered = false);
 
 public sealed record RoomChangeExecutionReadinessResult(
     bool CanExecuteTransfer, IReadOnlyList<string> Blockers);

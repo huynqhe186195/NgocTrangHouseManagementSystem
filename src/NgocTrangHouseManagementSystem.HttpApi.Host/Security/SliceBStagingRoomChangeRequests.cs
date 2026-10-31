@@ -729,12 +729,58 @@ public sealed class SliceBStagingRoomChangeRequests
                 x.SourceContractId == contractId ||
                 x.Status == DepositSettlementStatus.Pending ||
                 x.Type != DepositSettlementType.AllocateToContractDeposit);
+            var supported = approved && plan is not null &&
+                plan.ContractTreatment == RoomChangeContractTreatment.NewContract &&
+                plan.PricingTreatment == RoomChangePricingTreatment.FullOldMonthNewNextMonth &&
+                plan.DepositTreatment == RoomChangeDepositTreatment.CarryAllWithNoDifference &&
+                plan.TenantTreatment == RoomChangeTenantTreatment.AllCurrentTenants &&
+                request.RequestedDate.Day == DateTime.DaysInMonth(
+                    request.RequestedDate.Year, request.RequestedDate.Month) &&
+                contract.MonthlyRent == contract.DepositAmount;
+            var monthBilled = false;
+            if (handedOver)
+            {
+                var sourceMonth = await db.MonthlyIssuedInvoices.AsNoTracking()
+                    .SingleOrDefaultAsync(x => x.ContractId == contractId &&
+                        x.BillingYear == request.RequestedDate.Year &&
+                        x.BillingMonth == request.RequestedDate.Month);
+                var archived = sourceMonth is null ? null :
+                    await db.MonthlyInvoiceCandidates.AsNoTracking()
+                        .SingleOrDefaultAsync(x => x.Id == sourceMonth.CandidateId);
+                if (archived is not null)
+                {
+                    try
+                    {
+                        var evidence = archived.VerifyStoredEvidence();
+                        monthBilled = evidence.UtilityLines.Count == 2 &&
+                            evidence.UtilityLines.Any(line =>
+                                line.UtilityType == BuildingManagement.Utilities.UtilityType.Electricity &&
+                                line.Sources.Any(x => x.SourceId ==
+                                    handover!.ElectricityReadingId)) &&
+                            evidence.UtilityLines.Any(line =>
+                                line.UtilityType == BuildingManagement.Utilities.UtilityType.Water &&
+                                line.Sources.Any(x => x.SourceId ==
+                                    handover!.WaterReadingId));
+                    }
+                    catch (Exception ex) when (ex is System.IO.InvalidDataException or
+                        InvalidOperationException or ArgumentException) { throw Denied(); }
+                }
+            }
+            var currentSource = request.Status is
+                    (RoomChangeRequestStatus.Pending or RoomChangeRequestStatus.PolicyHold) &&
+                request.RequestedDate <= today &&
+                contract.Status == ContractStatus.Active &&
+                source.Status == RoomStatus.Occupied &&
+                target.Status == RoomStatus.Available &&
+                source.Building == building && target.Building == building &&
+                !moveOut && rosterCurrent;
             var assessed = RoomChangeExecutionReadiness.Assess(
-                new RoomChangeExecutionFacts(live.CanContinuePolicyReview,
+                new RoomChangeExecutionFacts(currentSource,
                     approved, handedOver, competitors, finalPosted, allPaid,
                     depositProven, depositUnspent, !committed &&
                     target.Building == building &&
-                    target.Status == RoomStatus.Available));
+                    target.Status == RoomStatus.Available,
+                    supported, monthBilled, true));
             return new SliceBRoomChangeExecutionReadiness(
                 requestId, assessed.CanExecuteTransfer,
                 assessed.Blockers.ToArray(), false);

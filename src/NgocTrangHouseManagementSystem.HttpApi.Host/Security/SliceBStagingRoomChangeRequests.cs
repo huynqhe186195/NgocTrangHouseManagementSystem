@@ -4,6 +4,9 @@ using System.Linq;
 using System.Threading.Tasks;
 using BuildingManagement.Contracts;
 using BuildingManagement.DepositSettlements;
+using BuildingManagement.Payments;
+using BuildingManagement.Invoices;
+using BuildingManagement.DepositSettlements;
 using BuildingManagement.Invoices;
 using BuildingManagement.Payments;
 using BuildingManagement.EntityFrameworkCore;
@@ -737,6 +740,177 @@ public sealed class SliceBStagingRoomChangeRequests
                 assessed.Blockers.ToArray(), false);
         }, permitEndedContract: true);
 
+    /// <summary>
+    /// Root-only, SERIALIZABLE atomic execution of the explicitly signed
+    /// NEW-CONTRACT / FULL-OLD-MONTH / EQUAL-DEPOSIT / ALL-TENANTS OI-07 lane.
+    /// No inferred proration, no partial tenants and no silent refund/topup.
+    /// Old invoices, originals and contract parties remain untouched.
+    /// </summary>
+    public Task<SliceBRoomChangeCompletionRead> CompleteRoomChangeAsync(
+        Guid contractId, Guid requestId, SliceBRoomChangeCompletionInput input)
+        => ExecuteScopedAsync(contractId, async (db, actor, building, sourceRoom) =>
+        {
+            if (input is null || input.TargetMonthlyRent <= 0m ||
+                decimal.Truncate(input.TargetMonthlyRent) != input.TargetMonthlyRent ||
+                input.SourceRoomDisposition is not
+                    (RoomStatus.Available or RoomStatus.Reserved or RoomStatus.Maintenance) ||
+                !ValidEvidence(input.DispositionEvidenceReference) ||
+                !ValidEvidence(input.CompletionReference) ||
+                db.Database.CurrentTransaction?.GetDbTransaction()
+                    .IsolationLevel != System.Data.IsolationLevel.Serializable)
+                throw Denied();
+            await _identity.AcquireBootstrapAsync(actor);
+            var request = await LockRequestAsync(
+                db, requestId, contractId, sourceRoom, building);
+            await _policy.EnsureResourceAsync(
+                BuildingBusinessResourceKind.Room, request.TargetRoomId,
+                BuildingBusinessCapability.ManageContract);
+            var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(
+                DateTime.UtcNow,
+                TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh")));
+            if (request.Status is not (RoomChangeRequestStatus.Pending or
+                RoomChangeRequestStatus.PolicyHold) ||
+                request.RequestedDate == default ||
+                request.RequestedDate >= DateOnly.MaxValue ||
+                request.RequestedDate > today ||
+                request.RequestedDate.Day != DateTime.DaysInMonth(
+                    request.RequestedDate.Year, request.RequestedDate.Month) ||
+                await db.RoomChangeCompletions.AsNoTracking()
+                    .AnyAsync(x => x.RequestId == requestId ||
+                        x.SourceContractId == contractId))
+                throw Denied();
+            var roomIds = new[] { sourceRoom, request.TargetRoomId }
+                .Distinct().OrderBy(x => x).ToArray();
+            if (roomIds.Length != 2) throw Denied();
+            foreach (var id in roomIds)
+            {
+                var locked = await LockRoomStatusAsync(db, id);
+                if (locked.Building != building ||
+                    locked.Status != (id == sourceRoom
+                        ? RoomStatus.Occupied : RoomStatus.Available))
+                    throw Denied();
+            }
+            var existingReservations = await db.RoomReservations.AsNoTracking()
+                .Where(x => !x.IsDeleted &&
+                    (x.RoomId == sourceRoom ||
+                     x.RoomId == request.TargetRoomId) &&
+                    (x.Status == RoomReservationStatus.Reserved ||
+                     x.Status == RoomReservationStatus.PendingPayment))
+                .ToArrayAsync();
+            if (existingReservations.Any(x => x.RoomId == request.TargetRoomId))
+                throw Denied();
+            var sourceReserved = existingReservations.Any(x =>
+                x.RoomId == sourceRoom && x.Status == RoomReservationStatus.Reserved);
+            var sourcePending = existingReservations.Any(x =>
+                x.RoomId == sourceRoom && x.Status == RoomReservationStatus.PendingPayment);
+            if (sourcePending ||
+                (sourceReserved && input.SourceRoomDisposition != RoomStatus.Reserved) ||
+                (!sourceReserved && input.SourceRoomDisposition == RoomStatus.Reserved) ||
+                (sourceReserved && input.SourceRoomDisposition == RoomStatus.Maintenance) ||
+                await db.Contracts.AsNoTracking().AnyAsync(x =>
+                    x.RoomId == request.TargetRoomId && !x.IsDeleted &&
+                    (x.Status == ContractStatus.Active ||
+                     x.Status == ContractStatus.Signed)) ||
+                await db.RoomChangeRequests.AsNoTracking().AnyAsync(x =>
+                    x.Id != requestId && x.TargetRoomId == request.TargetRoomId &&
+                    x.BuildingId == building &&
+                    (x.Status == RoomChangeRequestStatus.Pending ||
+                     x.Status == RoomChangeRequestStatus.PolicyHold)) ||
+                await db.MoveOutRequests.AsNoTracking().AnyAsync(x =>
+                    x.ContractId == contractId && !x.IsDeleted &&
+                    (x.Status == MoveOutRequestStatus.Pending ||
+                     x.Status == MoveOutRequestStatus.Approved)))
+                throw Denied();
+
+            var source = await db.Contracts.SingleOrDefaultAsync(x =>
+                x.Id == contractId && !x.IsDeleted);
+            var oldRoom = await db.Rooms.SingleOrDefaultAsync(x =>
+                x.Id == sourceRoom && !x.IsDeleted);
+            var nextRoom = await db.Rooms.SingleOrDefaultAsync(x =>
+                x.Id == request.TargetRoomId && !x.IsDeleted);
+            if (source is null || oldRoom is null || nextRoom is null ||
+                source.Status != ContractStatus.Active ||
+                source.RoomId != sourceRoom ||
+                source.MonthlyRent != input.TargetMonthlyRent ||
+                source.DepositAmount != input.TargetMonthlyRent ||
+                source.DepositAmount <= 0m)
+                throw Denied();
+
+            var roster = await db.RoomChangeRosterSnapshots.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.RoomChangeRequestId == requestId)
+                ?? throw Denied();
+            await LockCurrentRosterAsync(db, contractId);
+            var parties = await ReadCurrentRosterAsync(db, contractId);
+            var policy = await db.RoomChangeBusinessPolicies.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.RequestId == requestId)
+                ?? throw Denied();
+            var review = await db.RoomChangePolicyReviews.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.PolicyId == policy.Id && x.Accepted)
+                ?? throw Denied();
+            var handover = await db.RoomChangeHandoverEvidence.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.RequestId == requestId)
+                ?? throw Denied();
+            var originals = await LoadHandoverMetersAsync(
+                db, sourceRoom, request.RequestedDate);
+            try
+            {
+                review.Verify(policy, request, roster);
+                handover.Verify(request, originals.E, originals.Er,
+                    originals.W, originals.Wr);
+                if (!roster.MatchesCurrentRoster(requestId,
+                    contractId, sourceRoom, building, parties) ||
+                    policy.ContractTreatment != RoomChangeContractTreatment.NewContract ||
+                    policy.PricingTreatment != RoomChangePricingTreatment.FullOldMonthNewNextMonth ||
+                    policy.DepositTreatment != RoomChangeDepositTreatment.CarryAllWithNoDifference ||
+                    policy.TenantTreatment != RoomChangeTenantTreatment.AllCurrentTenants)
+                    throw Denied();
+            }
+            catch (Exception ex) when (ex is System.IO.InvalidDataException or
+                InvalidOperationException or ArgumentException) { throw Denied(); }
+
+            await VerifyTransferReceivablesAsync(db, contractId,
+                sourceRoom, building, request.RequestedDate,
+                handover.ElectricityReadingId, handover.WaterReadingId);
+            await VerifyTransferDepositAsync(db, source);
+            var utc = DateTime.UtcNow;
+            var newId = Guid.NewGuid();
+            var target = new Contract(newId, "TRF-" + newId.ToString("N"),
+                request.TargetRoomId,
+                request.RequestedDate.AddDays(1).ToDateTime(TimeOnly.MinValue),
+                null, input.TargetMonthlyRent,
+                "Room change " + request.Id.ToString("D"),
+                renewedFromContractId: source.Id);
+            target.Activate();
+            var freshParties = parties.Select(x => new ContractTenant(
+                Guid.NewGuid(), newId, x.TenantId, x.Role)).ToArray();
+            var settlement = new DepositSettlement(Guid.NewGuid(),
+                DepositSettlementType.RoomChangeCarryForward,
+                source.DepositAmount, sourceContractId: source.Id,
+                targetContractId: target.Id,
+                notes: "Signed same-deposit transfer " + request.Id.ToString("D"));
+            settlement.Complete(utc);
+            source.End(utc, ContractEndReason.RoomChanged);
+            oldRoom.ChangeStatus(input.SourceRoomDisposition);
+            nextRoom.ChangeStatus(RoomStatus.Occupied);
+            var completion = RoomChangeCompletionRecord.Complete(
+                Guid.NewGuid(), request, source, target, policy, review,
+                roster, handover, settlement, input.SourceRoomDisposition,
+                actor, utc);
+            request.Complete(actor, utc, input.CompletionReference!);
+            db.Contracts.Add(target);
+            db.ContractTenants.AddRange(freshParties);
+            db.DepositSettlements.Add(settlement);
+            db.RoomChangeCompletions.Add(completion);
+            return new SliceBRoomChangeCompletionRead(completion.Id,
+                request.Id, source.Id, target.Id, oldRoom.Id, nextRoom.Id,
+                completion.CarriedDepositAmount, completion.SourceRoomDisposition,
+                completion.EvidenceSha256, true);
+        });
+
+    private static bool ValidEvidence(string? proof) =>
+        !string.IsNullOrWhiteSpace(proof) &&
+        proof.Trim().Length is >= 12 and <= 500;
+
     public Task<SliceBRoomChangeRequestRead> HoldForPolicyAsync(
         Guid contractId, Guid requestId, SliceBRoomChangeReviewInput input)
         => ReviewAsync(contractId, requestId, input,
@@ -988,3 +1162,14 @@ public sealed record SliceBRoomChangeHandoverRead(
 public sealed record SliceBRoomChangeExecutionReadiness(
     Guid RequestId, bool CanExecuteTransfer, string[] Blockers,
     bool IsExternalBankVerification);
+
+/// <summary>Root-chosen explicit safe lane; not client-supplied ledger totals.</summary>
+public sealed record SliceBRoomChangeCompletionInput(
+    decimal TargetMonthlyRent, RoomStatus SourceRoomDisposition,
+    string? DispositionEvidenceReference, string? CompletionReference);
+
+public sealed record SliceBRoomChangeCompletionRead(
+    Guid Id, Guid RequestId, Guid SourceContractId, Guid TargetContractId,
+    Guid SourceRoomId, Guid TargetRoomId,
+    decimal CarriedDepositAmount, RoomStatus SourceRoomDisposition,
+    string EvidenceSha256, bool IsCompleted);

@@ -732,7 +732,7 @@ public sealed class RoomChangeTenantRosterPostgreSql_Tests
                 actor, committedAt);
             completed.VerifyFingerprint();
 
-            await Run(db, tx, $"""
+            var atomicSql = $"""
                 UPDATE "BuildingManagementContracts"
                    SET "Status"=3, "EndReason"=4,
                        "ActualEndedAt"='{committedAt:O}'
@@ -801,7 +801,24 @@ public sealed class RoomChangeTenantRosterPostgreSql_Tests
                         '{signedCompletion}','{payer:D}','{committedAt:O}',
                         '{completed.EvidenceSha256}');
                 SET CONSTRAINTS ALL IMMEDIATE;
-                """);
+                """;
+            // The state is otherwise valid. A recomputed but forged event
+            // checksum MUST fail at PostgreSQL's deferred commit gate.
+            // Roll back only the attempt, then commit the genuine domain SHA.
+            const string completionInsert =
+                "INSERT INTO \\"BuildingManagementRoomChangeCompletions\\"";
+            var split = atomicSql.IndexOf(completionInsert, StringComparison.Ordinal);
+            Assert.True(split > 0);
+            await Run(db, tx, atomicSql[..split]);
+            var validCompletion = atomicSql[split..];
+            var forgedCompletion = validCompletion.Replace(
+                completed.EvidenceSha256, new string('0', 64),
+                StringComparison.Ordinal);
+            Assert.NotEqual(validCompletion, forgedCompletion);
+            await Denied(db, tx, forgedCompletion, "23514");
+            Assert.Equal(0L, await Scalar(db, tx,
+                """SELECT count(*) FROM "BuildingManagementRoomChangeCompletions" """));
+            await Run(db, tx, validCompletion);
             Assert.Equal(1L, await Scalar(db, tx,
                 """SELECT count(*) FROM "BuildingManagementRoomChangeCompletions" """));
             Assert.Equal(4L, await Scalar(db, tx, $"""

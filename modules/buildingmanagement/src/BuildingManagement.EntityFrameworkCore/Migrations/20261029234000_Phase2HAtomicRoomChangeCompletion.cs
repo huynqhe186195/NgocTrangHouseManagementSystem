@@ -399,6 +399,111 @@ public sealed class Phase2HAtomicRoomChangeCompletion : Migration
               DEFERRABLE INITIALLY DEFERRED
               FOR EACH ROW EXECUTE FUNCTION "BM_VerifyRoomChangeCommit"();
 
+            CREATE FUNCTION "BM_FreezeCompletedTransferFunds"()
+            RETURNS trigger LANGUAGE plpgsql AS $funds$
+            BEGIN
+                -- Keep the same canonical contract lock as every deposit
+                -- settlement mutation and the initial completion writer.
+                IF TG_OP='INSERT' THEN
+                    PERFORM c."Id" FROM "BuildingManagementContracts" c
+                    WHERE c."Id" IN (NEW."SourceContractId",NEW."TargetContractId")
+                    ORDER BY c."Id" FOR UPDATE;
+                ELSIF TG_OP='DELETE' THEN
+                    PERFORM c."Id" FROM "BuildingManagementContracts" c
+                    WHERE c."Id" IN (OLD."SourceContractId",OLD."TargetContractId")
+                    ORDER BY c."Id" FOR UPDATE;
+                ELSE
+                    PERFORM c."Id" FROM "BuildingManagementContracts" c
+                    WHERE c."Id" IN (
+                        SELECT OLD."SourceContractId" UNION
+                        SELECT OLD."TargetContractId" UNION
+                        SELECT NEW."SourceContractId" UNION
+                        SELECT NEW."TargetContractId"
+                    )
+                    ORDER BY c."Id" FOR UPDATE;
+                END IF;
+                IF (TG_OP IN ('UPDATE','DELETE') AND EXISTS (
+                    SELECT 1 FROM "BuildingManagementRoomChangeCompletions" x
+                    WHERE x."CarryForwardSettlementId"=OLD."Id"
+                       OR x."SourceContractId"=OLD."SourceContractId"
+                       OR x."SourceContractId"=OLD."TargetContractId"
+                )) OR (TG_OP IN ('INSERT','UPDATE') AND EXISTS (
+                    SELECT 1 FROM "BuildingManagementRoomChangeCompletions" x
+                    WHERE x."SourceContractId"=NEW."SourceContractId"
+                       OR x."SourceContractId"=NEW."TargetContractId"
+                )) THEN
+                    RAISE EXCEPTION 'Carried-forward deposit is exclusively settled'
+                      USING ERRCODE='23514';
+                END IF;
+                RETURN CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END;
+            END;
+            $funds$;
+            CREATE TRIGGER "TR_BM_RoomChangeCompletion_FreezeFunds"
+              BEFORE INSERT OR UPDATE OR DELETE
+              ON "BuildingManagementDepositSettlements"
+              FOR EACH ROW EXECUTE FUNCTION "BM_FreezeCompletedTransferFunds"();
+
+            CREATE FUNCTION "BM_FreezeTransferredSourceContract"()
+            RETURNS trigger LANGUAGE plpgsql AS $contract$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM "BuildingManagementRoomChangeCompletions"
+                     WHERE "SourceContractId"=OLD."Id"
+                ) AND (TG_OP='DELETE' OR
+                    NEW."Status" IS DISTINCT FROM OLD."Status" OR
+                    NEW."RoomId" IS DISTINCT FROM OLD."RoomId" OR
+                    NEW."ContractNumber" IS DISTINCT FROM OLD."ContractNumber" OR
+                    NEW."MonthlyRent" IS DISTINCT FROM OLD."MonthlyRent" OR
+                    NEW."DepositAmount" IS DISTINCT FROM OLD."DepositAmount" OR
+                    NEW."ActualEndedAt" IS DISTINCT FROM OLD."ActualEndedAt" OR
+                    NEW."EndReason" IS DISTINCT FROM OLD."EndReason" OR
+                    NEW."StartDate" IS DISTINCT FROM OLD."StartDate" OR
+                    NEW."EndDate" IS DISTINCT FROM OLD."EndDate" OR
+                    NEW."Notes" IS DISTINCT FROM OLD."Notes" OR
+                    NEW."IsDeleted" IS DISTINCT FROM OLD."IsDeleted")
+                THEN
+                    RAISE EXCEPTION 'Completed transfer source terms are frozen'
+                      USING ERRCODE='23514';
+                END IF;
+                RETURN CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END;
+            END;
+            $contract$;
+            CREATE TRIGGER "TR_BM_RoomChangeCompletion_FreezeContract"
+              BEFORE UPDATE OR DELETE ON "BuildingManagementContracts"
+              FOR EACH ROW EXECUTE FUNCTION "BM_FreezeTransferredSourceContract"();
+
+            CREATE FUNCTION "BM_FreezeTransferredSourceParties"()
+            RETURNS trigger LANGUAGE plpgsql AS $parties$
+            BEGIN
+                IF TG_OP='INSERT' THEN
+                    PERFORM 1 FROM "BuildingManagementContracts"
+                    WHERE "Id"=NEW."ContractId" FOR UPDATE;
+                ELSIF TG_OP='DELETE' THEN
+                    PERFORM 1 FROM "BuildingManagementContracts"
+                    WHERE "Id"=OLD."ContractId" FOR UPDATE;
+                ELSE
+                    PERFORM 1 FROM "BuildingManagementContracts"
+                    WHERE "Id" IN (OLD."ContractId",NEW."ContractId")
+                    ORDER BY "Id" FOR UPDATE;
+                END IF;
+                IF (TG_OP IN ('UPDATE','DELETE') AND EXISTS (
+                    SELECT 1 FROM "BuildingManagementRoomChangeCompletions"
+                    WHERE "SourceContractId"=OLD."ContractId"
+                )) OR (TG_OP IN ('INSERT','UPDATE') AND EXISTS (
+                    SELECT 1 FROM "BuildingManagementRoomChangeCompletions"
+                    WHERE "SourceContractId"=NEW."ContractId"
+                )) THEN
+                    RAISE EXCEPTION 'Transferred source contract parties are immutable'
+                      USING ERRCODE='23514';
+                END IF;
+                RETURN CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END;
+            END;
+            $parties$;
+            CREATE TRIGGER "TR_BM_RoomChangeCompletion_FreezeParties"
+              BEFORE INSERT OR UPDATE OR DELETE
+              ON "BuildingManagementContractTenants"
+              FOR EACH ROW EXECUTE FUNCTION "BM_FreezeTransferredSourceParties"();
+
             CREATE FUNCTION "BM_VerifyRoomChangeTerminalRequest"()
             RETURNS trigger LANGUAGE plpgsql AS $terminal$
             BEGIN
@@ -435,6 +540,15 @@ public sealed class Phase2HAtomicRoomChangeCompletion : Migration
                 END IF;
             END;
             $down$;
+            DROP TRIGGER "TR_BM_RoomChangeCompletion_FreezeParties"
+              ON "BuildingManagementContractTenants";
+            DROP FUNCTION "BM_FreezeTransferredSourceParties"();
+            DROP TRIGGER "TR_BM_RoomChangeCompletion_FreezeContract"
+              ON "BuildingManagementContracts";
+            DROP FUNCTION "BM_FreezeTransferredSourceContract"();
+            DROP TRIGGER "TR_BM_RoomChangeCompletion_FreezeFunds"
+              ON "BuildingManagementDepositSettlements";
+            DROP FUNCTION "BM_FreezeCompletedTransferFunds"();
             DROP TRIGGER "TR_BM_RoomChangeRequest_CompletionGate"
               ON "BuildingManagementRoomChangeRequests";
             DROP FUNCTION "BM_VerifyRoomChangeTerminalRequest"();

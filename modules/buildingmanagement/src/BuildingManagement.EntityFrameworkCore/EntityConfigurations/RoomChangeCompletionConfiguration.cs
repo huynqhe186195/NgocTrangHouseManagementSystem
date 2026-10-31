@@ -1,4 +1,6 @@
 using BuildingManagement.RoomChanges;
+using BuildingManagement.Contracts;
+using BuildingManagement.DepositSettlements;
 using BuildingManagement.Rooms;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
@@ -32,6 +34,20 @@ public sealed class RoomChangeCompletionConfiguration
         b.Property(x => x.EvidenceSha256).HasMaxLength(64).IsRequired();
         b.HasOne<RoomChangeRequest>().WithMany()
             .HasForeignKey(x => x.RequestId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne<Contract>().WithMany()
+            .HasForeignKey(x => x.SourceContractId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne<Contract>().WithMany()
+            .HasForeignKey(x => x.TargetContractId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne<DepositSettlement>().WithMany()
+            .HasForeignKey(x => x.CarryForwardSettlementId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne<RoomChangeHandoverEvidenceRecord>().WithMany()
+            .HasForeignKey(x => x.HandoverEvidenceId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne<RoomChangeBusinessPolicyRecord>().WithMany()
+            .HasForeignKey(x => x.PolicyId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne<RoomChangeBusinessPolicyReviewRecord>().WithMany()
+            .HasForeignKey(x => x.PolicyReviewId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne<RoomChangeTenantRosterSnapshotRecord>().WithMany()
+            .HasForeignKey(x => x.RosterSnapshotId).OnDelete(DeleteBehavior.Restrict);
         b.HasIndex(x => x.RequestId).IsUnique();
         b.HasIndex(x => x.SourceContractId).IsUnique();
         b.HasIndex(x => x.TargetContractId).IsUnique();

@@ -4567,7 +4567,7 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     .GetRequiredService<SliceBStagingRoomChangeRequests>());
 
             var changeTarget = await CreateChildAsync(clientB, roomCreate,
-                new { floorId = floorB, roomNumber = "105",
+                new { floorId = floorB, roomNumber = "116",
                     name = "Phase2H review-only target",
                     area = 25m, capacity = 2, status = 1 });
             string ChangeRoute(Guid id) =>

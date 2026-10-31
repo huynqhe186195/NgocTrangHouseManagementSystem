@@ -3,6 +3,9 @@ using System.Data.Common;
 using System.Linq;
 using System.Threading.Tasks;
 using BuildingManagement.Contracts;
+using BuildingManagement.DepositSettlements;
+using BuildingManagement.Invoices;
+using BuildingManagement.Payments;
 using BuildingManagement.EntityFrameworkCore;
 using BuildingManagement.EntityFrameworkCore.Security;
 using BuildingManagement.MoveOuts;
@@ -574,6 +577,166 @@ public sealed class SliceBStagingRoomChangeRequests
             record.AttestedByUserId, record.AttestedAtUtc,
             record.EvidenceSha256, false, false);
 
+    /// <summary>
+    /// Source-only financial+physical transfer rehearsal. No client fact
+    /// switches, no authorized transfer writer, no deposit mutation.
+    /// </summary>
+    public Task<SliceBRoomChangeExecutionReadiness> GetExecutionReadinessAsync(
+        Guid contractId, Guid requestId)
+        => ExecuteScopedAsync(contractId, async (db, _, building, sourceRoom) =>
+        {
+            var request = await LockRequestAsync(
+                db, requestId, contractId, sourceRoom, building);
+            var rooms = new[] { sourceRoom, request.TargetRoomId }
+                .Distinct().OrderBy(x => x).ToArray();
+            if (rooms.Length != 2) throw Denied();
+            (Guid Building, RoomStatus Status) source = default, target = default;
+            foreach (var id in rooms)
+            {
+                var locked = await LockRoomStatusAsync(db, id);
+                if (id == sourceRoom) source = locked;
+                else target = locked;
+            }
+            var contract = await db.Contracts.AsNoTracking()
+                .SingleAsync(x => x.Id == contractId && !x.IsDeleted);
+            var competitors = await db.RoomChangeRequests.AsNoTracking()
+                .AnyAsync(x => x.Id != requestId &&
+                    x.BuildingId == building && x.TargetRoomId == request.TargetRoomId &&
+                    (x.Status == RoomChangeRequestStatus.Pending ||
+                     x.Status == RoomChangeRequestStatus.PolicyHold));
+            var committed = await db.RoomReservations.AsNoTracking()
+                .AnyAsync(x => x.RoomId == request.TargetRoomId && !x.IsDeleted &&
+                    (x.Status == RoomReservationStatus.PendingPayment ||
+                     x.Status == RoomReservationStatus.Reserved)) ||
+                await db.Contracts.AsNoTracking()
+                    .AnyAsync(x => x.RoomId == request.TargetRoomId && !x.IsDeleted &&
+                        (x.Status == ContractStatus.Active ||
+                         x.Status == ContractStatus.Signed));
+            var moveOut = await db.MoveOutRequests.AsNoTracking()
+                .AnyAsync(x => x.ContractId == contractId && !x.IsDeleted &&
+                    (x.Status == MoveOutRequestStatus.Pending ||
+                     x.Status == MoveOutRequestStatus.Approved));
+            var roster = await db.RoomChangeRosterSnapshots.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.RoomChangeRequestId == requestId);
+            var rosterCurrent = false;
+            if (roster is not null)
+            {
+                await LockCurrentRosterAsync(db, contractId);
+                try
+                {
+                    rosterCurrent = roster.MatchesCurrentRoster(
+                        requestId, contractId, sourceRoom, building,
+                        await ReadCurrentRosterAsync(db, contractId));
+                }
+                catch (System.IO.InvalidDataException) { throw Denied(); }
+            }
+            var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(
+                DateTime.UtcNow, TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh")));
+            var live = RoomChangeRequestReadiness.Assess(
+                new RoomChangeRequestReadinessFacts(requestId, contractId,
+                    sourceRoom, request.TargetRoomId, building,
+                    request.RequestedDate, today, request.Status, contract.Status,
+                    source.Status, target.Status, source.Building, target.Building,
+                    committed, committed, moveOut, rosterCurrent));
+            var plan = await db.RoomChangeBusinessPolicies.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.RequestId == requestId);
+            var review = plan is null ? null :
+                await db.RoomChangePolicyReviews.AsNoTracking()
+                    .SingleOrDefaultAsync(x => x.PolicyId == plan.Id);
+            var approved = false;
+            if (roster is not null && plan is not null && review is not null)
+            {
+                try { review.Verify(plan, request, roster); }
+                catch (Exception ex) when (ex is System.IO.InvalidDataException or
+                    InvalidOperationException or ArgumentException) { throw Denied(); }
+                approved = review.Accepted && rosterCurrent;
+            }
+            var handover = await db.RoomChangeHandoverEvidence.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.RequestId == requestId);
+            var handedOver = false;
+            if (handover is not null)
+            {
+                var originals = await LoadHandoverMetersAsync(
+                    db, sourceRoom, request.RequestedDate);
+                try
+                {
+                    handover.Verify(request, originals.E, originals.Er,
+                        originals.W, originals.Wr);
+                    handedOver = true;
+                }
+                catch (System.IO.InvalidDataException) { throw Denied(); }
+            }
+
+            var issuedFinal = await db.IssuedInvoiceLedger.AsNoTracking()
+                .CountAsync(x => x.ContractId == contractId);
+            var issuedMonthly = await db.MonthlyIssuedInvoices.AsNoTracking()
+                .CountAsync(x => x.ContractId == contractId);
+            var postings = await db.OfficialInvoiceReceivables.AsNoTracking()
+                .Where(x => x.ContractId == contractId).ToArrayAsync();
+            var finalPosted = issuedFinal > 0 &&
+                postings.Any(x => x.Kind == OfficialInvoiceKind.Final);
+            var allPaid = finalPosted &&
+                postings.Length == issuedFinal + issuedMonthly;
+            if (allPaid)
+            {
+                var reviews = await db.OfficialInvoiceReceiptReviews.AsNoTracking()
+                    .Where(x => x.ContractId == contractId).ToArrayAsync();
+                var adjustments = await db.MonthlyInvoiceAdjustmentDecisions.AsNoTracking()
+                    .Where(x => x.ContractId == contractId).ToArrayAsync();
+                allPaid = !reviews.Any(x => !x.Accepted ||
+                    !postings.Any(p => p.Id == x.ReceivablePostingId)) &&
+                    !adjustments.Any() &&
+                    postings.All(p => p.BuildingId == building &&
+                        p.RoomId == sourceRoom &&
+                        reviews.Where(r => r.ReceivablePostingId == p.Id)
+                            .Sum(r => r.Amount) == p.OriginalAmount);
+            }
+
+            var related = await db.DepositSettlements.AsNoTracking()
+                .Where(x => x.SourceContractId == contractId ||
+                    x.TargetContractId == contractId).ToArrayAsync();
+            var incoming = related.Where(x =>
+                x.TargetContractId == contractId &&
+                x.Type == DepositSettlementType.AllocateToContractDeposit)
+                .ToArray();
+            var ids = incoming.Where(x => x.PaymentId.HasValue)
+                .Select(x => x.PaymentId!.Value).Distinct().ToArray();
+            var payments = await db.Payments.IgnoreQueryFilters().AsNoTracking()
+                .Where(x => ids.Contains(x.Id)).ToArrayAsync();
+            var allocations = await db.DepositSettlements.AsNoTracking()
+                .Where(x => x.PaymentId.HasValue &&
+                    ids.Contains(x.PaymentId.Value)).ToArrayAsync();
+            var depositProven = contract.DepositAmount > 0m &&
+                incoming.Length > 0 && incoming.Sum(x => x.Amount) ==
+                    contract.DepositAmount &&
+                incoming.All(x => x.Status == DepositSettlementStatus.Completed &&
+                    x.PaymentId.HasValue && x.Amount > 0m) &&
+                payments.Length == ids.Length &&
+                incoming.All(x => payments.Any(p => p.Id == x.PaymentId &&
+                    p.Amount == x.Amount &&
+                    p.Status == PaymentStatus.Completed && !p.IsDeleted &&
+                    p.PaidAt.HasValue &&
+                    (p.Purpose == PaymentPurpose.ContractDeposit ||
+                     p.Purpose == PaymentPurpose.ReservationDeposit))) &&
+                allocations.All(x => x.Type ==
+                    DepositSettlementType.AllocateToContractDeposit &&
+                    x.Status == DepositSettlementStatus.Completed &&
+                    x.TargetContractId == contractId);
+            var depositUnspent = !related.Any(x =>
+                x.SourceContractId == contractId ||
+                x.Status == DepositSettlementStatus.Pending ||
+                x.Type != DepositSettlementType.AllocateToContractDeposit);
+            var assessed = RoomChangeExecutionReadiness.Assess(
+                new RoomChangeExecutionFacts(live.CanContinuePolicyReview,
+                    approved, handedOver, competitors, finalPosted, allPaid,
+                    depositProven, depositUnspent, !committed &&
+                    target.Building == building &&
+                    target.Status == RoomStatus.Available));
+            return new SliceBRoomChangeExecutionReadiness(
+                requestId, assessed.CanExecuteTransfer,
+                assessed.Blockers.ToArray(), false);
+        }, permitEndedContract: true);
+
     public Task<SliceBRoomChangeRequestRead> HoldForPolicyAsync(
         Guid contractId, Guid requestId, SliceBRoomChangeReviewInput input)
         => ReviewAsync(contractId, requestId, input,
@@ -820,3 +983,8 @@ public sealed record SliceBRoomChangeHandoverRead(
     string InspectionEvidenceReference, string SignedHandoverReference,
     Guid AttestedByUserId, DateTime AttestedAtUtc, string EvidenceSha256,
     bool AreInvoiceAndDepositReconciled, bool IsTransferExecuted);
+
+/// <summary>Read-only and always blocked until atomic 2H writer exists.</summary>
+public sealed record SliceBRoomChangeExecutionReadiness(
+    Guid RequestId, bool CanExecuteTransfer, string[] Blockers,
+    bool IsExternalBankVerification);

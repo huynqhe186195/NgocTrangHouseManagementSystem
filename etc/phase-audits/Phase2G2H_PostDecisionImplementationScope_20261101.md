@@ -79,3 +79,11 @@ These are **test case requirements, not selected money formulas** until D01–D0
 - **Current safe lane remains STAGING VERIFIED** only while its exact code SHA passes its real tests.
 - **Business direction approved now:** record + trace + explicit detail gates. Documentation is not a new code acceptance.
 - **Next implementation deliverable:** finish Stages B–D as cohesive changes, resolve D01–D07 without making financial assumptions, preserve historical invariants, run the full safety suite, commit and report SHA-scoped results. Any still-unspecified formula stays HOLD; do not unblock it by a dummy flag.
+
+## Implementation evidence — Stage B / OI-04 offset preview, 2026-11-01
+
+- Added `ContractDepositOffsetPreviewPolicy` as **read-only domain evaluation** of independently verified, explicitly Owner-approved claims. Its fixed priority is rent, electricity/water jointly, other approved services, approved damage. Within the same priority tier claims have stable-ID presentation ordering, not a newly approved legal creditor priority.
+- It rejects negative/fractional VND, duplicated/unverified/disputed evidence, missing policy/Owner approval and unsupported damage evidence. Any blocker suppresses ALL preview amounts instead of partially allocating cọc.
+- Its amounts are **proposals**, never posted offsets, payment receipts, bank refunds or mutations. Both `CanPostDebtOffset` and `CanExecuteRefund` remain false, and the existing `ContractDepositSettlementDecisionRecord` continues to deny nonzero outstanding debt. No legacy closeout gate was relaxed.
+- Added `DEP_POL01–DEP_POL12` domain tests and wired Domain/DepositSettlements changes to scratch PostgreSQL workflow triggers for full cross-phase regression. Await exact-SHA CI evidence before marking this implementation PASS.
+- **Still HOLD**: assemble claims from official ledger with persisted owner decision and dispute status; atomic signed `DepositSettlement` offset allocation/write; source receipt and refund proof; PostgreSQL rollback/race and authenticated HTTP; D04 refund verification/timing. This preview is not Phase 2G.4 full acceptance.

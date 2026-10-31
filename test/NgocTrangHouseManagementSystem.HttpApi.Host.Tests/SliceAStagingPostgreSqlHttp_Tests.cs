@@ -3137,6 +3137,35 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 closeout.RootElement.GetProperty("refundAmount").GetDecimal());
             Assert.Equal((int)BuildingManagement.Rooms.RoomStatus.Available,
                 closeout.RootElement.GetProperty("roomStatus").GetInt32());
+            Guid roomDispositionId = closeout.RootElement
+                .GetProperty("roomDispositionId").GetGuid();
+            Assert.NotEqual(Guid.Empty, roomDispositionId);
+            Assert.False(closeout.RootElement
+                .GetProperty("hasFutureCommitment").GetBoolean());
+            var roomDispositionRoute = financeRoot + "/move-outs/" +
+                financeMoveOut.ToString("D") + "/room-disposition";
+            using (var archivedDisposition =
+                await clientB.GetAsync(roomDispositionRoute))
+            {
+                Assert.Equal(HttpStatusCode.OK, archivedDisposition.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await archivedDisposition.Content.ReadAsStringAsync());
+                Assert.Equal(roomDispositionId,
+                    json.RootElement.GetProperty("dispositionId").GetGuid());
+                Assert.Equal((int)BuildingManagement.Rooms.RoomStatus.Available,
+                    json.RootElement.GetProperty("resultRoomStatus").GetInt32());
+                Assert.Equal(64,
+                    json.RootElement.GetProperty("dispositionSha256")
+                        .GetString()!.Length);
+                Assert.False(json.RootElement.GetProperty(
+                    "requiresMaintenance").GetBoolean());
+            }
+            using (var foreignDisposition = await clientB.GetAsync(
+                FinalInvoices(contractA) + "/move-outs/" +
+                financeMoveOut.ToString("D") + "/room-disposition"))
+                Assert.Equal(HttpStatusCode.Forbidden,
+                    foreignDisposition.StatusCode);
+
 
             // Authenticated building-scoped retrieval AFTER commit:
             // permanent approval and money totals are visible, but the

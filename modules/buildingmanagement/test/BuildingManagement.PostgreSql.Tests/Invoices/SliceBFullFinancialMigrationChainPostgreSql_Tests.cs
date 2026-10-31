@@ -214,6 +214,27 @@ public sealed class SliceBFullFinancialMigrationChainPostgreSql_Tests
                          'TR_BM_00_NoMonthlyIssueAfterDepositDecision',
                          'TR_BM_00_NoAdjustmentAfterDepositDecision')
                     """));
+                Assert.Equal(1L, await ScalarAsync(inspect,
+                    "SELECT to_regclass('\"BuildingManagementMoveOutRoomDispositions\"') IS NOT NULL"));
+                Assert.Equal(1L, await ScalarAsync(inspect, """
+                    SELECT count(*) FROM pg_trigger
+                     WHERE NOT tgisinternal
+                       AND tgname = 'TR_BM_Closeout_RequireRoomReleaseAtCommit'
+                       AND tgrelid =
+                         '"BuildingManagementContractDepositCloseoutApprovals"'::regclass
+                       AND tgdeferrable AND tginitdeferred
+                    """));
+                Assert.Equal(1L, await ScalarAsync(inspect, """
+                    SELECT count(*) FROM pg_trigger
+                     WHERE NOT tgisinternal
+                       AND tgname = 'TR_BM_MoveOutRoomDisposition_Immutable'
+                    """));
+                Assert.Equal(3L, await ScalarAsync(inspect, """
+                    SELECT count(*) FROM pg_indexes
+                     WHERE indexname IN ('UX_BM_MoveOutDisposition_Contract',
+                                        'UX_BM_MoveOutDisposition_Request',
+                                        'UX_BM_MoveOutDisposition_Approval')
+                    """));
                 // Even with plausible amount/decision JSON, an unrelated
                 // direct Read Committed SQL connection cannot create a
                 // deposit decision or bypass the required posting service.
@@ -295,6 +316,8 @@ public sealed class SliceBFullFinancialMigrationChainPostgreSql_Tests
                     "SELECT to_regclass('\"BuildingManagementOfficialInvoiceReceivables\"') IS NULL"));
                 Assert.Equal(1L, await ScalarAsync(inspect,
                     "SELECT to_regclass('\"BuildingManagementContractDepositSettlementDecisions\"') IS NULL"));
+                Assert.Equal(1L, await ScalarAsync(inspect,
+                    "SELECT to_regclass('\"BuildingManagementMoveOutRoomDispositions\"') IS NULL"));
                 Assert.Equal(1L, await ScalarAsync(inspect,
                     "SELECT to_regclass('\"BuildingManagementContractDepositCloseoutApprovals\"') IS NULL"));
                 Assert.Equal(1L, await ScalarAsync(inspect,

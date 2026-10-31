@@ -28,6 +28,10 @@ public sealed class RoomChangeTenantRosterPostgreSql_Tests
         new Phase2HBusinessPolicyProposals().UpOperations.OfType<SqlOperation>()).Sql;
     private static readonly string PolicyDown = Assert.Single(
         new Phase2HBusinessPolicyProposals().DownOperations.OfType<SqlOperation>()).Sql;
+    private static readonly string PolicyReviewUp = Assert.Single(
+        new Phase2HIndependentPolicyReviews().UpOperations.OfType<SqlOperation>()).Sql;
+    private static readonly string PolicyReviewDown = Assert.Single(
+        new Phase2HIndependentPolicyReviews().DownOperations.OfType<SqlOperation>()).Sql;
     private static readonly DateTime Created = new(
         2026, 11, 1, 10, 0, 0, DateTimeKind.Utc);
 
@@ -131,6 +135,7 @@ public sealed class RoomChangeTenantRosterPostgreSql_Tests
     {
         await ScratchAsync(async (db, tx) =>
         {
+            await Run(db, tx, PolicyReviewDown);
             await Run(db, tx, PolicyDown);
             await Run(db, tx, RosterDown);
             Assert.Equal(0L, await Scalar(db, tx, """
@@ -139,6 +144,7 @@ public sealed class RoomChangeTenantRosterPostgreSql_Tests
                 """));
             await Run(db, tx, RosterUp);
             await Run(db, tx, PolicyUp);
+            await Run(db, tx, PolicyReviewUp);
             Assert.Equal(1L, await Scalar(db, tx, """
                 SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal
                  AND tgname='TR_BM_RoomChangeRoster_Guard'
@@ -208,6 +214,94 @@ public sealed class RoomChangeTenantRosterPostgreSql_Tests
             Assert.Equal(2L, await Scalar(db, tx,
                 $"""SELECT "Status" FROM "BuildingManagementContracts" WHERE "Id"='{f.Request.SourceContractId:D}'"""));
         }, IsolationLevel.Serializable);
+    }
+
+    [Fact]
+    public async Task TRFPG11_Independent_OI07_Review_Is_Immutable_Scoped_And_Unique()
+    {
+        await ScratchAsync(async (db, tx) =>
+        {
+            var f = await SeedAsync(db, tx);
+            var roster = RoomChangeTenantRosterSnapshotRecord.Capture(
+                Guid.NewGuid(), f.Request, f.Parties,
+                Guid.NewGuid(), Created.AddSeconds(1));
+            await InsertSnapshot(db, tx, roster);
+            var proposer = Guid.NewGuid();
+            var policy = RoomChangeBusinessPolicyRecord.Propose(
+                Guid.NewGuid(), f.Request, roster,
+                RoomChangeContractTreatment.NewContract,
+                RoomChangePricingTreatment.FullOldMonthNewNextMonth,
+                RoomChangeDepositTreatment.CarryAllWithNoDifference,
+                RoomChangeTenantTreatment.AllCurrentTenants,
+                "SIGNED-CONTRACT-POLICY-REF-001",
+                "SIGNED-PRICING-POLICY-REF-001",
+                "SIGNED-DEPOSIT-POLICY-REF-001",
+                "SIGNED-TENANT-CONSENT-REF-001",
+                proposer, Created.AddSeconds(2));
+            await InsertPolicy(db, tx, policy);
+            var review = RoomChangeBusinessPolicyReviewRecord.Review(
+                Guid.NewGuid(), policy, f.Request, roster,
+                Guid.NewGuid(), Created.AddSeconds(3), true,
+                "SIGNED-ROOT-REVIEW-001",
+                "Reviewed policy choice; transfer blocked pending evidence");
+            await InsertReview(db, tx, review);
+            await Denied(db, tx, $"""
+                UPDATE "BuildingManagementRoomChangeBusinessPolicyReviews"
+                   SET "Accepted"=FALSE WHERE "Id"='{review.Id:D}'
+                """, "23514");
+            await Denied(db, tx, $"""
+                DELETE FROM "BuildingManagementRoomChangeBusinessPolicyReviews"
+                 WHERE "Id"='{review.Id:D}'
+                """, "23514");
+            await Denied(db, tx, PolicyReviewDown, "23514");
+            await Run(db, tx, "SAVEPOINT oi07_review_duplicate");
+            string? state = null;
+            try
+            {
+                await InsertReview(db, tx,
+                    RoomChangeBusinessPolicyReviewRecord.Review(
+                        Guid.NewGuid(), policy, f.Request, roster,
+                        Guid.NewGuid(), Created.AddSeconds(4), false,
+                        "SIGNED-REJECTION-REPLAY-001",
+                        "A second root review must not replace an acceptance"));
+            }
+            catch (PostgresException ex) { state = ex.SqlState; }
+            finally
+            {
+                await Run(db, tx, "ROLLBACK TO SAVEPOINT oi07_review_duplicate");
+                await Run(db, tx, "RELEASE SAVEPOINT oi07_review_duplicate");
+            }
+            Assert.Equal("23505", state);
+            Assert.Equal(1L, await Scalar(db, tx,
+                """SELECT count(*) FROM "BuildingManagementRoomChangeBusinessPolicyReviews" """));
+            Assert.Equal(2L, await Scalar(db, tx,
+                $"""SELECT "Status" FROM "BuildingManagementContracts" WHERE "Id"='{f.Request.SourceContractId:D}'"""));
+        }, IsolationLevel.Serializable);
+    }
+
+    private static async Task InsertReview(
+        NpgsqlConnection db, NpgsqlTransaction tx,
+        RoomChangeBusinessPolicyReviewRecord r)
+    {
+        await using var cmd = new NpgsqlCommand("""
+            INSERT INTO "BuildingManagementRoomChangeBusinessPolicyReviews"
+              ("Id","PolicyId","RequestId","BuildingId","ProposalSha256",
+               "ReviewedByUserId","ReviewedAtUtc","Accepted",
+               "SignedReviewReference","Reason")
+            VALUES (@id,@policy,@request,@building,@hash,@actor,@at,
+                    @accept,@signed,@reason)
+            """, db, tx);
+        cmd.Parameters.AddWithValue("id", r.Id);
+        cmd.Parameters.AddWithValue("policy", r.PolicyId);
+        cmd.Parameters.AddWithValue("request", r.RequestId);
+        cmd.Parameters.AddWithValue("building", r.BuildingId);
+        cmd.Parameters.AddWithValue("hash", r.ProposalSha256);
+        cmd.Parameters.AddWithValue("actor", r.ReviewedByUserId);
+        cmd.Parameters.AddWithValue("at", r.ReviewedAtUtc);
+        cmd.Parameters.AddWithValue("accept", r.Accepted);
+        cmd.Parameters.AddWithValue("signed", r.SignedReviewReference);
+        cmd.Parameters.AddWithValue("reason", r.Reason);
+        await cmd.ExecuteNonQueryAsync();
     }
 
     private static async Task InsertPolicy(
@@ -350,6 +444,7 @@ public sealed class RoomChangeTenantRosterPostgreSql_Tests
                 await Run(db, tx, RequestsUp);
                 await Run(db, tx, RosterUp);
                 await Run(db, tx, PolicyUp);
+                await Run(db, tx, PolicyReviewUp);
                 await test(db, tx);
             }
             finally { await tx.RollbackAsync(); }

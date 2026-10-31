@@ -4,6 +4,8 @@
 
 **Development branch:** `wip/phase-2g2`. This document compares present branch code with the source business requirements; **Slice A/B/C/D are implementation/security workstreams, NOT substitutes for the six business phases.** Test evidence from earlier commits does not certify a newer commit. No production deployment.
 
+> **CURRENT BUSINESS DECISIONS (approved 2026-11-01, Asia/Ho_Chi_Minh):** The owner explicitly approved H1–H6 for Phase 2H and the previously proposed directions OI-01–OI-06. Canonical decision register: [ApprovedBusinessDecisions_20261101](./Phase2G2H_ApprovedBusinessDecisions_20261101.md); implementation/test scope: [PostDecisionImplementationScope_20261101](./Phase2G2H_PostDecisionImplementationScope_20261101.md). Previous HOLD/CI PENDING statements in the dated historical ledger below describe **earlier implementation states** and are superseded for *business policy status*; they are not a claim that expanded behaviors are already coded. Last tested **code** baseline before this documentation: `c12e370` (Full, PostgreSQL authenticated HTTP and Identity CI PASS). Mid-month day-proration, deposit deltas, delegated self-service and additional settlement paths still require code and proof. The SRS full-final-month rent rule continues for ordinary move-out; a transfer-only exception needs a versioned signed financial policy. NO production deployment.
+
 ## Permanent phase order and gates
 
 | Business phase | Document's expected behavior | Code / test evidence observed | Residual gap or decision | Delivery label |
@@ -24,7 +26,7 @@
 5. **Asia/Ho_Chi_Minh business dates, UTC timestamps** and an approved schema/migration plan; no migration on unidentified/production DB (§9.2).
 6. **Owner/Staff resource-scoped ABP grants; Tenant access only to own contract**; no PII from unscoped routes (§9.2).
 
-## Decision register: not silently approved
+## Historical decision register (pre-approval snapshot; superseded by owner decision 2026-11-01)
 
 | Code | Business decision in source §11 | Safe engineering state |
 |---|---|---|
@@ -36,7 +38,7 @@
 | OI-06 | Damaged room with a confirmed future reservation | Needs explicit room disposition + reservation conflict workflow |
 | OI-07 | Transfer contract model, mid-month charges, delta deposit, occupants | Hold 2H final workflow until policy defined |
 
-## Immediate execution and verification steps
+## Historical execution and verification steps (superseded; see 2026-11-01 plan)
 
 1. **Verify 2G.1** against MOUT01–06, MOUT-PG01, current scoped staging authorization, dates/checklist, direct-End deny. If matching, do not rewrite; keep only OI-01/02 work open.
 2. **Unblock 2G.2 first failing test**: raw PostgreSQL lock queries in `SliceCStagingUtilityMeters` and `SliceCStagingMeterReadings` must use actual `BuildingManagementRooms` and `BuildingManagementFloors` (the `Buildings` table has no prefix). Run actual Identity, Full regression and disposable PostgreSQL authenticated HTTP CI at final commit; fix next first failing assertion before declaring PASS.

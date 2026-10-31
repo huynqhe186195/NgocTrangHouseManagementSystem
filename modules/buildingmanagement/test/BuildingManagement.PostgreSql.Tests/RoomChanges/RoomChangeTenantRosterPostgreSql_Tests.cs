@@ -806,7 +806,7 @@ public sealed class RoomChangeTenantRosterPostgreSql_Tests
             // checksum MUST fail at PostgreSQL's deferred commit gate.
             // Roll back only the attempt, then commit the genuine domain SHA.
             const string completionInsert =
-                "INSERT INTO \\"BuildingManagementRoomChangeCompletions\\"";
+                @"INSERT INTO ""BuildingManagementRoomChangeCompletions""";
             var split = atomicSql.IndexOf(completionInsert, StringComparison.Ordinal);
             Assert.True(split > 0);
             await Run(db, tx, atomicSql[..split]);

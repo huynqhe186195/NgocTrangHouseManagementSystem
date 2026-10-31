@@ -40,6 +40,7 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
     public DbSet<DepositSettlement> DepositSettlements {get; set;} = default!;
     public DbSet<MoveOutRequest> MoveOutRequests { get; set; } = default!;
     public DbSet<MoveOutChecklistTask> MoveOutChecklistTasks { get; set; } = default!;
+    public DbSet<MoveOutRoomDispositionRecord> MoveOutRoomDispositions { get; set; } = default!;
     public DbSet<Invoice> Invoices { get; set; } = default!;
     public DbSet<InvoiceItem> InvoiceItems { get; set; } = default!;
     public DbSet<InvoiceItemMeterSource> InvoiceItemMeterSources { get; set; } = default!;
@@ -121,6 +122,8 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.OfficialInvoiceReceiptReviewRecordConfiguration());
         builder.ApplyConfiguration(
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.ContractDepositSettlementDecisionRecordConfiguration());
+        builder.ApplyConfiguration(
+            new BuildingManagement.EntityFrameworkCore.EntityConfigurations.MoveOutRoomDispositionRecordConfiguration());
         builder.ApplyConfiguration(
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.ContractDepositCloseoutApprovalRecordConfiguration());
     }

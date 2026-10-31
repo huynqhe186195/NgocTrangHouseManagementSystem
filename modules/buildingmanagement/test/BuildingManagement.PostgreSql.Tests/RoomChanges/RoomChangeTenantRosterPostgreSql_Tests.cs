@@ -6,6 +6,7 @@ using BuildingManagement.Contracts;
 using BuildingManagement.Migrations;
 using BuildingManagement.RoomChanges;
 using BuildingManagement.Rooms;
+using BuildingManagement.Utilities;
 using Microsoft.EntityFrameworkCore.Migrations.Operations;
 using Npgsql;
 using Xunit;
@@ -32,6 +33,10 @@ public sealed class RoomChangeTenantRosterPostgreSql_Tests
         new Phase2HIndependentPolicyReviews().UpOperations.OfType<SqlOperation>()).Sql;
     private static readonly string PolicyReviewDown = Assert.Single(
         new Phase2HIndependentPolicyReviews().DownOperations.OfType<SqlOperation>()).Sql;
+    private static readonly string HandoverUp = Assert.Single(
+        new Phase2HPhysicalHandoverEvidence().UpOperations.OfType<SqlOperation>()).Sql;
+    private static readonly string HandoverDown = Assert.Single(
+        new Phase2HPhysicalHandoverEvidence().DownOperations.OfType<SqlOperation>()).Sql;
     private static readonly DateTime Created = new(
         2026, 11, 1, 10, 0, 0, DateTimeKind.Utc);
 
@@ -55,6 +60,17 @@ public sealed class RoomChangeTenantRosterPostgreSql_Tests
         CREATE TABLE "BuildingManagementMoveOutRequests" (
             "Id" uuid PRIMARY KEY, "ContractId" uuid NOT NULL,
             "Status" integer NOT NULL, "IsDeleted" boolean NOT NULL DEFAULT FALSE);
+        CREATE TABLE "BuildingManagementUtilityMeters" (
+            "Id" uuid PRIMARY KEY, "RoomId" uuid NOT NULL,
+            "UtilityType" integer NOT NULL, "InstalledDate" date NOT NULL,
+            "IsDeleted" boolean NOT NULL DEFAULT FALSE);
+        CREATE TABLE "BuildingManagementMeterReadings" (
+            "Id" uuid PRIMARY KEY, "UtilityMeterId" uuid NOT NULL,
+            "BillingYear" integer NOT NULL, "BillingMonth" integer NOT NULL,
+            "PreviousReading" numeric(18,3) NOT NULL,
+            "CurrentReading" numeric(18,3) NOT NULL,
+            "ReadingDate" date NOT NULL,
+            "IsDeleted" boolean NOT NULL DEFAULT FALSE);
         """;
 
     [Fact]
@@ -135,6 +151,7 @@ public sealed class RoomChangeTenantRosterPostgreSql_Tests
     {
         await ScratchAsync(async (db, tx) =>
         {
+            await Run(db, tx, HandoverDown);
             await Run(db, tx, PolicyReviewDown);
             await Run(db, tx, PolicyDown);
             await Run(db, tx, RosterDown);
@@ -145,6 +162,7 @@ public sealed class RoomChangeTenantRosterPostgreSql_Tests
             await Run(db, tx, RosterUp);
             await Run(db, tx, PolicyUp);
             await Run(db, tx, PolicyReviewUp);
+            await Run(db, tx, HandoverUp);
             Assert.Equal(1L, await Scalar(db, tx, """
                 SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal
                  AND tgname='TR_BM_RoomChangeRoster_Guard'
@@ -277,6 +295,189 @@ public sealed class RoomChangeTenantRosterPostgreSql_Tests
             Assert.Equal(2L, await Scalar(db, tx,
                 $"""SELECT "Status" FROM "BuildingManagementContracts" WHERE "Id"='{f.Request.SourceContractId:D}'"""));
         }, IsolationLevel.Serializable);
+    }
+
+    [Fact]
+    public async Task TRFPG12_Physical_Handover_Anchors_Exact_Meter_Source_And_Freezes_Drift()
+    {
+        await ScratchAsync(async (db, tx) =>
+        {
+            var (request, e, er, w, wr) = await SeedSignedHandoverAsync(db, tx);
+            var handover = RoomChangeHandoverEvidenceRecord.Attest(
+                Guid.NewGuid(), request, e, er, w, wr,
+                "SIGNED-INSPECTION-PG-2026-001",
+                "SIGNED-HANDOVER-PG-2026-001",
+                Guid.NewGuid(), Created.AddSeconds(4));
+            await InsertHandover(db, tx, handover);
+            Assert.Equal(1L, await Scalar(db, tx,
+                """SELECT count(*) FROM "BuildingManagementRoomChangeHandoverEvidence" """));
+            await Denied(db, tx, $"""
+                UPDATE "BuildingManagementMeterReadings"
+                   SET "CurrentReading"=999
+                 WHERE "Id"='{er.Id:D}'
+                """, "23514");
+            await Denied(db, tx, $"""
+                UPDATE "BuildingManagementUtilityMeters"
+                   SET "RoomId"='{Guid.NewGuid():D}'
+                 WHERE "Id"='{w.Id:D}'
+                """, "23514");
+            await Denied(db, tx, $"""
+                DELETE FROM "BuildingManagementRoomChangeHandoverEvidence"
+                 WHERE "Id"='{handover.Id:D}'
+                """, "23514");
+            await Denied(db, tx, HandoverDown, "23514");
+            Assert.Equal(2L, await Scalar(db, tx,
+                $"""SELECT "Status" FROM "BuildingManagementContracts" WHERE "Id"='{request.SourceContractId:D}'"""));
+        }, IsolationLevel.Serializable);
+    }
+
+    [Fact]
+    public async Task TRFPG13_Handover_Rejects_Forged_Reading_Even_With_Valid_Checksum()
+    {
+        await ScratchAsync(async (db, tx) =>
+        {
+            var (request, e, er, w, wr) = await SeedSignedHandoverAsync(db, tx);
+            var wrongWater = new MeterReading(Guid.NewGuid(), w.Id, 2026, 12,
+                19m, 51m, new DateTime(2026, 12, 31));
+            var forged = RoomChangeHandoverEvidenceRecord.Attest(
+                Guid.NewGuid(), request, e, er, w, wrongWater,
+                "SIGNED-INSPECTION-PG-2026-001",
+                "SIGNED-HANDOVER-PG-2026-001",
+                Guid.NewGuid(), Created.AddSeconds(4));
+            await DeniedInsertHandover(db, tx, forged, "23514");
+            var clean = RoomChangeHandoverEvidenceRecord.Attest(
+                Guid.NewGuid(), request, e, er, w, wr,
+                "SIGNED-INSPECTION-PG-2026-001",
+                "SIGNED-HANDOVER-PG-2026-001",
+                Guid.NewGuid(), Created.AddSeconds(4));
+            await InsertHandover(db, tx, clean);
+            var replay = RoomChangeHandoverEvidenceRecord.Attest(
+                Guid.NewGuid(), request, e, er, w, wr,
+                "SIGNED-INSPECTION-PG-2026-002",
+                "SIGNED-HANDOVER-PG-2026-002",
+                Guid.NewGuid(), Created.AddSeconds(5));
+            await DeniedInsertHandover(db, tx, replay, "23505");
+        }, IsolationLevel.Serializable);
+    }
+
+    [Fact]
+    public async Task TRFPG14_Premature_Handover_Without_Root_Review_Is_Denied()
+    {
+        await ScratchAsync(async (db, tx) =>
+        {
+            var f = await SeedAsync(db, tx);
+            var (e, er, w, wr) = await SeedMetersAsync(db, tx, f.Request.SourceRoomId);
+            var handover = RoomChangeHandoverEvidenceRecord.Attest(
+                Guid.NewGuid(), f.Request, e, er, w, wr,
+                "SIGNED-INSPECTION-PG-2026-001",
+                "SIGNED-HANDOVER-PG-2026-001",
+                Guid.NewGuid(), Created.AddSeconds(4));
+            await DeniedInsertHandover(db, tx, handover, "23514");
+        }, IsolationLevel.Serializable);
+    }
+
+    private static async Task<(RoomChangeRequest Request,
+        UtilityMeter E, MeterReading Er, UtilityMeter W, MeterReading Wr)>
+        SeedSignedHandoverAsync(NpgsqlConnection db, NpgsqlTransaction tx)
+    {
+        var f = await SeedAsync(db, tx);
+        var roster = RoomChangeTenantRosterSnapshotRecord.Capture(
+            Guid.NewGuid(), f.Request, f.Parties,
+            Guid.NewGuid(), Created.AddSeconds(1));
+        await InsertSnapshot(db, tx, roster);
+        var policy = RoomChangeBusinessPolicyRecord.Propose(
+            Guid.NewGuid(), f.Request, roster,
+            RoomChangeContractTreatment.NewContract,
+            RoomChangePricingTreatment.FullOldMonthNewNextMonth,
+            RoomChangeDepositTreatment.CarryAllWithNoDifference,
+            RoomChangeTenantTreatment.AllCurrentTenants,
+            "SIGNED-CONTRACT-POLICY-PG-001", "SIGNED-PRICING-POLICY-PG-001",
+            "SIGNED-DEPOSIT-POLICY-PG-001", "SIGNED-TENANT-CONSENT-PG-001",
+            Guid.NewGuid(), Created.AddSeconds(2));
+        await InsertPolicy(db, tx, policy);
+        var review = RoomChangeBusinessPolicyReviewRecord.Review(
+            Guid.NewGuid(), policy, f.Request, roster,
+            Guid.NewGuid(), Created.AddSeconds(3), true,
+            "SIGNED-ROOT-REVIEW-PG-001",
+            "Root accepted plan only; financial checks remain");
+        await InsertReview(db, tx, review);
+        var meters = await SeedMetersAsync(db, tx, f.Request.SourceRoomId);
+        return (f.Request, meters.E, meters.Er, meters.W, meters.Wr);
+    }
+
+    private static async Task<(UtilityMeter E, MeterReading Er,
+        UtilityMeter W, MeterReading Wr)> SeedMetersAsync(
+        NpgsqlConnection db, NpgsqlTransaction tx, Guid source)
+    {
+        var e = new UtilityMeter(Guid.NewGuid(), source, UtilityType.Electricity,
+            "E-METER-SIGNED-001", 0m, new DateTime(2026, 10, 1));
+        var w = new UtilityMeter(Guid.NewGuid(), source, UtilityType.Water,
+            "W-METER-SIGNED-001", 0m, new DateTime(2026, 10, 1));
+        var er = new MeterReading(Guid.NewGuid(), e.Id, 2026, 12,
+            10m, 50m, new DateTime(2026, 12, 31));
+        var wr = new MeterReading(Guid.NewGuid(), w.Id, 2026, 12,
+            12m, 33m, new DateTime(2026, 12, 31));
+        await Run(db, tx, $"""
+            INSERT INTO "BuildingManagementUtilityMeters"
+             ("Id","RoomId","UtilityType","InstalledDate")
+             VALUES ('{e.Id:D}','{source:D}',1,'2026-10-01'),
+                    ('{w.Id:D}','{source:D}',2,'2026-10-01');
+            INSERT INTO "BuildingManagementMeterReadings"
+             ("Id","UtilityMeterId","BillingYear","BillingMonth",
+              "PreviousReading","CurrentReading","ReadingDate")
+             VALUES ('{er.Id:D}','{e.Id:D}',2026,12,10,50,'2026-12-31'),
+                    ('{wr.Id:D}','{w.Id:D}',2026,12,12,33,'2026-12-31');
+            """);
+        return (e, er, w, wr);
+    }
+
+    private static async Task DeniedInsertHandover(NpgsqlConnection db,
+        NpgsqlTransaction tx, RoomChangeHandoverEvidenceRecord record, string state)
+    {
+        await Run(db, tx, "SAVEPOINT handover_probe");
+        string? actual = null;
+        try { await InsertHandover(db, tx, record); }
+        catch (PostgresException ex) { actual = ex.SqlState; }
+        finally
+        {
+            await Run(db, tx, "ROLLBACK TO SAVEPOINT handover_probe");
+            await Run(db, tx, "RELEASE SAVEPOINT handover_probe");
+        }
+        Assert.Equal(state, actual);
+    }
+
+    private static async Task InsertHandover(NpgsqlConnection db,
+        NpgsqlTransaction tx, RoomChangeHandoverEvidenceRecord r)
+    {
+        await using var cmd = new NpgsqlCommand("""
+            INSERT INTO "BuildingManagementRoomChangeHandoverEvidence"
+             ("Id","RequestId","SourceContractId","SourceRoomId","BuildingId",
+              "HandoverDate","ElectricityMeterId","ElectricityReadingId",
+              "ElectricityFinalReading","WaterMeterId","WaterReadingId",
+              "WaterFinalReading","InspectionEvidenceReference",
+              "SignedHandoverReference","AttestedByUserId","AttestedAtUtc",
+              "EvidenceSha256")
+            VALUES (@id,@request,@contract,@room,@building,@date,
+                    @em,@er,@ev,@wm,@wr,@wv,@inspection,@signed,@actor,@at,@hash)
+            """, db, tx);
+        cmd.Parameters.AddWithValue("id", r.Id);
+        cmd.Parameters.AddWithValue("request", r.RequestId);
+        cmd.Parameters.AddWithValue("contract", r.SourceContractId);
+        cmd.Parameters.AddWithValue("room", r.SourceRoomId);
+        cmd.Parameters.AddWithValue("building", r.BuildingId);
+        cmd.Parameters.AddWithValue("date", r.HandoverDate.ToDateTime(TimeOnly.MinValue));
+        cmd.Parameters.AddWithValue("em", r.ElectricityMeterId);
+        cmd.Parameters.AddWithValue("er", r.ElectricityReadingId);
+        cmd.Parameters.AddWithValue("ev", r.ElectricityFinalReading);
+        cmd.Parameters.AddWithValue("wm", r.WaterMeterId);
+        cmd.Parameters.AddWithValue("wr", r.WaterReadingId);
+        cmd.Parameters.AddWithValue("wv", r.WaterFinalReading);
+        cmd.Parameters.AddWithValue("inspection", r.InspectionEvidenceReference);
+        cmd.Parameters.AddWithValue("signed", r.SignedHandoverReference);
+        cmd.Parameters.AddWithValue("actor", r.AttestedByUserId);
+        cmd.Parameters.AddWithValue("at", r.AttestedAtUtc);
+        cmd.Parameters.AddWithValue("hash", r.EvidenceSha256);
+        await cmd.ExecuteNonQueryAsync();
     }
 
     private static async Task InsertReview(
@@ -445,6 +646,7 @@ public sealed class RoomChangeTenantRosterPostgreSql_Tests
                 await Run(db, tx, RosterUp);
                 await Run(db, tx, PolicyUp);
                 await Run(db, tx, PolicyReviewUp);
+                await Run(db, tx, HandoverUp);
                 await test(db, tx);
             }
             finally { await tx.RollbackAsync(); }

@@ -907,6 +907,188 @@ public sealed class SliceBStagingRoomChangeRequests
                 completion.EvidenceSha256, true);
         });
 
+    private static async Task VerifyTransferReceivablesAsync(
+        BuildingManagementDbContext db, Guid contractId, Guid roomId,
+        Guid buildingId, DateOnly transferDate,
+        Guid electricityReading, Guid waterReading)
+    {
+        await using (var lockPosting = Command(db, """
+            SELECT "Id" FROM "BuildingManagementOfficialInvoiceReceivables"
+             WHERE "ContractId"=@contract ORDER BY "Id" FOR UPDATE
+            """))
+        {
+            Add(lockPosting, "contract", contractId);
+            await using var reader = await lockPosting.ExecuteReaderAsync();
+            while (await reader.ReadAsync()) { }
+        }
+        var monthly = await db.MonthlyIssuedInvoices.AsNoTracking()
+            .Where(x => x.ContractId == contractId).ToArrayAsync();
+        var finalInvoices = await db.IssuedInvoiceLedger.AsNoTracking()
+            .Where(x => x.ContractId == contractId).ToArrayAsync();
+        var postings = await db.OfficialInvoiceReceivables.AsNoTracking()
+            .Where(x => x.ContractId == contractId).ToArrayAsync();
+        if (monthly.Length == 0 ||
+            postings.Length != monthly.Length + finalInvoices.Length ||
+            await db.MonthlyInvoiceAdjustmentDecisions.AsNoTracking()
+                .AnyAsync(x => x.ContractId == contractId) ||
+            await db.MonthlyInvoiceAdjustments.AsNoTracking()
+                .AnyAsync(x => x.ContractId == contractId))
+            throw Denied();
+
+        var endMonth = monthly.Where(x =>
+            x.BillingYear == transferDate.Year &&
+            x.BillingMonth == transferDate.Month).ToArray();
+        if (endMonth.Length != 1 || endMonth[0].RoomId != roomId)
+            throw Denied();
+        var last = endMonth[0];
+        var candidate = await db.MonthlyInvoiceCandidates.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.Id == last.CandidateId)
+            ?? throw Denied();
+        var signedReview = await db.MonthlyInvoiceReviews.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.Id == last.ReviewId)
+            ?? throw Denied();
+        try
+        {
+            last.VerifyAgainst(candidate, signedReview);
+            var frozen = candidate.VerifyStoredEvidence();
+            if (candidate.ContractId != contractId ||
+                candidate.RoomId != roomId ||
+                candidate.BuildingId != buildingId ||
+                frozen.UtilityLines.Count != 2 ||
+                !frozen.UtilityLines.Any(line =>
+                    line.UtilityType == BuildingManagement.Utilities.UtilityType.Electricity &&
+                    line.Sources.Any(x => x.SourceId == electricityReading)) ||
+                !frozen.UtilityLines.Any(line =>
+                    line.UtilityType == BuildingManagement.Utilities.UtilityType.Water &&
+                    line.Sources.Any(x => x.SourceId == waterReading)))
+                throw Denied();
+        }
+        catch (Exception ex) when (ex is System.IO.InvalidDataException or
+            InvalidOperationException or ArgumentException) { throw Denied(); }
+
+        var receiptReviews = await db.OfficialInvoiceReceiptReviews.AsNoTracking()
+            .Where(x => x.ContractId == contractId).ToArrayAsync();
+        if (receiptReviews.Any(r => !r.Accepted ||
+            !postings.Any(p => p.Id == r.ReceivablePostingId)) ||
+            postings.Select(x => x.IssuedInvoiceId).Distinct().Count() != postings.Length)
+            throw Denied();
+        foreach (var posting in postings)
+        {
+            if (posting.BuildingId != buildingId || posting.RoomId != roomId ||
+                posting.OriginalAmount <= 0m)
+                throw Denied();
+            if (posting.Kind == OfficialInvoiceKind.Monthly)
+            {
+                var issue = monthly.SingleOrDefault(x => x.Id == posting.IssuedInvoiceId);
+                if (issue is null) throw Denied();
+                var allocations = await db.MonthlyInvoicePaymentAllocations.AsNoTracking()
+                    .Where(x => x.IssuedInvoiceId == issue.Id).ToArrayAsync();
+                var confirmations = receiptReviews.Where(x =>
+                    x.ReceivablePostingId == posting.Id).ToArray();
+                if (allocations.Length != confirmations.Length ||
+                    allocations.Any(a => !confirmations.Any(r =>
+                        r.ReceiptAllocationId == a.Id && r.Amount == a.Amount)))
+                    throw Denied();
+            }
+            else if (posting.Kind == OfficialInvoiceKind.Final)
+            {
+                var issue = finalInvoices.SingleOrDefault(x =>
+                    x.Id == posting.IssuedInvoiceId);
+                if (issue is null) throw Denied();
+                var allocations = await db.InvoicePaymentAllocationJournal.AsNoTracking()
+                    .Where(x => x.IssuedInvoiceId == issue.Id).ToArrayAsync();
+                var confirmations = receiptReviews.Where(x =>
+                    x.ReceivablePostingId == posting.Id).ToArray();
+                if (allocations.Length != confirmations.Length ||
+                    allocations.Any(a => !confirmations.Any(r =>
+                        r.ReceiptAllocationId == a.Id && r.Amount == a.Amount)))
+                    throw Denied();
+            }
+            else throw Denied();
+            if (receiptReviews.Where(x => x.ReceivablePostingId == posting.Id)
+                    .Sum(x => x.Amount) != posting.OriginalAmount)
+                throw Denied();
+        }
+    }
+
+    private static async Task VerifyTransferDepositAsync(
+        BuildingManagementDbContext db, Contract source)
+    {
+        await using (var locked = Command(db, """
+            SELECT "Id" FROM "BuildingManagementDepositSettlements"
+             WHERE "SourceContractId"=@contract OR "TargetContractId"=@contract
+             ORDER BY "Id" FOR UPDATE
+            """))
+        {
+            Add(locked, "contract", source.Id);
+            await using var reader = await locked.ExecuteReaderAsync();
+            while (await reader.ReadAsync()) { }
+        }
+        if (await db.DepositSettlementDecisions.AsNoTracking()
+                .AnyAsync(x => x.ContractId == source.Id) ||
+            await db.DepositCloseoutApprovals.AsNoTracking()
+                .AnyAsync(x => x.ContractId == source.Id))
+            throw Denied();
+        var related = await db.DepositSettlements.AsNoTracking()
+            .Where(x => x.SourceContractId == source.Id ||
+                x.TargetContractId == source.Id).ToArrayAsync();
+        if (related.Any(x => x.SourceContractId == source.Id ||
+                x.Status != DepositSettlementStatus.Completed ||
+                x.Type != DepositSettlementType.AllocateToContractDeposit ||
+                x.TargetContractId != source.Id ||
+                x.PaymentId is null || x.Amount <= 0m) ||
+            related.Length == 0 ||
+            related.Sum(x => x.Amount) != source.DepositAmount ||
+            related.Select(x => x.PaymentId).Distinct().Count() != related.Length)
+            throw Denied();
+
+        var ids = related.Select(x => x.PaymentId!.Value).ToArray();
+        await using (var locked = Command(db, """
+            SELECT "Id" FROM "BuildingManagementPayments"
+             WHERE "Id" = ANY(@payment_ids) ORDER BY "Id" FOR UPDATE
+            """))
+        {
+            var p = locked.CreateParameter();
+            p.ParameterName = "payment_ids";
+            p.Value = ids;
+            locked.Parameters.Add(p);
+            await using var reader = await locked.ExecuteReaderAsync();
+            while (await reader.ReadAsync()) { }
+        }
+        var payments = await db.Payments.IgnoreQueryFilters().AsNoTracking()
+            .Where(x => ids.Contains(x.Id)).ToArrayAsync();
+        var uses = await db.DepositSettlements.AsNoTracking()
+            .Where(x => x.PaymentId.HasValue &&
+                ids.Contains(x.PaymentId.Value)).ToArrayAsync();
+        if (payments.Length != related.Length ||
+            uses.Length != related.Length ||
+            payments.Any(payment =>
+            {
+                var allocation = related.SingleOrDefault(x =>
+                    x.PaymentId == payment.Id);
+                return allocation is null || payment.IsDeleted ||
+                    payment.Status != PaymentStatus.Completed ||
+                    payment.PaidAt is null || payment.Amount != allocation.Amount ||
+                    (payment.Purpose == PaymentPurpose.ContractDeposit
+                        ? payment.ContractId != source.Id
+                        : payment.Purpose != PaymentPurpose.ReservationDeposit ||
+                          payment.RoomReservationId !=
+                              allocation.SourceRoomReservationId);
+            }) ||
+            uses.Any(x => x.TargetContractId != source.Id ||
+                x.Type != DepositSettlementType.AllocateToContractDeposit ||
+                x.Status != DepositSettlementStatus.Completed))
+            throw Denied();
+        // Direct contract-deposit receipts must all be journaled into the
+        // held contract ledger, not counted twice or silently ignored.
+        var direct = await db.Payments.IgnoreQueryFilters().AsNoTracking()
+            .Where(x => x.ContractId == source.Id &&
+                x.Purpose == PaymentPurpose.ContractDeposit &&
+                x.Status == PaymentStatus.Completed).ToArrayAsync();
+        if (direct.Any(x => !ids.Contains(x.Id)))
+            throw Denied();
+    }
+
     private static bool ValidEvidence(string? proof) =>
         !string.IsNullOrWhiteSpace(proof) &&
         proof.Trim().Length is >= 12 and <= 500;

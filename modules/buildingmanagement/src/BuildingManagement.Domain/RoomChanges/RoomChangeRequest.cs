@@ -90,6 +90,20 @@ public sealed class RoomChangeRequest : Entity<Guid>
         SetReview(actorId, cancelledAtUtc, "Cancelled before transfer authorization.");
     }
 
+    /// <summary>Only the scoped atomic completion writer may call this.</summary>
+    public void Complete(Guid actor, DateTime atUtc, string reference)
+    {
+        if (actor == Guid.Empty || atUtc.Kind != DateTimeKind.Utc ||
+            atUtc < CreatedAtUtc ||
+            Status is not (RoomChangeRequestStatus.Pending or
+                RoomChangeRequestStatus.PolicyHold) ||
+            string.IsNullOrWhiteSpace(reference) ||
+            reference.Trim().Length is < 12 or > 500)
+            throw new InvalidOperationException("Completed room change requires immutable audit reference.");
+        Status = RoomChangeRequestStatus.Completed;
+        SetReview(actor, atUtc, reference);
+    }
+
     private void RequireReview(Guid reviewerId, DateTime atUtc, string? reason)
     {
         if (reviewerId == Guid.Empty || atUtc.Kind != DateTimeKind.Utc ||

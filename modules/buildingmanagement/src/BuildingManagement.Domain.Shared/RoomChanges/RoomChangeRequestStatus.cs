@@ -7,5 +7,6 @@ public enum RoomChangeRequestStatus
     Pending = 0,
     PolicyHold = 1,
     Rejected = 2,
-    Cancelled = 3
+    Cancelled = 3,
+    Completed = 4
 }

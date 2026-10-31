@@ -5280,6 +5280,50 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 await uow.CompleteAsync();
             }
 
+            // Completed Phase 2H history is an audit boundary, not just a
+            // one-time consistency check at INSERT. Direct SQL attempts to
+            // rewrite old rent, evict old tenant evidence, spend the already
+            // carried deposit again or erase the completion must all fail.
+            // These are real disposable PostgreSQL writes, not mocks.
+            async Task AssertTransferredHistoryFrozenAsync(string statement)
+            {
+                await using var connection = new NpgsqlConnection(buildingCs);
+                await connection.OpenAsync();
+                await using var command = new NpgsqlCommand(statement, connection);
+                command.Parameters.AddWithValue("source", transferContract);
+                var rejection = await Assert.ThrowsAsync<PostgresException>(
+                    async () => await command.ExecuteNonQueryAsync());
+                Assert.Equal("23514", rejection.SqlState);
+            }
+            await AssertTransferredHistoryFrozenAsync(
+                """
+                UPDATE "BuildingManagementContracts"
+                   SET "MonthlyRent" = "MonthlyRent" + 1
+                 WHERE "Id" = @source
+                """);
+            await AssertTransferredHistoryFrozenAsync(
+                """
+                DELETE FROM "BuildingManagementContractTenants"
+                 WHERE "ContractId" = @source
+                """);
+            await AssertTransferredHistoryFrozenAsync(
+                """
+                UPDATE "BuildingManagementDepositSettlements"
+                   SET "Amount" = "Amount" - 1
+                 WHERE "SourceContractId" = @source
+                """);
+            await AssertTransferredHistoryFrozenAsync(
+                """
+                UPDATE "BuildingManagementPayments"
+                   SET "Amount" = "Amount" + 1
+                 WHERE "ContractId" = @source AND "Purpose" = 2
+                """);
+            await AssertTransferredHistoryFrozenAsync(
+                """
+                DELETE FROM "BuildingManagementRoomChangeCompletions"
+                 WHERE "SourceContractId" = @source
+                """);
+
             // Record the real room state rather than assuming occupancy:
             // other independent contract tests may have changed it earlier.
             BuildingManagement.Rooms.RoomStatus originalRoomStatus;

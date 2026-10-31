@@ -34,6 +34,8 @@ on:
       - "test/NgocTrangHouseManagementSystem.HttpApi.Host.Tests/BuildingManagementAuthenticatedControllerConvention_Tests.cs"
       - "modules/buildingmanagement/src/BuildingManagement.Application/Payments/PaymentAppService.cs"
       - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceBStagingFinalInvoiceMutation.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceBStagingRoomChangeRequests.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceBStagingRoomChangesController.cs"
       - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceBStagingFinalInvoiceController.cs"
       - "modules/buildingmanagement/src/BuildingManagement.Domain/DepositSettlements/ContractDepositCloseoutApprovalRecord.cs"
       - "modules/buildingmanagement/test/BuildingManagement.Domain.Tests/DepositSettlements/ContractDepositCloseoutApprovalIntegrity_Tests.cs"
@@ -80,6 +82,8 @@ on:
       - "test/NgocTrangHouseManagementSystem.HttpApi.Host.Tests/BuildingManagementAuthenticatedControllerConvention_Tests.cs"
       - "modules/buildingmanagement/src/BuildingManagement.Application/Payments/PaymentAppService.cs"
       - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceBStagingFinalInvoiceMutation.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceBStagingRoomChangeRequests.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceBStagingRoomChangesController.cs"
       - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceBStagingFinalInvoiceController.cs"
       - "modules/buildingmanagement/src/BuildingManagement.Domain/DepositSettlements/ContractDepositCloseoutApprovalRecord.cs"
       - "modules/buildingmanagement/test/BuildingManagement.Domain.Tests/DepositSettlements/ContractDepositCloseoutApprovalIntegrity_Tests.cs"
@@ -260,6 +264,10 @@ jobs:
             --no-restore --configuration Release \
             --filter "FullyQualifiedName~SliceBLockBothDepositSettlementContractsPostgreSql_Tests" \
             --logger "console;verbosity=normal"
+
+      - name: Phase 2H request schema, review history and conflict guards in scratch PostgreSQL
+        run: |
+          dotnet test modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/BuildingManagement.PostgreSql.Tests.csproj             --filter "FullyQualifiedName~RoomChangeRequestsPostgreSql_Tests"             --logger "console;verbosity=normal"
 
       - name: Isolated PostgreSQL ABP authenticated staging HTTP
         run: |

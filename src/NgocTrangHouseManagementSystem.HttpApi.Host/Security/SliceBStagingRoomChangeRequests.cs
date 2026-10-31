@@ -260,7 +260,7 @@ public sealed class SliceBStagingRoomChangeRequests
              JOIN "Buildings" b ON b."Id" = f."BuildingId"
              WHERE r."Id" = @id AND r."IsDeleted" = FALSE
                AND f."IsDeleted" = FALSE AND b."IsDeleted" = FALSE
-             FOR SHARE OF r, f, b
+             FOR SHARE OF f, b
             """);
         Add(cmd, "id", roomId);
         return await cmd.ExecuteScalarAsync() is Guid value

@@ -5165,6 +5165,35 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 Assert.Empty(doc.RootElement.GetProperty("blockers").EnumerateArray());
             }
 
+            // The 2G.5 guard's new RoomChanged exception is NOT a SQL
+            // backdoor. A standalone active->ended change without a matching
+            // completion ledger must fail at the deferred commit boundary.
+            await using (var direct = new NpgsqlConnection(buildingCs))
+            {
+                await direct.OpenAsync();
+                await using var tx = await direct.BeginTransactionAsync(
+                    System.Data.IsolationLevel.Serializable);
+                await using (var end = new NpgsqlCommand(
+                    """
+                    UPDATE "BuildingManagementContracts"
+                       SET "Status"=3, "EndReason"=4,
+                           "ActualEndedAt"=@at
+                     WHERE "Id"=@source
+                    """, direct, tx))
+                {
+                    end.Parameters.AddWithValue("at", DateTime.UtcNow);
+                    end.Parameters.AddWithValue("source", transferContract);
+                    Assert.Equal(1, await end.ExecuteNonQueryAsync());
+                }
+                var mismatch = await Assert.ThrowsAsync<PostgresException>(async () =>
+                {
+                    await using var flush = new NpgsqlCommand(
+                        "SET CONSTRAINTS ALL IMMEDIATE", direct, tx);
+                    await flush.ExecuteNonQueryAsync();
+                });
+                Assert.Equal("23514", mismatch.SqlState);
+                await tx.RollbackAsync();
+            }
             var completePayload = new {
                 targetMonthlyRent = transferRent, sourceRoomDisposition = 1,
                 dispositionEvidenceReference = "SIGNED-TRF-CLEAN-ROOM-2026-001",

@@ -4657,6 +4657,47 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 Assert.Equal(64, doc.RootElement.GetProperty(
                     "rosterSha256").GetString()!.Length);
             }
+            // Explicit OI-07 choices are persisted as PROPOSED only,
+            // separate from any independently authorized transfer.
+            var policyProposal = JsonSerializer.Serialize(new {
+                contractTreatment = 1, pricingTreatment = 1,
+                depositTreatment = 1, tenantTreatment = 1,
+                contractPolicyReference = "SIGNED-CONTRACT-DECISION-2026-001",
+                pricingPolicyReference = "SIGNED-PRICING-DECISION-2026-001",
+                depositPolicyReference = "SIGNED-DEPOSIT-DECISION-2026-001",
+                tenantConsentReference = "SIGNED-TENANT-CONSENT-2026-001"
+            });
+            Guid proposedPolicyId;
+            using (var body = new StringContent(policyProposal, Encoding.UTF8,
+                "application/json"))
+            using (var proposed = await clientB.PostAsync(
+                ChangeAt(roomChangeRequest) + "/business-policy-proposal", body))
+            {
+                var value = await proposed.Content.ReadAsStringAsync();
+                Assert.Equal(HttpStatusCode.OK, proposed.StatusCode);
+                using var json = JsonDocument.Parse(value);
+                proposedPolicyId = json.RootElement.GetProperty("id").GetGuid();
+                Assert.False(json.RootElement.GetProperty("isApproved").GetBoolean());
+                Assert.False(json.RootElement.GetProperty("isExecuted").GetBoolean());
+                Assert.Equal(rosterId,
+                    json.RootElement.GetProperty("rosterSnapshotId").GetGuid());
+            }
+            using (var body = new StringContent(policyProposal, Encoding.UTF8,
+                "application/json"))
+            using (var duplicatePolicy = await clientB.PostAsync(
+                ChangeAt(roomChangeRequest) + "/business-policy-proposal", body))
+                Assert.False(duplicatePolicy.IsSuccessStatusCode);
+            using (var readPolicy = await clientB.GetAsync(
+                ChangeAt(roomChangeRequest) + "/business-policy-proposal"))
+            {
+                Assert.Equal(HttpStatusCode.OK, readPolicy.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await readPolicy.Content.ReadAsStringAsync());
+                Assert.Equal(proposedPolicyId,
+                    json.RootElement.GetProperty("id").GetGuid());
+                Assert.False(json.RootElement.GetProperty("isExecuted").GetBoolean());
+            }
+
             using (var duplicateRoster = await clientB.PostAsync(
                 ChangeAt(roomChangeRequest) + "/tenant-roster", null))
                 Assert.False(duplicateRoster.IsSuccessStatusCode);

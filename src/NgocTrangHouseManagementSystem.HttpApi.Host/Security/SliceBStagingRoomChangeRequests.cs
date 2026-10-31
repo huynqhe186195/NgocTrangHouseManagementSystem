@@ -280,6 +280,76 @@ public sealed class SliceBStagingRoomChangeRequests
             record.ReadVerifiedRoster().ToArray(),
             false);
 
+    /// <summary>
+    /// Records one explicit proposed OI-07 choice set, never an approval
+    /// or an execution. No client-supplied roster or financial booleans.
+    /// </summary>
+    public Task<SliceBRoomChangeBusinessPolicyRead> ProposeBusinessPolicyAsync(
+        Guid contractId, Guid requestId, SliceBRoomChangeBusinessPolicyInput input)
+        => ExecuteScopedAsync(contractId, async (db, actor, building, sourceRoom) =>
+        {
+            if (input is null) throw Denied();
+            var request = await LockRequestAsync(
+                db, requestId, contractId, sourceRoom, building);
+            var roster = await db.RoomChangeRosterSnapshots.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.RoomChangeRequestId == requestId &&
+                    x.SourceContractId == contractId &&
+                    x.SourceRoomId == sourceRoom && x.BuildingId == building)
+                ?? throw Denied();
+            await LockCurrentRosterAsync(db, contractId);
+            var current = await ReadCurrentRosterAsync(db, contractId);
+            try
+            {
+                if (!roster.MatchesCurrentRoster(
+                    request.Id, contractId, sourceRoom, building, current))
+                    throw Denied();
+                var proposed = RoomChangeBusinessPolicyRecord.Propose(
+                    Guid.NewGuid(), request, roster, input.ContractTreatment,
+                    input.PricingTreatment, input.DepositTreatment,
+                    input.TenantTreatment, input.ContractPolicyReference,
+                    input.PricingPolicyReference, input.DepositPolicyReference,
+                    input.TenantConsentReference, actor, DateTime.UtcNow);
+                db.RoomChangeBusinessPolicies.Add(proposed);
+                return AsPolicyRead(proposed);
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or
+                System.IO.InvalidDataException or ArgumentException)
+            { throw Denied(); }
+        });
+
+    public Task<SliceBRoomChangeBusinessPolicyRead> GetBusinessPolicyAsync(
+        Guid contractId, Guid requestId)
+        => ExecuteScopedAsync(contractId, async (db, _, building, sourceRoom) =>
+        {
+            var request = await LockRequestAsync(
+                db, requestId, contractId, sourceRoom, building);
+            var plan = await db.RoomChangeBusinessPolicies.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.RequestId == requestId &&
+                    x.SourceContractId == contractId && x.BuildingId == building)
+                ?? throw Denied();
+            var roster = await db.RoomChangeRosterSnapshots.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.Id == plan.RosterSnapshotId &&
+                    x.RoomChangeRequestId == requestId &&
+                    x.SourceContractId == contractId) ?? throw Denied();
+            try { plan.Verify(request, roster); }
+            catch (Exception ex) when (ex is InvalidOperationException or
+                System.IO.InvalidDataException or ArgumentException)
+            { throw Denied(); }
+            return AsPolicyRead(plan);
+        }, permitEndedContract: true);
+
+    private static SliceBRoomChangeBusinessPolicyRead AsPolicyRead(
+        RoomChangeBusinessPolicyRecord plan)
+        => new(plan.Id, plan.RequestId, plan.SourceContractId,
+            plan.BuildingId, plan.RosterSnapshotId, plan.RosterSha256,
+            plan.ContractTreatment, plan.PricingTreatment,
+            plan.DepositTreatment, plan.TenantTreatment,
+            plan.ContractPolicyReference, plan.PricingPolicyReference,
+            plan.DepositPolicyReference, plan.TenantConsentReference,
+            plan.ProposedByUserId, plan.ProposedAtUtc,
+            plan.EvidenceSha256,
+            IsApproved: false, IsExecuted: false);
+
     public Task<SliceBRoomChangeRequestRead> HoldForPolicyAsync(
         Guid contractId, Guid requestId, SliceBRoomChangeReviewInput input)
         => ReviewAsync(contractId, requestId, input,
@@ -482,3 +552,24 @@ public sealed record SliceBRoomChangeRosterRead(
     Guid SourceRoomId, Guid BuildingId, Guid CapturedByUserId,
     DateTime CapturedAtUtc, int RosterCount, string RosterSha256,
     RoomChangeRosterMember[] Tenants, bool IsTransferConsentVerified);
+
+/// <summary>Explicit documentary options only; not signed transfer authorization.</summary>
+public sealed record SliceBRoomChangeBusinessPolicyInput(
+    RoomChangeContractTreatment ContractTreatment,
+    RoomChangePricingTreatment PricingTreatment,
+    RoomChangeDepositTreatment DepositTreatment,
+    RoomChangeTenantTreatment TenantTreatment,
+    string? ContractPolicyReference, string? PricingPolicyReference,
+    string? DepositPolicyReference, string? TenantConsentReference);
+
+public sealed record SliceBRoomChangeBusinessPolicyRead(
+    Guid Id, Guid RequestId, Guid SourceContractId,
+    Guid BuildingId, Guid RosterSnapshotId, string RosterSha256,
+    RoomChangeContractTreatment ContractTreatment,
+    RoomChangePricingTreatment PricingTreatment,
+    RoomChangeDepositTreatment DepositTreatment,
+    RoomChangeTenantTreatment TenantTreatment,
+    string ContractPolicyReference, string PricingPolicyReference,
+    string DepositPolicyReference, string TenantConsentReference,
+    Guid ProposedByUserId, DateTime ProposedAtUtc, string EvidenceSha256,
+    bool IsApproved, bool IsExecuted);

@@ -138,6 +138,61 @@ public sealed class SliceBStagingRoomChangeRequests
             return items.Select(AsRead).ToArray();
         }, permitEndedContract: true);
 
+    /// <summary>
+    /// Live PostgreSQL-only assessment, not a transfer preflight or approval.
+    /// Both rooms are locked in canonical order; the request and source
+    /// contract are server-resolved and membership is locked through commit.
+    /// All evidence comes from the database; no client-supplied booleans.
+    /// </summary>
+    public Task<SliceBRoomChangeLiveReadiness> GetLiveReadinessAsync(
+        Guid contractId, Guid requestId)
+        => ExecuteScopedAsync(contractId, async (db, _, building, sourceRoom) =>
+        {
+            var request = await LockRequestAsync(
+                db, requestId, contractId, sourceRoom, building);
+            var rooms = new[] { sourceRoom, request.TargetRoomId }
+                .Distinct().OrderBy(x => x).ToArray();
+            if (rooms.Length != 2) throw Denied();
+            (Guid Building, RoomStatus Status) source = default;
+            (Guid Building, RoomStatus Status) target = default;
+            foreach (var id in rooms)
+            {
+                var locked = await LockRoomStatusAsync(db, id);
+                if (id == sourceRoom) source = locked;
+                else target = locked;
+            }
+            var current = await db.Contracts.AsNoTracking()
+                .SingleAsync(x => x.Id == contractId && !x.IsDeleted);
+            var targetReservations = await db.RoomReservations.AsNoTracking()
+                .AnyAsync(x => x.RoomId == request.TargetRoomId &&
+                    !x.IsDeleted &&
+                    (x.Status == RoomReservationStatus.PendingPayment ||
+                     x.Status == RoomReservationStatus.Reserved));
+            var targetContracts = await db.Contracts.AsNoTracking()
+                .AnyAsync(x => x.RoomId == request.TargetRoomId &&
+                    !x.IsDeleted &&
+                    (x.Status == ContractStatus.Active ||
+                     x.Status == ContractStatus.Signed));
+            var moveOut = await db.MoveOutRequests.AsNoTracking()
+                .AnyAsync(x => x.ContractId == contractId &&
+                    !x.IsDeleted &&
+                    (x.Status == MoveOutRequestStatus.Pending ||
+                     x.Status == MoveOutRequestStatus.Approved));
+            var today = DateOnly.FromDateTime(
+                TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow,
+                    TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh")));
+            var facts = new RoomChangeRequestReadinessFacts(
+                request.Id, contractId, sourceRoom, request.TargetRoomId,
+                building, request.RequestedDate, today, request.Status,
+                current.Status, source.Status, target.Status,
+                source.Building, target.Building, targetReservations,
+                targetContracts, moveOut);
+            var result = RoomChangeRequestReadiness.Assess(facts);
+            return new SliceBRoomChangeLiveReadiness(
+                request.Id, result.CanContinuePolicyReview,
+                true, result.Blockers.ToArray());
+        }, permitEndedContract: true);
+
     public Task<SliceBRoomChangeRequestRead> HoldForPolicyAsync(
         Guid contractId, Guid requestId, SliceBRoomChangeReviewInput input)
         => ReviewAsync(contractId, requestId, input,
@@ -325,3 +380,8 @@ public sealed record SliceBRoomChangeRequestRead(
     Guid BuildingId, DateOnly RequestedDate, string Reason,
     RoomChangeRequestStatus Status, Guid RequestedByUserId, DateTime CreatedAtUtc,
     Guid? ReviewedByUserId, DateTime? ReviewedAtUtc, string? ReviewNotes);
+
+/// <summary>Always transfer-blocked: OI-07 and signed financial evidence are not implemented.</summary>
+public sealed record SliceBRoomChangeLiveReadiness(
+    Guid RequestId, bool CanContinuePolicyReview, bool TransferExecutionBlocked,
+    string[] Blockers);

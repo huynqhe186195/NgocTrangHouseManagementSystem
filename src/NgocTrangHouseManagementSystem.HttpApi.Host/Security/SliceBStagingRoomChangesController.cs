@@ -51,6 +51,15 @@ public sealed class SliceBStagingRoomChangesController : ControllerBase
         return _requests!.GetAsync(contractId, requestId);
     }
 
+    [HttpGet("{requestId:guid}/live-readiness")]
+    [UnitOfWork(true, IsolationLevel.Serializable)]
+    public Task<SliceBRoomChangeLiveReadiness> GetLiveReadinessAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid requestId)
+    {
+        RequireIsolatedStaging();
+        return _requests!.GetLiveReadinessAsync(contractId, requestId);
+    }
+
     [HttpPost]
     [UnitOfWork(true, IsolationLevel.Serializable)]
     public Task<SliceBRoomChangeRequestRead> SubmitAsync(

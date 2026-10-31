@@ -4698,6 +4698,46 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 Assert.False(json.RootElement.GetProperty("isExecuted").GetBoolean());
             }
 
+            // Independent root, not the requesting operator, must decide
+            // the proposed OI-07 policy. This still performs NO transfer.
+            var signedRootReview = JsonSerializer.Serialize(new {
+                accepted = true,
+                signedReviewReference = "SIGNED-ROOT-REVIEW-OI07-2026-001",
+                reason = "Approved policy selection only; finance and handover pending"
+            });
+            using (var body = new StringContent(signedRootReview, Encoding.UTF8,
+                "application/json"))
+            using (var selfApprove = await clientB.PostAsync(
+                ChangeAt(roomChangeRequest) + "/business-policy-review", body))
+                Assert.Equal(HttpStatusCode.Forbidden, selfApprove.StatusCode);
+            using (var body = new StringContent(signedRootReview, Encoding.UTF8,
+                "application/json"))
+            using (var rootApproval = await clientRoot.PostAsync(
+                ChangeAt(roomChangeRequest) + "/business-policy-review", body))
+            {
+                var raw = await rootApproval.Content.ReadAsStringAsync();
+                Assert.Equal(HttpStatusCode.OK, rootApproval.StatusCode);
+                using var doc = JsonDocument.Parse(raw);
+                Assert.True(doc.RootElement.GetProperty("accepted").GetBoolean());
+                Assert.False(doc.RootElement.GetProperty(
+                    "isTransferExecuted").GetBoolean());
+                Assert.Equal(proposedPolicyId,
+                    doc.RootElement.GetProperty("policyId").GetGuid());
+            }
+            using (var body = new StringContent(signedRootReview, Encoding.UTF8,
+                "application/json"))
+            using (var replay = await clientRoot.PostAsync(
+                ChangeAt(roomChangeRequest) + "/business-policy-review", body))
+                Assert.False(replay.IsSuccessStatusCode);
+            using (var reviewRead = await clientB.GetAsync(
+                ChangeAt(roomChangeRequest) + "/business-policy-review"))
+            {
+                Assert.Equal(HttpStatusCode.OK, reviewRead.StatusCode);
+                using var doc = JsonDocument.Parse(
+                    await reviewRead.Content.ReadAsStringAsync());
+                Assert.True(doc.RootElement.GetProperty("accepted").GetBoolean());
+            }
+
             using (var duplicateRoster = await clientB.PostAsync(
                 ChangeAt(roomChangeRequest) + "/tenant-roster", null))
                 Assert.False(duplicateRoster.IsSuccessStatusCode);

@@ -335,11 +335,20 @@ public sealed class SliceBStagingRoomChangeRequests
             catch (Exception ex) when (ex is InvalidOperationException or
                 System.IO.InvalidDataException or ArgumentException)
             { throw Denied(); }
-            return AsPolicyRead(plan);
+            var rootReview = await db.RoomChangePolicyReviews.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.PolicyId == plan.Id);
+            if (rootReview is not null)
+            {
+                try { rootReview.Verify(plan, request, roster); }
+                catch (Exception ex) when (ex is InvalidOperationException or
+                    System.IO.InvalidDataException or ArgumentException)
+                { throw Denied(); }
+            }
+            return AsPolicyRead(plan, rootReview?.Accepted == true);
         }, permitEndedContract: true);
 
     private static SliceBRoomChangeBusinessPolicyRead AsPolicyRead(
-        RoomChangeBusinessPolicyRecord plan)
+        RoomChangeBusinessPolicyRecord plan, bool approved = false)
         => new(plan.Id, plan.RequestId, plan.SourceContractId,
             plan.BuildingId, plan.RosterSnapshotId, plan.RosterSha256,
             plan.ContractTreatment, plan.PricingTreatment,
@@ -348,7 +357,75 @@ public sealed class SliceBStagingRoomChangeRequests
             plan.DepositPolicyReference, plan.TenantConsentReference,
             plan.ProposedByUserId, plan.ProposedAtUtc,
             plan.EvidenceSha256,
-            IsApproved: false, IsExecuted: false);
+            IsApproved: approved, IsExecuted: false);
+
+    /// <summary>
+    /// One independent ROOT signs an existing immutable policy proposal.
+    /// This is NEVER permission to transfer deposits or end a contract.
+    /// </summary>
+    public Task<SliceBRoomChangeBusinessPolicyReviewRead> ReviewBusinessPolicyAsync(
+        Guid contractId, Guid requestId, SliceBRoomChangeBusinessPolicyReviewInput input)
+        => ExecuteScopedAsync(contractId, async (db, actor, building, sourceRoom) =>
+        {
+            if (input is null) throw Denied();
+            await _identity.AcquireBootstrapAsync(actor);
+            var request = await LockRequestAsync(
+                db, requestId, contractId, sourceRoom, building);
+            var plan = await db.RoomChangeBusinessPolicies.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.RequestId == request.Id &&
+                    x.SourceContractId == contractId && x.BuildingId == building)
+                ?? throw Denied();
+            var roster = await db.RoomChangeRosterSnapshots.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.Id == plan.RosterSnapshotId &&
+                    x.RoomChangeRequestId == requestId &&
+                    x.SourceContractId == contractId) ?? throw Denied();
+            RoomChangeBusinessPolicyReviewRecord decision;
+            try
+            {
+                decision = RoomChangeBusinessPolicyReviewRecord.Review(
+                    Guid.NewGuid(), plan, request, roster, actor,
+                    DateTime.UtcNow, input.Accepted, input.SignedReviewReference,
+                    input.Reason);
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or
+                System.IO.InvalidDataException or ArgumentException)
+            { throw Denied(); }
+            db.RoomChangePolicyReviews.Add(decision);
+            return AsPolicyReviewRead(decision);
+        });
+
+    public Task<SliceBRoomChangeBusinessPolicyReviewRead> GetBusinessPolicyReviewAsync(
+        Guid contractId, Guid requestId)
+        => ExecuteScopedAsync(contractId, async (db, _, building, sourceRoom) =>
+        {
+            var request = await LockRequestAsync(
+                db, requestId, contractId, sourceRoom, building);
+            var plan = await db.RoomChangeBusinessPolicies.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.RequestId == requestId &&
+                    x.SourceContractId == contractId && x.BuildingId == building)
+                ?? throw Denied();
+            var review = await db.RoomChangePolicyReviews.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.PolicyId == plan.Id &&
+                    x.RequestId == requestId && x.BuildingId == building)
+                ?? throw Denied();
+            var roster = await db.RoomChangeRosterSnapshots.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.Id == plan.RosterSnapshotId &&
+                    x.RoomChangeRequestId == requestId &&
+                    x.SourceContractId == contractId) ?? throw Denied();
+            try { review.Verify(plan, request, roster); }
+            catch (Exception ex) when (ex is InvalidOperationException or
+                System.IO.InvalidDataException or ArgumentException)
+            { throw Denied(); }
+            return AsPolicyReviewRead(review);
+        }, permitEndedContract: true);
+
+    private static SliceBRoomChangeBusinessPolicyReviewRead AsPolicyReviewRead(
+        RoomChangeBusinessPolicyReviewRecord review)
+        => new(review.Id, review.PolicyId, review.RequestId,
+            review.BuildingId, review.ProposalSha256, review.ReviewedByUserId,
+            review.ReviewedAtUtc, review.Accepted,
+            review.SignedReviewReference, review.Reason,
+            IsTransferExecuted: false);
 
     public Task<SliceBRoomChangeRequestRead> HoldForPolicyAsync(
         Guid contractId, Guid requestId, SliceBRoomChangeReviewInput input)
@@ -573,3 +650,13 @@ public sealed record SliceBRoomChangeBusinessPolicyRead(
     string DepositPolicyReference, string TenantConsentReference,
     Guid ProposedByUserId, DateTime ProposedAtUtc, string EvidenceSha256,
     bool IsApproved, bool IsExecuted);
+
+/// <summary>Independent explicit root review, not transfer authorization.</summary>
+public sealed record SliceBRoomChangeBusinessPolicyReviewInput(
+    bool Accepted, string? SignedReviewReference, string? Reason);
+
+public sealed record SliceBRoomChangeBusinessPolicyReviewRead(
+    Guid Id, Guid PolicyId, Guid RequestId, Guid BuildingId,
+    string ProposalSha256, Guid ReviewedByUserId, DateTime ReviewedAtUtc,
+    bool Accepted, string SignedReviewReference, string Reason,
+    bool IsTransferExecuted);

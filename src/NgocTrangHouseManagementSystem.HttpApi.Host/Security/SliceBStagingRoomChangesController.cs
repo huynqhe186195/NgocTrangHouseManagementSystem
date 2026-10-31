@@ -107,6 +107,25 @@ public sealed class SliceBStagingRoomChangesController : ControllerBase
         return _requests!.GetBusinessPolicyAsync(contractId, requestId);
     }
 
+    [HttpPost("{requestId:guid}/business-policy-review")]
+    [UnitOfWork(true, IsolationLevel.Serializable)]
+    public Task<SliceBRoomChangeBusinessPolicyReviewRead> ReviewBusinessPolicyAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid requestId,
+        [FromBody] SliceBRoomChangeBusinessPolicyReviewInput input)
+    {
+        RequireIsolatedStaging();
+        return _requests!.ReviewBusinessPolicyAsync(contractId, requestId, input);
+    }
+
+    [HttpGet("{requestId:guid}/business-policy-review")]
+    [UnitOfWork(true, IsolationLevel.Serializable)]
+    public Task<SliceBRoomChangeBusinessPolicyReviewRead> GetBusinessPolicyReviewAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid requestId)
+    {
+        RequireIsolatedStaging();
+        return _requests!.GetBusinessPolicyReviewAsync(contractId, requestId);
+    }
+
     [HttpPost("{requestId:guid}/policy-hold")]
     [UnitOfWork(true, IsolationLevel.Serializable)]
     public Task<SliceBRoomChangeRequestRead> HoldForPolicyAsync(

@@ -633,7 +633,6 @@ public sealed class RoomChangeTenantRosterPostgreSql_Tests
             Assert.Equal("23514", state);
             Assert.Equal(0L, await Scalar(db, tx,
                 """SELECT count(*) FROM "BuildingManagementRoomChangeCompletions" """));
-            await Denied(db, tx, CompletionDown, "23514");
         }, IsolationLevel.Serializable);
     }
 

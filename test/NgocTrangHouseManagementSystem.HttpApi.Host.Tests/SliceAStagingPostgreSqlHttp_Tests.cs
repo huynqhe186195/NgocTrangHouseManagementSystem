@@ -4554,6 +4554,204 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 await uow.CompleteAsync();
             }
 
+            // Phase 2H end-to-end isolated HTTP: actual authenticated ABP,
+            // scoped contract, identity commit lease and PostgreSQL triggers.
+            // No financial transfer or room reassignment can occur via these
+            // request/review-only routes.
+            Assert.Contains(actions, action =>
+                action.ControllerTypeInfo.AsType() ==
+                    typeof(SliceBStagingRoomChangesController) &&
+                action.MethodInfo.Name == "SubmitAsync");
+            using (var scope = app.Services.CreateScope())
+                Assert.NotNull(scope.ServiceProvider
+                    .GetRequiredService<SliceBStagingRoomChangeRequests>());
+
+            var changeTarget = await CreateChildAsync(clientB, roomCreate,
+                new { floorId = floorB, roomNumber = "105",
+                    name = "Phase2H review-only target",
+                    area = 25m, capacity = 2, status = 1 });
+            string ChangeRoute(Guid id) =>
+                "/api/slice-b-staging/contracts/" + id.ToString("D") +
+                "/room-changes";
+            var changeInput = JsonSerializer.Serialize(new {
+                targetRoomId = changeTarget,
+                requestedDate = "2027-06-30",
+                reason = "Tenant requested a quieter room for next lease"
+            });
+            var crossTargetInput = JsonSerializer.Serialize(new {
+                targetRoomId = roomA,
+                requestedDate = "2027-06-30",
+                reason = "Attempt to move outside own building"
+            });
+            using (var foreignPayload = new StringContent(changeInput,
+                Encoding.UTF8, "application/json"))
+            using (var foreign = await clientB.PostAsync(
+                ChangeRoute(contractA), foreignPayload))
+                Assert.Equal(HttpStatusCode.Forbidden, foreign.StatusCode);
+            using (var foreignTargetPayload = new StringContent(
+                crossTargetInput, Encoding.UTF8, "application/json"))
+            using (var foreign = await clientB.PostAsync(
+                ChangeRoute(cancelContract), foreignTargetPayload))
+                Assert.Equal(HttpStatusCode.Forbidden, foreign.StatusCode);
+
+            Guid roomChangeRequest;
+            using (var payload = new StringContent(changeInput, Encoding.UTF8,
+                "application/json"))
+            using (var created = await clientB.PostAsync(
+                ChangeRoute(cancelContract), payload))
+            {
+                var body = await created.Content.ReadAsStringAsync();
+                Assert.True(created.StatusCode is HttpStatusCode.OK or
+                    HttpStatusCode.Created, "RoomChange submit: " + body);
+                using var doc = JsonDocument.Parse(body);
+                Assert.Equal(0, doc.RootElement.GetProperty("status").GetInt32());
+                Assert.Equal(cancelRoom,
+                    doc.RootElement.GetProperty("sourceRoomId").GetGuid());
+                Assert.Equal(changeTarget,
+                    doc.RootElement.GetProperty("targetRoomId").GetGuid());
+                roomChangeRequest = doc.RootElement.GetProperty("id").GetGuid();
+            }
+            using (var payload = new StringContent(changeInput, Encoding.UTF8,
+                "application/json"))
+            using (var repeat = await clientB.PostAsync(
+                ChangeRoute(cancelContract), payload))
+                Assert.False(repeat.IsSuccessStatusCode);
+
+            string ChangeAt(Guid id) =>
+                ChangeRoute(cancelContract) + "/" + id.ToString("D");
+            using (var crossRead = await clientB.GetAsync(
+                ChangeRoute(contractA) + "/" + roomChangeRequest.ToString("D")))
+                Assert.Equal(HttpStatusCode.Forbidden, crossRead.StatusCode);
+            using (var wrongId = await clientB.GetAsync(
+                ChangeAt(Guid.NewGuid()) + "/live-readiness"))
+                Assert.Equal(HttpStatusCode.Forbidden, wrongId.StatusCode);
+            using (var live = await clientB.GetAsync(
+                ChangeAt(roomChangeRequest) + "/live-readiness"))
+            {
+                Assert.Equal(HttpStatusCode.OK, live.StatusCode);
+                using var doc = JsonDocument.Parse(
+                    await live.Content.ReadAsStringAsync());
+                Assert.True(doc.RootElement.GetProperty(
+                    "canContinuePolicyReview").GetBoolean());
+                Assert.True(doc.RootElement.GetProperty(
+                    "transferExecutionBlocked").GetBoolean());
+                Assert.Empty(doc.RootElement.GetProperty(
+                    "blockers").EnumerateArray());
+            }
+            // A reservation/maintenance state may change after intake.
+            // Readiness MUST re-read actual locked rows, not trust a
+            // client-provided "available" flag from the original request.
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var db = await sp.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>()
+                    .GetDbContextAsync();
+                var targetRoom = await db.Rooms.SingleAsync(r => r.Id == changeTarget);
+                targetRoom.ChangeStatus(BuildingManagement.Rooms.RoomStatus.Maintenance);
+                await uow.CompleteAsync();
+            }
+            using (var live = await clientB.GetAsync(
+                ChangeAt(roomChangeRequest) + "/live-readiness"))
+            {
+                Assert.Equal(HttpStatusCode.OK, live.StatusCode);
+                using var doc = JsonDocument.Parse(
+                    await live.Content.ReadAsStringAsync());
+                Assert.False(doc.RootElement.GetProperty(
+                    "canContinuePolicyReview").GetBoolean());
+                Assert.Contains(doc.RootElement.GetProperty(
+                    "blockers").EnumerateArray(),
+                    x => x.GetString() == "TargetRoomNoLongerAvailable");
+                Assert.True(doc.RootElement.GetProperty(
+                    "transferExecutionBlocked").GetBoolean());
+            }
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var db = await sp.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>()
+                    .GetDbContextAsync();
+                var targetRoom = await db.Rooms.SingleAsync(r => r.Id == changeTarget);
+                targetRoom.ChangeStatus(BuildingManagement.Rooms.RoomStatus.Available);
+                await uow.CompleteAsync();
+            }
+
+            using (var body = new StringContent(
+                """{"reviewNotes":"Deposit policy OI-07 not yet approved"}""",
+                Encoding.UTF8, "application/json"))
+            using (var review = await clientB.PostAsync(
+                ChangeAt(roomChangeRequest) + "/policy-hold", body))
+            {
+                Assert.Equal(HttpStatusCode.OK, review.StatusCode);
+                using var doc = JsonDocument.Parse(
+                    await review.Content.ReadAsStringAsync());
+                Assert.Equal(1, doc.RootElement.GetProperty("status").GetInt32());
+            }
+            using (var body = new StringContent(
+                """{"reviewNotes":"Reviewer rejected without deposit disposal"}""",
+                Encoding.UTF8, "application/json"))
+            using (var rejection = await clientB.PostAsync(
+                ChangeAt(roomChangeRequest) + "/reject", body))
+            {
+                Assert.Equal(HttpStatusCode.OK, rejection.StatusCode);
+                using var doc = JsonDocument.Parse(
+                    await rejection.Content.ReadAsStringAsync());
+                Assert.Equal(2, doc.RootElement.GetProperty("status").GetInt32());
+            }
+            using (var revive = await clientB.PostAsync(
+                ChangeAt(roomChangeRequest) + "/cancel", null))
+                Assert.False(revive.IsSuccessStatusCode);
+            using (var list = await clientB.GetAsync(ChangeRoute(cancelContract)))
+            {
+                Assert.Equal(HttpStatusCode.OK, list.StatusCode);
+                using var doc = JsonDocument.Parse(
+                    await list.Content.ReadAsStringAsync());
+                Assert.Contains(doc.RootElement.EnumerateArray(),
+                    x => x.GetProperty("id").GetGuid() == roomChangeRequest);
+            }
+
+            Guid cancelChange;
+            using (var payload = new StringContent(changeInput, Encoding.UTF8,
+                "application/json"))
+            using (var created = await clientB.PostAsync(
+                ChangeRoute(cancelContract), payload))
+            {
+                Assert.Equal(HttpStatusCode.OK, created.StatusCode);
+                using var doc = JsonDocument.Parse(
+                    await created.Content.ReadAsStringAsync());
+                cancelChange = doc.RootElement.GetProperty("id").GetGuid();
+            }
+            using (var cancelled = await clientB.PostAsync(
+                ChangeAt(cancelChange) + "/cancel", null))
+            {
+                Assert.Equal(HttpStatusCode.OK, cancelled.StatusCode);
+                using var doc = JsonDocument.Parse(
+                    await cancelled.Content.ReadAsStringAsync());
+                Assert.Equal(3, doc.RootElement.GetProperty("status").GetInt32());
+            }
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var db = await sp.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>()
+                    .GetDbContextAsync();
+                Assert.Equal(BuildingManagement.Contracts.ContractStatus.Active,
+                    (await db.Contracts.SingleAsync(c => c.Id == cancelContract)).Status);
+                Assert.Equal(BuildingManagement.Rooms.RoomStatus.Occupied,
+                    (await db.Rooms.SingleAsync(r => r.Id == cancelRoom)).Status);
+                Assert.Equal(BuildingManagement.Rooms.RoomStatus.Available,
+                    (await db.Rooms.SingleAsync(r => r.Id == changeTarget)).Status);
+                Assert.Equal(2, await db.RoomChangeRequests.CountAsync(x =>
+                    x.SourceContractId == cancelContract));
+                await uow.CompleteAsync();
+            }
+
             // Record the real room state rather than assuming occupancy:
             // other independent contract tests may have changed it earlier.
             BuildingManagement.Rooms.RoomStatus originalRoomStatus;
@@ -5640,6 +5838,7 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             // Explicitly exercise the same Slice B financial adapter that
             // the real Host wires ONLY on two isolated staging databases.
             context.Services.AddTransient<SliceBStagingFinalInvoiceMutation>();
+            context.Services.AddTransient<SliceBStagingRoomChangeRequests>();
             context.Services.AddTransient<SliceCStagingUtilityRates>();
             context.Services.AddTransient<SliceCStagingMeterReadings>();
             context.Services.AddTransient<SliceCStagingUtilityMeters>();

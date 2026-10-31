@@ -6,9 +6,9 @@ namespace BuildingManagement.RoomChanges;
 
 /// <summary>
 /// Fail-closed, server-fact-only transfer execution rehearsal. Never authorizes
-/// writes: source final invoice, deposit and fresh occupancy facts are read by
+/// writes: source transfer-month invoice, deposit and occupancy facts are read by
 /// an authenticated PostgreSQL adapter. This is not a replacement for the
-/// still-missing same-UoW atomic transfer and financial settlement writer.
+/// same-UoW atomic transfer and financial settlement writer.
 /// </summary>
 public static class RoomChangeExecutionReadiness
 {
@@ -27,8 +27,8 @@ public static class RoomChangeExecutionReadiness
             blocked.Add("SourcePhysicalHandoverNotVerified");
         if (facts.OtherOpenIntentForSameTarget)
             blocked.Add("CompetingTargetRoomChangeIntent");
-        if (!facts.SourceFinalInvoiceOfficiallyPosted)
-            blocked.Add("SourceFinalInvoiceNotOfficiallyPosted");
+        if (!facts.SourceTransferMonthOfficiallyPosted)
+            blocked.Add("SourceTransferMonthNotOfficiallyPosted");
         if (!facts.AllSourceInvoicesOfficiallyPostedAndReviewed)
             blocked.Add("UnreconciledSourceReceivables");
         if (!facts.DepositOriginalPaymentsFullyProven)
@@ -54,7 +54,7 @@ public sealed record RoomChangeExecutionFacts(
     bool IndependentPolicyAcceptedAndVerified,
     bool HandoverOriginalMetersAndSignedReferencesVerified,
     bool OtherOpenIntentForSameTarget,
-    bool SourceFinalInvoiceOfficiallyPosted,
+    bool SourceTransferMonthOfficiallyPosted,
     bool AllSourceInvoicesOfficiallyPostedAndReviewed,
     bool DepositOriginalPaymentsFullyProven,
     bool NoPendingOrOutgoingDepositDisposition,

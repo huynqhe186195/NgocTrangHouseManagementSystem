@@ -15,7 +15,7 @@ public sealed class RoomChangeRequestReadiness_Tests
         Building, new DateOnly(2026, 12, 1), new DateOnly(2026, 10, 31),
         RoomChangeRequestStatus.PolicyHold, ContractStatus.Active,
         RoomStatus.Occupied, RoomStatus.Available,
-        Building, Building, false, false, false);
+        Building, Building, false, false, false, true);
 
     [Fact]
     public void TRF19_Uncontested_Open_Request_Is_Reviewable_Not_TransferApproved()
@@ -66,6 +66,15 @@ public sealed class RoomChangeRequestReadiness_Tests
         Assert.Contains("BuildingScopeDrift", result.Blockers);
         Assert.Contains("SourceContractNoLongerActive", result.Blockers);
         Assert.Contains("RequestedDateElapsed", result.Blockers);
+    }
+
+    [Fact]
+    public void TRF29_Missing_Or_Stale_Roster_Blocks_Policy_Review()
+    {
+        var result = RoomChangeRequestReadiness.Assess(
+            Valid() with { TenantRosterSnapshotCurrent = false });
+        Assert.False(result.CanContinuePolicyReview);
+        Assert.Contains("TenantRosterSnapshotMissingOrChanged", result.Blockers);
     }
 
     [Fact]

@@ -50,6 +50,9 @@ public static class RoomChangeRequestReadiness
         if (facts.SourceHasPendingOrApprovedMoveOut)
             blockers.Add("SourceMoveOutNowOpen");
 
+        if (!facts.TenantRosterSnapshotCurrent)
+            blockers.Add("TenantRosterSnapshotMissingOrChanged");
+
         // This is deliberately NOT a transfer approval: the separate OI-07
         // contract/pricing/deposit choices and final signed evidence remain
         // mandatory even when no live occupancy conflicts are observed.
@@ -64,7 +67,8 @@ public sealed record RoomChangeRequestReadinessFacts(
     ContractStatus SourceContractStatus, RoomStatus SourceRoomStatus,
     RoomStatus TargetRoomStatus, Guid SourceBuildingId,
     Guid TargetBuildingId, bool TargetHasPendingOrReservedReservation,
-    bool TargetHasSignedOrActiveContract, bool SourceHasPendingOrApprovedMoveOut);
+    bool TargetHasSignedOrActiveContract, bool SourceHasPendingOrApprovedMoveOut,
+    bool TenantRosterSnapshotCurrent);
 
 public sealed record RoomChangeRequestReadinessResult(
     bool CanContinuePolicyReview, IReadOnlyList<string> Blockers);

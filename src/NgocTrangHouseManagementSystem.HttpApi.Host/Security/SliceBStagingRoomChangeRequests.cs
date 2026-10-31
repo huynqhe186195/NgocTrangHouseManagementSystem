@@ -181,17 +181,104 @@ public sealed class SliceBStagingRoomChangeRequests
             var today = DateOnly.FromDateTime(
                 TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow,
                     TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh")));
+            var roster = await db.RoomChangeRosterSnapshots.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.RoomChangeRequestId == request.Id);
+            var rosterCurrent = false;
+            if (roster is not null)
+            {
+                await LockCurrentRosterAsync(db, contractId);
+                var parties = await ReadCurrentRosterAsync(db, contractId);
+                try
+                {
+                    rosterCurrent = roster.MatchesCurrentRoster(
+                        request.Id, contractId, sourceRoom, building, parties);
+                }
+                catch (System.IO.InvalidDataException) { throw Denied(); }
+            }
             var facts = new RoomChangeRequestReadinessFacts(
                 request.Id, contractId, sourceRoom, request.TargetRoomId,
                 building, request.RequestedDate, today, request.Status,
                 current.Status, source.Status, target.Status,
                 source.Building, target.Building, targetReservations,
-                targetContracts, moveOut);
+                targetContracts, moveOut, rosterCurrent);
             var result = RoomChangeRequestReadiness.Assess(facts);
             return new SliceBRoomChangeLiveReadiness(
                 request.Id, result.CanContinuePolicyReview,
                 true, result.Blockers.ToArray());
         }, permitEndedContract: true);
+
+    /// <summary>
+    /// Server snapshots ALL current contract parties; no self-selected
+    /// tenant list, no identity details, no implied tenant consent.
+    /// The Contract UPDATE lock serializes against tenant membership writes.
+    /// Database trigger verifies the persisted list independently.
+    /// </summary>
+    public Task<SliceBRoomChangeRosterRead> CaptureRosterAsync(
+        Guid contractId, Guid requestId)
+        => ExecuteScopedAsync(contractId, async (db, actor, building, sourceRoom) =>
+        {
+            var request = await LockRequestAsync(
+                db, requestId, contractId, sourceRoom, building);
+            if (request.Status is not
+                (RoomChangeRequestStatus.Pending or RoomChangeRequestStatus.PolicyHold))
+                throw Denied();
+
+            await LockCurrentRosterAsync(db, contractId);
+            var parties = await ReadCurrentRosterAsync(db, contractId);
+            RoomChangeTenantRosterSnapshotRecord snapshot;
+            try
+            {
+                snapshot = RoomChangeTenantRosterSnapshotRecord.Capture(
+                    Guid.NewGuid(), request, parties, actor, DateTime.UtcNow);
+            }
+            catch (InvalidOperationException) { throw Denied(); }
+            db.RoomChangeRosterSnapshots.Add(snapshot);
+            return AsRosterRead(snapshot);
+        });
+
+    public Task<SliceBRoomChangeRosterRead> GetRosterAsync(
+        Guid contractId, Guid requestId)
+        => ExecuteScopedAsync(contractId, async (db, _, building, sourceRoom) =>
+        {
+            var request = await LockRequestAsync(
+                db, requestId, contractId, sourceRoom, building);
+            var snapshot = await db.RoomChangeRosterSnapshots.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.RoomChangeRequestId == request.Id &&
+                    x.SourceContractId == contractId &&
+                    x.SourceRoomId == sourceRoom &&
+                    x.BuildingId == building) ?? throw Denied();
+            try { return AsRosterRead(snapshot); }
+            catch (System.IO.InvalidDataException) { throw Denied(); }
+        }, permitEndedContract: true);
+
+    private static async Task LockCurrentRosterAsync(
+        BuildingManagementDbContext db, Guid contractId)
+    {
+        await using var cmd = Command(db, """
+            SELECT "Id" FROM "BuildingManagementContractTenants"
+             WHERE "ContractId" = @contract AND "IsDeleted" = FALSE
+             ORDER BY "Id" FOR SHARE
+            """);
+        Add(cmd, "contract", contractId);
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync()) { }
+    }
+
+    private static Task<RoomChangeRosterMember[]> ReadCurrentRosterAsync(
+        BuildingManagementDbContext db, Guid contractId)
+        => db.ContractTenants.AsNoTracking()
+            .Where(x => x.ContractId == contractId && !x.IsDeleted)
+            .Select(x => new RoomChangeRosterMember(x.TenantId, x.Role))
+            .ToArrayAsync();
+
+    private static SliceBRoomChangeRosterRead AsRosterRead(
+        RoomChangeTenantRosterSnapshotRecord record)
+        => new(record.Id, record.RoomChangeRequestId,
+            record.SourceContractId, record.SourceRoomId, record.BuildingId,
+            record.CapturedByUserId, record.CapturedAtUtc,
+            record.RosterCount, record.RosterSha256,
+            record.ReadVerifiedRoster().ToArray(),
+            false);
 
     public Task<SliceBRoomChangeRequestRead> HoldForPolicyAsync(
         Guid contractId, Guid requestId, SliceBRoomChangeReviewInput input)
@@ -385,3 +472,13 @@ public sealed record SliceBRoomChangeRequestRead(
 public sealed record SliceBRoomChangeLiveReadiness(
     Guid RequestId, bool CanContinuePolicyReview, bool TransferExecutionBlocked,
     string[] Blockers);
+
+/// <summary>
+/// Read-only historical party roster; source snapshot only. IsTransferConsentVerified
+/// stays FALSE until a separately approved transfer policy and signoffs exist.
+/// </summary>
+public sealed record SliceBRoomChangeRosterRead(
+    Guid Id, Guid RoomChangeRequestId, Guid SourceContractId,
+    Guid SourceRoomId, Guid BuildingId, Guid CapturedByUserId,
+    DateTime CapturedAtUtc, int RosterCount, string RosterSha256,
+    RoomChangeRosterMember[] Tenants, bool IsTransferConsentVerified);

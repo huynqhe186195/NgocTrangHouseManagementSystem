@@ -89,6 +89,13 @@ public sealed class Phase2HTenantRosterSnapshots : Migration
                         USING ERRCODE = '23514';
                 END IF;
 
+                -- Freeze all live parties through the full insertion and
+                -- database validation, conflicting with tenant mutations.
+                PERFORM 1 FROM "BuildingManagementContractTenants"
+                 WHERE "ContractId" = NEW."SourceContractId"
+                   AND "IsDeleted" = FALSE
+                 ORDER BY "Id" FOR SHARE;
+
                 SELECT count(*),count(*) FILTER (WHERE "Role" = 1)
                   INTO db_count,primary_count
                   FROM "BuildingManagementContractTenants"

@@ -70,6 +70,24 @@ public sealed class SliceBStagingRoomChangesController : ControllerBase
         return _requests!.SubmitAsync(contractId, input);
     }
 
+    [HttpPost("{requestId:guid}/tenant-roster")]
+    [UnitOfWork(true, IsolationLevel.Serializable)]
+    public Task<SliceBRoomChangeRosterRead> CaptureRosterAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid requestId)
+    {
+        RequireIsolatedStaging();
+        return _requests!.CaptureRosterAsync(contractId, requestId);
+    }
+
+    [HttpGet("{requestId:guid}/tenant-roster")]
+    [UnitOfWork(true, IsolationLevel.Serializable)]
+    public Task<SliceBRoomChangeRosterRead> GetRosterAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid requestId)
+    {
+        RequireIsolatedStaging();
+        return _requests!.GetRosterAsync(contractId, requestId);
+    }
+
     [HttpPost("{requestId:guid}/policy-hold")]
     [UnitOfWork(true, IsolationLevel.Serializable)]
     public Task<SliceBRoomChangeRequestRead> HoldForPolicyAsync(

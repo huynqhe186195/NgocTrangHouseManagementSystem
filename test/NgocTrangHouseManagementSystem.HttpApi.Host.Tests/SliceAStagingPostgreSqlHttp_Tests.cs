@@ -4625,6 +4625,50 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             using (var wrongId = await clientB.GetAsync(
                 ChangeAt(Guid.NewGuid()) + "/live-readiness"))
                 Assert.Equal(HttpStatusCode.Forbidden, wrongId.StatusCode);
+            // New immutable roster history is captured from persisted
+            // ContractTenant links, never from a client-provided list.
+            using (var noRoster = await clientB.GetAsync(
+                ChangeAt(roomChangeRequest) + "/live-readiness"))
+            {
+                Assert.Equal(HttpStatusCode.OK, noRoster.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await noRoster.Content.ReadAsStringAsync());
+                Assert.False(json.RootElement.GetProperty(
+                    "canContinuePolicyReview").GetBoolean());
+                Assert.Contains(json.RootElement.GetProperty("blockers")
+                    .EnumerateArray(), x => x.GetString() ==
+                    "TenantRosterSnapshotMissingOrChanged");
+            }
+            using (var forged = await clientB.PostAsync(
+                ChangeRoute(contractA) + "/" + roomChangeRequest.ToString("D") +
+                "/tenant-roster", null))
+                Assert.Equal(HttpStatusCode.Forbidden, forged.StatusCode);
+            Guid rosterId;
+            using (var roster = await clientB.PostAsync(
+                ChangeAt(roomChangeRequest) + "/tenant-roster", null))
+            {
+                var body = await roster.Content.ReadAsStringAsync();
+                Assert.Equal(HttpStatusCode.OK, roster.StatusCode);
+                using var doc = JsonDocument.Parse(body);
+                Assert.True(doc.RootElement.GetProperty("rosterCount").GetInt32() >= 1);
+                Assert.False(doc.RootElement.GetProperty(
+                    "isTransferConsentVerified").GetBoolean());
+                rosterId = doc.RootElement.GetProperty("id").GetGuid();
+                Assert.Equal(64, doc.RootElement.GetProperty(
+                    "rosterSha256").GetString()!.Length);
+            }
+            using (var duplicateRoster = await clientB.PostAsync(
+                ChangeAt(roomChangeRequest) + "/tenant-roster", null))
+                Assert.False(duplicateRoster.IsSuccessStatusCode);
+            using (var rosterRead = await clientB.GetAsync(
+                ChangeAt(roomChangeRequest) + "/tenant-roster"))
+            {
+                Assert.Equal(HttpStatusCode.OK, rosterRead.StatusCode);
+                using var doc = JsonDocument.Parse(
+                    await rosterRead.Content.ReadAsStringAsync());
+                Assert.Equal(rosterId, doc.RootElement.GetProperty("id").GetGuid());
+            }
+
             using (var live = await clientB.GetAsync(
                 ChangeAt(roomChangeRequest) + "/live-readiness"))
             {

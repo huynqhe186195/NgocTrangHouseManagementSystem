@@ -111,11 +111,13 @@ public sealed class Phase2G5AtomicRoomRelease : Migration
                       USING ERRCODE = '23514';
                 END IF;
 
-                SELECT count(*),min("Id") INTO active_reservations,reserved_id
+                SELECT count(*),(array_agg("Id" ORDER BY "Id"))[1]
+                  INTO active_reservations,reserved_id
                   FROM "BuildingManagementRoomReservations"
                  WHERE "RoomId" = NEW."RoomId" AND "IsDeleted" = FALSE
                    AND "Status" = 2;
-                SELECT count(*),min("Id") INTO signed_contracts,signed_id
+                SELECT count(*),(array_agg("Id" ORDER BY "Id"))[1]
+                  INTO signed_contracts,signed_id
                   FROM "BuildingManagementContracts"
                  WHERE "RoomId" = NEW."RoomId" AND "IsDeleted" = FALSE
                    AND "Id" <> NEW."ContractId" AND "Status" = 5;

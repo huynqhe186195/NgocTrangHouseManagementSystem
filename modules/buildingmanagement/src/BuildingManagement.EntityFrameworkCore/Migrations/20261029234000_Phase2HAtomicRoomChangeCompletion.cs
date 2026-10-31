@@ -286,6 +286,7 @@ public sealed class Phase2HAtomicRoomChangeCompletion : Migration
                    OR carry."Amount" IS DISTINCT FROM NEW."CarriedDepositAmount"
                    OR carry."Amount" IS DISTINCT FROM source_contract."DepositAmount"
                    OR carry."CompletedAt" IS NULL
+                   OR NEW."CompletedAtUtc" > NOW()
                    OR NEW."CompletedAtUtc" < h."AttestedAtUtc"
                    OR NEW."CompletedAtUtc" < review."ReviewedAtUtc"
                 THEN

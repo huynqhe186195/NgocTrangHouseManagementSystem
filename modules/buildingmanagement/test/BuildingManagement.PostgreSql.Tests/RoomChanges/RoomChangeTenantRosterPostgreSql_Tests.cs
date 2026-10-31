@@ -37,6 +37,12 @@ public sealed class RoomChangeTenantRosterPostgreSql_Tests
         new Phase2HPhysicalHandoverEvidence().UpOperations.OfType<SqlOperation>()).Sql;
     private static readonly string HandoverDown = Assert.Single(
         new Phase2HPhysicalHandoverEvidence().DownOperations.OfType<SqlOperation>()).Sql;
+    private static readonly string CompletionUp = string.Join("\n",
+        new Phase2HAtomicRoomChangeCompletion().UpOperations
+            .OfType<SqlOperation>().Select(x => x.Sql));
+    private static readonly string CompletionDown = string.Join("\n",
+        new Phase2HAtomicRoomChangeCompletion().DownOperations
+            .OfType<SqlOperation>().Select(x => x.Sql));
     private static readonly DateTime Created = new(
         2026, 11, 1, 10, 0, 0, DateTimeKind.Utc);
 
@@ -49,7 +55,13 @@ public sealed class RoomChangeTenantRosterPostgreSql_Tests
             "Status" integer NOT NULL, "IsDeleted" boolean NOT NULL DEFAULT FALSE);
         CREATE TABLE "BuildingManagementContracts" (
             "Id" uuid PRIMARY KEY, "RoomId" uuid NOT NULL,
-            "Status" integer NOT NULL, "IsDeleted" boolean NOT NULL DEFAULT FALSE);
+            "Status" integer NOT NULL, "IsDeleted" boolean NOT NULL DEFAULT FALSE,
+            "StartDate" date NOT NULL DEFAULT '2026-09-01',
+            "EndReason" integer NULL,
+            "ActualEndedAt" timestamptz NULL,
+            "MonthlyRent" numeric(18,0) NOT NULL DEFAULT 3000000,
+            "DepositAmount" numeric(18,0) NOT NULL DEFAULT 3000000,
+            "RenewedFromContractId" uuid NULL);
         CREATE TABLE "BuildingManagementContractTenants" (
             "Id" uuid PRIMARY KEY, "ContractId" uuid NOT NULL,
             "TenantId" uuid NOT NULL, "Role" integer NOT NULL,
@@ -71,6 +83,25 @@ public sealed class RoomChangeTenantRosterPostgreSql_Tests
             "CurrentReading" numeric(18,3) NOT NULL,
             "ReadingDate" date NOT NULL,
             "IsDeleted" boolean NOT NULL DEFAULT FALSE);
+        CREATE TABLE "BuildingManagementDepositSettlements" (
+            "Id" uuid PRIMARY KEY, "Type" integer NOT NULL,
+            "Status" integer NOT NULL, "SourceContractId" uuid NULL,
+            "TargetContractId" uuid NULL, "Amount" numeric(18,0) NOT NULL,
+            "CompletedAt" timestamptz NULL);
+        CREATE TABLE "BuildingManagementMonthlyIssuedInvoiceLedger" (
+            "Id" uuid PRIMARY KEY, "ContractId" uuid NOT NULL,
+            "BillingYear" integer NOT NULL, "BillingMonth" integer NOT NULL);
+        CREATE TABLE "BuildingManagementIssuedInvoiceLedger" (
+            "Id" uuid PRIMARY KEY, "ContractId" uuid NOT NULL);
+        CREATE TABLE "BuildingManagementOfficialInvoiceReceivables" (
+            "Id" uuid PRIMARY KEY, "ContractId" uuid NOT NULL,
+            "IssuedInvoiceId" uuid NOT NULL, "Kind" integer NOT NULL,
+            "OriginalAmount" numeric(18,0) NOT NULL);
+        CREATE TABLE "BuildingManagementOfficialInvoiceReceiptReviews" (
+            "Id" uuid PRIMARY KEY, "ReceivablePostingId" uuid NOT NULL,
+            "Accepted" boolean NOT NULL, "Amount" numeric(18,0) NOT NULL);
+        CREATE TABLE "BuildingManagementMonthlyInvoiceAdjustmentDecisions" (
+            "Id" uuid PRIMARY KEY, "ContractId" uuid NOT NULL);
         """;
 
     [Fact]
@@ -151,6 +182,7 @@ public sealed class RoomChangeTenantRosterPostgreSql_Tests
     {
         await ScratchAsync(async (db, tx) =>
         {
+            await Run(db, tx, CompletionDown);
             await Run(db, tx, HandoverDown);
             await Run(db, tx, PolicyReviewDown);
             await Run(db, tx, PolicyDown);
@@ -163,6 +195,7 @@ public sealed class RoomChangeTenantRosterPostgreSql_Tests
             await Run(db, tx, PolicyUp);
             await Run(db, tx, PolicyReviewUp);
             await Run(db, tx, HandoverUp);
+            await Run(db, tx, CompletionUp);
             Assert.Equal(1L, await Scalar(db, tx, """
                 SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal
                  AND tgname='TR_BM_RoomChangeRoster_Guard'
@@ -480,6 +513,130 @@ public sealed class RoomChangeTenantRosterPostgreSql_Tests
         await cmd.ExecuteNonQueryAsync();
     }
 
+    [Fact]
+    public async Task TRFPG15_Terminal_Request_Without_Atomic_Event_Rolls_Back()
+    {
+        await ScratchAsync(async (db, tx) =>
+        {
+            var f = await SeedAsync(db, tx);
+            await Run(db, tx, "SAVEPOINT incomplete_room_change");
+            string? state = null;
+            try
+            {
+                await Run(db, tx, $"""
+                    UPDATE "BuildingManagementRoomChangeRequests"
+                    SET "Status"=4,
+                        "ReviewedByUserId"='{Guid.NewGuid():D}',
+                        "ReviewedAtUtc"='{Created.AddHours(1):O}',
+                        "ReviewNotes"='SIGNED-TRANSFER-COMPLETION-001'
+                    WHERE "Id"='{f.Request.Id:D}'
+                    """);
+                await Run(db, tx,
+                    "SET CONSTRAINTS \"TR_BM_RoomChangeRequest_CompletionGate\" IMMEDIATE");
+            }
+            catch (PostgresException ex) { state = ex.SqlState; }
+            finally
+            {
+                await Run(db, tx, "ROLLBACK TO SAVEPOINT incomplete_room_change");
+                await Run(db, tx, "RELEASE SAVEPOINT incomplete_room_change");
+                await Run(db, tx, "SET CONSTRAINTS ALL DEFERRED");
+            }
+            Assert.Equal("23514", state);
+            Assert.Equal(0L, await Scalar(db, tx, $"""
+                SELECT "Status" FROM "BuildingManagementRoomChangeRequests"
+                 WHERE "Id"='{f.Request.Id:D}'
+                """));
+            Assert.Equal(0L, await Scalar(db, tx,
+                """SELECT count(*) FROM "BuildingManagementRoomChangeCompletions" """));
+        }, IsolationLevel.Serializable);
+    }
+
+    [Fact]
+    public async Task TRFPG16_Atomic_Ledger_Requires_Root_Source_And_Valid_Commit()
+    {
+        await ScratchAsync(async (db, tx) =>
+        {
+            var f = await SeedAsync(db, tx);
+            var roster = RoomChangeTenantRosterSnapshotRecord.Capture(
+                Guid.NewGuid(), f.Request, f.Parties,
+                Guid.NewGuid(), Created.AddSeconds(1));
+            await InsertSnapshot(db, tx, roster);
+            var policy = RoomChangeBusinessPolicyRecord.Propose(
+                Guid.NewGuid(), f.Request, roster,
+                RoomChangeContractTreatment.NewContract,
+                RoomChangePricingTreatment.FullOldMonthNewNextMonth,
+                RoomChangeDepositTreatment.CarryAllWithNoDifference,
+                RoomChangeTenantTreatment.AllCurrentTenants,
+                "SIGNED-CONTRACT-POLICY-REF-001", "SIGNED-PRICING-POLICY-REF-001",
+                "SIGNED-DEPOSIT-POLICY-REF-001", "SIGNED-TENANT-CONSENT-REF-001",
+                Guid.NewGuid(), Created.AddSeconds(2));
+            await InsertPolicy(db, tx, policy);
+            var review = RoomChangeBusinessPolicyReviewRecord.Review(
+                Guid.NewGuid(), policy, f.Request, roster, Guid.NewGuid(),
+                Created.AddSeconds(3), true, "SIGNED-ROOT-REVIEW-001",
+                "Root reviewed exact signed room change plan");
+            await InsertReview(db, tx, review);
+            var meters = await SeedMetersAsync(db, tx, f.Request.SourceRoomId);
+            var handover = RoomChangeHandoverEvidenceRecord.Attest(
+                Guid.NewGuid(), f.Request, meters.E, meters.Er,
+                meters.W, meters.Wr, "SIGNED-INSPECTION-PG-001",
+                "SIGNED-HANDOVER-PG-001",
+                Guid.NewGuid(), Created.AddSeconds(4));
+            await InsertHandover(db, tx, handover);
+            var target = Guid.NewGuid();
+            var carry = Guid.NewGuid();
+            var completion = Guid.NewGuid();
+            var actor = Guid.NewGuid();
+            await Run(db, tx, $"""
+                INSERT INTO "BuildingManagementContracts"
+                 ("Id","RoomId","Status","RenewedFromContractId")
+                VALUES ('{target:D}','{f.Request.TargetRoomId:D}',2,
+                        '{f.Request.SourceContractId:D}');
+                INSERT INTO "BuildingManagementDepositSettlements"
+                 ("Id","Type","Status","SourceContractId",
+                  "TargetContractId","Amount","CompletedAt")
+                VALUES ('{carry:D}',5,2,'{f.Request.SourceContractId:D}',
+                        '{target:D}',3000000,'{Created.AddMinutes(3):O}');
+                """);
+            await Run(db, tx, "SAVEPOINT fake_atomic_commit");
+            string? state = null;
+            try
+            {
+                await Run(db, tx, $"""
+                    INSERT INTO "BuildingManagementRoomChangeCompletions"
+                     ("Id","RequestId","SourceContractId","TargetContractId",
+                      "SourceRoomId","TargetRoomId","BuildingId","PolicyId",
+                      "PolicyReviewId","RosterSnapshotId","HandoverEvidenceId",
+                      "CarryForwardSettlementId","CarriedDepositAmount",
+                      "SourceRoomDisposition","SourceDispositionEvidenceReference",
+                      "CompletionReference","CompletedByUserId","CompletedAtUtc",
+                      "EvidenceSha256")
+                    VALUES ('{completion:D}','{f.Request.Id:D}',
+                     '{f.Request.SourceContractId:D}','{target:D}',
+                     '{f.Request.SourceRoomId:D}','{f.Request.TargetRoomId:D}',
+                     '{f.Request.BuildingId:D}','{policy.Id:D}','{review.Id:D}',
+                     '{roster.Id:D}','{handover.Id:D}','{carry:D}',
+                     3000000,1,'SIGNED-SOURCE-ROOM-CLEAN-001',
+                     'SIGNED-ROOM-CHANGE-COMPLETE-001','{actor:D}',
+                     '{Created.AddDays(1):O}','{new string('a',64)}');
+                    """);
+                await Run(db, tx,
+                    "SET CONSTRAINTS \"TR_BM_RoomChangeCompletion_CommitGate\" IMMEDIATE");
+            }
+            catch (PostgresException ex) { state = ex.SqlState; }
+            finally
+            {
+                await Run(db, tx, "ROLLBACK TO SAVEPOINT fake_atomic_commit");
+                await Run(db, tx, "RELEASE SAVEPOINT fake_atomic_commit");
+                await Run(db, tx, "SET CONSTRAINTS ALL DEFERRED");
+            }
+            Assert.Equal("23514", state);
+            Assert.Equal(0L, await Scalar(db, tx,
+                """SELECT count(*) FROM "BuildingManagementRoomChangeCompletions" """));
+            await Denied(db, tx, CompletionDown, "23514");
+        }, IsolationLevel.Serializable);
+    }
+
     private static async Task InsertReview(
         NpgsqlConnection db, NpgsqlTransaction tx,
         RoomChangeBusinessPolicyReviewRecord r)
@@ -647,6 +804,7 @@ public sealed class RoomChangeTenantRosterPostgreSql_Tests
                 await Run(db, tx, PolicyUp);
                 await Run(db, tx, PolicyReviewUp);
                 await Run(db, tx, HandoverUp);
+                await Run(db, tx, CompletionUp);
                 await test(db, tx);
             }
             finally { await tx.RollbackAsync(); }

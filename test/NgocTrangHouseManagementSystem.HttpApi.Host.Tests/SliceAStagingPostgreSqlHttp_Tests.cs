@@ -9,6 +9,7 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
+using System.Threading;
 using BuildingManagement;
 using BuildingManagement.Buildings;
 using BuildingManagement.EntityFrameworkCore;
@@ -151,6 +152,10 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             builder.Host.UseAutofac();
             builder.Configuration.AddConfiguration(config);
             builder.Services.ReplaceConfiguration(config);
+            // Only this isolated fixture may move the 2H clock to a month-end;
+            // the real adapter always defaults to TimeProvider.System.
+            var transferClock = new MutableUtcTimeProvider();
+            builder.Services.AddSingleton<TimeProvider>(transferClock);
             await builder.AddApplicationAsync<SliceAPostgreSqlHttpModule>();
             app = builder.Build();
             await app.InitializeApplicationAsync();
@@ -6031,6 +6036,17 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             app.UseAuthorization();
             app.UseConfiguredEndpoints();
         }
+    }
+
+    private sealed class MutableUtcTimeProvider : TimeProvider
+    {
+        private long _ticks = DateTimeOffset.UtcNow.UtcTicks;
+
+        public override DateTimeOffset GetUtcNow() =>
+            new(Interlocked.Read(ref _ticks), TimeSpan.Zero);
+
+        public void SetUtc(DateTimeOffset value) =>
+            Interlocked.Exchange(ref _ticks, value.UtcTicks);
     }
 
     private sealed class PgHttpAuthenticationHandler

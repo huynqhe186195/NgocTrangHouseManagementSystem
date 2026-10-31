@@ -4753,7 +4753,7 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     "SourcePhysicalHandoverNotVerified");
                 Assert.Contains(doc.RootElement.GetProperty("blockers")
                     .EnumerateArray(), x => x.GetString() ==
-                    "SourceFinalInvoiceNotOfficiallyPosted");
+                    "SourceTransferMonthNotOfficiallyPosted");
             }
 
             // The transfer writer exists but must refuse an unearned

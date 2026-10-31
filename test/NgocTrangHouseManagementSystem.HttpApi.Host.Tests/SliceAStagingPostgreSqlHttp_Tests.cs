@@ -4707,16 +4707,16 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             });
             using (var body = new StringContent(signedRootReview, Encoding.UTF8,
                 "application/json"))
-            using (var selfApprove = await clientB.PostAsync(
+            using (var oi07SelfApprove = await clientB.PostAsync(
                 ChangeAt(roomChangeRequest) + "/business-policy-review", body))
-                Assert.Equal(HttpStatusCode.Forbidden, selfApprove.StatusCode);
+                Assert.Equal(HttpStatusCode.Forbidden, oi07SelfApprove.StatusCode);
             using (var body = new StringContent(signedRootReview, Encoding.UTF8,
                 "application/json"))
-            using (var rootApproval = await clientRoot.PostAsync(
+            using (var oi07RootApproval = await clientRoot.PostAsync(
                 ChangeAt(roomChangeRequest) + "/business-policy-review", body))
             {
-                var raw = await rootApproval.Content.ReadAsStringAsync();
-                Assert.Equal(HttpStatusCode.OK, rootApproval.StatusCode);
+                var raw = await oi07RootApproval.Content.ReadAsStringAsync();
+                Assert.Equal(HttpStatusCode.OK, oi07RootApproval.StatusCode);
                 using var doc = JsonDocument.Parse(raw);
                 Assert.True(doc.RootElement.GetProperty("accepted").GetBoolean());
                 Assert.False(doc.RootElement.GetProperty(
@@ -4726,15 +4726,15 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             }
             using (var body = new StringContent(signedRootReview, Encoding.UTF8,
                 "application/json"))
-            using (var replay = await clientRoot.PostAsync(
+            using (var oi07Replay = await clientRoot.PostAsync(
                 ChangeAt(roomChangeRequest) + "/business-policy-review", body))
-                Assert.False(replay.IsSuccessStatusCode);
-            using (var reviewRead = await clientB.GetAsync(
+                Assert.False(oi07Replay.IsSuccessStatusCode);
+            using (var oi07ReviewRead = await clientB.GetAsync(
                 ChangeAt(roomChangeRequest) + "/business-policy-review"))
             {
-                Assert.Equal(HttpStatusCode.OK, reviewRead.StatusCode);
+                Assert.Equal(HttpStatusCode.OK, oi07ReviewRead.StatusCode);
                 using var doc = JsonDocument.Parse(
-                    await reviewRead.Content.ReadAsStringAsync());
+                    await oi07ReviewRead.Content.ReadAsStringAsync());
                 Assert.True(doc.RootElement.GetProperty("accepted").GetBoolean());
             }
 

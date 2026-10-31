@@ -22,7 +22,8 @@ public sealed class Phase2HRoomChangeSecurityBoundary_Tests
 
         var methods = controller.GetMethods(BindingFlags.Public |
             BindingFlags.Instance | BindingFlags.DeclaredOnly);
-        Assert.Equal(16, methods.Length);
+        Assert.Equal(17, methods.Length);
+        Assert.Contains(methods, m => m.Name == "CompleteRoomChangeAsync");
         Assert.Contains(methods, m => m.Name == "GetExecutionReadinessAsync");
         Assert.Contains(methods, m => m.Name == "AttestHandoverAsync");
         Assert.Contains(methods, m => m.Name == "GetHandoverAsync");
@@ -35,7 +36,8 @@ public sealed class Phase2HRoomChangeSecurityBoundary_Tests
         Assert.Contains(methods, m => m.Name == "GetLiveReadinessAsync");
         Assert.DoesNotContain(methods, m =>
             m.Name.Contains("Approve", StringComparison.OrdinalIgnoreCase) ||
-            m.Name.Contains("Complete", StringComparison.OrdinalIgnoreCase) ||
+            (m.Name.Contains("Complete", StringComparison.OrdinalIgnoreCase) &&
+             m.Name != "CompleteRoomChangeAsync") ||
             m.Name.Contains("Transfer", StringComparison.OrdinalIgnoreCase) ||
             m.Name.Contains("Refund", StringComparison.OrdinalIgnoreCase) ||
             m.Name.Contains("CarryForward", StringComparison.OrdinalIgnoreCase));
@@ -58,6 +60,7 @@ public sealed class Phase2HRoomChangeSecurityBoundary_Tests
         Assert.DoesNotContain(methods, x =>
             x.Contains("Approve", StringComparison.OrdinalIgnoreCase) ||
             x.Contains("Transfer", StringComparison.OrdinalIgnoreCase) ||
-            x.Contains("Complete", StringComparison.OrdinalIgnoreCase));
+            (x.Contains("Complete", StringComparison.OrdinalIgnoreCase) &&
+             x != "CompleteRoomChangeAsync"));
     }
 }

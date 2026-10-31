@@ -4756,6 +4756,19 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     "SourceFinalInvoiceNotOfficiallyPosted");
             }
 
+            // The transfer writer exists but must refuse an unearned
+            // future-dated move without physical/financial evidence.
+            var unauthorizedComplete = JsonSerializer.Serialize(new {
+                targetMonthlyRent = 2800000m, sourceRoomDisposition = 1,
+                dispositionEvidenceReference = "SIGNED-CLEAN-INSPECTION-001",
+                completionReference = "ROOM-CHANGE-COMPLETION-001"
+            });
+            using (var body = new StringContent(unauthorizedComplete,
+                Encoding.UTF8, "application/json"))
+            using (var prematureTransfer = await clientRoot.PostAsync(
+                ChangeAt(roomChangeRequest) + "/complete-room-change", body))
+                Assert.False(prematureTransfer.IsSuccessStatusCode);
+
             // Do not accept an unearned physical handover: request is
             // future-dated and no room-source final E/W readings exist.
             var handoverInput = JsonSerializer.Serialize(new {

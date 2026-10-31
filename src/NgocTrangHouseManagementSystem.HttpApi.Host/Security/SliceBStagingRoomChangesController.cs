@@ -12,8 +12,8 @@ using Volo.Abp.Uow;
 namespace NgocTrangHouseManagementSystem.Security;
 
 /// <summary>
-/// Explicit request/review-only API. No Approve, Complete, Transfer,
-/// Refund, CarryForward or ChangeRoom route is present.
+/// Isolated staging API: one explicitly approved and fully attested
+/// month-end new-contract transfer, every alternative remains denied.
 /// </summary>
 [ApiController]
 [Authorize]
@@ -152,6 +152,16 @@ public sealed class SliceBStagingRoomChangesController : ControllerBase
     {
         RequireIsolatedStaging();
         return _requests!.GetExecutionReadinessAsync(contractId, requestId);
+    }
+
+    [HttpPost("{requestId:guid}/complete-room-change")]
+    [UnitOfWork(true, IsolationLevel.Serializable)]
+    public Task<SliceBRoomChangeCompletionRead> CompleteRoomChangeAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid requestId,
+        [FromBody] SliceBRoomChangeCompletionInput input)
+    {
+        RequireIsolatedStaging();
+        return _requests!.CompleteRoomChangeAsync(contractId, requestId, input);
     }
 
     [HttpPost("{requestId:guid}/policy-hold")]

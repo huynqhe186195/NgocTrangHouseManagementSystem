@@ -4738,6 +4738,21 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 Assert.True(doc.RootElement.GetProperty("accepted").GetBoolean());
             }
 
+            // Do not accept an unearned physical handover: request is
+            // future-dated and no room-source final E/W readings exist.
+            var handoverInput = JsonSerializer.Serialize(new {
+                inspectionEvidenceReference = "SIGNED-INSPECTION-2026-001",
+                signedHandoverReference = "SIGNED-HANDOVER-2026-001"
+            });
+            using (var body = new StringContent(handoverInput, Encoding.UTF8,
+                "application/json"))
+            using (var deniedHandover = await clientB.PostAsync(
+                ChangeAt(roomChangeRequest) + "/physical-handover", body))
+                Assert.Equal(HttpStatusCode.Forbidden, deniedHandover.StatusCode);
+            using (var missingHandover = await clientB.GetAsync(
+                ChangeAt(roomChangeRequest) + "/physical-handover"))
+                Assert.Equal(HttpStatusCode.Forbidden, missingHandover.StatusCode);
+
             using (var duplicateRoster = await clientB.PostAsync(
                 ChangeAt(roomChangeRequest) + "/tenant-roster", null))
                 Assert.False(duplicateRoster.IsSuccessStatusCode);

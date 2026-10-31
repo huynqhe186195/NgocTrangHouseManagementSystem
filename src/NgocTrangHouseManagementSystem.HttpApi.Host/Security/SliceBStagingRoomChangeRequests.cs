@@ -10,6 +10,7 @@ using BuildingManagement.RoomChanges;
 using BuildingManagement.RoomReservations;
 using BuildingManagement.Rooms;
 using BuildingManagement.Security;
+using BuildingManagement.Utilities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Volo.Abp.Authorization;
@@ -427,6 +428,152 @@ public sealed class SliceBStagingRoomChangeRequests
             review.SignedReviewReference, review.Reason,
             IsTransferExecuted: false);
 
+    /// <summary>
+    /// Physical evidence is materialized from CURRENT database readings,
+    /// never from client values. A document reference is operator attestation,
+    /// not an external cryptographic signature verification.
+    /// </summary>
+    public Task<SliceBRoomChangeHandoverRead> AttestHandoverAsync(
+        Guid contractId, Guid requestId, SliceBRoomChangeHandoverInput input)
+        => ExecuteScopedAsync(contractId, async (db, actor, building, sourceRoom) =>
+        {
+            if (input is null) throw Denied();
+            var request = await LockRequestAsync(
+                db, requestId, contractId, sourceRoom, building);
+            var today = DateOnly.FromDateTime(
+                TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow,
+                    TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh")));
+            if (request.RequestedDate > today ||
+                await db.RoomChangeHandoverEvidence.AsNoTracking()
+                    .AnyAsync(x => x.RequestId == requestId))
+                throw Denied();
+            var review = await db.RoomChangePolicyReviews.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.RequestId == requestId && x.Accepted)
+                ?? throw Denied();
+            var policy = await db.RoomChangeBusinessPolicies.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.Id == review.PolicyId &&
+                    x.RequestId == requestId &&
+                    x.SourceContractId == contractId &&
+                    x.BuildingId == building) ?? throw Denied();
+            var roster = await db.RoomChangeRosterSnapshots.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.Id == policy.RosterSnapshotId &&
+                    x.RoomChangeRequestId == requestId) ?? throw Denied();
+            await LockCurrentRosterAsync(db, contractId);
+            var current = await ReadCurrentRosterAsync(db, contractId);
+            try
+            {
+                review.Verify(policy, request, roster);
+                if (!roster.MatchesCurrentRoster(
+                    requestId, contractId, sourceRoom, building, current))
+                    throw Denied();
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or
+                System.IO.InvalidDataException or ArgumentException)
+            { throw Denied(); }
+
+            var original = await LoadHandoverMetersAsync(db, sourceRoom,
+                request.RequestedDate);
+            RoomChangeHandoverEvidenceRecord signed;
+            try
+            {
+                signed = RoomChangeHandoverEvidenceRecord.Attest(
+                    Guid.NewGuid(), request, original.E, original.Er,
+                    original.W, original.Wr,
+                    input.InspectionEvidenceReference,
+                    input.SignedHandoverReference, actor, DateTime.UtcNow);
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or
+                ArgumentException) { throw Denied(); }
+            db.RoomChangeHandoverEvidence.Add(signed);
+            return AsHandoverRead(signed);
+        });
+
+    public Task<SliceBRoomChangeHandoverRead> GetHandoverAsync(
+        Guid contractId, Guid requestId)
+        => ExecuteScopedAsync(contractId, async (db, _, building, sourceRoom) =>
+        {
+            var request = await LockRequestAsync(
+                db, requestId, contractId, sourceRoom, building);
+            var stored = await db.RoomChangeHandoverEvidence.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.RequestId == request.Id &&
+                    x.SourceContractId == contractId &&
+                    x.SourceRoomId == sourceRoom && x.BuildingId == building)
+                ?? throw Denied();
+            var meters = await LoadHandoverMetersAsync(
+                db, sourceRoom, request.RequestedDate);
+            try { stored.Verify(request, meters.E, meters.Er, meters.W, meters.Wr); }
+            catch (Exception ex) when (ex is System.IO.InvalidDataException or
+                InvalidOperationException or ArgumentException) { throw Denied(); }
+            return AsHandoverRead(stored);
+        }, permitEndedContract: true);
+
+    private static async Task<(UtilityMeter E, MeterReading Er,
+        UtilityMeter W, MeterReading Wr)> LoadHandoverMetersAsync(
+        BuildingManagementDbContext db, Guid room, DateOnly date)
+    {
+        // Lock all potential originals in stable UUID order. A concurrent
+        // meter replacement or reading edit must serialize through the UoW.
+        await using (var meterLock = Command(db, """
+            SELECT "Id" FROM "BuildingManagementUtilityMeters"
+             WHERE "RoomId"=@room AND "IsDeleted"=FALSE
+             ORDER BY "Id" FOR SHARE
+            """))
+        {
+            Add(meterLock, "room", room);
+            await using var reader = await meterLock.ExecuteReaderAsync();
+            while (await reader.ReadAsync()) { }
+        }
+        var meters = await db.UtilityMeters.AsNoTracking()
+            .Where(x => x.RoomId == room && !x.IsDeleted &&
+                x.InstalledDate.Date <= date.ToDateTime(TimeOnly.MinValue))
+            .ToArrayAsync();
+        // Require exactly one physical reading per utility *on that date*.
+        // Missing/duplicate historical sources fail closed.
+        if (meters.Count(x => x.UtilityType == UtilityType.Electricity) != 1 ||
+            meters.Count(x => x.UtilityType == UtilityType.Water) != 1)
+            throw Denied();
+
+        var e = meters.Single(x => x.UtilityType == UtilityType.Electricity);
+        var w = meters.Single(x => x.UtilityType == UtilityType.Water);
+        var ids = new[] { e.Id, w.Id }.OrderBy(x => x).ToArray();
+        await using (var readingLock = Command(db, """
+            SELECT "Id" FROM "BuildingManagementMeterReadings"
+             WHERE "UtilityMeterId" IN (@e,@w)
+               AND "ReadingDate"=@date AND "IsDeleted"=FALSE
+             ORDER BY "Id" FOR SHARE
+            """))
+        {
+            Add(readingLock, "e", e.Id);
+            Add(readingLock, "w", w.Id);
+            var dateParam = readingLock.CreateParameter();
+            dateParam.ParameterName = "date";
+            dateParam.Value = date.ToDateTime(TimeOnly.MinValue);
+            readingLock.Parameters.Add(dateParam);
+            await using var reader = await readingLock.ExecuteReaderAsync();
+            while (await reader.ReadAsync()) { }
+        }
+        var readings = await db.MeterReadings.AsNoTracking()
+            .Where(x => ids.Contains(x.UtilityMeterId) && !x.IsDeleted &&
+                x.ReadingDate.Date == date.ToDateTime(TimeOnly.MinValue))
+            .ToArrayAsync();
+        if (readings.Count(x => x.UtilityMeterId == e.Id) != 1 ||
+            readings.Count(x => x.UtilityMeterId == w.Id) != 1)
+            throw Denied();
+        return (e, readings.Single(x => x.UtilityMeterId == e.Id),
+            w, readings.Single(x => x.UtilityMeterId == w.Id));
+    }
+
+    private static SliceBRoomChangeHandoverRead AsHandoverRead(
+        RoomChangeHandoverEvidenceRecord record)
+        => new(record.Id, record.RequestId, record.SourceContractId,
+            record.SourceRoomId, record.HandoverDate,
+            record.ElectricityMeterId, record.ElectricityReadingId,
+            record.ElectricityFinalReading, record.WaterMeterId,
+            record.WaterReadingId, record.WaterFinalReading,
+            record.InspectionEvidenceReference, record.SignedHandoverReference,
+            record.AttestedByUserId, record.AttestedAtUtc,
+            record.EvidenceSha256, false, false);
+
     public Task<SliceBRoomChangeRequestRead> HoldForPolicyAsync(
         Guid contractId, Guid requestId, SliceBRoomChangeReviewInput input)
         => ReviewAsync(contractId, requestId, input,
@@ -660,3 +807,16 @@ public sealed record SliceBRoomChangeBusinessPolicyReviewRead(
     string ProposalSha256, Guid ReviewedByUserId, DateTime ReviewedAtUtc,
     bool Accepted, string SignedReviewReference, string Reason,
     bool IsTransferExecuted);
+
+/// <summary>Only external document references; all meter values are server-read.</summary>
+public sealed record SliceBRoomChangeHandoverInput(
+    string? InspectionEvidenceReference, string? SignedHandoverReference);
+
+public sealed record SliceBRoomChangeHandoverRead(
+    Guid Id, Guid RequestId, Guid SourceContractId, Guid SourceRoomId,
+    DateOnly HandoverDate,
+    Guid ElectricityMeterId, Guid ElectricityReadingId, decimal ElectricityFinalReading,
+    Guid WaterMeterId, Guid WaterReadingId, decimal WaterFinalReading,
+    string InspectionEvidenceReference, string SignedHandoverReference,
+    Guid AttestedByUserId, DateTime AttestedAtUtc, string EvidenceSha256,
+    bool AreInvoiceAndDepositReconciled, bool IsTransferExecuted);

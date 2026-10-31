@@ -22,7 +22,9 @@ public sealed class Phase2HRoomChangeSecurityBoundary_Tests
 
         var methods = controller.GetMethods(BindingFlags.Public |
             BindingFlags.Instance | BindingFlags.DeclaredOnly);
-        Assert.Equal(13, methods.Length);
+        Assert.Equal(15, methods.Length);
+        Assert.Contains(methods, m => m.Name == "AttestHandoverAsync");
+        Assert.Contains(methods, m => m.Name == "GetHandoverAsync");
         Assert.Contains(methods, m => m.Name == "ReviewBusinessPolicyAsync");
         Assert.Contains(methods, m => m.Name == "GetBusinessPolicyReviewAsync");
         Assert.Contains(methods, m => m.Name == "ProposeBusinessPolicyAsync");

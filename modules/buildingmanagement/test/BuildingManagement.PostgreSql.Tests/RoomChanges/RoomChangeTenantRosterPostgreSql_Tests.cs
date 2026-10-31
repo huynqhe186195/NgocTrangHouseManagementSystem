@@ -59,6 +59,8 @@ public sealed class RoomChangeTenantRosterPostgreSql_Tests
             "StartDate" date NOT NULL DEFAULT '2026-09-01',
             "EndReason" integer NULL,
             "ActualEndedAt" timestamptz NULL,
+            "ContractNumber" varchar(64) NOT NULL DEFAULT 'SCRATCH_CONTRACT',
+            "EndDate" date NULL, "Notes" varchar(500) NULL,
             "MonthlyRent" numeric(18,0) NOT NULL DEFAULT 3000000,
             "DepositAmount" numeric(18,0) NOT NULL DEFAULT 3000000,
             "RenewedFromContractId" uuid NULL);
@@ -440,16 +442,20 @@ public sealed class RoomChangeTenantRosterPostgreSql_Tests
 
     private static async Task<(UtilityMeter E, MeterReading Er,
         UtilityMeter W, MeterReading Wr)> SeedMetersAsync(
-        NpgsqlConnection db, NpgsqlTransaction tx, Guid source)
+        NpgsqlConnection db, NpgsqlTransaction tx, Guid source,
+        DateOnly? handoverDate = null)
     {
+        var readingDate = handoverDate ?? new DateOnly(2026, 12, 31);
         var e = new UtilityMeter(Guid.NewGuid(), source, UtilityType.Electricity,
             "E-METER-SIGNED-001", 0m, new DateTime(2026, 10, 1));
         var w = new UtilityMeter(Guid.NewGuid(), source, UtilityType.Water,
             "W-METER-SIGNED-001", 0m, new DateTime(2026, 10, 1));
-        var er = new MeterReading(Guid.NewGuid(), e.Id, 2026, 12,
-            10m, 50m, new DateTime(2026, 12, 31));
-        var wr = new MeterReading(Guid.NewGuid(), w.Id, 2026, 12,
-            12m, 33m, new DateTime(2026, 12, 31));
+        var er = new MeterReading(Guid.NewGuid(), e.Id,
+            readingDate.Year, readingDate.Month,
+            10m, 50m, readingDate.ToDateTime(TimeOnly.MinValue));
+        var wr = new MeterReading(Guid.NewGuid(), w.Id,
+            readingDate.Year, readingDate.Month,
+            12m, 33m, readingDate.ToDateTime(TimeOnly.MinValue));
         await Run(db, tx, $"""
             INSERT INTO "BuildingManagementUtilityMeters"
              ("Id","RoomId","UtilityType","InstalledDate")
@@ -458,8 +464,10 @@ public sealed class RoomChangeTenantRosterPostgreSql_Tests
             INSERT INTO "BuildingManagementMeterReadings"
              ("Id","UtilityMeterId","BillingYear","BillingMonth",
               "PreviousReading","CurrentReading","ReadingDate")
-             VALUES ('{er.Id:D}','{e.Id:D}',2026,12,10,50,'2026-12-31'),
-                    ('{wr.Id:D}','{w.Id:D}',2026,12,12,33,'2026-12-31');
+             VALUES ('{er.Id:D}','{e.Id:D}',{readingDate.Year},{readingDate.Month},
+                    10,50,'{readingDate:yyyy-MM-dd}'),
+                    ('{wr.Id:D}','{w.Id:D}',{readingDate.Year},{readingDate.Month},
+                    12,33,'{readingDate:yyyy-MM-dd}');
             """);
         return (e, er, w, wr);
     }
@@ -636,6 +644,164 @@ public sealed class RoomChangeTenantRosterPostgreSql_Tests
         }, IsolationLevel.Serializable);
     }
 
+    [Fact]
+    public async Task TRFPG17_Atomic_RoomChange_Commits_One_Carry_And_Freeze_Source()
+    {
+        await ScratchAsync(async (db, tx) =>
+        {
+            var changed = new DateOnly(2026, 9, 30);
+            var submittedAt = new DateTime(
+                2026, 9, 1, 10, 0, 0, DateTimeKind.Utc);
+            var committedAt = new DateTime(
+                2026, 10, 1, 10, 0, 0, DateTimeKind.Utc);
+            var f = await SeedAsync(db, tx, changed, submittedAt);
+            var roster = RoomChangeTenantRosterSnapshotRecord.Capture(
+                Guid.NewGuid(), f.Request, f.Parties,
+                Guid.NewGuid(), submittedAt.AddMinutes(1));
+            await InsertSnapshot(db, tx, roster);
+            var policy = RoomChangeBusinessPolicyRecord.Propose(
+                Guid.NewGuid(), f.Request, roster,
+                RoomChangeContractTreatment.NewContract,
+                RoomChangePricingTreatment.FullOldMonthNewNextMonth,
+                RoomChangeDepositTreatment.CarryAllWithNoDifference,
+                RoomChangeTenantTreatment.AllCurrentTenants,
+                "SIGNED-CONTRACT-POLICY-REF-001",
+                "SIGNED-PRICING-POLICY-REF-001",
+                "SIGNED-DEPOSIT-POLICY-REF-001",
+                "SIGNED-TENANT-CONSENT-REF-001",
+                Guid.NewGuid(), submittedAt.AddMinutes(2));
+            await InsertPolicy(db, tx, policy);
+            var review = RoomChangeBusinessPolicyReviewRecord.Review(
+                Guid.NewGuid(), policy, f.Request, roster, Guid.NewGuid(),
+                submittedAt.AddMinutes(3), true,
+                "SIGNED-ROOT-REVIEW-2026-001",
+                "No deposit delta and full old month policy accepted");
+            await InsertReview(db, tx, review);
+            var meters = await SeedMetersAsync(db, tx,
+                f.Request.SourceRoomId, changed);
+            var handover = RoomChangeHandoverEvidenceRecord.Attest(
+                Guid.NewGuid(), f.Request, meters.E, meters.Er,
+                meters.W, meters.Wr,
+                "SIGNED-INSPECTION-SOURCE-2026-001",
+                "SIGNED-HANDOVER-SOURCE-2026-001",
+                Guid.NewGuid(), committedAt.AddMinutes(-10));
+            await InsertHandover(db, tx, handover);
+            var target = Guid.NewGuid();
+            var carry = Guid.NewGuid();
+            var incoming = Guid.NewGuid();
+            var completion = Guid.NewGuid();
+            var payer = Guid.NewGuid();
+            var monthly = Guid.NewGuid();
+            var posting = Guid.NewGuid();
+            var receiptReview = Guid.NewGuid();
+            var signedCompletion = "SIGNED-ROOM-CHANGE-COMPLETION-2026-001";
+            await Run(db, tx, $"""
+                UPDATE "BuildingManagementContracts"
+                   SET "Status"=3, "EndReason"=4,
+                       "ActualEndedAt"='{committedAt:O}'
+                 WHERE "Id"='{f.Request.SourceContractId:D}';
+                INSERT INTO "BuildingManagementContracts"
+                 ("Id","RoomId","Status","StartDate",
+                  "RenewedFromContractId","ContractNumber")
+                VALUES ('{target:D}','{f.Request.TargetRoomId:D}',2,'2026-10-01',
+                        '{f.Request.SourceContractId:D}','TRANSFER-TEST-001');
+                INSERT INTO "BuildingManagementContractTenants"
+                 ("Id","ContractId","TenantId","Role")
+                VALUES ('{Guid.NewGuid():D}','{target:D}','{f.Parties[0].TenantId:D}',1),
+                       ('{Guid.NewGuid():D}','{target:D}','{f.Parties[1].TenantId:D}',2);
+                INSERT INTO "BuildingManagementDepositSettlements"
+                 ("Id","Type","Status","TargetContractId","Amount","CompletedAt")
+                VALUES ('{incoming:D}',3,2,'{f.Request.SourceContractId:D}',3000000,
+                        '{submittedAt.AddDays(1):O}');
+                INSERT INTO "BuildingManagementDepositSettlements"
+                 ("Id","Type","Status","SourceContractId","TargetContractId",
+                  "Amount","CompletedAt")
+                VALUES ('{carry:D}',5,2,'{f.Request.SourceContractId:D}',
+                        '{target:D}',3000000,'{committedAt:O}');
+                INSERT INTO "BuildingManagementMonthlyIssuedInvoiceLedger"
+                 ("Id","ContractId","BillingYear","BillingMonth")
+                VALUES ('{monthly:D}','{f.Request.SourceContractId:D}',2026,9);
+                INSERT INTO "BuildingManagementOfficialInvoiceReceivables"
+                 ("Id","ContractId","IssuedInvoiceId","Kind","OriginalAmount")
+                VALUES ('{posting:D}','{f.Request.SourceContractId:D}',
+                        '{monthly:D}',1,3000000);
+                INSERT INTO "BuildingManagementOfficialInvoiceReceiptReviews"
+                 ("Id","ReceivablePostingId","Accepted","Amount")
+                VALUES ('{receiptReview:D}','{posting:D}',TRUE,3000000);
+                UPDATE "BuildingManagementRooms" SET "Status"=1
+                 WHERE "Id"='{f.Request.SourceRoomId:D}';
+                UPDATE "BuildingManagementRooms" SET "Status"=2
+                 WHERE "Id"='{f.Request.TargetRoomId:D}';
+                UPDATE "BuildingManagementRoomChangeRequests"
+                   SET "Status"=4,"ReviewedByUserId"='{payer:D}',
+                       "ReviewedAtUtc"='{committedAt:O}',
+                       "ReviewNotes"='{signedCompletion}'
+                 WHERE "Id"='{f.Request.Id:D}';
+                INSERT INTO "BuildingManagementRoomChangeCompletions"
+                 ("Id","RequestId","SourceContractId","TargetContractId",
+                  "SourceRoomId","TargetRoomId","BuildingId","PolicyId",
+                  "PolicyReviewId","RosterSnapshotId","HandoverEvidenceId",
+                  "CarryForwardSettlementId","CarriedDepositAmount",
+                  "SourceRoomDisposition","SourceDispositionEvidenceReference",
+                  "CompletionReference","CompletedByUserId","CompletedAtUtc",
+                  "EvidenceSha256")
+                VALUES ('{completion:D}','{f.Request.Id:D}',
+                        '{f.Request.SourceContractId:D}','{target:D}',
+                        '{f.Request.SourceRoomId:D}','{f.Request.TargetRoomId:D}',
+                        '{f.Request.BuildingId:D}','{policy.Id:D}','{review.Id:D}',
+                        '{roster.Id:D}','{handover.Id:D}','{carry:D}',
+                        3000000,1,'SIGNED-CLEAN-ROOM-EVIDENCE-001',
+                        '{signedCompletion}','{payer:D}','{committedAt:O}',
+                        '{new string('a',64)}');
+                SET CONSTRAINTS ALL IMMEDIATE;
+                """);
+            Assert.Equal(1L, await Scalar(db, tx,
+                """SELECT count(*) FROM "BuildingManagementRoomChangeCompletions" """));
+            Assert.Equal(4L, await Scalar(db, tx, $"""
+                SELECT "Status" FROM "BuildingManagementRoomChangeRequests"
+                 WHERE "Id"='{f.Request.Id:D}'
+                """));
+            Assert.Equal(2L, await Scalar(db, tx, $"""
+                SELECT "Status" FROM "BuildingManagementRooms"
+                 WHERE "Id"='{f.Request.TargetRoomId:D}'
+                """));
+            await Denied(db, tx, $"""
+                INSERT INTO "BuildingManagementDepositSettlements"
+                 ("Id","Type","Status","SourceContractId","Amount")
+                VALUES ('{Guid.NewGuid():D}',1,1,
+                        '{f.Request.SourceContractId:D}',1)
+                """, "23514");
+            await Denied(db, tx, $"""
+                UPDATE "BuildingManagementContracts"
+                   SET "MonthlyRent"=1 WHERE "Id"='{f.Request.SourceContractId:D}'
+                """, "23514");
+            await Denied(db, tx, $"""
+                DELETE FROM "BuildingManagementContractTenants"
+                 WHERE "ContractId"='{f.Request.SourceContractId:D}'
+                """, "23514");
+            await Denied(db, tx, CompletionDown, "23514");
+            await Denied(db, tx, $"""
+                INSERT INTO "BuildingManagementRoomChangeCompletions"
+                 ("Id","RequestId","SourceContractId","TargetContractId",
+                  "SourceRoomId","TargetRoomId","BuildingId","PolicyId",
+                  "PolicyReviewId","RosterSnapshotId","HandoverEvidenceId",
+                  "CarryForwardSettlementId","CarriedDepositAmount",
+                  "SourceRoomDisposition","SourceDispositionEvidenceReference",
+                  "CompletionReference","CompletedByUserId","CompletedAtUtc","EvidenceSha256")
+                SELECT '{Guid.NewGuid():D}',"RequestId","SourceContractId",
+                       "TargetContractId","SourceRoomId","TargetRoomId",
+                       "BuildingId","PolicyId","PolicyReviewId",
+                       "RosterSnapshotId","HandoverEvidenceId",
+                       "CarryForwardSettlementId","CarriedDepositAmount",
+                       "SourceRoomDisposition","SourceDispositionEvidenceReference",
+                       "CompletionReference","CompletedByUserId",
+                       "CompletedAtUtc","EvidenceSha256"
+                  FROM "BuildingManagementRoomChangeCompletions"
+                 WHERE "Id"='{completion:D}'
+                """, "23505");
+        }, IsolationLevel.Serializable);
+    }
+
     private static async Task InsertReview(
         NpgsqlConnection db, NpgsqlTransaction tx,
         RoomChangeBusinessPolicyReviewRecord r)
@@ -699,16 +865,19 @@ public sealed class RoomChangeTenantRosterPostgreSql_Tests
 
     private static async Task<(RoomChangeRequest Request,
         RoomChangeRosterMember[] Parties)> SeedAsync(
-        NpgsqlConnection db, NpgsqlTransaction tx)
+        NpgsqlConnection db, NpgsqlTransaction tx,
+        DateOnly? transferDate = null, DateTime? creationTime = null)
     {
+        var changeDate = transferDate ?? new DateOnly(2026, 12, 31);
+        var time = creationTime ?? Created;
         var building = Guid.NewGuid();
         var floor = Guid.NewGuid();
         var source = Guid.NewGuid();
         var target = Guid.NewGuid();
         var contract = Guid.NewGuid();
         var request = RoomChangeRequest.Submit(Guid.NewGuid(), contract,
-            source, target, building, new DateOnly(2026, 12, 31),
-            "Documented room transfer request", Guid.NewGuid(), Created,
+            source, target, building, changeDate,
+            "Documented room transfer request", Guid.NewGuid(), time,
             ContractStatus.Active, RoomStatus.Occupied, RoomStatus.Available);
         var parties = new[] {
             new RoomChangeRosterMember(Guid.NewGuid(), ContractTenantRole.PrimaryTenant),
@@ -732,9 +901,9 @@ public sealed class RoomChangeTenantRosterPostgreSql_Tests
                "BuildingId","RequestedDate","Reason","Status",
                "RequestedByUserId","CreatedAtUtc")
               VALUES('{request.Id:D}','{contract:D}','{source:D}',
-                     '{target:D}','{building:D}','2026-12-31',
+                     '{target:D}','{building:D}','{changeDate:yyyy-MM-dd}',
                      'Documented room transfer request',0,
-                     '{request.RequestedByUserId:D}','2026-11-01T10:00:00Z')
+                     '{request.RequestedByUserId:D}','{time:O}')
             """);
         return (request, parties);
     }

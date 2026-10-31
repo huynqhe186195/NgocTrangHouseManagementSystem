@@ -348,30 +348,30 @@ public sealed class Phase2HAtomicRoomChangeCompletion : Migration
                 -- and has a one-and-only-one reservation/contract source.
                 IF EXISTS (
                     SELECT 1 FROM "BuildingManagementDepositSettlements" s
-                    LEFT JOIN "BuildingManagementPayments" p ON p."Id"=s."PaymentId"
+                    LEFT JOIN "BuildingManagementPayments" pay ON pay."Id"=s."PaymentId"
                      WHERE s."TargetContractId"=source_contract."Id"
                        AND s."Type"=3 AND
                          (s."Status"<>2 OR s."PaymentId" IS NULL
-                          OR p."Id" IS NULL OR p."IsDeleted"=TRUE
-                          OR p."Status"<>2 OR p."PaidAt" IS NULL
-                          OR p."Amount"<>s."Amount"
-                          OR p."DepositDisposition" NOT IN (1,2)
+                          OR pay."Id" IS NULL OR pay."IsDeleted"=TRUE
+                          OR pay."Status"<>2 OR pay."PaidAt" IS NULL
+                          OR pay."Amount"<>s."Amount"
+                          OR pay."DepositDisposition" NOT IN (1,2)
                           OR NOT (
-                           (p."Purpose"=2 AND p."ContractId"=source_contract."Id"
+                           (pay."Purpose"=2 AND pay."ContractId"=source_contract."Id"
                             AND s."SourceRoomReservationId" IS NULL)
                            OR
-                           (p."Purpose"=1 AND p."RoomReservationId" IS NOT NULL
-                            AND p."RoomReservationId"=s."SourceRoomReservationId")
+                           (pay."Purpose"=1 AND pay."RoomReservationId" IS NOT NULL
+                            AND pay."RoomReservationId"=s."SourceRoomReservationId")
                           )
                           OR (SELECT count(*) FROM "BuildingManagementDepositSettlements" d
-                               WHERE d."PaymentId"=p."Id")<>1)
+                               WHERE d."PaymentId"=pay."Id")<>1)
                 ) OR EXISTS (
-                    SELECT 1 FROM "BuildingManagementPayments" p
-                     WHERE p."ContractId"=source_contract."Id"
-                       AND p."Purpose"=2 AND p."Status"=2
+                    SELECT 1 FROM "BuildingManagementPayments" pay
+                     WHERE pay."ContractId"=source_contract."Id"
+                       AND pay."Purpose"=2 AND pay."Status"=2
                        AND NOT EXISTS (
                            SELECT 1 FROM "BuildingManagementDepositSettlements" s
-                            WHERE s."PaymentId"=p."Id"
+                            WHERE s."PaymentId"=pay."Id"
                               AND s."TargetContractId"=source_contract."Id"
                               AND s."Type"=3 AND s."Status"=2)
                 ) THEN

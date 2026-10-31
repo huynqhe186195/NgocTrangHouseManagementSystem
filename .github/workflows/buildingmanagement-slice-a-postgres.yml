@@ -7,6 +7,10 @@ on:
     paths:
       - ".github/workflows/buildingmanagement-slice-a-postgres.yml"
       - "modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/**"
+      - "modules/buildingmanagement/src/BuildingManagement.Domain/MoveOuts/MoveOutRoomDispositionRecord.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.Domain/RoomChanges/**"
+      - "modules/buildingmanagement/test/BuildingManagement.Domain.Tests/MoveOuts/MoveOutRoomDisposition_Tests.cs"
+      - "modules/buildingmanagement/test/BuildingManagement.Domain.Tests/RoomChanges/**"
       - "test/NgocTrangHouseManagementSystem.HttpApi.Host.Tests/SliceAStagingPostgreSqlHttp_Tests.cs"
       - "etc/phase-audits/SliceA_OperatorBuildingGrant_*.sql"
       - "etc/phase-audits/SliceA_RuntimeDbRole_ReadOnlyAudit.sql"
@@ -58,6 +62,10 @@ on:
     paths:
       - ".github/workflows/buildingmanagement-slice-a-postgres.yml"
       - "modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/**"
+      - "modules/buildingmanagement/src/BuildingManagement.Domain/MoveOuts/MoveOutRoomDispositionRecord.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.Domain/RoomChanges/**"
+      - "modules/buildingmanagement/test/BuildingManagement.Domain.Tests/MoveOuts/MoveOutRoomDisposition_Tests.cs"
+      - "modules/buildingmanagement/test/BuildingManagement.Domain.Tests/RoomChanges/**"
       - "test/NgocTrangHouseManagementSystem.HttpApi.Host.Tests/SliceAStagingPostgreSqlHttp_Tests.cs"
       - "etc/phase-audits/SliceA_OperatorBuildingGrant_*.sql"
       - "etc/phase-audits/SliceA_RuntimeDbRole_ReadOnlyAudit.sql"

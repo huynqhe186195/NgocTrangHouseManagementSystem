@@ -708,6 +708,29 @@ public sealed class RoomChangeTenantRosterPostgreSql_Tests
             var posting = Guid.NewGuid();
             var receiptReview = Guid.NewGuid();
             var signedCompletion = "SIGNED-ROOM-CHANGE-COMPLETION-2026-001";
+            var actor = payer;
+            var old = new Contract(f.Request.SourceContractId,
+                "SOURCE-SCRATCH-CONTRACT", f.Request.SourceRoomId,
+                new DateTime(2026, 9, 1), null, 3_000_000m);
+            old.Activate();
+            old.End(committedAt, ContractEndReason.RoomChanged);
+            var next = new Contract(target,
+                "TRANSFER-TEST-001", f.Request.TargetRoomId,
+                new DateTime(2026, 10, 1), null, 3_000_000m,
+                renewedFromContractId: old.Id);
+            next.Activate();
+            var carryRecord = new DepositSettlement(carry,
+                DepositSettlementType.RoomChangeCarryForward,
+                3_000_000m, sourceContractId: old.Id,
+                targetContractId: next.Id);
+            carryRecord.Complete(committedAt);
+            var completed = RoomChangeCompletionRecord.Complete(
+                completion, f.Request, old, next, policy, review, roster,
+                handover, carryRecord, RoomStatus.Available,
+                "SIGNED-CLEAN-ROOM-EVIDENCE-001", signedCompletion,
+                actor, committedAt);
+            completed.VerifyFingerprint();
+
             await Run(db, tx, $"""
                 UPDATE "BuildingManagementContracts"
                    SET "Status"=3, "EndReason"=4,
@@ -775,7 +798,7 @@ public sealed class RoomChangeTenantRosterPostgreSql_Tests
                         '{roster.Id:D}','{handover.Id:D}','{carry:D}',
                         3000000,1,'SIGNED-CLEAN-ROOM-EVIDENCE-001',
                         '{signedCompletion}','{payer:D}','{committedAt:O}',
-                        '{new string('a',64)}');
+                        '{completed.EvidenceSha256}');
                 SET CONSTRAINTS ALL IMMEDIATE;
                 """);
             Assert.Equal(1L, await Scalar(db, tx,

@@ -294,6 +294,30 @@ public sealed class Phase2HAtomicRoomChangeCompletion : Migration
                       USING ERRCODE='23514';
                 END IF;
 
+                -- Check the domain's canonical SHA256 at the SQL boundary.
+                -- timestamptz precision is 6 digits; the .NET domain hashes
+                -- its UTC timestamp with 7 decimal places (last digit 0).
+                IF NEW."EvidenceSha256" IS DISTINCT FROM encode(
+                    sha256(convert_to(concat_ws(E'\n',
+                        NEW."Id"::text,NEW."RequestId"::text,
+                        NEW."SourceContractId"::text,NEW."TargetContractId"::text,
+                        NEW."SourceRoomId"::text,NEW."TargetRoomId"::text,
+                        NEW."BuildingId"::text,NEW."PolicyId"::text,
+                        NEW."PolicyReviewId"::text,NEW."RosterSnapshotId"::text,
+                        NEW."HandoverEvidenceId"::text,
+                        NEW."CarryForwardSettlementId"::text,
+                        NEW."CarriedDepositAmount"::numeric(18,0)::text,
+                        NEW."SourceRoomDisposition"::text,
+                        NEW."SourceDispositionEvidenceReference",
+                        NEW."CompletionReference",
+                        NEW."CompletedByUserId"::text,
+                        to_char(NEW."CompletedAtUtc" AT TIME ZONE 'UTC',
+                            'YYYY-MM-DD"T"HH24:MI:SS.US') || '0Z'
+                    ),'UTF8')),'hex') THEN
+                    RAISE EXCEPTION 'Completed room change checksum does not match source'
+                      USING ERRCODE='23514';
+                END IF;
+
                 -- Source parties are IMMUTABLE history; destination is an
                 -- exact, uniquely identified copy. No covert tenant swap.
                 IF EXISTS (

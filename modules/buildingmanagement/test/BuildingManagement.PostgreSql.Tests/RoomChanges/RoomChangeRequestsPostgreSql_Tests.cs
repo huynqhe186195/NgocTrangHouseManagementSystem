@@ -193,6 +193,136 @@ public sealed class RoomChangeRequestsPostgreSql_Tests
         });
     }
 
+    [Fact]
+    public async Task TRFPG04_Concurrent_Same_Contract_Request_Rejects_Second_Writer()
+    {
+        await ConcurrentScratchAsync(async (seed, cs, schema) =>
+        {
+            var (building, source, target, contract, actor) =
+                await SeedActiveContractAsync(seed);
+            string Intent(Guid id) => $"""
+                INSERT INTO "BuildingManagementRoomChangeRequests"
+                ("Id","SourceContractId","SourceRoomId","TargetRoomId",
+                 "BuildingId","RequestedDate","Reason","Status",
+                 "RequestedByUserId","CreatedAtUtc")
+                VALUES('{id:D}','{contract:D}','{source:D}','{target:D}',
+                       '{building:D}','2027-06-30',
+                       'Competing room-change request',0,
+                       '{actor:D}','2026-11-01T10:00:00Z')
+                """;
+            await using var first = new NpgsqlConnection(cs);
+            await using var second = new NpgsqlConnection(cs);
+            await first.OpenAsync();
+            await second.OpenAsync();
+            await Run(first, null, $"SET search_path TO \"{schema}\"");
+            await Run(second, null, $"SET search_path TO \"{schema}\"");
+            await using var tx1 = await first.BeginTransactionAsync();
+            await using var tx2 = await second.BeginTransactionAsync();
+            await Run(first, tx1, Intent(Guid.NewGuid()));
+            // The second transaction must not observe an uncommitted
+            // identical request as absent and commit another open intent.
+            var pending = Run(second, tx2, Intent(Guid.NewGuid()));
+            await Task.Delay(200);
+            Assert.False(pending.IsCompleted);
+            await tx1.CommitAsync();
+            var error = await Assert.ThrowsAsync<PostgresException>(() => pending);
+            Assert.Equal("23505", error.SqlState);
+            await tx2.RollbackAsync();
+            Assert.Equal(1L, await Scalar(seed, null,
+                """SELECT count(*) FROM "BuildingManagementRoomChangeRequests" """));
+        });
+    }
+
+    [Fact]
+    public async Task TRFPG05_Concurrent_Target_Status_Change_Invalidates_Intake()
+    {
+        await ConcurrentScratchAsync(async (seed, cs, schema) =>
+        {
+            var (building, source, target, contract, actor) =
+                await SeedActiveContractAsync(seed);
+            await using var change = new NpgsqlConnection(cs);
+            await using var intake = new NpgsqlConnection(cs);
+            await change.OpenAsync();
+            await intake.OpenAsync();
+            await Run(change, null, $"SET search_path TO \"{schema}\"");
+            await Run(intake, null, $"SET search_path TO \"{schema}\"");
+            await using var tx1 = await change.BeginTransactionAsync();
+            await using var tx2 = await intake.BeginTransactionAsync();
+            await Run(change, tx1, $"""
+                UPDATE "BuildingManagementRooms" SET "Status"=4
+                 WHERE "Id"='{target:D}'
+                """);
+            var pending = Run(intake, tx2, $"""
+                INSERT INTO "BuildingManagementRoomChangeRequests"
+                ("Id","SourceContractId","SourceRoomId","TargetRoomId",
+                 "BuildingId","RequestedDate","Reason","Status",
+                 "RequestedByUserId","CreatedAtUtc")
+                VALUES('{Guid.NewGuid():D}','{contract:D}','{source:D}',
+                       '{target:D}','{building:D}','2027-06-30',
+                       'Must not override maintenance status',0,
+                       '{actor:D}','2026-11-01T10:00:00Z')
+                """);
+            await Task.Delay(200);
+            Assert.False(pending.IsCompleted,
+                "Intake must wait on the current target-room row lock.");
+            await tx1.CommitAsync();
+            var error = await Assert.ThrowsAsync<PostgresException>(() => pending);
+            Assert.Equal("23514", error.SqlState);
+            await tx2.RollbackAsync();
+            Assert.Equal(0L, await Scalar(seed, null,
+                """SELECT count(*) FROM "BuildingManagementRoomChangeRequests" """));
+            Assert.Equal(4L, await Scalar(seed, null,
+                $"""SELECT "Status" FROM "BuildingManagementRooms" WHERE "Id"='{target:D}'"""));
+        });
+    }
+
+    private static async Task<(Guid Building, Guid Source, Guid Target,
+        Guid Contract, Guid Actor)> SeedActiveContractAsync(NpgsqlConnection db)
+    {
+        var building = Guid.NewGuid();
+        var floor = Guid.NewGuid();
+        var source = Guid.NewGuid();
+        var target = Guid.NewGuid();
+        var contract = Guid.NewGuid();
+        var actor = Guid.NewGuid();
+        await Run(db, null, $"""
+            INSERT INTO "BuildingManagementFloors"("Id","BuildingId")
+              VALUES('{floor:D}','{building:D}');
+            INSERT INTO "BuildingManagementRooms"("Id","FloorId","Status")
+              VALUES('{source:D}','{floor:D}',2),('{target:D}','{floor:D}',1);
+            INSERT INTO "BuildingManagementContracts"("Id","RoomId","Status")
+              VALUES('{contract:D}','{source:D}',2)
+            """);
+        return (building, source, target, contract, actor);
+    }
+
+    private static async Task ConcurrentScratchAsync(
+        Func<NpgsqlConnection, string, string, Task> test)
+    {
+        var cs = new NpgsqlConnectionStringBuilder(
+            BuildingManagementPostgreSqlTestModule.RequireSafeConnectionString())
+        { Pooling = false, CommandTimeout = 30 }.ConnectionString;
+        var schema = "bm_roomchange_race_" + Guid.NewGuid().ToString("N");
+        await using var seed = new NpgsqlConnection(cs);
+        await seed.OpenAsync();
+        Assert.Equal(BuildingManagementPostgreSqlTestModule.DatabaseName, seed.Database);
+        try
+        {
+            await Run(seed, null, $"CREATE SCHEMA \"{schema}\"");
+            await Run(seed, null, $"SET search_path TO \"{schema}\"");
+            await Run(seed, null, SchemaSql);
+            await Run(seed, null, UpSql);
+            await test(seed, cs, schema);
+        }
+        finally
+        {
+            await Run(seed, null, "RESET search_path");
+            await Run(seed, null, $"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE");
+        }
+        Assert.Equal(0L, await Scalar(seed, null,
+            $"SELECT count(*) FROM pg_namespace WHERE nspname='{schema}'"));
+    }
+
     private static async Task ScratchAsync(
         Func<NpgsqlConnection, NpgsqlTransaction, Task> test)
     {

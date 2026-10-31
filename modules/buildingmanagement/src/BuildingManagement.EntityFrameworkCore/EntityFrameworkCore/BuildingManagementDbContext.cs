@@ -41,6 +41,7 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
     public DbSet<DepositSettlement> DepositSettlements {get; set;} = default!;
     public DbSet<RoomChangeRequest> RoomChangeRequests { get; set; } = default!;
     public DbSet<RoomChangeTenantRosterSnapshotRecord> RoomChangeRosterSnapshots { get; set; } = default!;
+    public DbSet<RoomChangeBusinessPolicyRecord> RoomChangeBusinessPolicies { get; set; } = default!;
     public DbSet<MoveOutRequest> MoveOutRequests { get; set; } = default!;
     public DbSet<MoveOutChecklistTask> MoveOutChecklistTasks { get; set; } = default!;
     public DbSet<MoveOutRoomDispositionRecord> MoveOutRoomDispositions { get; set; } = default!;
@@ -131,6 +132,8 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.RoomChangeRequestConfiguration());
         builder.ApplyConfiguration(
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.RoomChangeTenantRosterSnapshotConfiguration());
+        builder.ApplyConfiguration(
+            new BuildingManagement.EntityFrameworkCore.EntityConfigurations.RoomChangeBusinessPolicyConfiguration());
         builder.ApplyConfiguration(
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.ContractDepositCloseoutApprovalRecordConfiguration());
     }

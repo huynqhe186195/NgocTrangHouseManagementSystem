@@ -447,9 +447,9 @@ public sealed class RoomChangeTenantRosterPostgreSql_Tests
     {
         var readingDate = handoverDate ?? new DateOnly(2026, 12, 31);
         var e = new UtilityMeter(Guid.NewGuid(), source, UtilityType.Electricity,
-            "E-METER-SIGNED-001", 0m, new DateTime(2026, 10, 1));
+            "E-METER-SIGNED-001", 0m, new DateTime(2026, 8, 1));
         var w = new UtilityMeter(Guid.NewGuid(), source, UtilityType.Water,
-            "W-METER-SIGNED-001", 0m, new DateTime(2026, 10, 1));
+            "W-METER-SIGNED-001", 0m, new DateTime(2026, 8, 1));
         var er = new MeterReading(Guid.NewGuid(), e.Id,
             readingDate.Year, readingDate.Month,
             10m, 50m, readingDate.ToDateTime(TimeOnly.MinValue));
@@ -459,8 +459,8 @@ public sealed class RoomChangeTenantRosterPostgreSql_Tests
         await Run(db, tx, $"""
             INSERT INTO "BuildingManagementUtilityMeters"
              ("Id","RoomId","UtilityType","InstalledDate")
-             VALUES ('{e.Id:D}','{source:D}',1,'2026-10-01'),
-                    ('{w.Id:D}','{source:D}',2,'2026-10-01');
+             VALUES ('{e.Id:D}','{source:D}',1,'2026-08-01'),
+                    ('{w.Id:D}','{source:D}',2,'2026-08-01');
             INSERT INTO "BuildingManagementMeterReadings"
              ("Id","UtilityMeterId","BillingYear","BillingMonth",
               "PreviousReading","CurrentReading","ReadingDate")

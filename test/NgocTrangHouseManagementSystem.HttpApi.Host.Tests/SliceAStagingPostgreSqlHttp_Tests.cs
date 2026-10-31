@@ -4670,11 +4670,11 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             Guid proposedPolicyId;
             using (var body = new StringContent(policyProposal, Encoding.UTF8,
                 "application/json"))
-            using (var proposed = await clientB.PostAsync(
+            using (var oi07Reply = await clientB.PostAsync(
                 ChangeAt(roomChangeRequest) + "/business-policy-proposal", body))
             {
-                var value = await proposed.Content.ReadAsStringAsync();
-                Assert.Equal(HttpStatusCode.OK, proposed.StatusCode);
+                var value = await oi07Reply.Content.ReadAsStringAsync();
+                Assert.Equal(HttpStatusCode.OK, oi07Reply.StatusCode);
                 using var json = JsonDocument.Parse(value);
                 proposedPolicyId = json.RootElement.GetProperty("id").GetGuid();
                 Assert.False(json.RootElement.GetProperty("isApproved").GetBoolean());

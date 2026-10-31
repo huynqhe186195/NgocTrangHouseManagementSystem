@@ -269,8 +269,18 @@ public sealed class SliceBStagingFinalInvoiceController : ControllerBase
             contractId, requestId);
     }
 
+    [HttpGet("contracts/{contractId:guid}/move-outs/{requestId:guid}/room-disposition")]
+    [UnitOfWork(true, System.Data.IsolationLevel.RepeatableRead)]
+    public Task<SliceBMoveOutRoomDispositionRead> GetRoomDispositionAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid requestId)
+    {
+        RequireIsolatedStaging();
+        return (_mutation ?? throw Denied()).GetRoomDispositionAsync(
+            contractId, requestId);
+    }
+
     [HttpPost("contracts/{contractId:guid}/move-outs/{requestId:guid}/complete")]
-    [UnitOfWork(true)]
+    [UnitOfWork(true, System.Data.IsolationLevel.Serializable)]
     public Task<SliceBStagedMoveOutCloseoutRead> CompleteMoveOutAsync(
         [FromRoute] Guid contractId, [FromRoute] Guid requestId,
         [FromBody] SliceBFinalMoveOutCloseoutInput input)

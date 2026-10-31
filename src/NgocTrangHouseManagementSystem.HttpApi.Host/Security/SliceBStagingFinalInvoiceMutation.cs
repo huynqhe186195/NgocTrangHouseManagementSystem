@@ -1255,7 +1255,9 @@ public sealed class SliceBStagingFinalInvoiceMutation
         => ExecuteScopedAsync(contractId, requireBootstrapOwner: true,
             async (db, actor, building, roomId) =>
             {
-                if (input is null ||
+                if (db.Database.CurrentTransaction?.GetDbTransaction()
+                        .IsolationLevel != System.Data.IsolationLevel.Serializable ||
+                    input is null ||
                     requestId == Guid.Empty ||
                     !input.ConfirmManualRefundPaid ||
                     input.ForfeitAmount < 0m ||
@@ -1302,14 +1304,26 @@ public sealed class SliceBStagingFinalInvoiceMutation
                         throw Denied();
                 }
 
+                // A Reserved booking or Signed future contract is a
+                // genuine next-tenant commitment, not a reason to refuse
+                // an otherwise clean handover. PendingPayment alone is NOT.
+                // Room UPDATE lock serializes normal reservation/contract
+                // transitions with this disposition until the UoW commits.
                 if (await db.Contracts.AsNoTracking().AnyAsync(x =>
                         x.Id != contractId && x.RoomId == roomId &&
-                        !x.IsDeleted && x.Status == ContractStatus.Active) ||
-                    await db.RoomReservations.AsNoTracking().AnyAsync(x =>
-                        x.RoomId == roomId && !x.IsDeleted &&
-                        (x.Status == RoomReservationStatus.PendingPayment ||
-                         x.Status == RoomReservationStatus.Reserved)))
+                        !x.IsDeleted && x.Status == ContractStatus.Active))
                     throw Denied();
+                var reservationFacts = await db.RoomReservations.AsNoTracking()
+                    .Where(x => x.RoomId == roomId && !x.IsDeleted &&
+                        (x.Status == RoomReservationStatus.Reserved ||
+                         x.Status == RoomReservationStatus.PendingPayment))
+                    .Select(x => new MoveOutRoomReservationFact(x.Id, x.Status))
+                    .ToArrayAsync();
+                var signedFacts = await db.Contracts.AsNoTracking()
+                    .Where(x => x.RoomId == roomId && x.Id != contractId &&
+                        !x.IsDeleted && x.Status == ContractStatus.Signed)
+                    .Select(x => new MoveOutRoomSignedContractFact(x.Id, x.Status))
+                    .ToArrayAsync();
 
                 // Exclusive signoff is tied to the pre-existing, verified
                 // final meter checklist; this method NEVER signs the meter.
@@ -1488,6 +1502,29 @@ public sealed class SliceBStagingFinalInvoiceMutation
                         input.RefundTransactionReference,
                         input.RefundPaidAtUtc);
 
+                // Phase 2G.5: immutable, separately auditable room
+                // release, bound to the SAME owner approval and timestamp.
+                // Do not silently cancel a confirmed future reservation:
+                // damaged + booked and multiple bookings remain HOLD.
+                MoveOutRoomDispositionRecord roomRelease;
+                try
+                {
+                    roomRelease = MoveOutRoomDispositionRecord.Complete(
+                        Guid.NewGuid(), contractId, requestId, roomId,
+                        building, approval.Id, actor, now, room.Status,
+                        input.ForfeitAmount, reservationFacts, signedFacts,
+                        input.RequiresMaintenance,
+                        input.ForfeitAmount > 0m
+                            ? input.DamageReason : input.MaintenanceReason,
+                        input.ForfeitAmount > 0m
+                            ? input.DamageEvidenceReference :
+                              input.MaintenanceEvidenceReference,
+                        input.HandoverEvidenceReference);
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or
+                    InvalidDataException or ArgumentException or OverflowException)
+                { throw Denied(); }
+
                 if (refundId.HasValue)
                 {
                     var refund = new DepositSettlement(
@@ -1554,14 +1591,50 @@ public sealed class SliceBStagingFinalInvoiceMutation
                     ? ContractEndReason.EarlyTermination
                     : ContractEndReason.Normal;
                 contract.End(now, reason);
-                room.ChangeStatus(input.ForfeitAmount > 0m
-                    ? RoomStatus.Maintenance : RoomStatus.Available);
+                room.ChangeStatus(roomRelease.ResultRoomStatus);
+                db.MoveOutRoomDispositions.Add(roomRelease);
 
                 return new SliceBStagedMoveOutCloseoutRead(
                     request.Id, contract.Id, room.Id, approval.Id,
                     final.Id, held, refundAmount, input.ForfeitAmount,
-                    room.Status);
+                    room.Status, roomRelease.Id,
+                    roomRelease.FutureReservationId.HasValue ||
+                    roomRelease.FutureSignedContractId.HasValue);
             });
+
+    /// <summary>
+    /// Immutable post-closeout handover history. Never reconstruct a
+    /// historical status from the room's later occupancy changes.
+    /// </summary>
+    public Task<SliceBMoveOutRoomDispositionRead> GetRoomDispositionAsync(
+        Guid contractId, Guid requestId)
+        => ExecuteScopedAsync(contractId, requireBootstrapOwner: false,
+            async (db, actor, building, roomId) =>
+            {
+                var disposition = await db.MoveOutRoomDispositions
+                    .AsNoTracking().SingleOrDefaultAsync(x =>
+                        x.ContractId == contractId &&
+                        x.MoveOutRequestId == requestId &&
+                        x.RoomId == roomId && x.BuildingId == building)
+                    ?? throw Denied();
+                try { disposition.VerifyStoredDisposition(); }
+                catch (Exception ex) when (ex is InvalidDataException or
+                    InvalidOperationException or ArgumentException)
+                { throw Denied(); }
+                if (!await db.DepositCloseoutApprovals.AsNoTracking()
+                    .AnyAsync(x => x.Id == disposition.CloseoutApprovalId &&
+                        x.ContractId == contractId &&
+                        x.MoveOutRequestId == requestId))
+                    throw Denied();
+                return new SliceBMoveOutRoomDispositionRead(
+                    disposition.Id, disposition.ContractId,
+                    disposition.MoveOutRequestId, disposition.RoomId,
+                    disposition.ResultRoomStatus, disposition.CompletedAtUtc,
+                    disposition.RequiresMaintenance,
+                    disposition.FutureReservationId.HasValue ||
+                    disposition.FutureSignedContractId.HasValue,
+                    disposition.DispositionSha256);
+            }, permitEndedContract: true);
 
     /// <summary>
     /// Explicit root authorization converts one independently reviewed,
@@ -2233,6 +2306,9 @@ public sealed record SliceBStagedInvoiceReceiptRead(
 public sealed class SliceBFinalMoveOutCloseoutInput
 {
     public decimal ForfeitAmount { get; set; }
+    public bool RequiresMaintenance { get; set; }
+    public string? MaintenanceReason { get; set; }
+    public string? MaintenanceEvidenceReference { get; set; }
     public string? DamageReason { get; set; }
     public string? DamageEvidenceReference { get; set; }
     public string InspectionEvidenceReference { get; set; } = string.Empty;
@@ -2250,7 +2326,14 @@ public sealed record SliceBStagedMoveOutCloseoutRead(
     Guid MoveOutRequestId, Guid ContractId, Guid RoomId,
     Guid CloseoutApprovalId, Guid IssuedInvoiceId,
     decimal VerifiedHeldDeposit, decimal RefundAmount,
-    decimal ForfeitAmount, RoomStatus RoomStatus);
+    decimal ForfeitAmount, RoomStatus RoomStatus,
+    Guid RoomDispositionId, bool HasFutureCommitment);
+
+public sealed record SliceBMoveOutRoomDispositionRead(
+    Guid DispositionId, Guid ContractId, Guid MoveOutRequestId,
+    Guid RoomId, RoomStatus ResultRoomStatus, DateTime CompletedAtUtc,
+    bool RequiresMaintenance, bool HasFutureCommitment,
+    string DispositionSha256);
 
 public sealed record OfficialInvoicePostingRead(
     Guid PostingId, Guid IssuedInvoiceId, Guid ContractId,

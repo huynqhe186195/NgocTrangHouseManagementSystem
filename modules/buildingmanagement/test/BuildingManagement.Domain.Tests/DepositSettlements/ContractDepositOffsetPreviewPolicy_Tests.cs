@@ -151,10 +151,11 @@ public sealed class ContractDepositOffsetPreviewPolicy_Tests
             Claim(1, ContractDepositOffsetCategory.Electricity, 50m),
             Claim(2, ContractDepositOffsetCategory.Electricity, 60m)
         };
-        var a = Preview(100m, claims);
-        var b = Preview(100m, claims.Reverse().ToArray());
+        var a = Preview(200m, claims);
+        var b = Preview(200m, claims.Reverse().ToArray());
         Assert.Equal(a.ProposedAllocations, b.ProposedAllocations);
-        Assert.Equal(100m, a.ProposedAllocations.Sum(x => x.ProposedAppliedVnd));
+        Assert.Equal(190m, a.ProposedAllocations.Sum(x => x.ProposedAppliedVnd));
+        Assert.Equal(10m, a.ProposedRefundableVnd);
     }
 
     [Fact]
@@ -172,5 +173,26 @@ public sealed class ContractDepositOffsetPreviewPolicy_Tests
         var a = Preview(1_000_000m,
             Claim(1, (ContractDepositOffsetCategory)999, 100_000m));
         Assert.Contains("DebtClaimInvalid", a.Blockers);
+    }
+
+    [Fact]
+    public void DEP_POL13_Partial_Utilities_Tier_Is_Blocked_Until_Owner_Selects_Split_Rule()
+    {
+        var a = Preview(100m,
+            Claim(1, ContractDepositOffsetCategory.Electricity, 80m),
+            Claim(2, ContractDepositOffsetCategory.Water, 70m));
+        Assert.Contains("PartialPriorityTierRequiresAllocationRule", a.Blockers);
+        Assert.Empty(a.ProposedAllocations);
+        Assert.Null(a.ProposedRefundableVnd);
+    }
+
+    [Fact]
+    public void DEP_POL14_One_Partially_Funded_Claim_Is_Unambiguous()
+    {
+        var a = Preview(100m,
+            Claim(1, ContractDepositOffsetCategory.UnpaidRent, 200m));
+        Assert.True(a.IsEvidenceCompleteForPreview);
+        Assert.Equal(100m, a.ProposedAllocations[0].ProposedAppliedVnd);
+        Assert.Equal(100m, a.ProposedUncoveredDebtVnd);
     }
 }

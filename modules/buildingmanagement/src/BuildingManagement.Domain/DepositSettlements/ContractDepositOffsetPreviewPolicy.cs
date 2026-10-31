@@ -86,6 +86,20 @@ public static class ContractDepositOffsetPreviewPolicy
             .OrderBy(x => Priority(x.Category))
             .ThenBy(x => x.ClaimId)
             .ToArray();
+        // The owner approved rent -> (electricity and water) -> service
+        // -> damage, but NOT precedence among multiple claims at the same
+        // rank. If insufficient cash would split one rank, never select a
+        // winner by GUID/order: that would invent a financial policy.
+        var available = verifiedHeldVnd;
+        foreach (var tier in ordered.GroupBy(x => Priority(x.Category)))
+        {
+            var required = tier.Sum(x => x.OutstandingVnd);
+            if (available > 0m && available < required && tier.Count() > 1)
+                return Denied(verifiedHeldVnd,
+                    new[] { "PartialPriorityTierRequiresAllocationRule" });
+            available = Math.Max(0m, available - required);
+        }
+
         var remaining = verifiedHeldVnd;
         var allocations = new List<ContractDepositOffsetPreviewLine>(ordered.Length);
         decimal unpaid = 0m;

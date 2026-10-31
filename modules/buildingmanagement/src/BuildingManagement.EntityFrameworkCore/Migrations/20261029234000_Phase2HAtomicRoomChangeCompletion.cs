@@ -319,6 +319,41 @@ public sealed class Phase2HAtomicRoomChangeCompletion : Migration
                   FROM "BuildingManagementDepositSettlements" s
                  WHERE s."SourceContractId"=source_contract."Id"
                    AND s."Id"<>carry."Id";
+                -- A completed allocation is not proof of real money unless
+                -- the exact original Payment was completed, was not deleted,
+                -- and has a one-and-only-one reservation/contract source.
+                IF EXISTS (
+                    SELECT 1 FROM "BuildingManagementDepositSettlements" s
+                    LEFT JOIN "BuildingManagementPayments" p ON p."Id"=s."PaymentId"
+                     WHERE s."TargetContractId"=source_contract."Id"
+                       AND s."Type"=3 AND
+                         (s."Status"<>2 OR s."PaymentId" IS NULL
+                          OR p."Id" IS NULL OR p."IsDeleted"=TRUE
+                          OR p."Status"<>2 OR p."PaidAt" IS NULL
+                          OR p."Amount"<>s."Amount"
+                          OR p."DepositDisposition" NOT IN (1,2)
+                          OR NOT (
+                           (p."Purpose"=2 AND p."ContractId"=source_contract."Id"
+                            AND s."SourceRoomReservationId" IS NULL)
+                           OR
+                           (p."Purpose"=1 AND p."RoomReservationId" IS NOT NULL
+                            AND p."RoomReservationId"=s."SourceRoomReservationId")
+                          )
+                          OR (SELECT count(*) FROM "BuildingManagementDepositSettlements" d
+                               WHERE d."PaymentId"=p."Id")<>1)
+                ) OR EXISTS (
+                    SELECT 1 FROM "BuildingManagementPayments" p
+                     WHERE p."ContractId"=source_contract."Id"
+                       AND p."Purpose"=2 AND p."Status"=2
+                       AND NOT EXISTS (
+                           SELECT 1 FROM "BuildingManagementDepositSettlements" s
+                            WHERE s."PaymentId"=p."Id"
+                              AND s."TargetContractId"=source_contract."Id"
+                              AND s."Type"=3 AND s."Status"=2)
+                ) THEN
+                    RAISE EXCEPTION 'Transfer source deposit lacks exclusive verified original receipts'
+                      USING ERRCODE='23514';
+                END IF;
                 IF other_held <> 0 OR EXISTS (
                     SELECT 1 FROM "BuildingManagementDepositSettlements" s
                      WHERE s."SourceContractId"=source_contract."Id"
@@ -443,6 +478,51 @@ public sealed class Phase2HAtomicRoomChangeCompletion : Migration
               ON "BuildingManagementDepositSettlements"
               FOR EACH ROW EXECUTE FUNCTION "BM_FreezeCompletedTransferFunds"();
 
+            CREATE FUNCTION "BM_FreezeTransferredDepositReceipt"()
+            RETURNS trigger LANGUAGE plpgsql AS $payment$
+            DECLARE source_finished boolean;
+            BEGIN
+                IF TG_OP='INSERT' THEN
+                    SELECT EXISTS (
+                        SELECT 1 FROM "BuildingManagementRoomChangeCompletions" x
+                         WHERE x."SourceContractId"=NEW."ContractId"
+                           AND NEW."Purpose"=2
+                    ) INTO source_finished;
+                    IF source_finished THEN
+                        RAISE EXCEPTION 'Transferred source cannot receive new deposit money'
+                          USING ERRCODE='23514';
+                    END IF;
+                    RETURN NEW;
+                END IF;
+                SELECT EXISTS (
+                    SELECT 1 FROM "BuildingManagementDepositSettlements" s
+                    JOIN "BuildingManagementRoomChangeCompletions" x
+                      ON x."SourceContractId"=s."TargetContractId"
+                    WHERE s."PaymentId"=OLD."Id" AND s."Type"=3 AND s."Status"=2
+                ) INTO source_finished;
+                IF source_finished AND (TG_OP='DELETE' OR
+                    NEW."Amount" IS DISTINCT FROM OLD."Amount" OR
+                    NEW."Status" IS DISTINCT FROM OLD."Status" OR
+                    NEW."PaidAt" IS DISTINCT FROM OLD."PaidAt" OR
+                    NEW."Purpose" IS DISTINCT FROM OLD."Purpose" OR
+                    NEW."ContractId" IS DISTINCT FROM OLD."ContractId" OR
+                    NEW."RoomReservationId" IS DISTINCT FROM OLD."RoomReservationId" OR
+                    NEW."DepositDisposition" IS DISTINCT FROM OLD."DepositDisposition" OR
+                    NEW."TransactionReference" IS DISTINCT FROM OLD."TransactionReference" OR
+                    NEW."Notes" IS DISTINCT FROM OLD."Notes" OR
+                    NEW."IsDeleted" IS DISTINCT FROM OLD."IsDeleted")
+                THEN
+                    RAISE EXCEPTION 'Transferred deposit receipt evidence is frozen'
+                      USING ERRCODE='23514';
+                END IF;
+                RETURN CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END;
+            END;
+            $payment$;
+            CREATE TRIGGER "TR_BM_RoomChangeCompletion_FreezeReceipts"
+              BEFORE INSERT OR UPDATE OR DELETE
+              ON "BuildingManagementPayments"
+              FOR EACH ROW EXECUTE FUNCTION "BM_FreezeTransferredDepositReceipt"();
+
             CREATE FUNCTION "BM_FreezeTransferredSourceContract"()
             RETURNS trigger LANGUAGE plpgsql AS $contract$
             BEGIN
@@ -559,6 +639,9 @@ public sealed class Phase2HAtomicRoomChangeCompletion : Migration
             DROP TRIGGER "TR_BM_RoomChangeCompletion_FreezeParties"
               ON "BuildingManagementContractTenants";
             DROP FUNCTION "BM_FreezeTransferredSourceParties"();
+            DROP TRIGGER "TR_BM_RoomChangeCompletion_FreezeReceipts"
+              ON "BuildingManagementPayments";
+            DROP FUNCTION "BM_FreezeTransferredDepositReceipt"();
             DROP TRIGGER "TR_BM_RoomChangeCompletion_FreezeContract"
               ON "BuildingManagementContracts";
             DROP FUNCTION "BM_FreezeTransferredSourceContract"();

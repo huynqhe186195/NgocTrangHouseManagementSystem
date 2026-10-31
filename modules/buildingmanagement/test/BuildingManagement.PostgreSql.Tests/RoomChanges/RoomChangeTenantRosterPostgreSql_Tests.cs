@@ -85,10 +85,23 @@ public sealed class RoomChangeTenantRosterPostgreSql_Tests
             "CurrentReading" numeric(18,3) NOT NULL,
             "ReadingDate" date NOT NULL,
             "IsDeleted" boolean NOT NULL DEFAULT FALSE);
+        CREATE TABLE "BuildingManagementPayments" (
+            "Id" uuid PRIMARY KEY,
+            "Purpose" integer NOT NULL,
+            "Amount" numeric(18,0) NOT NULL,
+            "Status" integer NOT NULL,
+            "PaidAt" timestamptz NULL,
+            "IsDeleted" boolean NOT NULL DEFAULT FALSE,
+            "ContractId" uuid NULL, "RoomReservationId" uuid NULL,
+            "DepositDisposition" integer NULL,
+            "TransactionReference" varchar(128) NULL,
+            "Notes" text NULL);
         CREATE TABLE "BuildingManagementDepositSettlements" (
             "Id" uuid PRIMARY KEY, "Type" integer NOT NULL,
             "Status" integer NOT NULL, "SourceContractId" uuid NULL,
-            "TargetContractId" uuid NULL, "Amount" numeric(18,0) NOT NULL,
+            "TargetContractId" uuid NULL, "PaymentId" uuid NULL,
+            "SourceRoomReservationId" uuid NULL,
+            "Amount" numeric(18,0) NOT NULL,
             "CompletedAt" timestamptz NULL);
         CREATE TABLE "BuildingManagementMonthlyIssuedInvoiceLedger" (
             "Id" uuid PRIMARY KEY, "ContractId" uuid NOT NULL,
@@ -709,10 +722,20 @@ public sealed class RoomChangeTenantRosterPostgreSql_Tests
                  ("Id","ContractId","TenantId","Role")
                 VALUES ('{Guid.NewGuid():D}','{target:D}','{f.Parties[0].TenantId:D}',1),
                        ('{Guid.NewGuid():D}','{target:D}','{f.Parties[1].TenantId:D}',2);
+                INSERT INTO "BuildingManagementPayments"
+                 ("Id","Purpose","Status","Amount","PaidAt","ContractId",
+                  "DepositDisposition")
+                VALUES ('{Guid.NewGuid():D}',2,2,3000000,
+                        '{submittedAt.AddDays(1):O}',
+                        '{f.Request.SourceContractId:D}',1);
                 INSERT INTO "BuildingManagementDepositSettlements"
-                 ("Id","Type","Status","TargetContractId","Amount","CompletedAt")
-                VALUES ('{incoming:D}',3,2,'{f.Request.SourceContractId:D}',3000000,
-                        '{submittedAt.AddDays(1):O}');
+                 ("Id","Type","Status","TargetContractId","PaymentId",
+                  "Amount","CompletedAt")
+                SELECT '{incoming:D}',3,2,'{f.Request.SourceContractId:D}',
+                        p."Id",3000000,'{submittedAt.AddDays(1):O}'
+                FROM "BuildingManagementPayments" p
+                WHERE p."ContractId"='{f.Request.SourceContractId:D}'
+                  AND p."Purpose"=2;
                 INSERT INTO "BuildingManagementDepositSettlements"
                  ("Id","Type","Status","SourceContractId","TargetContractId",
                   "Amount","CompletedAt")

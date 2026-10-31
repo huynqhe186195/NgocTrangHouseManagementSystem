@@ -3085,6 +3085,54 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             using (var beforeCloseout = await clientB.GetAsync(signedCloseoutRoute))
                 Assert.Equal(HttpStatusCode.Forbidden, beforeCloseout.StatusCode);
 
+            // A plain SQL UPDATE must not bypass the authenticated
+            // Phase 2G.5 handover, even AFTER a deposit plan was approved.
+            await using (var bypass = new NpgsqlConnection(buildingCs))
+            {
+                await bypass.OpenAsync();
+                await using (var directContractEnd = new NpgsqlCommand(
+                    """
+                    UPDATE "BuildingManagementContracts"
+                       SET "Status" = 3, "ActualEndedAt" = now(),
+                           "EndReason" = 1
+                     WHERE "Id" = @id
+                    """, bypass))
+                {
+                    directContractEnd.Parameters.AddWithValue("id", financeContract);
+                    var rejected = await Assert.ThrowsAsync<PostgresException>(
+                        async () => { await directContractEnd.ExecuteNonQueryAsync(); });
+                    Assert.Equal("23514", rejected.SqlState);
+                }
+                await using (var directRequestComplete = new NpgsqlCommand(
+                    """
+                    UPDATE "BuildingManagementMoveOutRequests"
+                       SET "Status" = 4, "CompletedAt" = now()
+                     WHERE "Id" = @id
+                    """, bypass))
+                {
+                    directRequestComplete.Parameters.AddWithValue("id", financeMoveOut);
+                    var rejected = await Assert.ThrowsAsync<PostgresException>(
+                        async () => { await directRequestComplete.ExecuteNonQueryAsync(); });
+                    Assert.Equal("23514", rejected.SqlState);
+                }
+            }
+
+            var unsignedMaintenance = await PostFinalAsync(
+                clientRoot, financeRoot + "/move-outs/" +
+                    financeMoveOut.ToString("D") + "/complete",
+                JsonSerializer.Serialize(new {
+                    forfeitAmount = 0m,
+                    requiresMaintenance = true,
+                    inspectionEvidenceReference = "SCRATCH-SIGNED-INSPECTION-0001",
+                    handoverEvidenceReference = "SCRATCH-SIGNED-HANDOVER-0001",
+                    depositPolicyReference = "SCRATCH-CONTRACT-DEPOSIT-POLICY-2026",
+                    confirmManualRefundPaid = true,
+                    refundPaidAtUtc = DateTime.UtcNow,
+                    refundTransactionReference = "SCRATCH-MANUAL-REFUND-0001",
+                    refundBankEvidenceReference = "SCRATCH-REFUND-SIGNED-PROOF-0001"
+                }));
+            Assert.Equal(HttpStatusCode.Forbidden, unsignedMaintenance.Status);
+
             var contradictoryComplete = await PostFinalAsync(
                 clientRoot, financeRoot + "/move-outs/" +
                     financeMoveOut.ToString("D") + "/complete",
@@ -3140,6 +3188,23 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             Guid roomDispositionId = closeout.RootElement
                 .GetProperty("roomDispositionId").GetGuid();
             Assert.NotEqual(Guid.Empty, roomDispositionId);
+            using (var persistedHandover = app.Services.CreateScope())
+            {
+                using var checkUow = persistedHandover.ServiceProvider
+                    .GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var checkDb = await persistedHandover.ServiceProvider
+                    .GetRequiredService<IDbContextProvider<BuildingManagementDbContext>>()
+                    .GetDbContextAsync();
+                var record = await checkDb.MoveOutRoomDispositions.AsNoTracking()
+                    .SingleAsync(x => x.Id == roomDispositionId);
+                record.VerifyStoredDisposition();
+                Assert.Equal(financeContract, record.ContractId);
+                Assert.Equal(BuildingManagement.Rooms.RoomStatus.Available,
+                    record.ResultRoomStatus);
+                await checkUow.CompleteAsync();
+            }
+
             Assert.False(closeout.RootElement
                 .GetProperty("hasFutureCommitment").GetBoolean());
             var roomDispositionRoute = financeRoot + "/move-outs/" +
@@ -3293,6 +3358,19 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 var refused = await Assert.ThrowsAsync<PostgresException>(
                     () => rewrite.ExecuteNonQueryAsync());
                 Assert.Equal("23514", refused.SqlState);
+
+                // The final room release is a permanent immutable
+                // financial/legal handover, not editable after commit.
+                await using var rewriteRoomHandover = new NpgsqlCommand(
+                    """
+                    UPDATE "BuildingManagementMoveOutRoomDispositions"
+                       SET "ResultRoomStatus" = 3
+                     WHERE "Id" = @id
+                    """, auditCash);
+                rewriteRoomHandover.Parameters.AddWithValue("id", roomDispositionId);
+                var dispositionDenied = await Assert.ThrowsAsync<PostgresException>(
+                    async () => { await rewriteRoomHandover.ExecuteNonQueryAsync(); });
+                Assert.Equal("23514", dispositionDenied.SqlState);
 
                 // A signed handover must also freeze both financial contract
                 // terms and the original approved move-out date, not merely

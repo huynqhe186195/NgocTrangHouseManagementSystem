@@ -37,87 +37,87 @@ public sealed class Phase2HAtomicRoomChangeCompletion : Migration
                 );
             """);
         builder.Sql("""
-CREATE OR REPLACE FUNCTION "BM_GuardRoomChangeRequest"()
-            RETURNS trigger LANGUAGE plpgsql AS $room_change$
-            DECLARE source_contract record;
-            DECLARE source_building uuid;
-            DECLARE target_building uuid;
-            DECLARE source_status integer;
-            DECLARE target_status integer;
-            BEGIN
-                IF TG_OP = 'DELETE' THEN
-                    RAISE EXCEPTION 'Room change review history cannot be deleted'
-                      USING ERRCODE = '23514';
-                ELSIF TG_OP = 'UPDATE' THEN
-                    IF OLD."Status" IN (2,3,4)
-                       OR NEW."Id" IS DISTINCT FROM OLD."Id"
-                       OR NEW."SourceContractId" IS DISTINCT FROM OLD."SourceContractId"
-                       OR NEW."SourceRoomId" IS DISTINCT FROM OLD."SourceRoomId"
-                       OR NEW."TargetRoomId" IS DISTINCT FROM OLD."TargetRoomId"
-                       OR NEW."BuildingId" IS DISTINCT FROM OLD."BuildingId"
-                       OR NEW."RequestedDate" IS DISTINCT FROM OLD."RequestedDate"
-                       OR NEW."Reason" IS DISTINCT FROM OLD."Reason"
-                       OR NEW."RequestedByUserId" IS DISTINCT FROM OLD."RequestedByUserId"
-                       OR NEW."CreatedAtUtc" IS DISTINCT FROM OLD."CreatedAtUtc"
-                       OR NEW."Status" NOT IN (1,2,3,4)
-                       OR (OLD."Status" = 1 AND NEW."Status" NOT IN (2,3,4))
-                       OR (OLD."Status" = 1 AND NEW."Status" = 1)
-                       OR NEW."ReviewedAtUtc" < OLD."ReviewedAtUtc" THEN
-                        RAISE EXCEPTION 'Cannot rewrite or advance unauthorized room change'
-                          USING ERRCODE = '23514';
-                    END IF;
-                    RETURN NEW;
-                END IF;
+            CREATE OR REPLACE FUNCTION "BM_GuardRoomChangeRequest"()
+                        RETURNS trigger LANGUAGE plpgsql AS $room_change$
+                        DECLARE source_contract record;
+                        DECLARE source_building uuid;
+                        DECLARE target_building uuid;
+                        DECLARE source_status integer;
+                        DECLARE target_status integer;
+                        BEGIN
+                            IF TG_OP = 'DELETE' THEN
+                                RAISE EXCEPTION 'Room change review history cannot be deleted'
+                                  USING ERRCODE = '23514';
+                            ELSIF TG_OP = 'UPDATE' THEN
+                                IF OLD."Status" IN (2,3,4)
+                                   OR NEW."Id" IS DISTINCT FROM OLD."Id"
+                                   OR NEW."SourceContractId" IS DISTINCT FROM OLD."SourceContractId"
+                                   OR NEW."SourceRoomId" IS DISTINCT FROM OLD."SourceRoomId"
+                                   OR NEW."TargetRoomId" IS DISTINCT FROM OLD."TargetRoomId"
+                                   OR NEW."BuildingId" IS DISTINCT FROM OLD."BuildingId"
+                                   OR NEW."RequestedDate" IS DISTINCT FROM OLD."RequestedDate"
+                                   OR NEW."Reason" IS DISTINCT FROM OLD."Reason"
+                                   OR NEW."RequestedByUserId" IS DISTINCT FROM OLD."RequestedByUserId"
+                                   OR NEW."CreatedAtUtc" IS DISTINCT FROM OLD."CreatedAtUtc"
+                                   OR NEW."Status" NOT IN (1,2,3,4)
+                                   OR (OLD."Status" = 1 AND NEW."Status" NOT IN (2,3,4))
+                                   OR (OLD."Status" = 1 AND NEW."Status" = 1)
+                                   OR NEW."ReviewedAtUtc" < OLD."ReviewedAtUtc" THEN
+                                    RAISE EXCEPTION 'Cannot rewrite or advance unauthorized room change'
+                                      USING ERRCODE = '23514';
+                                END IF;
+                                RETURN NEW;
+                            END IF;
 
-                -- Intake is NOT approval. Snapshot the current source and
-                -- target, including same-building invariants, under locks.
-                IF NEW."Status" <> 0 THEN
-                    RAISE EXCEPTION 'New room change must start Pending'
-                      USING ERRCODE = '23514';
-                END IF;
-                SELECT "RoomId","Status","IsDeleted" INTO source_contract
-                  FROM "BuildingManagementContracts"
-                 WHERE "Id" = NEW."SourceContractId" FOR SHARE;
-                SELECT r."Status", f."BuildingId"
-                  INTO source_status,source_building
-                  FROM "BuildingManagementRooms" r
-                  JOIN "BuildingManagementFloors" f ON f."Id" = r."FloorId"
-                 WHERE r."Id" = NEW."SourceRoomId"
-                   AND r."IsDeleted" = FALSE AND f."IsDeleted" = FALSE
-                 FOR SHARE OF r, f;
-                SELECT r."Status", f."BuildingId"
-                  INTO target_status,target_building
-                  FROM "BuildingManagementRooms" r
-                  JOIN "BuildingManagementFloors" f ON f."Id" = r."FloorId"
-                 WHERE r."Id" = NEW."TargetRoomId"
-                   AND r."IsDeleted" = FALSE AND f."IsDeleted" = FALSE
-                 FOR SHARE OF r, f;
-                IF source_contract."RoomId" IS DISTINCT FROM NEW."SourceRoomId"
-                   OR source_contract."Status" IS DISTINCT FROM 2
-                   OR source_contract."IsDeleted" IS DISTINCT FROM FALSE
-                   OR source_status IS DISTINCT FROM 2
-                   OR target_status IS DISTINCT FROM 1
-                   OR source_building IS DISTINCT FROM NEW."BuildingId"
-                   OR target_building IS DISTINCT FROM NEW."BuildingId"
-                   OR EXISTS (
-                      SELECT 1 FROM "BuildingManagementMoveOutRequests" m
-                       WHERE m."ContractId" = NEW."SourceContractId"
-                         AND m."IsDeleted" = FALSE AND m."Status" IN (0,1))
-                   OR EXISTS (
-                      SELECT 1 FROM "BuildingManagementContracts" c
-                       WHERE c."RoomId" = NEW."TargetRoomId"
-                         AND c."IsDeleted" = FALSE AND c."Status" IN (2,5))
-                   OR EXISTS (
-                      SELECT 1 FROM "BuildingManagementRoomReservations" rr
-                       WHERE rr."RoomId" = NEW."TargetRoomId"
-                         AND rr."IsDeleted" = FALSE AND rr."Status" IN (1,2))
-                THEN
-                    RAISE EXCEPTION 'Room change source or target is not eligible'
-                      USING ERRCODE = '23514';
-                END IF;
-                RETURN NEW;
-            END;
-            $room_change$;
+                            -- Intake is NOT approval. Snapshot the current source and
+                            -- target, including same-building invariants, under locks.
+                            IF NEW."Status" <> 0 THEN
+                                RAISE EXCEPTION 'New room change must start Pending'
+                                  USING ERRCODE = '23514';
+                            END IF;
+                            SELECT "RoomId","Status","IsDeleted" INTO source_contract
+                              FROM "BuildingManagementContracts"
+                             WHERE "Id" = NEW."SourceContractId" FOR SHARE;
+                            SELECT r."Status", f."BuildingId"
+                              INTO source_status,source_building
+                              FROM "BuildingManagementRooms" r
+                              JOIN "BuildingManagementFloors" f ON f."Id" = r."FloorId"
+                             WHERE r."Id" = NEW."SourceRoomId"
+                               AND r."IsDeleted" = FALSE AND f."IsDeleted" = FALSE
+                             FOR SHARE OF r, f;
+                            SELECT r."Status", f."BuildingId"
+                              INTO target_status,target_building
+                              FROM "BuildingManagementRooms" r
+                              JOIN "BuildingManagementFloors" f ON f."Id" = r."FloorId"
+                             WHERE r."Id" = NEW."TargetRoomId"
+                               AND r."IsDeleted" = FALSE AND f."IsDeleted" = FALSE
+                             FOR SHARE OF r, f;
+                            IF source_contract."RoomId" IS DISTINCT FROM NEW."SourceRoomId"
+                               OR source_contract."Status" IS DISTINCT FROM 2
+                               OR source_contract."IsDeleted" IS DISTINCT FROM FALSE
+                               OR source_status IS DISTINCT FROM 2
+                               OR target_status IS DISTINCT FROM 1
+                               OR source_building IS DISTINCT FROM NEW."BuildingId"
+                               OR target_building IS DISTINCT FROM NEW."BuildingId"
+                               OR EXISTS (
+                                  SELECT 1 FROM "BuildingManagementMoveOutRequests" m
+                                   WHERE m."ContractId" = NEW."SourceContractId"
+                                     AND m."IsDeleted" = FALSE AND m."Status" IN (0,1))
+                               OR EXISTS (
+                                  SELECT 1 FROM "BuildingManagementContracts" c
+                                   WHERE c."RoomId" = NEW."TargetRoomId"
+                                     AND c."IsDeleted" = FALSE AND c."Status" IN (2,5))
+                               OR EXISTS (
+                                  SELECT 1 FROM "BuildingManagementRoomReservations" rr
+                                   WHERE rr."RoomId" = NEW."TargetRoomId"
+                                     AND rr."IsDeleted" = FALSE AND rr."Status" IN (1,2))
+                            THEN
+                                RAISE EXCEPTION 'Room change source or target is not eligible'
+                                  USING ERRCODE = '23514';
+                            END IF;
+                            RETURN NEW;
+                        END;
+                        $room_change$;
             """);
         builder.Sql("""
             CREATE TABLE "BuildingManagementRoomChangeCompletions" (
@@ -444,87 +444,87 @@ CREATE OR REPLACE FUNCTION "BM_GuardRoomChangeRequest"()
             DROP TABLE "BuildingManagementRoomChangeCompletions";
             """);
         builder.Sql("""
-CREATE OR REPLACE FUNCTION "BM_GuardRoomChangeRequest"()
-            RETURNS trigger LANGUAGE plpgsql AS $room_change$
-            DECLARE source_contract record;
-            DECLARE source_building uuid;
-            DECLARE target_building uuid;
-            DECLARE source_status integer;
-            DECLARE target_status integer;
-            BEGIN
-                IF TG_OP = 'DELETE' THEN
-                    RAISE EXCEPTION 'Room change review history cannot be deleted'
-                      USING ERRCODE = '23514';
-                ELSIF TG_OP = 'UPDATE' THEN
-                    IF OLD."Status" IN (2,3)
-                       OR NEW."Id" IS DISTINCT FROM OLD."Id"
-                       OR NEW."SourceContractId" IS DISTINCT FROM OLD."SourceContractId"
-                       OR NEW."SourceRoomId" IS DISTINCT FROM OLD."SourceRoomId"
-                       OR NEW."TargetRoomId" IS DISTINCT FROM OLD."TargetRoomId"
-                       OR NEW."BuildingId" IS DISTINCT FROM OLD."BuildingId"
-                       OR NEW."RequestedDate" IS DISTINCT FROM OLD."RequestedDate"
-                       OR NEW."Reason" IS DISTINCT FROM OLD."Reason"
-                       OR NEW."RequestedByUserId" IS DISTINCT FROM OLD."RequestedByUserId"
-                       OR NEW."CreatedAtUtc" IS DISTINCT FROM OLD."CreatedAtUtc"
-                       OR NEW."Status" NOT IN (1,2,3)
-                       OR (OLD."Status" = 1 AND NEW."Status" NOT IN (2,3))
-                       OR (OLD."Status" = 1 AND NEW."Status" = 1)
-                       OR NEW."ReviewedAtUtc" < OLD."ReviewedAtUtc" THEN
-                        RAISE EXCEPTION 'Cannot rewrite or advance unauthorized room change'
-                          USING ERRCODE = '23514';
-                    END IF;
-                    RETURN NEW;
-                END IF;
+            CREATE OR REPLACE FUNCTION "BM_GuardRoomChangeRequest"()
+                        RETURNS trigger LANGUAGE plpgsql AS $room_change$
+                        DECLARE source_contract record;
+                        DECLARE source_building uuid;
+                        DECLARE target_building uuid;
+                        DECLARE source_status integer;
+                        DECLARE target_status integer;
+                        BEGIN
+                            IF TG_OP = 'DELETE' THEN
+                                RAISE EXCEPTION 'Room change review history cannot be deleted'
+                                  USING ERRCODE = '23514';
+                            ELSIF TG_OP = 'UPDATE' THEN
+                                IF OLD."Status" IN (2,3)
+                                   OR NEW."Id" IS DISTINCT FROM OLD."Id"
+                                   OR NEW."SourceContractId" IS DISTINCT FROM OLD."SourceContractId"
+                                   OR NEW."SourceRoomId" IS DISTINCT FROM OLD."SourceRoomId"
+                                   OR NEW."TargetRoomId" IS DISTINCT FROM OLD."TargetRoomId"
+                                   OR NEW."BuildingId" IS DISTINCT FROM OLD."BuildingId"
+                                   OR NEW."RequestedDate" IS DISTINCT FROM OLD."RequestedDate"
+                                   OR NEW."Reason" IS DISTINCT FROM OLD."Reason"
+                                   OR NEW."RequestedByUserId" IS DISTINCT FROM OLD."RequestedByUserId"
+                                   OR NEW."CreatedAtUtc" IS DISTINCT FROM OLD."CreatedAtUtc"
+                                   OR NEW."Status" NOT IN (1,2,3)
+                                   OR (OLD."Status" = 1 AND NEW."Status" NOT IN (2,3))
+                                   OR (OLD."Status" = 1 AND NEW."Status" = 1)
+                                   OR NEW."ReviewedAtUtc" < OLD."ReviewedAtUtc" THEN
+                                    RAISE EXCEPTION 'Cannot rewrite or advance unauthorized room change'
+                                      USING ERRCODE = '23514';
+                                END IF;
+                                RETURN NEW;
+                            END IF;
 
-                -- Intake is NOT approval. Snapshot the current source and
-                -- target, including same-building invariants, under locks.
-                IF NEW."Status" <> 0 THEN
-                    RAISE EXCEPTION 'New room change must start Pending'
-                      USING ERRCODE = '23514';
-                END IF;
-                SELECT "RoomId","Status","IsDeleted" INTO source_contract
-                  FROM "BuildingManagementContracts"
-                 WHERE "Id" = NEW."SourceContractId" FOR SHARE;
-                SELECT r."Status", f."BuildingId"
-                  INTO source_status,source_building
-                  FROM "BuildingManagementRooms" r
-                  JOIN "BuildingManagementFloors" f ON f."Id" = r."FloorId"
-                 WHERE r."Id" = NEW."SourceRoomId"
-                   AND r."IsDeleted" = FALSE AND f."IsDeleted" = FALSE
-                 FOR SHARE OF r, f;
-                SELECT r."Status", f."BuildingId"
-                  INTO target_status,target_building
-                  FROM "BuildingManagementRooms" r
-                  JOIN "BuildingManagementFloors" f ON f."Id" = r."FloorId"
-                 WHERE r."Id" = NEW."TargetRoomId"
-                   AND r."IsDeleted" = FALSE AND f."IsDeleted" = FALSE
-                 FOR SHARE OF r, f;
-                IF source_contract."RoomId" IS DISTINCT FROM NEW."SourceRoomId"
-                   OR source_contract."Status" IS DISTINCT FROM 2
-                   OR source_contract."IsDeleted" IS DISTINCT FROM FALSE
-                   OR source_status IS DISTINCT FROM 2
-                   OR target_status IS DISTINCT FROM 1
-                   OR source_building IS DISTINCT FROM NEW."BuildingId"
-                   OR target_building IS DISTINCT FROM NEW."BuildingId"
-                   OR EXISTS (
-                      SELECT 1 FROM "BuildingManagementMoveOutRequests" m
-                       WHERE m."ContractId" = NEW."SourceContractId"
-                         AND m."IsDeleted" = FALSE AND m."Status" IN (0,1))
-                   OR EXISTS (
-                      SELECT 1 FROM "BuildingManagementContracts" c
-                       WHERE c."RoomId" = NEW."TargetRoomId"
-                         AND c."IsDeleted" = FALSE AND c."Status" IN (2,5))
-                   OR EXISTS (
-                      SELECT 1 FROM "BuildingManagementRoomReservations" rr
-                       WHERE rr."RoomId" = NEW."TargetRoomId"
-                         AND rr."IsDeleted" = FALSE AND rr."Status" IN (1,2))
-                THEN
-                    RAISE EXCEPTION 'Room change source or target is not eligible'
-                      USING ERRCODE = '23514';
-                END IF;
-                RETURN NEW;
-            END;
-            $room_change$;
+                            -- Intake is NOT approval. Snapshot the current source and
+                            -- target, including same-building invariants, under locks.
+                            IF NEW."Status" <> 0 THEN
+                                RAISE EXCEPTION 'New room change must start Pending'
+                                  USING ERRCODE = '23514';
+                            END IF;
+                            SELECT "RoomId","Status","IsDeleted" INTO source_contract
+                              FROM "BuildingManagementContracts"
+                             WHERE "Id" = NEW."SourceContractId" FOR SHARE;
+                            SELECT r."Status", f."BuildingId"
+                              INTO source_status,source_building
+                              FROM "BuildingManagementRooms" r
+                              JOIN "BuildingManagementFloors" f ON f."Id" = r."FloorId"
+                             WHERE r."Id" = NEW."SourceRoomId"
+                               AND r."IsDeleted" = FALSE AND f."IsDeleted" = FALSE
+                             FOR SHARE OF r, f;
+                            SELECT r."Status", f."BuildingId"
+                              INTO target_status,target_building
+                              FROM "BuildingManagementRooms" r
+                              JOIN "BuildingManagementFloors" f ON f."Id" = r."FloorId"
+                             WHERE r."Id" = NEW."TargetRoomId"
+                               AND r."IsDeleted" = FALSE AND f."IsDeleted" = FALSE
+                             FOR SHARE OF r, f;
+                            IF source_contract."RoomId" IS DISTINCT FROM NEW."SourceRoomId"
+                               OR source_contract."Status" IS DISTINCT FROM 2
+                               OR source_contract."IsDeleted" IS DISTINCT FROM FALSE
+                               OR source_status IS DISTINCT FROM 2
+                               OR target_status IS DISTINCT FROM 1
+                               OR source_building IS DISTINCT FROM NEW."BuildingId"
+                               OR target_building IS DISTINCT FROM NEW."BuildingId"
+                               OR EXISTS (
+                                  SELECT 1 FROM "BuildingManagementMoveOutRequests" m
+                                   WHERE m."ContractId" = NEW."SourceContractId"
+                                     AND m."IsDeleted" = FALSE AND m."Status" IN (0,1))
+                               OR EXISTS (
+                                  SELECT 1 FROM "BuildingManagementContracts" c
+                                   WHERE c."RoomId" = NEW."TargetRoomId"
+                                     AND c."IsDeleted" = FALSE AND c."Status" IN (2,5))
+                               OR EXISTS (
+                                  SELECT 1 FROM "BuildingManagementRoomReservations" rr
+                                   WHERE rr."RoomId" = NEW."TargetRoomId"
+                                     AND rr."IsDeleted" = FALSE AND rr."Status" IN (1,2))
+                            THEN
+                                RAISE EXCEPTION 'Room change source or target is not eligible'
+                                  USING ERRCODE = '23514';
+                            END IF;
+                            RETURN NEW;
+                        END;
+                        $room_change$;
             """);
         builder.Sql("""
             ALTER TABLE "BuildingManagementRoomChangeRequests"

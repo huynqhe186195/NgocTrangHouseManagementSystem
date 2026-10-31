@@ -4738,6 +4738,24 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 Assert.True(doc.RootElement.GetProperty("accepted").GetBoolean());
             }
 
+            using (var executionPreflight = await clientB.GetAsync(
+                ChangeAt(roomChangeRequest) + "/execution-readiness"))
+            {
+                Assert.Equal(HttpStatusCode.OK, executionPreflight.StatusCode);
+                using var doc = JsonDocument.Parse(
+                    await executionPreflight.Content.ReadAsStringAsync());
+                Assert.False(doc.RootElement.GetProperty(
+                    "canExecuteTransfer").GetBoolean());
+                Assert.False(doc.RootElement.GetProperty(
+                    "isExternalBankVerification").GetBoolean());
+                Assert.Contains(doc.RootElement.GetProperty("blockers")
+                    .EnumerateArray(), x => x.GetString() ==
+                    "SourcePhysicalHandoverNotVerified");
+                Assert.Contains(doc.RootElement.GetProperty("blockers")
+                    .EnumerateArray(), x => x.GetString() ==
+                    "SourceFinalInvoiceNotOfficiallyPosted");
+            }
+
             // Do not accept an unearned physical handover: request is
             // future-dated and no room-source final E/W readings exist.
             var handoverInput = JsonSerializer.Serialize(new {

@@ -446,6 +446,22 @@ public sealed class Phase2HAtomicRoomChangeCompletion : Migration
             CREATE FUNCTION "BM_FreezeTransferredSourceContract"()
             RETURNS trigger LANGUAGE plpgsql AS $contract$
             BEGIN
+                -- Completion INSERT may precede the final source UPDATE in
+                -- the same EF save. Permit precisely the first ACTIVE -> ENDED
+                -- RoomChanged transition; the deferred gate requires it.
+                IF TG_OP='UPDATE' AND OLD."Status"=2 AND NEW."Status"=3
+                   AND NEW."EndReason"=4 AND NEW."ActualEndedAt" IS NOT NULL
+                   AND OLD."RoomId" IS NOT DISTINCT FROM NEW."RoomId"
+                   AND OLD."MonthlyRent" IS NOT DISTINCT FROM NEW."MonthlyRent"
+                   AND OLD."DepositAmount" IS NOT DISTINCT FROM NEW."DepositAmount"
+                   AND OLD."ContractNumber" IS NOT DISTINCT FROM NEW."ContractNumber"
+                   AND OLD."StartDate" IS NOT DISTINCT FROM NEW."StartDate"
+                   AND OLD."EndDate" IS NOT DISTINCT FROM NEW."EndDate"
+                   AND OLD."Notes" IS NOT DISTINCT FROM NEW."Notes"
+                   AND OLD."IsDeleted" IS NOT DISTINCT FROM NEW."IsDeleted"
+                THEN
+                    RETURN NEW;
+                END IF;
                 IF EXISTS (
                     SELECT 1 FROM "BuildingManagementRoomChangeCompletions"
                      WHERE "SourceContractId"=OLD."Id"

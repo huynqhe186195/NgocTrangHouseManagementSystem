@@ -6040,13 +6040,20 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
 
     private sealed class MutableUtcTimeProvider : TimeProvider
     {
-        private long _ticks = DateTimeOffset.UtcNow.UtcTicks;
+        // Zero means the real clock, so all existing tests keep native time.
+        private long _ticks;
 
-        public override DateTimeOffset GetUtcNow() =>
-            new(Interlocked.Read(ref _ticks), TimeSpan.Zero);
+        public override DateTimeOffset GetUtcNow()
+        {
+            var ticks = Interlocked.Read(ref _ticks);
+            return ticks == 0 ? DateTimeOffset.UtcNow :
+                new DateTimeOffset(ticks, TimeSpan.Zero);
+        }
 
         public void SetUtc(DateTimeOffset value) =>
             Interlocked.Exchange(ref _ticks, value.UtcTicks);
+
+        public void Reset() => Interlocked.Exchange(ref _ticks, 0);
     }
 
     private sealed class PgHttpAuthenticationHandler

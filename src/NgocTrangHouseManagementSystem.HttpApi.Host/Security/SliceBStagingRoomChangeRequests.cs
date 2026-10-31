@@ -38,19 +38,22 @@ public sealed class SliceBStagingRoomChangeRequests
     private readonly IBuildingBusinessResourceScopeReader _resources;
     private readonly ICurrentUser _current;
     private readonly SliceAStagingIdentityCommitLease _identity;
+    private readonly TimeProvider _clock;
 
     public SliceBStagingRoomChangeRequests(
         IDbContextProvider<BuildingManagementDbContext> provider,
         IBuildingCrudAccessPolicy policy,
         IBuildingBusinessResourceScopeReader resources,
         ICurrentUser current,
-        SliceAStagingIdentityCommitLease identity)
+        SliceAStagingIdentityCommitLease identity,
+        TimeProvider? clock = null)
     {
         _provider = provider;
         _policy = policy;
         _resources = resources;
         _current = current;
         _identity = identity;
+        _clock = clock ?? TimeProvider.System;
     }
 
     public Task<SliceBRoomChangeRequestRead> SubmitAsync(
@@ -61,7 +64,7 @@ public sealed class SliceBStagingRoomChangeRequests
                 input.TargetRoomId == sourceRoom ||
                 input.RequestedDate == default ||
                 input.RequestedDate < DateOnly.FromDateTime(
-                    TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow,
+                    TimeZoneInfo.ConvertTimeFromUtc(_clock.GetUtcNow().UtcDateTime,
                         TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh"))))
                 throw Denied();
 
@@ -111,7 +114,7 @@ public sealed class SliceBStagingRoomChangeRequests
                 request = RoomChangeRequest.Submit(
                     Guid.NewGuid(), contractId, sourceRoom,
                     input.TargetRoomId, building, input.RequestedDate,
-                    input.Reason, actor, DateTime.UtcNow, contract.Status,
+                    input.Reason, actor, _clock.GetUtcNow().UtcDateTime, contract.Status,
                     source.Status, target.Status);
             }
             catch (InvalidOperationException) { throw Denied(); }
@@ -186,7 +189,7 @@ public sealed class SliceBStagingRoomChangeRequests
                     (x.Status == MoveOutRequestStatus.Pending ||
                      x.Status == MoveOutRequestStatus.Approved));
             var today = DateOnly.FromDateTime(
-                TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow,
+                TimeZoneInfo.ConvertTimeFromUtc(_clock.GetUtcNow().UtcDateTime,
                     TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh")));
             var roster = await db.RoomChangeRosterSnapshots.AsNoTracking()
                 .SingleOrDefaultAsync(x => x.RoomChangeRequestId == request.Id);
@@ -236,7 +239,7 @@ public sealed class SliceBStagingRoomChangeRequests
             try
             {
                 snapshot = RoomChangeTenantRosterSnapshotRecord.Capture(
-                    Guid.NewGuid(), request, parties, actor, DateTime.UtcNow);
+                    Guid.NewGuid(), request, parties, actor, _clock.GetUtcNow().UtcDateTime);
             }
             catch (InvalidOperationException) { throw Denied(); }
             db.RoomChangeRosterSnapshots.Add(snapshot);
@@ -315,7 +318,7 @@ public sealed class SliceBStagingRoomChangeRequests
                     input.PricingTreatment, input.DepositTreatment,
                     input.TenantTreatment, input.ContractPolicyReference,
                     input.PricingPolicyReference, input.DepositPolicyReference,
-                    input.TenantConsentReference, actor, DateTime.UtcNow);
+                    input.TenantConsentReference, actor, _clock.GetUtcNow().UtcDateTime);
                 db.RoomChangeBusinessPolicies.Add(proposed);
                 return AsPolicyRead(proposed);
             }
@@ -391,7 +394,7 @@ public sealed class SliceBStagingRoomChangeRequests
             {
                 decision = RoomChangeBusinessPolicyReviewRecord.Review(
                     Guid.NewGuid(), plan, request, roster, actor,
-                    DateTime.UtcNow, input.Accepted, input.SignedReviewReference,
+                    _clock.GetUtcNow().UtcDateTime, input.Accepted, input.SignedReviewReference,
                     input.Reason);
             }
             catch (Exception ex) when (ex is InvalidOperationException or
@@ -447,7 +450,7 @@ public sealed class SliceBStagingRoomChangeRequests
             var request = await LockRequestAsync(
                 db, requestId, contractId, sourceRoom, building);
             var today = DateOnly.FromDateTime(
-                TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow,
+                TimeZoneInfo.ConvertTimeFromUtc(_clock.GetUtcNow().UtcDateTime,
                     TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh")));
             if (request.RequestedDate > today ||
                 await db.RoomChangeHandoverEvidence.AsNoTracking()
@@ -486,7 +489,7 @@ public sealed class SliceBStagingRoomChangeRequests
                     Guid.NewGuid(), request, original.E, original.Er,
                     original.W, original.Wr,
                     input.InspectionEvidenceReference,
-                    input.SignedHandoverReference, actor, DateTime.UtcNow);
+                    input.SignedHandoverReference, actor, _clock.GetUtcNow().UtcDateTime);
             }
             catch (Exception ex) when (ex is InvalidOperationException or
                 ArgumentException) { throw Denied(); }
@@ -634,7 +637,7 @@ public sealed class SliceBStagingRoomChangeRequests
                 catch (System.IO.InvalidDataException) { throw Denied(); }
             }
             var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(
-                DateTime.UtcNow, TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh")));
+                _clock.GetUtcNow().UtcDateTime, TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh")));
             var live = RoomChangeRequestReadiness.Assess(
                 new RoomChangeRequestReadinessFacts(requestId, contractId,
                     sourceRoom, request.TargetRoomId, building,
@@ -817,7 +820,7 @@ public sealed class SliceBStagingRoomChangeRequests
                 BuildingBusinessResourceKind.Room, request.TargetRoomId,
                 BuildingBusinessCapability.ManageContract);
             var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(
-                DateTime.UtcNow,
+                _clock.GetUtcNow().UtcDateTime,
                 TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh")));
             if (request.Status is not (RoomChangeRequestStatus.Pending or
                 RoomChangeRequestStatus.PolicyHold) ||
@@ -923,7 +926,7 @@ public sealed class SliceBStagingRoomChangeRequests
                 sourceRoom, building, request.RequestedDate,
                 handover.ElectricityReadingId, handover.WaterReadingId);
             await VerifyTransferDepositAsync(db, source);
-            var utc = DateTime.UtcNow;
+            var utc = _clock.GetUtcNow().UtcDateTime;
             var newId = Guid.NewGuid();
             var target = new Contract(newId, "TRF-" + newId.ToString("N"),
                 request.TargetRoomId,
@@ -1161,7 +1164,7 @@ public sealed class SliceBStagingRoomChangeRequests
         {
             var request = await LockRequestAsync(
                 db, requestId, contractId, sourceRoom, building);
-            try { request.Cancel(actor, DateTime.UtcNow); }
+            try { request.Cancel(actor, _clock.GetUtcNow().UtcDateTime); }
             catch (InvalidOperationException) { throw Denied(); }
             return AsRead(request);
         });
@@ -1174,7 +1177,7 @@ public sealed class SliceBStagingRoomChangeRequests
             if (input is null) throw Denied();
             var request = await LockRequestAsync(
                 db, requestId, contractId, sourceRoom, building);
-            try { action(request, actor, DateTime.UtcNow, input.ReviewNotes); }
+            try { action(request, actor, _clock.GetUtcNow().UtcDateTime, input.ReviewNotes); }
             catch (InvalidOperationException) { throw Denied(); }
             return AsRead(request);
         });

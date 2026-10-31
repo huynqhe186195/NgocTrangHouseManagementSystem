@@ -676,9 +676,13 @@ public sealed class SliceBStagingRoomChangeRequests
                 .CountAsync(x => x.ContractId == contractId);
             var postings = await db.OfficialInvoiceReceivables.AsNoTracking()
                 .Where(x => x.ContractId == contractId).ToArrayAsync();
-            var finalPosted = issuedFinal > 0 &&
-                postings.Any(x => x.Kind == OfficialInvoiceKind.Final);
-            var allPaid = finalPosted &&
+            // The signed full-month lane settles the last source month
+            // through the officially posted monthly ledger; a second final
+            // invoice is not mandatory and would double-bill those charges.
+            var sourceMonthPosted = monthly.Any(x =>
+                x.BillingYear == request.RequestedDate.Year &&
+                x.BillingMonth == request.RequestedDate.Month);
+            var allPaid = sourceMonthPosted &&
                 postings.Length == issuedFinal + issuedMonthly;
             if (allPaid)
             {
@@ -776,7 +780,7 @@ public sealed class SliceBStagingRoomChangeRequests
                 !moveOut && rosterCurrent;
             var assessed = RoomChangeExecutionReadiness.Assess(
                 new RoomChangeExecutionFacts(currentSource,
-                    approved, handedOver, competitors, finalPosted, allPaid,
+                    approved, handedOver, competitors, sourceMonthPosted, allPaid,
                     depositProven, depositUnspent, !committed &&
                     target.Building == building &&
                     target.Status == RoomStatus.Available,

@@ -25,6 +25,8 @@ public sealed class RoomChangeCompletionConfiguration
         b.Property(x => x.CarryForwardSettlementId).IsRequired();
         b.Property(x => x.CarriedDepositAmount).HasPrecision(18,0).IsRequired();
         b.Property(x => x.SourceRoomDisposition).HasConversion<int>().IsRequired();
+        b.Property(x => x.SourceDispositionEvidenceReference).HasMaxLength(500).IsRequired();
+        b.Property(x => x.CompletionReference).HasMaxLength(500).IsRequired();
         b.Property(x => x.CompletedByUserId).IsRequired();
         b.Property(x => x.CompletedAtUtc).IsRequired();
         b.Property(x => x.EvidenceSha256).HasMaxLength(64).IsRequired();

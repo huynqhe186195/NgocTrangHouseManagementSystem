@@ -895,7 +895,8 @@ public sealed class SliceBStagingRoomChangeRequests
             var completion = RoomChangeCompletionRecord.Complete(
                 Guid.NewGuid(), request, source, target, policy, review,
                 roster, handover, settlement, input.SourceRoomDisposition,
-                actor, utc);
+                input.DispositionEvidenceReference,
+                input.CompletionReference, actor, utc);
             request.Complete(actor, utc, input.CompletionReference!);
             db.Contracts.Add(target);
             db.ContractTenants.AddRange(freshParties);

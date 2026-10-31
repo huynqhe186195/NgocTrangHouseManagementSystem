@@ -31,6 +31,8 @@ public sealed class RoomChangeCompletionRecord : Entity<Guid>
     public Guid CarryForwardSettlementId { get; private set; }
     public decimal CarriedDepositAmount { get; private set; }
     public RoomStatus SourceRoomDisposition { get; private set; }
+    public string SourceDispositionEvidenceReference { get; private set; } = string.Empty;
+    public string CompletionReference { get; private set; } = string.Empty;
     public Guid CompletedByUserId { get; private set; }
     public DateTime CompletedAtUtc { get; private set; }
     public string EvidenceSha256 { get; private set; } = string.Empty;
@@ -45,6 +47,7 @@ public sealed class RoomChangeCompletionRecord : Entity<Guid>
         RoomChangeTenantRosterSnapshotRecord roster,
         RoomChangeHandoverEvidenceRecord handover,
         DepositSettlement carryForward, RoomStatus sourceDisposition,
+        string? dispositionEvidenceReference, string? completionReference,
         Guid actor, DateTime atUtc)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -59,6 +62,10 @@ public sealed class RoomChangeCompletionRecord : Entity<Guid>
         review.Verify(policy, request, roster);
         if (id == Guid.Empty || actor == Guid.Empty ||
             atUtc.Kind != DateTimeKind.Utc || atUtc < review.ReviewedAtUtc ||
+            string.IsNullOrWhiteSpace(dispositionEvidenceReference) ||
+            dispositionEvidenceReference.Trim().Length is < 12 or > 500 ||
+            string.IsNullOrWhiteSpace(completionReference) ||
+            completionReference.Trim().Length is < 12 or > 500 ||
             atUtc < handover.AttestedAtUtc ||
             request.Status is not (RoomChangeRequestStatus.Pending or
                 RoomChangeRequestStatus.PolicyHold) ||
@@ -112,6 +119,8 @@ public sealed class RoomChangeCompletionRecord : Entity<Guid>
             CarryForwardSettlementId = carryForward.Id,
             CarriedDepositAmount = carryForward.Amount,
             SourceRoomDisposition = sourceDisposition,
+            SourceDispositionEvidenceReference = dispositionEvidenceReference!.Trim(),
+            CompletionReference = completionReference!.Trim(),
             CompletedByUserId = actor,
             CompletedAtUtc = atUtc.AddTicks(-(atUtc.Ticks % 10))
         };
@@ -129,6 +138,8 @@ public sealed class RoomChangeCompletionRecord : Entity<Guid>
             PolicyId == Guid.Empty || PolicyReviewId == Guid.Empty ||
             RosterSnapshotId == Guid.Empty || HandoverEvidenceId == Guid.Empty ||
             CarryForwardSettlementId == Guid.Empty ||
+            SourceDispositionEvidenceReference.Trim().Length is < 12 or > 500 ||
+            CompletionReference.Trim().Length is < 12 or > 500 ||
             CompletedByUserId == Guid.Empty ||
             CompletedAtUtc.Kind != DateTimeKind.Utc ||
             CarriedDepositAmount <= 0m ||
@@ -151,6 +162,7 @@ public sealed class RoomChangeCompletionRecord : Entity<Guid>
             CarryForwardSettlementId.ToString("D"),
             CarriedDepositAmount.ToString("0", System.Globalization.CultureInfo.InvariantCulture),
             ((int)SourceRoomDisposition).ToString(System.Globalization.CultureInfo.InvariantCulture),
+            SourceDispositionEvidenceReference, CompletionReference,
             CompletedByUserId.ToString("D"), CompletedAtUtc.ToString("O")
         });
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)))

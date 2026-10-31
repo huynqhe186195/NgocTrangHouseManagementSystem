@@ -145,6 +145,8 @@ public sealed class Phase2HAtomicRoomChangeCompletion : Migration
                     "BuildingManagementDepositSettlements"("Id") ON DELETE RESTRICT,
                 "CarriedDepositAmount" numeric(18,0) NOT NULL,
                 "SourceRoomDisposition" integer NOT NULL,
+                "SourceDispositionEvidenceReference" varchar(500) NOT NULL,
+                "CompletionReference" varchar(500) NOT NULL,
                 "CompletedByUserId" uuid NOT NULL,
                 "CompletedAtUtc" timestamptz NOT NULL,
                 "EvidenceSha256" varchar(64) NOT NULL,
@@ -154,6 +156,8 @@ public sealed class Phase2HAtomicRoomChangeCompletion : Migration
                     AND "SourceRoomId" <> "TargetRoomId"
                     AND "CarriedDepositAmount" > 0
                     AND "SourceRoomDisposition" IN (1,3,4)
+                    AND length(btrim("SourceDispositionEvidenceReference")) BETWEEN 12 AND 500
+                    AND length(btrim("CompletionReference")) BETWEEN 12 AND 500
                     AND "CompletedByUserId" <> '00000000-0000-0000-0000-000000000000'::uuid
                     AND "EvidenceSha256" ~ '^[0-9a-f]{64}$'
                 )
@@ -236,6 +240,7 @@ public sealed class Phase2HAtomicRoomChangeCompletion : Migration
                    OR r."SourceRoomId" IS DISTINCT FROM NEW."SourceRoomId"
                    OR r."TargetRoomId" IS DISTINCT FROM NEW."TargetRoomId"
                    OR r."BuildingId" IS DISTINCT FROM NEW."BuildingId"
+                   OR r."ReviewNotes" IS DISTINCT FROM NEW."CompletionReference"
                    OR r."ReviewedByUserId" IS DISTINCT FROM NEW."CompletedByUserId"
                    OR r."ReviewedAtUtc" IS DISTINCT FROM NEW."CompletedAtUtc"
                    OR r."RequestedDate" <> (

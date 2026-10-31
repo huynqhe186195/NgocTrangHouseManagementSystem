@@ -53,7 +53,7 @@ public sealed class RoomChangeExecutionReadiness_Tests
             IndependentPolicyAcceptedAndVerified = false,
             HandoverOriginalMetersAndSignedReferencesVerified = false,
             OtherOpenIntentForSameTarget = true,
-            SourceFinalInvoiceOfficiallyPosted = false,
+            SourceTransferMonthOfficiallyPosted = false,
             AllSourceInvoicesOfficiallyPostedAndReviewed = false,
             DepositOriginalPaymentsFullyProven = false,
             NoPendingOrOutgoingDepositDisposition = false,
@@ -74,10 +74,10 @@ public sealed class RoomChangeExecutionReadiness_Tests
     {
         var result = RoomChangeExecutionReadiness.Assess(
             Clean() with {
-                SourceFinalInvoiceOfficiallyPosted = false,
+                SourceTransferMonthOfficiallyPosted = false,
                 DepositOriginalPaymentsFullyProven = false
             });
-        Assert.Contains("SourceFinalInvoiceNotOfficiallyPosted", result.Blockers);
+        Assert.Contains("SourceTransferMonthNotOfficiallyPosted", result.Blockers);
         Assert.Contains("ContractDepositProvenanceIncomplete", result.Blockers);
         Assert.False(result.CanExecuteTransfer);
     }

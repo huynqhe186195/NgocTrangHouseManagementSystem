@@ -229,6 +229,12 @@ public sealed class SliceBFullFinancialMigrationChainPostgreSql_Tests
                      WHERE NOT tgisinternal
                        AND tgname = 'TR_BM_MoveOutRoomDisposition_Immutable'
                     """));
+                Assert.Equal(2L, await ScalarAsync(inspect, """
+                    SELECT count(*) FROM pg_trigger
+                     WHERE NOT tgisinternal
+                       AND tgname IN ('TR_BM_02_BlockDirectContractEnd',
+                                      'TR_BM_02_BlockDirectRequestCompletion')
+                    """));
                 Assert.Equal(3L, await ScalarAsync(inspect, """
                     SELECT count(*) FROM pg_indexes
                      WHERE indexname IN ('UX_BM_MoveOutDisposition_Contract',

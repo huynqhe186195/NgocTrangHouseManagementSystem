@@ -216,6 +216,50 @@ public sealed class Phase2G5AtomicRoomRelease : Migration
               DEFERRABLE INITIALLY DEFERRED
               FOR EACH ROW EXECUTE FUNCTION "BM_RequireRoomReleaseAtMoveOutCommit"();
             """);
+        builder.Sql("""
+            -- P0 database boundary: no direct EndAsync replacement, batch
+            -- SQL or import can end a contract or complete a request
+            -- without the SAME transaction's signed deposit closeout.
+            CREATE FUNCTION "BM_GuardDirectUnapprovedMoveOutEnd"()
+            RETURNS trigger LANGUAGE plpgsql AS $no_bypass$
+            BEGIN
+                IF TG_TABLE_NAME = 'BuildingManagementContracts' THEN
+                    IF OLD."Status" <> 3 AND NEW."Status" = 3 AND
+                       (OLD."Status" <> 2 OR NEW."ActualEndedAt" IS NULL OR
+                        NOT EXISTS (
+                           SELECT 1 FROM "BuildingManagementContractDepositCloseoutApprovals" a
+                            WHERE a."ContractId" = OLD."Id"
+                        )) THEN
+                        RAISE EXCEPTION
+                          'Direct Contract.End bypasses signed CompleteMoveOut'
+                          USING ERRCODE = '23514';
+                    END IF;
+                ELSIF TG_TABLE_NAME = 'BuildingManagementMoveOutRequests' THEN
+                    IF OLD."Status" <> 4 AND NEW."Status" = 4 AND
+                       (OLD."Status" <> 1 OR NEW."CompletedAt" IS NULL OR
+                        NOT EXISTS (
+                           SELECT 1 FROM "BuildingManagementContractDepositCloseoutApprovals" a
+                            WHERE a."MoveOutRequestId" = OLD."Id"
+                              AND a."ContractId" = NEW."ContractId"
+                        )) THEN
+                        RAISE EXCEPTION
+                          'Direct request completion bypasses signed CompleteMoveOut'
+                          USING ERRCODE = '23514';
+                    END IF;
+                ELSE
+                    RAISE EXCEPTION 'Unknown move-out end bypass target'
+                      USING ERRCODE = '23514';
+                END IF;
+                RETURN NEW;
+            END;
+            $no_bypass$;
+            CREATE TRIGGER "TR_BM_02_BlockDirectContractEnd"
+              BEFORE UPDATE ON "BuildingManagementContracts"
+              FOR EACH ROW EXECUTE FUNCTION "BM_GuardDirectUnapprovedMoveOutEnd"();
+            CREATE TRIGGER "TR_BM_02_BlockDirectRequestCompletion"
+              BEFORE UPDATE ON "BuildingManagementMoveOutRequests"
+              FOR EACH ROW EXECUTE FUNCTION "BM_GuardDirectUnapprovedMoveOutEnd"();
+            """);
     }
 
     protected override void Down(MigrationBuilder builder)
@@ -236,6 +280,11 @@ public sealed class Phase2G5AtomicRoomRelease : Migration
                 END IF;
             END;
             $disposition_down$;
+            DROP TRIGGER "TR_BM_02_BlockDirectRequestCompletion"
+              ON "BuildingManagementMoveOutRequests";
+            DROP TRIGGER "TR_BM_02_BlockDirectContractEnd"
+              ON "BuildingManagementContracts";
+            DROP FUNCTION "BM_GuardDirectUnapprovedMoveOutEnd"();
             DROP TRIGGER "TR_BM_Closeout_RequireRoomReleaseAtCommit"
               ON "BuildingManagementContractDepositCloseoutApprovals";
             DROP FUNCTION "BM_RequireRoomReleaseAtMoveOutCommit"();

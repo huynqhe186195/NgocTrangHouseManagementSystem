@@ -4928,6 +4928,329 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 await uow.CompleteAsync();
             }
 
+
+            // PHASE 2H POSITIVE HTTP ACCEPTANCE: the same isolated ABP Host,
+            // real Identity lease, actual EF migrations and actual deferred
+            // PostgreSQL commit trigger. Only submission time is simulated:
+            // the request is created at month-end; financial review, handover
+            // and commit happen on the real clock after that date. This never
+            // changes the real production clock or permits backdated requests.
+            var transferSourceRoom = await CreateChildAsync(clientB, roomCreate,
+                new { floorId = floorB, roomNumber = "117",
+                    name = "2H atomic HTTP source", area = 25m, capacity = 2,
+                    status = (int)BuildingManagement.Rooms.RoomStatus.Occupied });
+            var transferTargetRoom = await CreateChildAsync(clientB, roomCreate,
+                new { floorId = floorB, roomNumber = "118",
+                    name = "2H atomic HTTP target", area = 25m, capacity = 2,
+                    status = (int)BuildingManagement.Rooms.RoomStatus.Available });
+            var transferContract = Guid.NewGuid();
+            var transferMeterE = Guid.NewGuid();
+            var transferMeterW = Guid.NewGuid();
+            var transferEndE = Guid.NewGuid();
+            var transferEndW = Guid.NewGuid();
+            var transferDepositPayment = Guid.NewGuid();
+            const decimal transferRent = 3_000_000m;
+            const decimal transferBill = 3_083_000m;
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var db = await sp.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>().GetDbContextAsync();
+                var contract = new BuildingManagement.Contracts.Contract(
+                    transferContract, "TRF-PG-HTTP-" + transferContract.ToString("N"),
+                    transferSourceRoom, new DateTime(2026, 9, 1), null, transferRent);
+                contract.Activate();
+                db.Contracts.Add(contract);
+                db.ContractTenants.Add(new BuildingManagement.Contracts.ContractTenant(
+                    Guid.NewGuid(), transferContract, tenantB,
+                    BuildingManagement.Contracts.ContractTenantRole.PrimaryTenant));
+                db.UtilityMeters.AddRange(
+                    new BuildingManagement.Utilities.UtilityMeter(
+                        transferMeterE, transferSourceRoom,
+                        BuildingManagement.Utilities.UtilityType.Electricity,
+                        "TRF-E-" + transferMeterE.ToString("N"), 0m,
+                        new DateTime(2026, 9, 1)),
+                    new BuildingManagement.Utilities.UtilityMeter(
+                        transferMeterW, transferSourceRoom,
+                        BuildingManagement.Utilities.UtilityType.Water,
+                        "TRF-W-" + transferMeterW.ToString("N"), 0m,
+                        new DateTime(2026, 9, 1)));
+                db.MeterReadings.AddRange(
+                    new BuildingManagement.Utilities.MeterReading(
+                        Guid.NewGuid(), transferMeterE, 2026, 9,
+                        0m, 10m, new DateTime(2026, 9, 30)),
+                    new BuildingManagement.Utilities.MeterReading(
+                        Guid.NewGuid(), transferMeterW, 2026, 9,
+                        0m, 15m, new DateTime(2026, 9, 30)),
+                    new BuildingManagement.Utilities.MeterReading(
+                        transferEndE, transferMeterE, 2026, 10,
+                        10m, 20m, new DateTime(2026, 10, 31)),
+                    new BuildingManagement.Utilities.MeterReading(
+                        transferEndW, transferMeterW, 2026, 10,
+                        15m, 19m, new DateTime(2026, 10, 31)));
+                var payment = new BuildingManagement.Payments.Payment(
+                    transferDepositPayment,
+                    "TRF-DEPOSIT-" + transferDepositPayment.ToString("N"),
+                    tenantB, BuildingManagement.Payments.PaymentPurpose.ContractDeposit,
+                    BuildingManagement.Payments.BuildingManagement.Payments
+                        .PaymentMethod.BankTransfer,
+                    BuildingManagement.Payments.PaymentChannel.Manual,
+                    transferRent, contractId: transferContract,
+                    transactionReference: "TRF-PG-DEPOSIT-" +
+                        transferDepositPayment.ToString("N"));
+                payment.Complete(DateTime.UtcNow.AddDays(-5),
+                    "TRF-PG-DEPOSIT-" + transferDepositPayment.ToString("N"));
+                db.Payments.Add(payment);
+                await db.SaveChangesAsync();
+                var allocated = new BuildingManagement.DepositSettlements.DepositSettlement(
+                    Guid.NewGuid(),
+                    BuildingManagement.DepositSettlements.DepositSettlementType
+                        .AllocateToContractDeposit, transferRent,
+                    paymentId: transferDepositPayment,
+                    targetContractId: transferContract,
+                    notes: "Signed transfer source deposit");
+                allocated.Complete(DateTime.UtcNow.AddDays(-4));
+                db.DepositSettlements.Add(allocated);
+                await db.SaveChangesAsync();
+                await uow.CompleteAsync();
+            }
+            async Task<JsonDocument> Positive2HPostAsync(
+                HttpClient caller, string url, object payload)
+            {
+                var (status, data) = await PostFinalAsync(
+                    caller, url, JsonSerializer.Serialize(payload));
+                Assert.True(status is HttpStatusCode.OK or HttpStatusCode.Created,
+                    "2H positive POST " + url + ": " + status + " " + data);
+                return JsonDocument.Parse(data);
+            }
+            var positiveRoute = ChangeRoute(transferContract);
+            Guid positiveRequest;
+            transferClock.SetUtc(new DateTimeOffset(
+                2026, 10, 31, 12, 0, 0, TimeSpan.Zero));
+            try
+            {
+                using var submitted = await Positive2HPostAsync(clientB, positiveRoute,
+                    new { targetRoomId = transferTargetRoom,
+                        requestedDate = "2026-10-31",
+                        reason = "Signed full-month move to the next room" });
+                positiveRequest = submitted.RootElement.GetProperty("id").GetGuid();
+            }
+            finally { transferClock.Reset(); }
+            var positiveAt = positiveRoute + "/" + positiveRequest.ToString("D");
+            using (var roster = await Positive2HPostAsync(
+                clientB, positiveAt + "/tenant-roster", new { }))
+                Assert.Equal(1, roster.RootElement.GetProperty("rosterCount").GetInt32());
+            using (var proposal = await Positive2HPostAsync(
+                clientB, positiveAt + "/business-policy-proposal",
+                new {
+                    contractTreatment = 1, pricingTreatment = 1,
+                    depositTreatment = 1, tenantTreatment = 1,
+                    contractPolicyReference = "SIGNED-TRF-CONTRACT-2026-001",
+                    pricingPolicyReference = "SIGNED-TRF-PRICING-2026-001",
+                    depositPolicyReference = "SIGNED-TRF-DEPOSIT-2026-001",
+                    tenantConsentReference = "SIGNED-TRF-TENANT-2026-001"
+                }))
+                Assert.False(proposal.RootElement.GetProperty("isApproved").GetBoolean());
+            using (var review = await Positive2HPostAsync(
+                clientRoot, positiveAt + "/business-policy-review", new {
+                    accepted = true,
+                    signedReviewReference = "SIGNED-TRF-ROOT-REVIEW-2026-001",
+                    reason = "Independently verified whole-month same-rent and deposit"
+                }))
+                Assert.True(review.RootElement.GetProperty("accepted").GetBoolean());
+            using (var handover = await Positive2HPostAsync(
+                clientB, positiveAt + "/physical-handover", new {
+                    inspectionEvidenceReference = "SIGNED-TRF-INSPECTION-2026-001",
+                    signedHandoverReference = "SIGNED-TRF-HANDOVER-2026-001"
+                }))
+            {
+                Assert.Equal(transferEndE,
+                    handover.RootElement.GetProperty("electricityReadingId").GetGuid());
+                Assert.Equal(transferEndW,
+                    handover.RootElement.GetProperty("waterReadingId").GetGuid());
+            }
+            using (var beforeInvoice = await clientB.GetAsync(
+                positiveAt + "/execution-readiness"))
+            {
+                Assert.Equal(HttpStatusCode.OK, beforeInvoice.StatusCode);
+                using var doc = JsonDocument.Parse(
+                    await beforeInvoice.Content.ReadAsStringAsync());
+                Assert.False(doc.RootElement.GetProperty("canExecuteTransfer").GetBoolean());
+                Assert.Contains(doc.RootElement.GetProperty("blockers").EnumerateArray(),
+                    x => x.GetString() == "SourceTransferMonthNotOfficiallyPosted");
+            }
+
+            // Issue the transfer-month invoice using the existing 2G.3
+            // root/independent-review HTTP routes and real monthly meter
+            // history, not a fake settled invoice inserted by the test.
+            var transferDraftRoute = scopedContracts + "/" +
+                transferContract.ToString("D") + "/monthly-utility-drafts/2026/10";
+            Guid transferDraft;
+            using (var draft = await Positive2HPostAsync(
+                clientB, transferDraftRoute, new { }))
+                transferDraft = draft.RootElement.GetProperty("id").GetGuid();
+            var transferFinance = FinalInvoices(transferContract);
+            Guid transferCandidate;
+            using (var candidate = await Positive2HPostAsync(
+                clientRoot, transferFinance + "/monthly-drafts/" +
+                    transferDraft.ToString("D") + "/candidate",
+                new {
+                    contractId = transferContract, roomId = transferSourceRoom,
+                    billingYear = 2026, billingMonth = 10,
+                    paymentDueDate = new DateOnly(2026, 11, 7),
+                    dueDatePolicyReference = "SIGNED-TRF-MONTH-DUE-001",
+                    auxiliaryFeeDecision = 1,
+                    auxiliaryFeePolicyReference = "SIGNED-TRF-NO-EXTRAS-001",
+                    auxiliaryFeeReviewerId = root,
+                    auxiliaryCharges = Array.Empty<object>()
+                }))
+            {
+                transferCandidate = candidate.RootElement
+                    .GetProperty("candidateId").GetGuid();
+                Assert.Equal(transferBill, candidate.RootElement
+                    .GetProperty("frozenCandidateAmount").GetDecimal());
+            }
+            var transferCandidateRoute = transferFinance +
+                "/monthly-candidates/" + transferCandidate.ToString("D");
+            using (var reviewed = await Positive2HPostAsync(clientB,
+                transferCandidateRoute + "/review", new {
+                    accept = true,
+                    reason = "Independently checked transfer-month source E and W"
+                }))
+                Assert.True(reviewed.RootElement.GetProperty("accepted").GetBoolean());
+            Guid transferIssued;
+            using (var issued = await Positive2HPostAsync(clientRoot,
+                transferCandidateRoute + "/issue", new { }))
+                transferIssued = issued.RootElement.GetProperty("issuedInvoiceId").GetGuid();
+            Guid transferPaymentJournal;
+            using (var receipt = await Positive2HPostAsync(clientRoot,
+                transferFinance + "/monthly-issued/" +
+                    transferIssued.ToString("D") + "/manual-receipts",
+                new {
+                    tenantId = tenantB, amount = transferBill,
+                    paidAtUtc = DateTime.UtcNow,
+                    transactionReference = "TRF-MONTH-RECEIPT-" +
+                        transferContract.ToString("N"),
+                    bankEvidenceReference = "SIGNED-TRF-BANK-" +
+                        transferContract.ToString("N")
+                }))
+                transferPaymentJournal = receipt.RootElement
+                    .GetProperty("allocationJournalId").GetGuid();
+            Guid transferPosting;
+            using (var posted = await Positive2HPostAsync(clientRoot,
+                transferFinance + "/monthly-issued/" +
+                    transferIssued.ToString("D") + "/post-receivable", new { }))
+                transferPosting = posted.RootElement.GetProperty("postingId").GetGuid();
+            using (var accepted = await Positive2HPostAsync(clientB,
+                transferFinance + "/receivables/" +
+                    transferPosting.ToString("D") + "/allocations/" +
+                    transferPaymentJournal.ToString("D") + "/review",
+                new {
+                    accept = true,
+                    bankStatementEvidenceReference = "SIGNED-TRF-BANK-REVIEW-" +
+                        transferContract.ToString("N"),
+                    reason = "Independent reconciliation of transfer-month receipt"
+                }))
+                Assert.True(accepted.RootElement.GetProperty("accepted").GetBoolean());
+            using (var readiness = await clientB.GetAsync(
+                positiveAt + "/execution-readiness"))
+            {
+                var data = await readiness.Content.ReadAsStringAsync();
+                Assert.Equal(HttpStatusCode.OK, readiness.StatusCode);
+                using var doc = JsonDocument.Parse(data);
+                Assert.True(doc.RootElement.GetProperty("canExecuteTransfer").GetBoolean(),
+                    "2H eligible execution after proven settlement: " + data);
+                Assert.Empty(doc.RootElement.GetProperty("blockers").EnumerateArray());
+            }
+
+            var completePayload = new {
+                targetMonthlyRent = transferRent, sourceRoomDisposition = 1,
+                dispositionEvidenceReference = "SIGNED-TRF-CLEAN-ROOM-2026-001",
+                completionReference = "SIGNED-TRF-ATOMIC-COMPLETE-2026-001"
+            };
+            var staffComplete = await PostFinalAsync(clientB,
+                positiveAt + "/complete-room-change",
+                JsonSerializer.Serialize(completePayload));
+            Assert.Equal(HttpStatusCode.Forbidden, staffComplete.Status);
+            // Two simultaneous legitimate root requests must not create two
+            // contracts or transfer the same deposit twice.
+            var rootCalls = await Task.WhenAll(
+                PostFinalAsync(clientRoot, positiveAt + "/complete-room-change",
+                    JsonSerializer.Serialize(completePayload)),
+                PostFinalAsync(clientRoot, positiveAt + "/complete-room-change",
+                    JsonSerializer.Serialize(completePayload)));
+            var winners = rootCalls.Where(x =>
+                x.Status is HttpStatusCode.OK or HttpStatusCode.Created).ToArray();
+            Assert.Single(winners);
+            Assert.False(rootCalls.Single(x =>
+                x.Status != winners[0].Status || x.Body != winners[0].Body)
+                .Status is HttpStatusCode.OK or HttpStatusCode.Created);
+            Guid newTransferContract;
+            using (var done = JsonDocument.Parse(winners[0].Body))
+            {
+                newTransferContract = done.RootElement
+                    .GetProperty("targetContractId").GetGuid();
+                Assert.Equal(transferContract, done.RootElement
+                    .GetProperty("sourceContractId").GetGuid());
+                Assert.Equal(transferRent, done.RootElement
+                    .GetProperty("carriedDepositAmount").GetDecimal());
+            }
+            using (var replay = await clientRoot.PostAsync(
+                positiveAt + "/complete-room-change",
+                new StringContent(JsonSerializer.Serialize(completePayload),
+                    Encoding.UTF8, "application/json")))
+                Assert.False(replay.IsSuccessStatusCode);
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var db = await sp.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>().GetDbContextAsync();
+                var from = await db.Contracts.SingleAsync(x => x.Id == transferContract);
+                var to = await db.Contracts.SingleAsync(x => x.Id == newTransferContract);
+                Assert.Equal(BuildingManagement.Contracts.ContractStatus.Ended, from.Status);
+                Assert.Equal(BuildingManagement.Contracts.ContractEndReason.RoomChanged,
+                    from.EndReason);
+                Assert.Equal(BuildingManagement.Contracts.ContractStatus.Active, to.Status);
+                Assert.Equal(transferTargetRoom, to.RoomId);
+                Assert.Equal(transferContract, to.RenewedFromContractId);
+                Assert.Equal(new DateTime(2026, 11, 1), to.StartDate);
+                Assert.Equal(transferRent, to.DepositAmount);
+                Assert.Equal(BuildingManagement.Rooms.RoomStatus.Available,
+                    (await db.Rooms.SingleAsync(x => x.Id == transferSourceRoom)).Status);
+                Assert.Equal(BuildingManagement.Rooms.RoomStatus.Occupied,
+                    (await db.Rooms.SingleAsync(x => x.Id == transferTargetRoom)).Status);
+                var originalTenants = await db.ContractTenants.AsNoTracking()
+                    .Where(x => x.ContractId == transferContract).ToArrayAsync();
+                var movedTenants = await db.ContractTenants.AsNoTracking()
+                    .Where(x => x.ContractId == newTransferContract).ToArrayAsync();
+                Assert.Single(originalTenants);
+                Assert.Single(movedTenants);
+                Assert.Equal(originalTenants[0].TenantId, movedTenants[0].TenantId);
+                Assert.Equal(originalTenants[0].Role, movedTenants[0].Role);
+                var carried = await db.DepositSettlements.SingleAsync(x =>
+                    x.SourceContractId == transferContract);
+                Assert.Equal(newTransferContract, carried.TargetContractId);
+                Assert.Equal(transferRent, carried.Amount);
+                Assert.Equal(BuildingManagement.DepositSettlements.DepositSettlementType
+                    .RoomChangeCarryForward, carried.Type);
+                Assert.Equal(1, await db.RoomChangeCompletions.CountAsync(x =>
+                    x.SourceContractId == transferContract));
+                var evidence = await db.RoomChangeCompletions.SingleAsync(x =>
+                    x.SourceContractId == transferContract);
+                evidence.VerifyFingerprint();
+                Assert.Equal(1, await db.MonthlyIssuedInvoices.CountAsync(x =>
+                    x.ContractId == transferContract));
+                Assert.Equal(1, await db.OfficialInvoiceReceivables.CountAsync(x =>
+                    x.ContractId == transferContract));
+                Assert.Equal(1, await db.OfficialInvoiceReceiptReviews.CountAsync(x =>
+                    x.ContractId == transferContract && x.Accepted));
+                await uow.CompleteAsync();
+            }
+
             // Record the real room state rather than assuming occupancy:
             // other independent contract tests may have changed it earlier.
             BuildingManagement.Rooms.RoomStatus originalRoomStatus;

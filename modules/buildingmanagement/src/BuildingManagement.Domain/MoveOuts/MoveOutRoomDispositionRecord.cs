@@ -69,10 +69,13 @@ public sealed class MoveOutRoomDispositionRecord : Entity<Guid>
             approvedDamageForfeit < 0m ||
             decimal.Truncate(approvedDamageForfeit) != approvedDamageForfeit ||
             !HasReference(handoverEvidenceReference, 8, 500) ||
+            // Only facts observed by the locked handover query are valid.
+            // Unexpected states are not silently treated as no future occupant.
             booking.Any(x => x is null || x.Id == Guid.Empty ||
-                !Enum.IsDefined(x.Status)) ||
+                x.Status is not (RoomReservationStatus.PendingPayment or
+                    RoomReservationStatus.Reserved)) ||
             signed.Any(x => x is null || x.Id == Guid.Empty ||
-                !Enum.IsDefined(x.Status)) ||
+                x.Status != ContractStatus.Signed) ||
             booking.Select(x => x.Id).Distinct().Count() != booking.Length ||
             signed.Select(x => x.Id).Distinct().Count() != signed.Length ||
             signed.Any(x => x.Id == contractId))

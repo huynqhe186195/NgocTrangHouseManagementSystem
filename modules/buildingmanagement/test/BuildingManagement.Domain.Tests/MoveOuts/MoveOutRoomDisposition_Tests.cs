@@ -145,6 +145,36 @@ public sealed class MoveOutRoomDisposition_Tests
             status: RoomStatus.Available));
     }
 
+    [Fact]
+    public void CMOUT62_Unknown_Or_Unexpected_Booking_State_Fails_Closed()
+    {
+        Assert.Throws<InvalidOperationException>(() => Create(
+            reservations: new[] {
+                new MoveOutRoomReservationFact(Guid.NewGuid(),
+                    RoomReservationStatus.ConvertedToContract)
+            }));
+        Assert.Throws<InvalidOperationException>(() => Create(
+            reservations: new[] {
+                new MoveOutRoomReservationFact(Guid.NewGuid(),
+                    (RoomReservationStatus)999)
+            }));
+    }
+
+    [Fact]
+    public void CMOUT63_Active_Or_Ended_Contract_Is_Not_Ignored_As_No_Commitment()
+    {
+        Assert.Throws<InvalidOperationException>(() => Create(
+            contracts: new[] {
+                new MoveOutRoomSignedContractFact(Guid.NewGuid(),
+                    ContractStatus.Active)
+            }));
+        Assert.Throws<InvalidOperationException>(() => Create(
+            contracts: new[] {
+                new MoveOutRoomSignedContractFact(Guid.NewGuid(),
+                    ContractStatus.Ended)
+            }));
+    }
+
     private static void Set(MoveOutRoomDispositionRecord d,
         string property, object value)
     {

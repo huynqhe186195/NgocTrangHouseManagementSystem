@@ -5121,9 +5121,9 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 }))
                 Assert.True(reviewed.RootElement.GetProperty("accepted").GetBoolean());
             Guid transferIssued;
-            using (var issued = await Positive2HPostAsync(clientRoot,
+            using (var transferIssueResponse = await Positive2HPostAsync(clientRoot,
                 transferCandidateRoute + "/issue", new { }))
-                transferIssued = issued.RootElement.GetProperty("issuedInvoiceId").GetGuid();
+                transferIssued = transferIssueResponse.RootElement.GetProperty("issuedInvoiceId").GetGuid();
             Guid transferPaymentJournal;
             using (var receipt = await Positive2HPostAsync(clientRoot,
                 transferFinance + "/monthly-issued/" +
@@ -5239,9 +5239,9 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     .RoomChangeCarryForward, carried.Type);
                 Assert.Equal(1, await db.RoomChangeCompletions.CountAsync(x =>
                     x.SourceContractId == transferContract));
-                var evidence = await db.RoomChangeCompletions.SingleAsync(x =>
+                var transferCompletionEvidence = await db.RoomChangeCompletions.SingleAsync(x =>
                     x.SourceContractId == transferContract);
-                evidence.VerifyFingerprint();
+                transferCompletionEvidence.VerifyFingerprint();
                 Assert.Equal(1, await db.MonthlyIssuedInvoices.CountAsync(x =>
                     x.ContractId == transferContract));
                 Assert.Equal(1, await db.OfficialInvoiceReceivables.CountAsync(x =>

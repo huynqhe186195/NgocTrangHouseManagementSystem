@@ -77,6 +77,7 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
     public DbSet<ContractDepositSettlementDecisionRecord> DepositSettlementDecisions { get; set; } = default!;
     // OI-04 separate immutable Owner authorization: never an actual cash journal.
     public DbSet<ContractDepositDebtOffsetApprovalRecord> DebtOffsetApprovals { get; set; } = default!;
+    public DbSet<ContractDepositDebtReviewRecord> DebtOffsetReviews { get; set; } = default!;
     public DbSet<ContractDepositCloseoutApprovalRecord> DepositCloseoutApprovals { get; set; } = default!;
 
     public BuildingManagementDbContext(DbContextOptions<BuildingManagementDbContext> options)
@@ -137,6 +138,8 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.ContractDepositSettlementDecisionRecordConfiguration());
         builder.ApplyConfiguration(
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.ContractDepositDebtOffsetApprovalRecordConfiguration());
+        builder.ApplyConfiguration(
+            new BuildingManagement.EntityFrameworkCore.EntityConfigurations.ContractDepositDebtReviewRecordConfiguration());
         builder.ApplyConfiguration(
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.MoveOutRoomDispositionRecordConfiguration());
         builder.ApplyConfiguration(

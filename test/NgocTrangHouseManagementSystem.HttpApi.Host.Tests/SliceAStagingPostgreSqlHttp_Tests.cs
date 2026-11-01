@@ -1841,7 +1841,7 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             // deposit, with no final invoice, to exercise the separate
             // staff review -> Root approval sequence. No offset is posted.
             var oi04RoomId = await CreateChildAsync(clientB, roomCreate,
-                new { floorId = floorB, roomNumber = "987",
+                new { floorId = floorB, roomNumber = "111",
                     name = "PG OI04 owner debt-offset approval",
                     area = 23m, capacity = 2,
                     status = (int)BuildingManagement.Rooms.RoomStatus.Occupied });

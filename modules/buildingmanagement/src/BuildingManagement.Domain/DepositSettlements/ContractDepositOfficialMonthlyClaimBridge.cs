@@ -134,6 +134,13 @@ public static class ContractDepositOfficialMonthlyClaimBridge
             SignedEvidenceReference: posting.SourceEvidenceSha256));
     }
 
+    /// <summary>
+    /// Stable claim key shared by financial source proof and the official
+    /// per-invoice balance presentation. Not a caller-authorized amount.
+    /// </summary>
+    public static Guid ClaimIdFor(Guid posting, ContractDepositOffsetCategory category)
+        => ClaimId(posting, category);
+
     private static Guid ClaimId(Guid posting,
         ContractDepositOffsetCategory category)
     {

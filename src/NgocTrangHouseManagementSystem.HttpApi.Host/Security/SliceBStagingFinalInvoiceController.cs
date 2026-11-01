@@ -235,6 +235,22 @@ public sealed class SliceBStagingFinalInvoiceController : ControllerBase
             .GetPostedDebtOffsetAsync(contractId, requestId);
     }
 
+    /// <summary>
+    /// Accounting-only, source-backed readiness: true bank refund and
+    /// final contract/room closeout remain separate, approved operations.
+    /// </summary>
+    [HttpGet("contracts/{contractId:guid}/move-outs/{requestId:guid}/debt-offset/closeout-readiness")]
+    [UnitOfWork(true, System.Data.IsolationLevel.RepeatableRead)]
+    public Task<BuildingManagement.DepositSettlements.ContractDepositPostOffsetCloseoutReadiness>
+        GetPostOffsetCloseoutReadinessAsync(
+            [FromRoute] Guid contractId, [FromRoute] Guid requestId,
+            [FromQuery] DateOnly? asOfDate = null)
+    {
+        RequireIsolatedStaging();
+        return (_mutation ?? throw Denied())
+            .GetPostOffsetCloseoutReadinessAsync(contractId, requestId, asOfDate);
+    }
+
     [HttpGet("contracts/{contractId:guid}/receivables/{postingId:guid}/balance")]
     [UnitOfWork(true, System.Data.IsolationLevel.RepeatableRead)]
     public Task<OfficialInvoiceReceivableBalance> GetOfficialBalanceAsync(

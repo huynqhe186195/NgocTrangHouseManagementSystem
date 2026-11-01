@@ -1836,6 +1836,196 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 await uow.CompleteAsync();
             }
 
+            // OI-04 POSITIVE authenticated PostgreSQL HTTP. This scratch
+            // contract proves true bank-independent monthly debt and HELD
+            // deposit, with no final invoice, to exercise the separate
+            // staff review -> Root approval sequence. No offset is posted.
+            var oi04RoomId = await CreateChildAsync(clientB, roomCreate,
+                new { floorId = floorB, roomNumber = "987",
+                    name = "PG OI04 owner debt-offset approval",
+                    area = 23m, capacity = 2,
+                    status = (int)BuildingManagement.Rooms.RoomStatus.Occupied });
+            var oi04ContractId = Guid.NewGuid();
+            var oi04RequestId = Guid.NewGuid();
+            var oi04DepositPaymentId = Guid.NewGuid();
+            const decimal oi04MonthlyRent = 3_000_000m;
+            using (var oi04SetupScope = app.Services.CreateScope())
+            {
+                var oi04Sp = oi04SetupScope.ServiceProvider;
+                using var oi04Uow = oi04Sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var oi04Db = await oi04Sp.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>()
+                    .GetDbContextAsync();
+                var oi04Contract = new BuildingManagement.Contracts.Contract(
+                    oi04ContractId, "OI04-HTTP-" + oi04ContractId.ToString("N"),
+                    oi04RoomId,
+                    new DateTime(2026, 10, 1, 0, 0, 0, DateTimeKind.Utc),
+                    null, oi04MonthlyRent);
+                oi04Contract.Activate();
+                oi04Db.Contracts.Add(oi04Contract);
+                oi04Db.ContractTenants.Add(
+                    new BuildingManagement.Contracts.ContractTenant(
+                        Guid.NewGuid(), oi04ContractId, tenantB,
+                        BuildingManagement.Contracts.ContractTenantRole.PrimaryTenant));
+                var oi04MoveOut = new BuildingManagement.MoveOuts.MoveOutRequest(
+                    oi04RequestId, oi04ContractId, oi04RoomId,
+                    new DateOnly(2026, 10, 31),
+                    "Signed end-of-month financial reconciliation");
+                oi04MoveOut.Approve(DateTime.UtcNow.AddDays(-1),
+                    "Approved standard month-end reconciliation");
+                oi04Db.MoveOutRequests.Add(oi04MoveOut);
+
+                var oi04Deposit = new BuildingManagement.Payments.Payment(
+                    oi04DepositPaymentId,
+                    "OI04-PAID-" + oi04DepositPaymentId.ToString("N"),
+                    tenantB, BuildingManagement.Payments.PaymentPurpose.ContractDeposit,
+                    BuildingManagement.Payments.BuildingManagement.Payments
+                        .PaymentMethod.BankTransfer,
+                    BuildingManagement.Payments.PaymentChannel.Manual,
+                    oi04MonthlyRent, contractId: oi04ContractId,
+                    transactionReference: "OI04-INITIAL-DEPOSIT-PAID-2026");
+                oi04Deposit.Complete(DateTime.UtcNow.AddDays(-5),
+                    "OI04-INITIAL-DEPOSIT-PAID-2026");
+                oi04Db.Payments.Add(oi04Deposit);
+                await oi04Db.SaveChangesAsync();
+                var oi04InitialAllocation = new
+                    BuildingManagement.DepositSettlements.DepositSettlement(
+                        Guid.NewGuid(),
+                        BuildingManagement.DepositSettlements.DepositSettlementType
+                            .AllocateToContractDeposit,
+                        oi04MonthlyRent, paymentId: oi04DepositPaymentId,
+                        targetContractId: oi04ContractId,
+                        notes: "Isolated test completed and accounted held cash");
+                oi04InitialAllocation.Complete(DateTime.UtcNow.AddDays(-4));
+                oi04Db.DepositSettlements.Add(oi04InitialAllocation);
+
+                var oi04At = DateTime.UtcNow.AddMinutes(-15);
+                var oi04Source = BuildingManagement.Invoices
+                    .MonthlyInvoiceCandidateLedgerRecord.Capture(Guid.NewGuid(),
+                    new BuildingManagement.Invoices.MonthlyInvoiceCandidateSnapshot(
+                        Guid.NewGuid(), oi04ContractId, oi04RoomId, b,
+                        2026, 10, root, oi04At,
+                        new DateOnly(2026, 11, 7),
+                        "SIGNED-OI04-MONTHLY-DUE-DATE-POLICY",
+                        oi04MonthlyRent, 35_000m, 15_000m,
+                        BuildingManagement.Invoices.AuxiliaryFeeAssessmentDecision
+                            .ExplicitlyNoCharges,
+                        "SIGNED-OI04-NO-ADDITIONAL-SERVICES",
+                        Array.Empty<BuildingManagement.Invoices
+                            .FinalInvoiceAuxiliaryChargeProposal>(),
+                        0m, 3_050_000m,
+                        new[] {
+                            new BuildingManagement.Invoices.MonthlyInvoiceCandidateUtilityLine(
+                                BuildingManagement.Utilities.UtilityType.Electricity,
+                                Guid.NewGuid(),10m,3500m,35_000m,
+                                new[] { new BuildingManagement.Invoices.MonthlyInvoiceCandidateMeterSource(
+                                    Guid.NewGuid(),Guid.NewGuid(),
+                                    BuildingManagement.Utilities.MeterUsageSourceType.MonthlyReading,
+                                    new DateTime(2026,10,31),0m,10m) }),
+                            new BuildingManagement.Invoices.MonthlyInvoiceCandidateUtilityLine(
+                                BuildingManagement.Utilities.UtilityType.Water,
+                                Guid.NewGuid(),1m,15_000m,15_000m,
+                                new[] { new BuildingManagement.Invoices.MonthlyInvoiceCandidateMeterSource(
+                                    Guid.NewGuid(),Guid.NewGuid(),
+                                    BuildingManagement.Utilities.MeterUsageSourceType.MonthlyReading,
+                                    new DateTime(2026,10,31),0m,1m) })
+                        }));
+                var oi04IndependentReview = BuildingManagement.Invoices
+                    .MonthlyInvoiceIndependentReviewRecord.Capture(
+                        Guid.NewGuid(),oi04Source,operatorB,oi04At.AddMinutes(1),
+                        true,"Signed independent reconciliation of October rent utilities");
+                var oi04Issued = BuildingManagement.Invoices.MonthlyIssuedInvoiceRecord.Issue(
+                    Guid.NewGuid(),"NT-OI04-PG-202610",root,oi04At.AddMinutes(2),
+                    oi04Source,oi04IndependentReview);
+                var oi04Posted = BuildingManagement.Invoices
+                    .OfficialInvoiceReceivablePostingRecord.PostMonthly(
+                        Guid.NewGuid(),oi04Issued,oi04Source,oi04IndependentReview,
+                        root,oi04At.AddMinutes(3));
+                oi04Db.MonthlyInvoiceCandidates.Add(oi04Source);
+                oi04Db.MonthlyInvoiceReviews.Add(oi04IndependentReview);
+                oi04Db.MonthlyIssuedInvoices.Add(oi04Issued);
+                oi04Db.OfficialInvoiceReceivables.Add(oi04Posted);
+                await oi04Db.SaveChangesAsync();
+                await oi04Uow.CompleteAsync();
+            }
+            var oi04BaseRoute = FinalInvoices(oi04ContractId) +
+                "/move-outs/" + oi04RequestId.ToString("D") + "/debt-offset";
+            var oi04ReviewInput = new {
+                signedReviewReference = "SIGNED-INDEPENDENT-OI04-SOURCE-REVIEW-001"
+            };
+            // Independent STAFF must sign; Owner later requires a
+            // different authenticated actor and bootstrap privilege.
+            var oi04StaffReview = await PostFinalAsync(clientB,
+                oi04BaseRoute + "/review",
+                JsonSerializer.Serialize(oi04ReviewInput));
+            Assert.True(oi04StaffReview.Status is HttpStatusCode.OK or
+                HttpStatusCode.Created,
+                "Independent OI04 review: " +
+                oi04StaffReview.Status + " " + oi04StaffReview.Body);
+            Guid oi04ReviewId;
+            using (var oi04ReviewJson = JsonDocument.Parse(oi04StaffReview.Body))
+            {
+                oi04ReviewId = oi04ReviewJson.RootElement.GetProperty("reviewId").GetGuid();
+                Assert.Equal(3_050_000m, oi04ReviewJson.RootElement
+                    .GetProperty("verifiedOutstandingVnd").GetDecimal());
+                Assert.False(oi04ReviewJson.RootElement
+                    .GetProperty("canPostDepositOffset").GetBoolean());
+            }
+            var oi04ApproveRoute = oi04BaseRoute + "/reviews/" +
+                oi04ReviewId.ToString("D") + "/approve";
+            var oi04ApprovalPayload = JsonSerializer.Serialize(new {
+                signedPolicyReference = "SIGNED-OI04-OWNER-RENT-UTILITY-PRIORITY-001"
+            });
+            var oi04StaffCannotApprove = await PostFinalAsync(clientB,
+                oi04ApproveRoute,oi04ApprovalPayload);
+            Assert.Equal(HttpStatusCode.Forbidden,oi04StaffCannotApprove.Status);
+            var oi04OwnerApproval = await PostFinalAsync(clientRoot,
+                oi04ApproveRoute,oi04ApprovalPayload);
+            Assert.True(oi04OwnerApproval.Status is HttpStatusCode.OK or
+                HttpStatusCode.Created,
+                "OI04 Owner authorization: " +
+                oi04OwnerApproval.Status + " " + oi04OwnerApproval.Body);
+            using (var oi04ApprovedJson=JsonDocument.Parse(oi04OwnerApproval.Body))
+            {
+                Assert.Equal(3_000_000m,oi04ApprovedJson.RootElement
+                    .GetProperty("approvedOffsetVnd").GetDecimal());
+                Assert.Equal(0m,oi04ApprovedJson.RootElement
+                    .GetProperty("expectedRemainingDepositVnd").GetDecimal());
+                Assert.Equal(50_000m,oi04ApprovedJson.RootElement
+                    .GetProperty("expectedUncoveredDebtVnd").GetDecimal());
+                Assert.False(oi04ApprovedJson.RootElement
+                    .GetProperty("isMoneyPosted").GetBoolean());
+                Assert.False(oi04ApprovedJson.RootElement
+                    .GetProperty("canCompleteMoveOut").GetBoolean());
+            }
+            var oi04ApproveReplay = await PostFinalAsync(clientRoot,
+                oi04ApproveRoute,oi04ApprovalPayload);
+            Assert.Equal(HttpStatusCode.OK,oi04ApproveReplay.Status);
+            var oi04ChangedPolicy = await PostFinalAsync(clientRoot,
+                oi04ApproveRoute,
+                JsonSerializer.Serialize(new {
+                    signedPolicyReference = "SIGNED-OI04-DIFFERENT-PRIORITY-REPLAY"
+                }));
+            Assert.Equal(HttpStatusCode.Forbidden,oi04ChangedPolicy.Status);
+            using (var oi04InspectScope=app.Services.CreateScope())
+            {
+                using var oi04Uow=oi04InspectScope.ServiceProvider
+                    .GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew:true,isTransactional:true);
+                var oi04Db=await oi04InspectScope.ServiceProvider
+                    .GetRequiredService<IDbContextProvider<BuildingManagementDbContext>>()
+                    .GetDbContextAsync();
+                Assert.Single(await oi04Db.DebtOffsetReviews
+                    .AsNoTracking().Where(x=>x.ContractId==oi04ContractId).ToArrayAsync());
+                Assert.Single(await oi04Db.DebtOffsetApprovals
+                    .AsNoTracking().Where(x=>x.ContractId==oi04ContractId).ToArrayAsync());
+                Assert.False(await oi04Db.DepositSettlements.AnyAsync(x =>
+                    x.SourceContractId==oi04ContractId &&
+                    x.Type==BuildingManagement.DepositSettlements.DepositSettlementType.Forfeit));
+                await oi04Uow.CompleteAsync();
+            }
+
             // Phase 2G.3 regular billing preview: a scoped, repeatable-read
             // calculation uses only the known full-month rent and source-
             // backed utilities. Other service fees are explicitly UNKNOWN.

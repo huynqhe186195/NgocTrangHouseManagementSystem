@@ -1848,6 +1848,11 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             var oi04ContractId = Guid.NewGuid();
             var oi04RequestId = Guid.NewGuid();
             var oi04DepositPaymentId = Guid.NewGuid();
+            var oi04DraftId = Guid.NewGuid();
+            var oi04ElectricMeterId = Guid.NewGuid();
+            var oi04WaterMeterId = Guid.NewGuid();
+            var oi04ElectricReadingId = Guid.NewGuid();
+            var oi04WaterReadingId = Guid.NewGuid();
             const decimal oi04MonthlyRent = 3_000_000m;
             using (var oi04SetupScope = app.Services.CreateScope())
             {
@@ -1900,36 +1905,82 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 oi04InitialAllocation.Complete(DateTime.UtcNow.AddDays(-4));
                 oi04Db.DepositSettlements.Add(oi04InitialAllocation);
 
+                // Preserve the REAL original Draft, physical meters,
+                // posted readings and previously approved building rates.
+                // The official candidate references this exact draft ID.
+                var oi04PhysicalAt = new DateTime(2026, 10, 31);
+                oi04Db.UtilityMeters.AddRange(
+                    new BuildingManagement.Utilities.UtilityMeter(
+                        oi04ElectricMeterId,oi04RoomId,
+                        BuildingManagement.Utilities.UtilityType.Electricity,
+                        "OI04-E-" + oi04ElectricMeterId.ToString("N"),0m,
+                        new DateTime(2026,9,1)),
+                    new BuildingManagement.Utilities.UtilityMeter(
+                        oi04WaterMeterId,oi04RoomId,
+                        BuildingManagement.Utilities.UtilityType.Water,
+                        "OI04-W-" + oi04WaterMeterId.ToString("N"),0m,
+                        new DateTime(2026,9,1)));
+                oi04Db.MeterReadings.AddRange(
+                    new BuildingManagement.Utilities.MeterReading(
+                        oi04ElectricReadingId,oi04ElectricMeterId,2026,10,
+                        0m,10m,oi04PhysicalAt),
+                    new BuildingManagement.Utilities.MeterReading(
+                        oi04WaterReadingId,oi04WaterMeterId,2026,10,
+                        0m,4m,oi04PhysicalAt));
+                oi04Db.Invoices.Add(BuildingManagement.Invoices.Invoice.CreateDraft(
+                    oi04DraftId,
+                    BuildingManagement.Invoices.InvoiceDraftSnapshot.Capture(
+                        oi04ContractId,oi04RoomId,2026,10,
+                        new [] {
+                            new BuildingManagement.Invoices.InvoiceDraftUtilityLineSnapshot(
+                                BuildingManagement.Utilities.UtilityType.Electricity,
+                                financeRateE,"SingleRateWholeMonth",10m,
+                                3500m,35_000m,
+                                new [] {new BuildingManagement.Invoices.InvoiceDraftMeterSegmentSnapshot(
+                                    oi04ElectricReadingId,oi04ElectricMeterId,
+                                    BuildingManagement.Utilities.MeterUsageSourceType.MonthlyReading,
+                                    oi04PhysicalAt,0m,10m)},
+                                Array.Empty<string>()),
+                            new BuildingManagement.Invoices.InvoiceDraftUtilityLineSnapshot(
+                                BuildingManagement.Utilities.UtilityType.Water,
+                                financeRateW,"SingleRateWholeMonth",4m,
+                                12000m,48_000m,
+                                new [] {new BuildingManagement.Invoices.InvoiceDraftMeterSegmentSnapshot(
+                                    oi04WaterReadingId,oi04WaterMeterId,
+                                    BuildingManagement.Utilities.MeterUsageSourceType.MonthlyReading,
+                                    oi04PhysicalAt,0m,4m)},
+                                Array.Empty<string>())
+                        }),Guid.NewGuid));
                 var oi04At = DateTime.UtcNow.AddMinutes(-15);
                 var oi04Source = BuildingManagement.Invoices
                     .MonthlyInvoiceCandidateLedgerRecord.Capture(Guid.NewGuid(),
                     new BuildingManagement.Invoices.MonthlyInvoiceCandidateSnapshot(
-                        Guid.NewGuid(), oi04ContractId, oi04RoomId, b,
+                        oi04DraftId, oi04ContractId, oi04RoomId, b,
                         2026, 10, root, oi04At,
                         new DateOnly(2026, 11, 7),
                         "SIGNED-OI04-MONTHLY-DUE-DATE-POLICY",
-                        oi04MonthlyRent, 35_000m, 15_000m,
+                        oi04MonthlyRent, 35_000m, 48_000m,
                         BuildingManagement.Invoices.AuxiliaryFeeAssessmentDecision
                             .ExplicitlyNoCharges,
                         "SIGNED-OI04-NO-ADDITIONAL-SERVICES",
                         Array.Empty<BuildingManagement.Invoices
                             .FinalInvoiceAuxiliaryChargeProposal>(),
-                        0m, 3_050_000m,
+                        0m, 3_083_000m,
                         new[] {
                             new BuildingManagement.Invoices.MonthlyInvoiceCandidateUtilityLine(
                                 BuildingManagement.Utilities.UtilityType.Electricity,
-                                Guid.NewGuid(),10m,3500m,35_000m,
+                                financeRateE,10m,3500m,35_000m,
                                 new[] { new BuildingManagement.Invoices.MonthlyInvoiceCandidateMeterSource(
-                                    Guid.NewGuid(),Guid.NewGuid(),
+                                    oi04ElectricReadingId,oi04ElectricMeterId,
                                     BuildingManagement.Utilities.MeterUsageSourceType.MonthlyReading,
                                     new DateTime(2026,10,31),0m,10m) }),
                             new BuildingManagement.Invoices.MonthlyInvoiceCandidateUtilityLine(
                                 BuildingManagement.Utilities.UtilityType.Water,
-                                Guid.NewGuid(),1m,15_000m,15_000m,
+                                financeRateW,4m,12000m,48_000m,
                                 new[] { new BuildingManagement.Invoices.MonthlyInvoiceCandidateMeterSource(
-                                    Guid.NewGuid(),Guid.NewGuid(),
+                                    oi04WaterReadingId,oi04WaterMeterId,
                                     BuildingManagement.Utilities.MeterUsageSourceType.MonthlyReading,
-                                    new DateTime(2026,10,31),0m,1m) })
+                                    new DateTime(2026,10,31),0m,4m) })
                         }));
                 var oi04IndependentReview = BuildingManagement.Invoices
                     .MonthlyInvoiceIndependentReviewRecord.Capture(
@@ -1967,7 +2018,7 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             using (var oi04ReviewJson = JsonDocument.Parse(oi04StaffReview.Body))
             {
                 oi04ReviewId = oi04ReviewJson.RootElement.GetProperty("reviewId").GetGuid();
-                Assert.Equal(3_050_000m, oi04ReviewJson.RootElement
+                Assert.Equal(3_083_000m, oi04ReviewJson.RootElement
                     .GetProperty("verifiedOutstandingVnd").GetDecimal());
                 Assert.False(oi04ReviewJson.RootElement
                     .GetProperty("canPostDepositOffset").GetBoolean());
@@ -1992,7 +2043,7 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     .GetProperty("approvedOffsetVnd").GetDecimal());
                 Assert.Equal(0m,oi04ApprovedJson.RootElement
                     .GetProperty("expectedRemainingDepositVnd").GetDecimal());
-                Assert.Equal(50_000m,oi04ApprovedJson.RootElement
+                Assert.Equal(83_000m,oi04ApprovedJson.RootElement
                     .GetProperty("expectedUncoveredDebtVnd").GetDecimal());
                 Assert.False(oi04ApprovedJson.RootElement
                     .GetProperty("isMoneyPosted").GetBoolean());

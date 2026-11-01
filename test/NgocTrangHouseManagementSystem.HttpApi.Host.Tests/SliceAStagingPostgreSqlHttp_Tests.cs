@@ -5189,10 +5189,10 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             var selfBankReviewer = await PostFinalAsync(
                 clientB, splitRoute, splitPayload);
             Assert.Equal(HttpStatusCode.Forbidden, selfBankReviewer.Status);
-            var signed = await PostFinalAsync(clientRoot, splitRoute, splitPayload);
-            Assert.True(signed.Status is HttpStatusCode.OK or HttpStatusCode.Created,
-                "Signed receipt line split: " + signed.Status + " " + signed.Body);
-            using (var document = JsonDocument.Parse(signed.Body))
+            var ownerReceiptSplitResponse = await PostFinalAsync(clientRoot, splitRoute, splitPayload);
+            Assert.True(ownerReceiptSplitResponse.Status is HttpStatusCode.OK or HttpStatusCode.Created,
+                "Signed receipt line split: " + ownerReceiptSplitResponse.Status + " " + ownerReceiptSplitResponse.Body);
+            using (var document = JsonDocument.Parse(ownerReceiptSplitResponse.Body))
             {
                 Assert.Equal(transferBill, document.RootElement
                     .GetProperty("allocatedAmountVnd").GetDecimal());
@@ -5201,8 +5201,8 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 Assert.False(document.RootElement
                     .GetProperty("isBankExternallyVerified").GetBoolean());
             }
-            var replay = await PostFinalAsync(clientRoot, splitRoute, splitPayload);
-            Assert.Equal(HttpStatusCode.OK, replay.Status);
+            var replayReceiptSplitResponse = await PostFinalAsync(clientRoot, splitRoute, splitPayload);
+            Assert.Equal(HttpStatusCode.OK, replayReceiptSplitResponse.Status);
             var altered = await PostFinalAsync(clientRoot, splitRoute,
                 JsonSerializer.Serialize(new {
                     signedAllocationReference = "SIGNED-ALTERED-TRF-SPLIT-001",

@@ -309,7 +309,7 @@ public sealed class SliceBStagingFinalInvoiceController : ControllerBase
     }
 
     [HttpPost("contracts/{contractId:guid}/evidence/{evidenceId:guid}/issue-candidate")]
-    [UnitOfWork(true)]
+    [UnitOfWork(true, System.Data.IsolationLevel.Serializable)]
     public Task<SliceBStagedIssuedInvoiceRead> IssueCandidateAsync(
         [FromRoute] Guid contractId, [FromRoute] Guid evidenceId,
         [FromBody] FinalInvoiceFinancialTermsProposal input)
@@ -322,7 +322,7 @@ public sealed class SliceBStagingFinalInvoiceController : ControllerBase
     }
 
     [HttpPost("contracts/{contractId:guid}/issued/{issuedId:guid}/manual-receipts")]
-    [UnitOfWork(true)]
+    [UnitOfWork(true, System.Data.IsolationLevel.Serializable)]
     public Task<SliceBStagedInvoiceReceiptRead> RecordManualReceiptAsync(
         [FromRoute] Guid contractId, [FromRoute] Guid issuedId,
         [FromBody] SliceBFinalInvoiceManualReceiptInput input)

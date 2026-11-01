@@ -207,6 +207,55 @@ public sealed class Phase2G4PostOffsetVerifiedCollections : Migration
             END;
             $newsource$;
 
+            CREATE FUNCTION "BM_VerifyPostOffsetCashSourceAtCommit"()
+            RETURNS trigger LANGUAGE plpgsql AS $journal$
+            DECLARE posted record;
+            DECLARE official record;
+            DECLARE allocated numeric;
+            BEGIN
+              -- A new bank Payment without an exact existing financial
+              -- allocation is not collected debt. Deferring this validation
+              -- allows Payment INSERT and original journal INSERT in the
+              -- SAME SERIALIZABLE UoW, never across two different commits.
+              SELECT * INTO posted
+                FROM "BuildingManagementContractDepositDebtOffsetPostings"
+               WHERE "ContractId"=NEW."ContractId";
+              IF posted."Id" IS NULL OR NEW."Purpose"<>3 THEN
+                RETURN NEW;
+              END IF;
+              SELECT * INTO official
+                FROM "BuildingManagementOfficialInvoiceReceivables"
+               WHERE "ContractId"=NEW."ContractId"
+                 AND "IssuedInvoiceId"=NEW."InvoiceId";
+              IF official."Id" IS NULL THEN
+                RAISE EXCEPTION 'Offset contract receipt has no official posting'
+                  USING ERRCODE='23514';
+              END IF;
+              IF official."Kind"=1 THEN
+                SELECT COALESCE(sum(j."Amount"),0) INTO allocated
+                  FROM "BuildingManagementMonthlyInvoicePaymentAllocation" j
+                 WHERE j."PaymentId"=NEW."Id"
+                   AND j."IssuedInvoiceId"=NEW."InvoiceId"
+                   AND j."ContractId"=NEW."ContractId";
+              ELSE
+                SELECT COALESCE(sum(j."Amount"),0) INTO allocated
+                  FROM "BuildingManagementInvoicePaymentAllocationJournal" j
+                 WHERE j."PaymentId"=NEW."Id"
+                   AND j."IssuedInvoiceId"=NEW."InvoiceId"
+                   AND j."ContractId"=NEW."ContractId";
+              END IF;
+              IF allocated IS DISTINCT FROM NEW."Amount" THEN
+                RAISE EXCEPTION 'Bank receipt after deposit offset requires an exact same-commit financial allocation'
+                  USING ERRCODE='23514';
+              END IF;
+              RETURN NEW;
+            END;
+            $journal$;
+            CREATE CONSTRAINT TRIGGER "TR_BM_OI04_PostOffsetCashJournalCommit"
+              AFTER INSERT ON "BuildingManagementPayments"
+              DEFERRABLE INITIALLY DEFERRED
+              FOR EACH ROW EXECUTE FUNCTION "BM_VerifyPostOffsetCashSourceAtCommit"();
+
             DROP TRIGGER "TR_BM_OI04FreezeOffsetPayments"
               ON "BuildingManagementPayments";
             DROP TRIGGER "TR_BM_OI04FreezeOffsetReceiptReviews"
@@ -255,6 +304,9 @@ public sealed class Phase2G4PostOffsetVerifiedCollections : Migration
               END IF;
             END;
             $downgrade$;
+            DROP TRIGGER "TR_BM_OI04_PostOffsetCashJournalCommit"
+              ON "BuildingManagementPayments";
+            DROP FUNCTION "BM_VerifyPostOffsetCashSourceAtCommit"();
             DROP TRIGGER "TR_BM_OI04NetOffsetCashSource"
               ON "BuildingManagementPayments";
             DROP TRIGGER "TR_BM_OI04NetOffsetBankReview"

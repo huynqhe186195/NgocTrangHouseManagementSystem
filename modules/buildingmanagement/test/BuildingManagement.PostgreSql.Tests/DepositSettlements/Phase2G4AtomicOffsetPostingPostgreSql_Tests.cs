@@ -28,6 +28,9 @@ public sealed class Phase2G4AtomicOffsetPostingPostgreSql_Tests
     private static readonly string FreezeSql = Assert.Single(
         new Phase2G4FreezeOffsetSources().UpOperations
             .OfType<SqlOperation>()).Sql;
+    private static readonly string NetCollectionSql = Assert.Single(
+        new Phase2G4PostOffsetVerifiedCollections().UpOperations
+            .OfType<SqlOperation>()).Sql;
     private static readonly Guid Contract = Guid.NewGuid();
     private static readonly Guid Request = Guid.NewGuid();
     private static readonly Guid Room = Guid.NewGuid();
@@ -341,6 +344,109 @@ public sealed class Phase2G4AtomicOffsetPostingPostgreSql_Tests
             // test and is destroyed even after a failed concurrent attempt.
             await Run(admin,null,$"""DROP SCHEMA IF EXISTS "{schema}" CASCADE""");
         }
+    }
+
+    [Fact]
+    public async Task OI04POSTSQL10_Net_Bank_Collection_Accepted_No_Overpay_Or_Deposit_Reuse()
+    {
+        await Scratch(async (db,tx) =>
+        {
+            var a=Approval(); var p=Execution(a);
+            await SeedApproval(db,tx,a);
+            await Run(db,tx,InsertSql(p));
+            await SetupPostOffsetCollectionColumns(db,tx);
+            var cash=Guid.NewGuid();
+            await Run(db,tx,$"""
+                INSERT INTO "BuildingManagementPayments"
+                 ("Id","Amount","ContractId","RoomReservationId",
+                  "Purpose","Status","IsDeleted","PaidAt","DepositDisposition",
+                  "InvoiceId","Method","Channel","TransactionReference","Notes")
+                VALUES ('{cash:D}',83000,'{Contract:D}',NULL,
+                    3,2,FALSE,now(),NULL,'{Issued:D}',2,1,
+                    'OI04-NET-RECEIPT-UNIQUE-001','BANK-PROOF: INDEPENDENT-STATEMENT-001')
+                """);
+            Assert.Equal(1L,await Scalar(db,tx,$"""
+                SELECT count(*) FROM "BuildingManagementPayments" WHERE "Id"='{cash:D}'
+                """));
+            await Denied(db,tx,$"""
+                INSERT INTO "BuildingManagementPayments"
+                 ("Id","Amount","ContractId","RoomReservationId",
+                  "Purpose","Status","IsDeleted","PaidAt","DepositDisposition",
+                  "InvoiceId","Method","Channel","TransactionReference","Notes")
+                VALUES ('{Guid.NewGuid():D}',1,'{Contract:D}',NULL,
+                    3,2,FALSE,now(),NULL,'{Issued:D}',2,1,
+                    'OI04-EXCESS-RECEIPT-001','BANK-PROOF: BANK-STATEMENT-001')
+                ""","23514");
+            await Denied(db,tx,$"""
+                UPDATE "BuildingManagementPayments" SET "Amount"=100000
+                WHERE "Id"='{cash:D}'
+                ""","23514");
+            await Denied(db,tx,$"""
+                INSERT INTO "BuildingManagementPayments"
+                 ("Id","Amount","ContractId","RoomReservationId",
+                  "Purpose","Status","IsDeleted","PaidAt","DepositDisposition",
+                  "InvoiceId","Method","Channel","TransactionReference","Notes")
+                VALUES ('{Guid.NewGuid():D}',1,'{Contract:D}',NULL,
+                    2,2,FALSE,now(),NULL,'{Issued:D}',2,1,
+                    'OI04-FORGED-DEPOSIT-001','BANK-PROOF: BANK-STATEMENT-001')
+                ""","23514");
+        });
+    }
+
+    [Fact]
+    public async Task OI04POSTSQL11_Reviewed_Receipt_And_Original_Fee_Are_Net_Of_Offset()
+    {
+        await Scratch(async (db,tx) =>
+        {
+            var a=Approval(); var p=Execution(a);
+            await SeedApproval(db,tx,a);
+            await Run(db,tx,InsertSql(p));
+            await SetupPostOffsetCollectionColumns(db,tx);
+            await Run(db,tx,$"""
+                INSERT INTO "BuildingManagementOfficialInvoiceReceiptReviews"
+                  ("ReceivablePostingId","ReviewedAtUtc","Accepted","Amount","ContractId")
+                VALUES ('{Posting:D}',now(),TRUE,83000,'{Contract:D}')
+                """);
+            await Denied(db,tx,$"""
+                INSERT INTO "BuildingManagementOfficialInvoiceReceiptReviews"
+                  ("ReceivablePostingId","ReviewedAtUtc","Accepted","Amount","ContractId")
+                VALUES ('{Posting:D}',now(),TRUE,1,'{Contract:D}')
+                ""","23514");
+            await Denied(db,tx,$"""
+                INSERT INTO "BuildingManagementOfficialMonthlyReceiptLineAllocations"
+                   ("ReceivablePostingId","Category","Amount")
+                VALUES ('{Posting:D}',1,1)
+                ""","23514");
+            await Denied(db,tx,$"""
+                UPDATE "BuildingManagementOfficialInvoiceReceiptReviews"
+                   SET "Amount"=1
+                ""","23514");
+        });
+    }
+
+    private static async Task SetupPostOffsetCollectionColumns(
+        NpgsqlConnection db,NpgsqlTransaction tx)
+    {
+        // Existing older scratch tables model exactly the earlier migrations.
+        // Extend only this random schema to the newer verified Payment
+        // and independent review columns needed by the new guard.
+        await Run(db,tx,"""
+            ALTER TABLE "BuildingManagementPayments"
+              ADD COLUMN "InvoiceId" uuid,
+              ADD COLUMN "Method" integer,
+              ADD COLUMN "Channel" integer,
+              ADD COLUMN "TransactionReference" text,
+              ADD COLUMN "Notes" text;
+            ALTER TABLE "BuildingManagementOfficialInvoiceReceivables"
+              ADD COLUMN "OriginalAmount" numeric(18,0) DEFAULT 1083000;
+            ALTER TABLE "BuildingManagementOfficialInvoiceReceiptReviews"
+              ADD COLUMN "ContractId" uuid,
+              ADD COLUMN "Accepted" boolean,
+              ADD COLUMN "Amount" numeric(18,0);
+            ALTER TABLE "BuildingManagementIssuedInvoiceLedger"
+              ADD COLUMN "MoveOutRequestId" uuid;
+            """);
+        await Run(db,tx,NetCollectionSql);
     }
 
     private static async Task SeedApproval(NpgsqlConnection db,

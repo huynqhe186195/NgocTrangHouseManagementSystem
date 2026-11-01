@@ -93,6 +93,20 @@ public sealed class Phase2G4FreezeOffsetSources : Migration
             -- All of these rows are either original money sources or official
             -- receivable sources; no general-purpose writer may bypass the
             -- one-contract offset journal with a follow-on receipt.
+            -- The old no-offset closeout decision and actual refund
+            -- approval are incompatible with an already posted offset.
+            CREATE TRIGGER "TR_BM_OI04FreezeLegacyDepositDecision"
+              BEFORE INSERT OR UPDATE OR DELETE
+              ON "BuildingManagementContractDepositSettlementDecisions"
+              FOR EACH ROW EXECUTE FUNCTION "BM_BlockPostedOffsetSourceMutation"();
+            CREATE TRIGGER "TR_BM_OI04FreezeLegacyCloseoutApproval"
+              BEFORE INSERT OR UPDATE OR DELETE
+              ON "BuildingManagementContractDepositCloseoutApprovals"
+              FOR EACH ROW EXECUTE FUNCTION "BM_BlockPostedOffsetSourceMutation"();
+            CREATE TRIGGER "TR_BM_OI04FreezeMonthlyInvoiceCandidates"
+              BEFORE INSERT OR UPDATE OR DELETE
+              ON "BuildingManagementMonthlyInvoiceCandidates"
+              FOR EACH ROW EXECUTE FUNCTION "BM_BlockPostedOffsetSourceMutation"();
             CREATE TRIGGER "TR_BM_OI04FreezeOffsetPayments"
               BEFORE INSERT OR UPDATE OR DELETE
               ON "BuildingManagementPayments"
@@ -147,6 +161,12 @@ public sealed class Phase2G4FreezeOffsetSources : Migration
               END IF;
             END;
             $history$;
+            DROP TRIGGER "TR_BM_OI04FreezeLegacyDepositDecision"
+              ON "BuildingManagementContractDepositSettlementDecisions";
+            DROP TRIGGER "TR_BM_OI04FreezeLegacyCloseoutApproval"
+              ON "BuildingManagementContractDepositCloseoutApprovals";
+            DROP TRIGGER "TR_BM_OI04FreezeMonthlyInvoiceCandidates"
+              ON "BuildingManagementMonthlyInvoiceCandidates";
             DROP TRIGGER "TR_BM_OI04FreezeOffsetPayments"
               ON "BuildingManagementPayments";
             DROP TRIGGER "TR_BM_OI04FreezeOffsetSettlements"

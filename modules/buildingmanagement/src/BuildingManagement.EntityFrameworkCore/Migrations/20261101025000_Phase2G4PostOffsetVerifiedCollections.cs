@@ -62,25 +62,33 @@ public sealed class Phase2G4PostOffsetVerifiedCollections : Migration
             DECLARE source_invoice record;
             DECLARE category_ceiling numeric;
             BEGIN
-              IF TG_OP <> 'INSERT' THEN
-                RAISE EXCEPTION 'Post-offset source history cannot be changed'
-                  USING ERRCODE='23514';
-              END IF;
-
-              -- NEW is an anonymous trigger RECORD. Access columns
-              -- through JSON so a Payment INSERT never attempts to resolve
-              -- the line-only ReceivablePostingId field (SQLSTATE 42703).
+              -- Never change normal non-offset financial workflows:
+              -- the legacy trigger explicitly freezes ONLY contracts with
+              -- a posted offset. The new guard must retain that scope even
+              -- for UPDATE/DELETE and source-payment state transitions.
               contract_id := CASE TG_TABLE_NAME
                 WHEN 'BuildingManagementOfficialMonthlyReceiptLineAllocations'
                   THEN (SELECT p."ContractId"
                         FROM "BuildingManagementOfficialInvoiceReceivables" p
-                       WHERE p."Id"=NULLIF(to_jsonb(NEW)->>'ReceivablePostingId','')::uuid)
-                ELSE NULLIF(to_jsonb(NEW)->>'ContractId','')::uuid
+                       WHERE p."Id"=COALESCE(
+                           NULLIF(to_jsonb(NEW)->>'ReceivablePostingId','')::uuid,
+                           NULLIF(to_jsonb(OLD)->>'ReceivablePostingId','')::uuid))
+                ELSE COALESCE(
+                     NULLIF(to_jsonb(NEW)->>'ContractId','')::uuid,
+                     NULLIF(to_jsonb(OLD)->>'ContractId','')::uuid)
                 END;
               SELECT * INTO offset_row
                 FROM "BuildingManagementContractDepositDebtOffsetPostings"
-               WHERE "ContractId"=contract_id;
-              IF offset_row."Id" IS NULL THEN RETURN NEW; END IF;
+               WHERE "ContractId" IN (
+                   contract_id, NULLIF(to_jsonb(OLD)->>'ContractId','')::uuid);
+              IF offset_row."Id" IS NULL THEN
+                IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+                RETURN NEW;
+              END IF;
+              IF TG_OP <> 'INSERT' THEN
+                RAISE EXCEPTION 'Post-offset source history cannot be changed'
+                  USING ERRCODE='23514';
+              END IF;
               IF current_setting('transaction_isolation') <> 'serializable' THEN
                 RAISE EXCEPTION 'Post-offset financial entries require SERIALIZABLE'
                   USING ERRCODE='23514';

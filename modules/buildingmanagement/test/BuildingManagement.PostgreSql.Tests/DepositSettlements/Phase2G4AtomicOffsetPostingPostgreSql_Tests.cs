@@ -368,6 +368,16 @@ public sealed class Phase2G4AtomicOffsetPostingPostgreSql_Tests
             Assert.Equal(1L,await Scalar(db,tx,$"""
                 SELECT count(*) FROM "BuildingManagementPayments" WHERE "Id"='{cash:D}'
                 """));
+            // A Payment with no official allocation is NOT an accepted
+            // financial receipt. It can be built before its journal row,
+            // but it MUST never reach COMMIT by itself.
+            await Denied(db,tx,"SET CONSTRAINTS ALL IMMEDIATE","23514");
+            await Run(db,tx,$"""
+                INSERT INTO "BuildingManagementMonthlyInvoicePaymentAllocation"
+                  ("PaymentId","IssuedInvoiceId","ContractId","Amount")
+                VALUES ('{cash:D}','{Issued:D}','{Contract:D}',83000)
+                """);
+            await Run(db,tx,"SET CONSTRAINTS ALL IMMEDIATE");
             await Denied(db,tx,$"""
                 INSERT INTO "BuildingManagementPayments"
                  ("Id","Amount","ContractId","RoomReservationId",
@@ -445,6 +455,14 @@ public sealed class Phase2G4AtomicOffsetPostingPostgreSql_Tests
               ADD COLUMN "Amount" numeric(18,0);
             ALTER TABLE "BuildingManagementIssuedInvoiceLedger"
               ADD COLUMN "MoveOutRequestId" uuid;
+            """);
+        await Run(db,tx,"""
+            CREATE TABLE "BuildingManagementMonthlyInvoicePaymentAllocation" (
+               "PaymentId" uuid, "IssuedInvoiceId" uuid,
+               "ContractId" uuid, "Amount" numeric(18,0));
+            CREATE TABLE "BuildingManagementInvoicePaymentAllocationJournal" (
+               "PaymentId" uuid, "IssuedInvoiceId" uuid,
+               "ContractId" uuid, "Amount" numeric(18,0));
             """);
         await Run(db,tx,NetCollectionSql);
     }

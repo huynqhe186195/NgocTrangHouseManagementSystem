@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using System.Text.Json;
 using System.Threading.Tasks;
 using BuildingManagement.DepositSettlements;
 using BuildingManagement.Migrations;
@@ -16,6 +17,12 @@ public sealed class Phase2G4OwnerDebtOffsetApprovalPostgreSql_Tests
             .OfType<SqlOperation>()).Sql;
     private static readonly string DownSql = Assert.Single(
         new Phase2G4OwnerDebtOffsetApproval().DownOperations
+            .OfType<SqlOperation>()).Sql;
+    private static readonly string IndependentUpSql = Assert.Single(
+        new Phase2G4IndependentDebtReview().UpOperations
+            .OfType<SqlOperation>()).Sql;
+    private static readonly string IndependentDownSql = Assert.Single(
+        new Phase2G4IndependentDebtReview().DownOperations
             .OfType<SqlOperation>()).Sql;
     private static readonly Guid ContractId = Guid.NewGuid();
     private static readonly Guid RequestId = Guid.NewGuid();
@@ -142,6 +149,108 @@ public sealed class Phase2G4OwnerDebtOffsetApprovalPostgreSql_Tests
                 """SELECT count(*) FROM pg_tables WHERE schemaname=current_schema() AND tablename='BuildingManagementContractDepositDebtOffsetApprovals' """));
             await Run(db,tx,UpSql);
         });
+    }
+
+
+    [Fact]
+    public async Task OI04AUTHSQL05_Owner_Cannot_Approve_Before_Independent_Review()
+    {
+        await Scratch(async (db,tx) =>
+        {
+            await Run(db,tx,IndependentUpSql);
+            var approved = Valid();
+            await Rejected(db,tx,InsertSql(approved),"23514");
+            await InsertIndependentReview(db,tx,approved);
+            await Insert(db,tx,approved);
+            Assert.Equal(1L,await Scalar(db,tx,
+                """SELECT count(*) FROM "BuildingManagementContractDepositDebtReviews" """));
+            Assert.Equal(1L,await Scalar(db,tx,
+                """SELECT count(*) FROM "BuildingManagementContractDepositDebtOffsetApprovals" """));
+            await Rejected(db,tx,IndependentDownSql,"23514");
+            await Rejected(db,tx,
+                """UPDATE "BuildingManagementContractDepositDebtReviews" SET "VerifiedOutstandingAmount"=2""",
+                "23514");
+            await Rejected(db,tx,
+                """DELETE FROM "BuildingManagementContractDepositDebtReviews" """,
+                "23514");
+            await Rejected(db,tx,
+                """TRUNCATE "BuildingManagementContractDepositDebtReviews" """,
+                "23514");
+        });
+    }
+
+    [Fact]
+    public async Task OI04AUTHSQL06_Mismatch_Reviewed_Claims_Or_Cash_Denies_Owner()
+    {
+        await Scratch(async (db,tx) =>
+        {
+            await Run(db,tx,IndependentUpSql);
+            var signed = Valid();
+            await InsertIndependentReview(db,tx,signed);
+            await Run(db,tx,
+                """UPDATE "BuildingManagementMonthlyInvoiceCandidates" SET "RentAmount"=1500000""");
+            await Rejected(db,tx,InsertSql(signed),"23514");
+            await Run(db,tx,
+                """UPDATE "BuildingManagementMonthlyInvoiceCandidates" SET "RentAmount"=1000000""");
+            var different = Valid();
+            await Rejected(db,tx,InsertSql(different),"23514");
+        });
+    }
+
+    [Fact]
+    public async Task OI04AUTHSQL07_Duplicate_Independent_Review_And_Proof_Forgery_Fail()
+    {
+        await Scratch(async (db,tx) =>
+        {
+            await Run(db,tx,IndependentUpSql);
+            var first = Valid();
+            await InsertIndependentReview(db,tx,first);
+            await Rejected(db,tx,IndependentReviewInsertSql(first),"23505");
+            var signed = Valid();
+            await Rejected(db,tx,InsertSql(signed),"23514");
+        });
+    }
+
+    [Fact]
+    public async Task OI04AUTHSQL08_Empty_Independent_Review_Downgrade_Is_Reversible()
+    {
+        await Scratch(async (db,tx) =>
+        {
+            await Run(db,tx,IndependentUpSql);
+            await Run(db,tx,IndependentDownSql);
+            await Run(db,tx,IndependentUpSql);
+        });
+    }
+
+    private static async Task InsertIndependentReview(NpgsqlConnection db,
+        NpgsqlTransaction tx,ContractDepositDebtOffsetApprovalRecord approval)
+        => await Run(db,tx,IndependentReviewInsertSql(approval));
+
+    private static string IndependentReviewInsertSql(
+        ContractDepositDebtOffsetApprovalRecord approval)
+    {
+        using var doc = JsonDocument.Parse(approval.ApprovalJson);
+        var claims = JsonSerializer.Deserialize<ContractDepositOffsetClaim[]>(
+            doc.RootElement.GetProperty("Claims").GetRawText())!;
+        var review = ContractDepositDebtReviewRecord.Capture(
+            Guid.NewGuid(), ContractId, RequestId, BuildingId, ReviewerId,
+            DateOnly.FromDateTime(approval.ApprovedAtUtc),
+            approval.ApprovedAtUtc.AddSeconds(-30), 3_000_000m, claims,
+            approval.IndependentReviewReference);
+        var json = review.ReviewJson.Replace("'","''");
+        return $"""
+            INSERT INTO "BuildingManagementContractDepositDebtReviews"(
+              "Id","ContractId","MoveOutRequestId","BuildingId",
+              "ReviewedByUserId","ReviewedAsOfDate","ReviewedAtUtc",
+              "VerifiedHeldAmount","VerifiedOutstandingAmount",
+              "SignedReviewReference","ReviewJson","ReviewSha256")
+            VALUES ('{review.Id:D}','{ContractId:D}','{RequestId:D}',
+              '{BuildingId:D}','{ReviewerId:D}',
+              '{review.ReviewedAsOfDate:yyyy-MM-dd}',
+              '{review.ReviewedAtUtc:yyyy-MM-ddTHH:mm:ss.ffffffZ}',
+              {review.VerifiedHeldAmount},{review.VerifiedOutstandingAmount},
+              '{review.SignedReviewReference}','{json}','{review.ReviewSha256}');
+            """;
     }
 
     private static string InsertSql(

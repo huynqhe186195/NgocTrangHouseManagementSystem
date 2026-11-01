@@ -242,6 +242,32 @@ public sealed class Phase2G4AtomicOffsetPostingPostgreSql_Tests
     }
 
     [Fact]
+    public async Task OI04POSTSQL09_Duplicate_Archived_Hash_Category_Cannot_Double_Match_Claim()
+    {
+        await Scratch(async (db,tx) =>
+        {
+            var a=Approval();var p=Execution(a);
+            await SeedApproval(db,tx,a);
+            var candidate2=Guid.NewGuid();
+            var issue2=Guid.NewGuid();
+            var posting2=Guid.NewGuid();
+            // An imported ledger can carry a repeated frozen SHA. A
+            // signature for invoice 1 must never authorize invoice 2.
+            await Run(db,tx,$"""
+                INSERT INTO "BuildingManagementMonthlyInvoiceCandidates" VALUES
+                    ('{candidate2:D}','{Contract:D}','{Hash}',1000000,0,0,0);
+                INSERT INTO "BuildingManagementMonthlyIssuedInvoiceLedger" VALUES
+                    ('{issue2:D}','{Contract:D}','{candidate2:D}');
+                INSERT INTO "BuildingManagementOfficialInvoiceReceivables" VALUES
+                    ('{posting2:D}',1,'{issue2:D}','{Contract:D}','{Hash}');
+                """);
+            await Denied(db,tx,InsertSql(p),"23514");
+            Assert.Equal(0L,await Scalar(db,tx,
+                """SELECT count(*) FROM "BuildingManagementContractDepositDebtOffsetPostings" """));
+        });
+    }
+
+    [Fact]
     public async Task OI04POSTSQL08_Two_Concurrent_Posts_Cannot_Both_Commit()
     {
         var cs=BuildingManagementPostgreSqlTestModule.RequireSafeConnectionString();

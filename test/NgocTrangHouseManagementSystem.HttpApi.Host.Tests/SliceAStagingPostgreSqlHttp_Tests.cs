@@ -1846,6 +1846,7 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     area = 23m, capacity = 2,
                     status = (int)BuildingManagement.Rooms.RoomStatus.Occupied });
             var oi04ContractId = Guid.NewGuid();
+            Guid oi04IssuedMonthlyId;
             var oi04RequestId = Guid.NewGuid();
             var oi04DepositPaymentId = Guid.NewGuid();
             var oi04DraftId = Guid.NewGuid();
@@ -1989,6 +1990,7 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 var oi04Issued = BuildingManagement.Invoices.MonthlyIssuedInvoiceRecord.Issue(
                     Guid.NewGuid(),"NT-OI04-PG-202610",root,oi04At.AddMinutes(2),
                     oi04Source,oi04IndependentReview);
+                oi04IssuedMonthlyId = oi04Issued.Id;
                 var oi04Posted = BuildingManagement.Invoices
                     .OfficialInvoiceReceivablePostingRecord.PostMonthly(
                         Guid.NewGuid(),oi04Issued,oi04Source,oi04IndependentReview,
@@ -2196,6 +2198,103 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     .GetProperty("outstandingAmount").GetDecimal());
                 Assert.False(oi04BalanceJson.RootElement
                     .GetProperty("isExternallyVerifiedBankTransfer").GetBoolean());
+            }
+
+            // POST-OFFSET COLLECTION: use the original Payment + monthly
+            // receipt journal, independent bank review, and complete fee split.
+            // No competing deposit ledger, no source invoice rewrite.
+            var oi04CollectPath=FinalInvoices(oi04ContractId)+
+                "/monthly-issued/"+oi04IssuedMonthlyId.ToString("D")+
+                "/manual-receipts";
+            var oi04PaymentInput=JsonSerializer.Serialize(new {
+                tenantId=tenantB,amount=83_000m,paidAtUtc=DateTime.UtcNow,
+                transactionReference="OI04-NET-COLLECT-"+oi04ContractId.ToString("N"),
+                bankEvidenceReference="SIGNED-OI04-BANK-NET-COLLECTION-001"
+            });
+            var oi04StaffCannotCollect=await PostFinalAsync(
+                clientB,oi04CollectPath,oi04PaymentInput);
+            Assert.Equal(HttpStatusCode.Forbidden,oi04StaffCannotCollect.Status);
+            var oi04Collection=await PostFinalAsync(
+                clientRoot,oi04CollectPath,oi04PaymentInput);
+            Assert.True(oi04Collection.Status is HttpStatusCode.OK or
+                HttpStatusCode.Created,
+                "Post-offset source Payment: "+oi04Collection.Status+" "+
+                oi04Collection.Body);
+            Guid oi04CollectionAllocation;
+            using (var pay=JsonDocument.Parse(oi04Collection.Body))
+                oi04CollectionAllocation=pay.RootElement
+                    .GetProperty("allocationJournalId").GetGuid();
+
+            var oi04ReviewPath=FinalInvoices(oi04ContractId)+
+                "/receivables/"+oi04OfficialReceivableId.ToString("D")+
+                "/allocations/"+oi04CollectionAllocation.ToString("D")+"/review";
+            var oi04BankReview=await PostFinalAsync(clientB,oi04ReviewPath,
+                JsonSerializer.Serialize(new {
+                    accept=true,
+                    bankStatementEvidenceReference=
+                        "SIGNED-OI04-INDEPENDENT-STATEMENT-001",
+                    reason="Independent bank statement confirms cash against residual utility debt"
+                }));
+            Assert.True(oi04BankReview.Status is HttpStatusCode.OK or
+                HttpStatusCode.Created,
+                "Post-offset bank review: "+oi04BankReview.Status+" "+
+                oi04BankReview.Body);
+            Guid oi04BankReviewId;
+            using(var review=JsonDocument.Parse(oi04BankReview.Body))
+                oi04BankReviewId=review.RootElement.GetProperty("reviewId").GetGuid();
+
+            var oi04SplitPath=FinalInvoices(oi04ContractId)+
+                "/receivables/"+oi04OfficialReceivableId.ToString("D")+
+                "/receipt-reviews/"+oi04BankReviewId.ToString("D")+
+                "/line-split";
+            var oi04Split=await PostFinalAsync(clientRoot,oi04SplitPath,
+                JsonSerializer.Serialize(new {
+                    signedAllocationReference="OI04-OWNER-NET-UTILITY-RECONCILIATION-001",
+                    lines=new[]{
+                        new {category=2,amountVnd=35_000m},
+                        new {category=3,amountVnd=48_000m}
+                    }
+                }));
+            Assert.True(oi04Split.Status is HttpStatusCode.OK or
+                HttpStatusCode.Created,
+                "Post-offset approved utility split: "+oi04Split.Status+" "+
+                oi04Split.Body);
+            using(var split=JsonDocument.Parse(oi04Split.Body))
+                Assert.Equal(83_000m,split.RootElement
+                    .GetProperty("allocatedAmountVnd").GetDecimal());
+
+            var oi04CollectedBalance=await clientRoot.GetAsync(
+                FinalInvoices(oi04ContractId)+"/receivables/"+
+                oi04OfficialReceivableId.ToString("D")+"/balance");
+            Assert.Equal(HttpStatusCode.OK,oi04CollectedBalance.StatusCode);
+            using(var net=JsonDocument.Parse(
+                await oi04CollectedBalance.Content.ReadAsStringAsync()))
+            {
+                var balance=net.RootElement;
+                Assert.Equal(3_000_000m,balance.GetProperty(
+                    "internalDepositOffsetVnd").GetDecimal());
+                Assert.Equal(83_000m,balance.GetProperty(
+                    "independentlyReviewedManualPayments").GetDecimal());
+                Assert.Equal(0m,balance.GetProperty(
+                    "outstandingAmount").GetDecimal());
+                Assert.False(balance.GetProperty(
+                    "isExternallyVerifiedBankTransfer").GetBoolean());
+            }
+            var oi04DebtCollectedReadiness=await clientRoot.GetAsync(
+                oi04BaseRoute+"/closeout-readiness");
+            Assert.Equal(HttpStatusCode.OK,oi04DebtCollectedReadiness.StatusCode);
+            using(var netReadiness=JsonDocument.Parse(
+                await oi04DebtCollectedReadiness.Content.ReadAsStringAsync()))
+            {
+                var proof=netReadiness.RootElement;
+                Assert.Equal(0m,proof.GetProperty(
+                    "officialOutstandingDebtVnd").GetDecimal());
+                Assert.Equal(83_000m,proof.GetProperty(
+                    "independentlyReviewedBankReceiptsVnd").GetDecimal());
+                Assert.False(proof.GetProperty("canCompleteMoveOut").GetBoolean());
+                Assert.Contains("OneSignedFinalInvoiceRequired",
+                    proof.GetProperty("blockers").EnumerateArray()
+                        .Select(x=>x.GetString()).ToArray());
             }
 
             // Phase 2G.3 regular billing preview: a scoped, repeatable-read

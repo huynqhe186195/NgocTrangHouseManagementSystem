@@ -138,4 +138,48 @@ public sealed class RoomChangeDailyRentQuote_Tests
         // Source SRS section 5 retains FULL final-month rent for normal
         // 2G.5. This preview is explicitly for H2/H3 transfer only.
     }
+
+    [Fact]
+    public void TRF_MID11_Tenth_Day_Cutoff_Is_Exactly_One_Chargeable_Day_Per_Room()
+    {
+        var day = new DateOnly(2026, 9, 10);
+        var targetOwnsDay = Quote(day);
+        var sourceOwnsDay = Quote(
+            day, day: RoomChangeTransferDayChargeOwner.SourceRoom);
+
+        Assert.Equal(9, targetOwnsDay.SourceChargeableDays);
+        Assert.Equal(21, targetOwnsDay.TargetChargeableDays);
+        Assert.Equal(900_000m, targetOwnsDay.ProposedSourceRentVnd);
+        Assert.Equal(2_800_000m, targetOwnsDay.ProposedTargetRentVnd);
+        Assert.Equal(new DateOnly(2026, 9, 9),
+            targetOwnsDay.SourceLastChargeableDate);
+        Assert.Equal(day, targetOwnsDay.TargetFirstChargeableDate);
+
+        Assert.Equal(10, sourceOwnsDay.SourceChargeableDays);
+        Assert.Equal(20, sourceOwnsDay.TargetChargeableDays);
+        Assert.Equal(1_000_000m, sourceOwnsDay.ProposedSourceRentVnd);
+        Assert.Equal(2_666_667m, sourceOwnsDay.ProposedTargetRentVnd);
+        Assert.Equal(day, sourceOwnsDay.SourceLastChargeableDate);
+        Assert.Equal(new DateOnly(2026, 9, 11),
+            sourceOwnsDay.TargetFirstChargeableDate);
+        Assert.False(targetOwnsDay.CanExecuteRoomChange);
+        Assert.False(sourceOwnsDay.CanIssueInvoice);
+    }
+
+    [Fact]
+    public void TRF_MID12_Leap_February_Last_Day_Source_Ownership_Does_Not_DoubleBill()
+    {
+        var q = Quote(new DateOnly(2028, 2, 29),
+            day: RoomChangeTransferDayChargeOwner.SourceRoom);
+        Assert.Equal(29, q.CalendarDaysInMonth);
+        Assert.Equal(29, q.SourceChargeableDays);
+        Assert.Equal(0, q.TargetChargeableDays);
+        Assert.Equal(3_000_000m, q.ProposedSourceRentVnd);
+        Assert.Equal(0m, q.ProposedTargetRentVnd);
+        Assert.Equal(new DateOnly(2028, 2, 29),
+            q.SourceLastChargeableDate);
+        Assert.Null(q.TargetFirstChargeableDate);
+        Assert.False(q.CanExecuteRoomChange);
+    }
+
 }

@@ -1093,7 +1093,11 @@ public sealed class SliceBStagingFinalInvoiceMutation
             {
                 if (input is null ||
                     db.Database.CurrentTransaction?.GetDbTransaction()
-                        .IsolationLevel != System.Data.IsolationLevel.Serializable)
+                        .IsolationLevel != System.Data.IsolationLevel.Serializable ||
+                    // The legacy refund/forfeit path assumes ZERO offset
+                    // and would otherwise spend the already-applied cash twice.
+                    await db.DebtOffsetPostings.AsNoTracking()
+                        .AnyAsync(x => x.ContractId == contractId))
                     throw Denied();
                 var request = await LockRequestAsync(
                     db, requestId, contractId, roomId);
@@ -1273,6 +1277,9 @@ public sealed class SliceBStagingFinalInvoiceMutation
                          input.RefundPaidAtUtc.Value > DateTime.UtcNow))
                     throw Denied();
 
+                if (await db.DebtOffsetPostings.AsNoTracking()
+                    .AnyAsync(x => x.ContractId == contractId))
+                    throw Denied(); // Reconcile posted OI-04 first, never refund original full cọc.
                 var requestSource = await LockRequestAsync(
                     db, requestId, contractId, roomId);
                 var contract = await db.Contracts

@@ -25,6 +25,9 @@ public sealed class Phase2G4AtomicOffsetPostingPostgreSql_Tests
     private static readonly string CashSql = Assert.Single(
         new Phase2G4RequireCashBackedDebtApproval().UpOperations
             .OfType<SqlOperation>()).Sql;
+    private static readonly string FreezeSql = Assert.Single(
+        new Phase2G4FreezeOffsetSources().UpOperations
+            .OfType<SqlOperation>()).Sql;
     private static readonly Guid Contract = Guid.NewGuid();
     private static readonly Guid Request = Guid.NewGuid();
     private static readonly Guid Room = Guid.NewGuid();
@@ -54,7 +57,7 @@ public sealed class Phase2G4AtomicOffsetPostingPostgreSql_Tests
           "TargetContractId" uuid);
         CREATE TABLE "BuildingManagementContractDepositSettlementDecisions" ("ContractId" uuid);
         CREATE TABLE "BuildingManagementContractDepositCloseoutApprovals" ("ContractId" uuid);
-        CREATE TABLE "BuildingManagementIssuedInvoiceLedger" ("ContractId" uuid);
+        CREATE TABLE "BuildingManagementIssuedInvoiceLedger" ("Id" uuid,"ContractId" uuid);
         CREATE TABLE "BuildingManagementMonthlyIssuedInvoiceLedger" (
           "Id" uuid PRIMARY KEY,"ContractId" uuid,"CandidateId" uuid);
         CREATE TABLE "BuildingManagementMonthlyInvoiceCandidates" (
@@ -167,6 +170,53 @@ public sealed class Phase2G4AtomicOffsetPostingPostgreSql_Tests
     }
 
     [Fact]
+    public async Task OI04POSTSQL06_Original_Money_And_Invoice_Sources_Frozen_After_Post()
+    {
+        await Scratch(async (db,tx) =>
+        {
+            var a=Approval();var p=Execution(a);
+            await SeedApproval(db,tx,a);
+            await Run(db,tx,InsertSql(p));
+            await Denied(db,tx,$"""
+                UPDATE "BuildingManagementPayments"
+                   SET "Amount"=1 WHERE "Id"='{Receipt:D}'
+                ""","23514");
+            await Denied(db,tx,$"""
+                UPDATE "BuildingManagementDepositSettlements"
+                   SET "Amount"=1 WHERE "TargetContractId"='{Contract:D}'
+                ""","23514");
+            await Denied(db,tx,$"""
+                INSERT INTO "BuildingManagementOfficialInvoiceReceiptReviews"
+                  VALUES ('{Posting:D}',now())
+                ""","23514");
+            await Denied(db,tx,$"""
+                INSERT INTO "BuildingManagementOfficialMonthlyReceiptLineAllocations"
+                  VALUES ('{Posting:D}',1,1000)
+                ""","23514");
+            await Denied(db,tx,$"""
+                INSERT INTO "BuildingManagementMonthlyInvoiceAdjustments"
+                  VALUES ('{Issued:D}')
+                ""","23514");
+        });
+    }
+
+    [Fact]
+    public async Task OI04POSTSQL07_New_Payout_From_Same_Deposit_Is_Blocked()
+    {
+        await Scratch(async (db,tx) =>
+        {
+            var a=Approval();var p=Execution(a);
+            await SeedApproval(db,tx,a);
+            await Run(db,tx,InsertSql(p));
+            await Denied(db,tx,$"""
+                INSERT INTO "BuildingManagementDepositSettlements"
+                  VALUES ('{Guid.NewGuid():D}',1,2,100000,NULL,NULL,
+                          '{Contract:D}',NULL)
+                ""","23514");
+        });
+    }
+
+    [Fact]
     public async Task OI04POSTSQL05_Downgrade_Only_When_No_Posted_Money_History()
     {
         await Scratch(async (db,tx) =>
@@ -243,6 +293,7 @@ public sealed class Phase2G4AtomicOffsetPostingPostgreSql_Tests
                 """);
             await Run(db,tx,CashSql);
             await Run(db,tx,UpSql);
+            await Run(db,tx,FreezeSql);
             await scenario(db,tx);
         }
         finally { await tx.RollbackAsync(); }

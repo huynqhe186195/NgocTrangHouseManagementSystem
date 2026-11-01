@@ -2243,6 +2243,22 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             using(var review=JsonDocument.Parse(oi04BankReview.Body))
                 oi04BankReviewId=review.RootElement.GetProperty("reviewId").GetGuid();
 
+            // A reviewed bank transfer is NOT sufficient until its
+            // physical utility charge allocation is signed and persisted.
+            var oi04BeforeSplit=await clientRoot.GetAsync(
+                oi04BaseRoute+"/closeout-readiness");
+            Assert.Equal(HttpStatusCode.OK,oi04BeforeSplit.StatusCode);
+            using(var incomplete=JsonDocument.Parse(
+                await oi04BeforeSplit.Content.ReadAsStringAsync()))
+            {
+                var reasons=incomplete.RootElement
+                    .GetProperty("blockers").EnumerateArray()
+                    .Select(x=>x.GetString()).ToArray();
+                Assert.Contains("AcceptedMonthlyBankReceiptMissingSignedFeeSplit",
+                    reasons);
+                Assert.False(incomplete.RootElement
+                    .GetProperty("isFullyFinanciallyReconciled").GetBoolean());
+            }
             var oi04SplitPath=FinalInvoices(oi04ContractId)+
                 "/receivables/"+oi04OfficialReceivableId.ToString("D")+
                 "/receipt-reviews/"+oi04BankReviewId.ToString("D")+

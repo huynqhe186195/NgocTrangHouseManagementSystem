@@ -387,6 +387,20 @@ public sealed class Phase2G4AtomicOffsetPostingPostgreSql_Tests
                     3,2,FALSE,now(),NULL,'{Issued:D}',2,1,
                     'OI04-EXCESS-RECEIPT-001','BANK-PROOF: BANK-STATEMENT-001')
                 ""","23514");
+            // This scope guard must NOT lock valid pre-existing finance
+            // activity for unrelated non-offset contracts (regression).
+            var other=Guid.NewGuid();
+            var unrelated=Guid.NewGuid();
+            await Run(db,tx,$"""
+                INSERT INTO "BuildingManagementPayments"
+                  ("Id","Amount","ContractId","RoomReservationId",
+                   "Purpose","Status","IsDeleted","PaidAt","DepositDisposition")
+                VALUES ('{unrelated:D}',1000,'{other:D}',NULL,2,2,FALSE,now(),1);
+                UPDATE "BuildingManagementPayments" SET "Amount"=2000
+                 WHERE "Id"='{unrelated:D}';
+                DELETE FROM "BuildingManagementPayments"
+                 WHERE "Id"='{unrelated:D}';
+                """);
             await Denied(db,tx,$"""
                 UPDATE "BuildingManagementPayments" SET "Amount"=100000
                 WHERE "Id"='{cash:D}'

@@ -63,9 +63,9 @@ public sealed class Phase2G4CashBackedDebtReviewPostgreSql_Tests
             await Run(db, tx, InsertReview(contract, 3_000_000m));
             await Run(db, tx, InsertApproval(contract, 3_000_000m));
             Assert.Equal(1L, await Count(db, tx,
-                """SELECT count(*) FROM "BuildingManagementContractDepositDebtReviews""""));
+                """SELECT count(*) FROM "BuildingManagementContractDepositDebtReviews" """));
             Assert.Equal(1L, await Count(db, tx,
-                """SELECT count(*) FROM "BuildingManagementContractDepositDebtOffsetApprovals""""));
+                """SELECT count(*) FROM "BuildingManagementContractDepositDebtOffsetApprovals" """));
             await Denied(db, tx, DownSql, "23514");
         });
     }

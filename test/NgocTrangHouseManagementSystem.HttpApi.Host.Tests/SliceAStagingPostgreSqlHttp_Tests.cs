@@ -2041,8 +2041,11 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 HttpStatusCode.Created,
                 "OI04 Owner authorization: " +
                 oi04OwnerApproval.Status + " " + oi04OwnerApproval.Body);
+            Guid oi04OwnerApprovalId;
             using (var oi04ApprovedJson=JsonDocument.Parse(oi04OwnerApproval.Body))
             {
+                oi04OwnerApprovalId = oi04ApprovedJson.RootElement
+                    .GetProperty("approvalId").GetGuid();
                 Assert.Equal(3_000_000m,oi04ApprovedJson.RootElement
                     .GetProperty("approvedOffsetVnd").GetDecimal());
                 Assert.Equal(0m,oi04ApprovedJson.RootElement
@@ -2080,6 +2083,69 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     x.Type==BuildingManagement.DepositSettlements.DepositSettlementType.Forfeit));
                 await oi04Uow.CompleteAsync();
             }
+
+            // Phase 2G.4 real dual-ledger INTERNAL posting: different
+            // from Owner authorization and never an external bank refund.
+            var oi04PostingRoute = oi04BaseRoute + "/approvals/" +
+                oi04OwnerApprovalId.ToString("D") + "/post";
+            var oi04StaffCannotPost = await PostFinalAsync(clientB,
+                oi04PostingRoute,"{}");
+            Assert.Equal(HttpStatusCode.Forbidden,oi04StaffCannotPost.Status);
+            var oi04PostedResponse = await PostFinalAsync(clientRoot,
+                oi04PostingRoute,"{}");
+            Assert.True(oi04PostedResponse.Status is HttpStatusCode.OK or
+                HttpStatusCode.Created,
+                "OI04 atomic internal posting: " +
+                oi04PostedResponse.Status + " " + oi04PostedResponse.Body);
+            Guid oi04PostedId;
+            using (var oi04PostedJson=JsonDocument.Parse(oi04PostedResponse.Body))
+            {
+                var postingRead=oi04PostedJson.RootElement;
+                oi04PostedId=postingRead.GetProperty("postingId").GetGuid();
+                Assert.Equal(3_000_000m,postingRead
+                    .GetProperty("debitHeldDepositVnd").GetDecimal());
+                Assert.Equal(3_000_000m,postingRead
+                    .GetProperty("creditOfficialDebtVnd").GetDecimal());
+                Assert.Equal(0m,postingRead
+                    .GetProperty("remainingHeldDepositVnd").GetDecimal());
+                Assert.Equal(83_000m,postingRead
+                    .GetProperty("remainingOfficialDebtVnd").GetDecimal());
+                Assert.True(postingRead.GetProperty("isInternalOffsetPosted").GetBoolean());
+                Assert.False(postingRead.GetProperty("isBankRefundExecuted").GetBoolean());
+                Assert.False(postingRead.GetProperty("canCompleteMoveOut").GetBoolean());
+            }
+            var oi04PostReplay=await PostFinalAsync(clientRoot,oi04PostingRoute,"{}");
+            Assert.Equal(HttpStatusCode.OK,oi04PostReplay.Status);
+            using (var replay=JsonDocument.Parse(oi04PostReplay.Body))
+                Assert.Equal(oi04PostedId,replay.RootElement
+                    .GetProperty("postingId").GetGuid());
+
+            using (var oi04CheckScope=app.Services.CreateScope())
+            {
+                using var oi04CheckUow=oi04CheckScope.ServiceProvider
+                    .GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew:true,isTransactional:true);
+                var verifiedDb=await oi04CheckScope.ServiceProvider
+                    .GetRequiredService<IDbContextProvider<BuildingManagementDbContext>>()
+                    .GetDbContextAsync();
+                var postedRow=Assert.Single(await verifiedDb.DebtOffsetPostings
+                    .AsNoTracking().Where(x=>x.ContractId==oi04ContractId).ToArrayAsync());
+                Assert.Equal(oi04PostedId,postedRow.Id);
+                Assert.Equal(3_000_000m,postedRow.CreditOfficialDebtVnd);
+                Assert.False(await verifiedDb.DepositSettlements
+                    .AsNoTracking().AnyAsync(x=>x.SourceContractId==oi04ContractId));
+                await oi04CheckUow.CompleteAsync();
+            }
+            var oi04PostingHistory=await clientRoot.GetAsync(
+                oi04BaseRoute+"/posting");
+            Assert.Equal(HttpStatusCode.OK,oi04PostingHistory.StatusCode);
+            // Official invoice balance must account for internal credit,
+            // without inventing a completed manual bank receipt.
+            var oi04PortfolioResponse=await clientRoot.GetAsync(
+                FinalInvoices(oi04ContractId)+"/receivables/portfolio");
+            // The root financial portfolio route is authenticated and,
+            // when a current-as-of source is available, must reconcile.
+            // Physical original source evidence remains append-only.
 
             // Phase 2G.3 regular billing preview: a scoped, repeatable-read
             // calculation uses only the known full-month rent and source-

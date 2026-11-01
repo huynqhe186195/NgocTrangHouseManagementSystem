@@ -171,6 +171,20 @@ public sealed class ContractDepositPostOffsetCloseoutReadiness_Tests
     }
 
     [Fact]
+    public void OI04READY08_Independently_Reviewed_Bank_Receipt_Must_Have_Signed_Fee_Split()
+    {
+        var (a,p)=Signed(1_000_000m);
+        var result=ContractDepositPostOffsetCloseoutEvaluator.Assess(
+            p,a,Deposit(1_000_000m),DateFor(p),
+            new[]{Monthly(p),Final(p)},1,2,5,5,
+            allAcceptedMonthlyReceiptsHaveSignedFeeSplits:false);
+        Assert.Contains("AcceptedMonthlyBankReceiptMissingSignedFeeSplit",
+            result.Blockers);
+        Assert.False(result.IsFullyFinanciallyReconciled);
+        Assert.False(result.CanCompleteMoveOut);
+    }
+
+    [Fact]
     public void OI04READY07_External_Bank_Transfer_Cannot_Be_Fabricated()
     {
         var (a,p)=Signed(2_000_000m);

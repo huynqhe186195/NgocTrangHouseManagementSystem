@@ -248,14 +248,15 @@ public sealed class Phase2G4AtomicOffsetPostingPostgreSql_Tests
         return $"""
             INSERT INTO "BuildingManagementContractDepositDebtOffsetPostings"
               ("Id","ContractId","MoveOutRequestId","BuildingId","ApprovalId",
-               "PostedByOwnerId","PostedAtUtc","DebitHeldDepositVnd",
+               "PostedByOwnerId","PostedAtUtc","VerifiedHeldAmount","DebitHeldDepositVnd",
                "CreditOfficialDebtVnd","RemainingHeldDepositVnd",
                "RemainingOfficialDebtVnd","ApprovalSha256",
                "PostingJson","PostingSha256")
             VALUES ('{p.Id:D}','{Contract:D}','{Request:D}','{Building:D}',
                     '{p.ApprovalId:D}','{Owner:D}',
                     '{p.PostedAtUtc:yyyy-MM-ddTHH:mm:ss.ffffffZ}',
-                    {p.DebitHeldDepositVnd},{creditOverride??p.CreditOfficialDebtVnd},
+                    {p.VerifiedHeldAmount},{p.DebitHeldDepositVnd},
+                    {creditOverride??p.CreditOfficialDebtVnd},
                     {p.RemainingHeldDepositVnd},{p.RemainingOfficialDebtVnd},
                     '{p.ApprovalSha256}','{proof}','{p.PostingSha256}')
             """;

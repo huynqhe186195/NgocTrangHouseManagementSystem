@@ -142,6 +142,50 @@ public sealed class ContractDepositSettlementDecision_Tests
                 null, null, "SIGNED-DEPOSIT-POLICY-001"));
     }
 
+
+    [Fact]
+    public void DEP4_11_Signed_Posted_Credit_Is_Deducted_Before_Refund_And_Damage()
+    {
+        var d = ContractDepositSettlementDecisionRecord.Approve(
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
+            Guid.NewGuid(), Guid.NewGuid(), Approved, Issued,
+            3_000_000m, 0m, 250_000m, "Cracked window in room 203",
+            "PHOTO-SIGNED-DAMAGE-REPORT-203",
+            "SIGNED-DEPOSIT-POLICY-001", 400_000m);
+        d.VerifyStoredDecision();
+        Assert.Equal(400_000m, d.ApprovedDebtOffsetAmount);
+        Assert.Equal(2_350_000m, d.ApprovedRefundAmount);
+        d.RequireForCloseout(d.ContractId, d.MoveOutRequestId,
+            d.FinalIssuedInvoiceId, d.BuildingId, 3_000_000m,
+            250_000m, "Cracked window in room 203",
+            "PHOTO-SIGNED-DAMAGE-REPORT-203",
+            "SIGNED-DEPOSIT-POLICY-001", 400_000m);
+        Assert.Throws<InvalidOperationException>(() => d.RequireForCloseout(
+            d.ContractId, d.MoveOutRequestId, d.FinalIssuedInvoiceId,
+            d.BuildingId, 3_000_000m, 250_000m,
+            "Cracked window in room 203", "PHOTO-SIGNED-DAMAGE-REPORT-203",
+            "SIGNED-DEPOSIT-POLICY-001", 399_999m));
+        Assert.False(d.IsRefundExecuted);
+    }
+
+    [Theory]
+    [InlineData(-1, 0)]
+    [InlineData(3_000_001, 0)]
+    [InlineData(2_900_000, 250_000)]
+    [InlineData(1.5, 0)]
+    public void DEP4_12_Offset_Exceeds_Held_Or_Is_Fractional_Is_Denied(
+        decimal offset, decimal damage)
+    {
+        Assert.Throws<InvalidOperationException>(() =>
+            ContractDepositSettlementDecisionRecord.Approve(
+                Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
+                Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
+                Approved, Issued, 3_000_000m, 0m, damage,
+                damage > 0 ? "Cracked window in room 203" : null,
+                damage > 0 ? "PHOTO-SIGNED-DAMAGE-REPORT-203" : null,
+                "SIGNED-DEPOSIT-POLICY-001", offset));
+    }
+
     private static ContractDepositSettlementDecisionRecord Decision(
         decimal amount = 0m, string? reason = null, string? proof = null)
         => ContractDepositSettlementDecisionRecord.Approve(

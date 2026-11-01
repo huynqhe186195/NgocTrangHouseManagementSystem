@@ -47,7 +47,8 @@ public sealed class ContractDepositSettlementDecisionRecord : Entity<Guid>
         decimal verifiedHeldAmount, decimal outstandingDebt,
         decimal explicitlyApprovedForfeitAmount,
         string? damageReason, string? damageEvidenceReference,
-        string explicitDepositPolicyReference)
+        string explicitDepositPolicyReference,
+        decimal verifiedPostedOffsetAmount = 0m)
     {
         var reason = string.IsNullOrWhiteSpace(damageReason)
             ? null : damageReason.Trim();
@@ -62,9 +63,13 @@ public sealed class ContractDepositSettlementDecisionRecord : Entity<Guid>
             approvedAtUtc < invoiceIssuedAtUtc ||
             verifiedHeldAmount <= 0m || !Whole(verifiedHeldAmount) ||
             outstandingDebt != 0m ||
+            verifiedPostedOffsetAmount < 0m ||
+            !Whole(verifiedPostedOffsetAmount) ||
+            verifiedPostedOffsetAmount > verifiedHeldAmount ||
             explicitlyApprovedForfeitAmount < 0m ||
             !Whole(explicitlyApprovedForfeitAmount) ||
-            explicitlyApprovedForfeitAmount > verifiedHeldAmount ||
+            explicitlyApprovedForfeitAmount >
+                verifiedHeldAmount - verifiedPostedOffsetAmount ||
             policy.Length is < 8 or > 200 ||
             (explicitlyApprovedForfeitAmount > 0m &&
              (reason?.Length is null or < 8 or > 500 ||
@@ -77,7 +82,8 @@ public sealed class ContractDepositSettlementDecisionRecord : Entity<Guid>
                 "explicit owner damage evidence and a documented no-offset policy.");
 
         var at = approvedAtUtc.AddTicks(-(approvedAtUtc.Ticks % 10L));
-        var refund = verifiedHeldAmount - explicitlyApprovedForfeitAmount;
+        var refund = verifiedHeldAmount - verifiedPostedOffsetAmount -
+            explicitlyApprovedForfeitAmount;
         var json = JsonSerializer.Serialize(new
         {
             ContractId = contractId,
@@ -89,7 +95,7 @@ public sealed class ContractDepositSettlementDecisionRecord : Entity<Guid>
             VerifiedHeldAmount = verifiedHeldAmount,
             ApprovedForfeitAmount = explicitlyApprovedForfeitAmount,
             ApprovedRefundAmount = refund,
-            ApprovedDebtOffsetAmount = 0m,
+            ApprovedDebtOffsetAmount = verifiedPostedOffsetAmount,
             DamageReason = reason,
             DamageEvidenceReference = evidence,
             ExplicitDepositPolicyReference = policy
@@ -108,7 +114,7 @@ public sealed class ContractDepositSettlementDecisionRecord : Entity<Guid>
             VerifiedHeldAmount = verifiedHeldAmount,
             ApprovedForfeitAmount = explicitlyApprovedForfeitAmount,
             ApprovedRefundAmount = refund,
-            ApprovedDebtOffsetAmount = 0m,
+            ApprovedDebtOffsetAmount = verifiedPostedOffsetAmount,
             DamageReason = reason,
             DamageEvidenceReference = evidence,
             ExplicitDepositPolicyReference = policy,
@@ -126,10 +132,12 @@ public sealed class ContractDepositSettlementDecisionRecord : Entity<Guid>
             BuildingId == Guid.Empty || ApprovedByUserId == Guid.Empty ||
             ApprovedAtUtc.Kind != DateTimeKind.Utc ||
             VerifiedHeldAmount <= 0m || !Whole(VerifiedHeldAmount) ||
-            ApprovedDebtOffsetAmount != 0m ||
+            ApprovedDebtOffsetAmount < 0m ||
+            !Whole(ApprovedDebtOffsetAmount) ||
             ApprovedForfeitAmount < 0m || !Whole(ApprovedForfeitAmount) ||
             ApprovedRefundAmount < 0m || !Whole(ApprovedRefundAmount) ||
-            VerifiedHeldAmount != ApprovedForfeitAmount + ApprovedRefundAmount ||
+            VerifiedHeldAmount != ApprovedDebtOffsetAmount +
+                ApprovedForfeitAmount + ApprovedRefundAmount ||
             ExplicitDepositPolicyReference?.Trim().Length is < 8 or > 200 ||
             (ApprovedForfeitAmount > 0m &&
              (DamageReason?.Trim().Length is null or < 8 or > 500 ||
@@ -155,7 +163,7 @@ public sealed class ContractDepositSettlementDecisionRecord : Entity<Guid>
                 root.GetProperty("VerifiedHeldAmount").GetDecimal() != VerifiedHeldAmount ||
                 root.GetProperty("ApprovedForfeitAmount").GetDecimal() != ApprovedForfeitAmount ||
                 root.GetProperty("ApprovedRefundAmount").GetDecimal() != ApprovedRefundAmount ||
-                root.GetProperty("ApprovedDebtOffsetAmount").GetDecimal() != 0m ||
+                root.GetProperty("ApprovedDebtOffsetAmount").GetDecimal() != ApprovedDebtOffsetAmount ||
                 Text(root, "DamageReason") != DamageReason ||
                 Text(root, "DamageEvidenceReference") != DamageEvidenceReference ||
                 root.GetProperty("ExplicitDepositPolicyReference").GetString() !=
@@ -171,12 +179,15 @@ public sealed class ContractDepositSettlementDecisionRecord : Entity<Guid>
 
     public void RequireForCloseout(Guid contractId, Guid requestId,
         Guid finalInvoiceId, Guid buildingId, decimal held,
-        decimal forfeit, string? reason, string? evidence, string policy)
+        decimal forfeit, string? reason, string? evidence, string policy,
+        decimal verifiedPostedOffsetAmount = 0m)
     {
         VerifyStoredDecision();
         if (ContractId != contractId || MoveOutRequestId != requestId ||
             FinalIssuedInvoiceId != finalInvoiceId || BuildingId != buildingId ||
-            VerifiedHeldAmount != held || ApprovedForfeitAmount != forfeit ||
+            VerifiedHeldAmount != held ||
+            ApprovedDebtOffsetAmount != verifiedPostedOffsetAmount ||
+            ApprovedForfeitAmount != forfeit ||
             !StringComparer.Ordinal.Equals(DamageReason,
                 string.IsNullOrWhiteSpace(reason) ? null : reason.Trim()) ||
             !StringComparer.Ordinal.Equals(DamageEvidenceReference,

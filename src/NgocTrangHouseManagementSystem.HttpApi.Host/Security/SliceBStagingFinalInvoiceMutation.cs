@@ -1095,7 +1095,8 @@ public sealed class SliceBStagingFinalInvoiceMutation
 
     /// <summary>
     /// Phase 2G.4: the OWNER explicitly approves an auditable deposit
-    /// refund/forfeit plan. The only permitted debt offset is ZERO.
+    /// refund/forfeit plan. When OI-04 has posted, the exact signed
+    /// internal credit is deducted once before approving residual refund.
     /// This action NEVER transfers money or ends the contract.
     /// </summary>
     public Task<SliceBDepositSettlementDecisionRead> ApproveDepositSettlementAsync(
@@ -1105,11 +1106,7 @@ public sealed class SliceBStagingFinalInvoiceMutation
             {
                 if (input is null ||
                     db.Database.CurrentTransaction?.GetDbTransaction()
-                        .IsolationLevel != System.Data.IsolationLevel.Serializable ||
-                    // The legacy refund/forfeit path assumes ZERO offset
-                    // and would otherwise spend the already-applied cash twice.
-                    await db.DebtOffsetPostings.AsNoTracking()
-                        .AnyAsync(x => x.ContractId == contractId))
+                        .IsolationLevel != System.Data.IsolationLevel.Serializable)
                     throw Denied();
                 var request = await LockRequestAsync(
                     db, requestId, contractId, roomId);
@@ -1187,6 +1184,26 @@ public sealed class SliceBStagingFinalInvoiceMutation
                         not "DepositDeductionPolicyNotApproved" and
                         not "RefundAuthorizationAndHandoverMissing"))
                     throw Denied();
+                var postedOffset = await db.DebtOffsetPostings.AsNoTracking()
+                    .SingleOrDefaultAsync(x => x.ContractId == contractId &&
+                        x.MoveOutRequestId == requestId &&
+                        x.BuildingId == building);
+                ContractDepositPostOffsetCloseoutReadiness? offsetReadiness = null;
+                if (postedOffset is not null)
+                {
+                    var signedApproval = await db.DebtOffsetApprovals.AsNoTracking()
+                        .SingleOrDefaultAsync(x => x.Id == postedOffset.ApprovalId)
+                        ?? throw Denied();
+                    try { postedOffset.VerifyStoredPosting(signedApproval); }
+                    catch (Exception ex) when (ex is InvalidDataException or
+                        InvalidOperationException or ArgumentException)
+                    { throw Denied(); }
+                    offsetReadiness = await AssessPostOffsetInsideScopeAsync(
+                        db, contractId, requestId, building, roomId, null);
+                    if (!offsetReadiness.CanApproveDepositDisposition ||
+                        offsetReadiness.PostingId != postedOffset.Id)
+                        throw Denied();
+                }
                 ContractDepositSettlementDecisionRecord candidate;
                 try
                 {
@@ -1195,7 +1212,8 @@ public sealed class SliceBStagingFinalInvoiceMutation
                         building, actor, DateTime.UtcNow, final.IssuedAtUtc,
                         held, 0m, input.ForfeitAmount,
                         input.DamageReason, input.DamageEvidenceReference,
-                        input.DepositPolicyReference);
+                        input.DepositPolicyReference,
+                        postedOffset?.DebitHeldDepositVnd ?? 0m);
                 }
                 catch (Exception ex) when (ex is InvalidOperationException or
                     ArgumentException or OverflowException)
@@ -1212,7 +1230,8 @@ public sealed class SliceBStagingFinalInvoiceMutation
                             contractId, requestId, final.Id, building, held,
                             input.ForfeitAmount, input.DamageReason,
                             input.DamageEvidenceReference,
-                            input.DepositPolicyReference);
+                            input.DepositPolicyReference,
+                            postedOffset?.DebitHeldDepositVnd ?? 0m);
                     }
                     catch (Exception ex) when (ex is InvalidDataException or
                         InvalidOperationException or ArgumentException)
@@ -1289,9 +1308,26 @@ public sealed class SliceBStagingFinalInvoiceMutation
                          input.RefundPaidAtUtc.Value > DateTime.UtcNow))
                     throw Denied();
 
-                if (await db.DebtOffsetPostings.AsNoTracking()
-                    .AnyAsync(x => x.ContractId == contractId))
-                    throw Denied(); // Reconcile posted OI-04 first, never refund original full cọc.
+                var postedOffset = await db.DebtOffsetPostings.AsNoTracking()
+                    .SingleOrDefaultAsync(x => x.ContractId == contractId &&
+                        x.MoveOutRequestId == requestId &&
+                        x.BuildingId == building);
+                ContractDepositPostOffsetCloseoutReadiness? offsetReadiness = null;
+                if (postedOffset is not null)
+                {
+                    var signedApproval = await db.DebtOffsetApprovals.AsNoTracking()
+                        .SingleOrDefaultAsync(x => x.Id == postedOffset.ApprovalId)
+                        ?? throw Denied();
+                    try { postedOffset.VerifyStoredPosting(signedApproval); }
+                    catch (Exception ex) when (ex is InvalidDataException or
+                        InvalidOperationException or ArgumentException)
+                    { throw Denied(); }
+                    offsetReadiness = await AssessPostOffsetInsideScopeAsync(
+                        db, contractId, requestId, building, roomId, null);
+                    if (!offsetReadiness.CanApproveDepositDisposition ||
+                        offsetReadiness.PostingId != postedOffset.Id)
+                        throw Denied();
+                }
                 var requestSource = await LockRequestAsync(
                     db, requestId, contractId, roomId);
                 var contract = await db.Contracts
@@ -1481,7 +1517,8 @@ public sealed class SliceBStagingFinalInvoiceMutation
                     decision.RequireForCloseout(contractId, requestId, final.Id,
                         building, held, input.ForfeitAmount,
                         input.DamageReason, input.DamageEvidenceReference,
-                        input.DepositPolicyReference);
+                        input.DepositPolicyReference,
+                         postedOffset?.DebitHeldDepositVnd ?? 0m);
                     // The owner decision must precede an actual refund;
                     // neither a backdated manual proof nor another refund
                     // can be used to retroactively approve money sent.
@@ -1493,7 +1530,9 @@ public sealed class SliceBStagingFinalInvoiceMutation
                     InvalidOperationException or ArgumentException)
                 { throw Denied(); }
 
-                decimal refundAmount = held - input.ForfeitAmount;
+                decimal refundAmount = held -
+                    (postedOffset?.DebitHeldDepositVnd ?? 0m) -
+                    input.ForfeitAmount;
                 if (refundAmount > 0m &&
                     (!ValidProof(input.RefundTransactionReference) ||
                      !ValidProof(input.RefundBankEvidenceReference) ||
@@ -1522,7 +1561,7 @@ public sealed class SliceBStagingFinalInvoiceMutation
                         input.DepositPolicyReference,
                         refundId, forfeitId,
                         input.RefundTransactionReference,
-                        input.RefundPaidAtUtc);
+                        input.RefundPaidAtUtc, offsetReadiness);
 
                 // Phase 2G.5: immutable, separately auditable room
                 // release, bound to the SAME owner approval and timestamp.
@@ -2270,70 +2309,22 @@ public sealed class SliceBStagingFinalInvoiceMutation
         GetPostOffsetCloseoutReadinessAsync(Guid contractId, Guid requestId,
             DateOnly? asOfDate)
         => ExecuteScopedAsync(contractId, requireBootstrapOwner: false,
-            async (db, actor, building, roomId) =>
-            {
-                if (requestId == Guid.Empty) throw Denied();
-                var post = await db.DebtOffsetPostings.AsNoTracking()
-                    .SingleOrDefaultAsync(x => x.ContractId == contractId &&
-                        x.MoveOutRequestId == requestId &&
-                        x.BuildingId == building) ?? throw Denied();
-                var approval = await db.DebtOffsetApprovals.AsNoTracking()
-                    .SingleOrDefaultAsync(x => x.Id == post.ApprovalId &&
-                        x.BuildingId == building) ?? throw Denied();
-                try { post.VerifyStoredPosting(approval); }
-                catch (Exception ex) when (ex is InvalidDataException or
-                    InvalidOperationException or ArgumentException)
-                { throw Denied(); }
-                var date = OfficialAsOf(asOfDate);
-                var invoices = await db.OfficialInvoiceReceivables.AsNoTracking()
-                    .Where(x => x.ContractId == contractId &&
-                        x.BuildingId == building && x.RoomId == roomId)
-                    .ToArrayAsync();
-                var balances = new List<OfficialInvoiceReceivableBalance>();
-                foreach (var invoice in invoices)
-                    balances.Add(await AssessOfficialBalanceAsync(
-                        db, invoice, date));
-                var finalCount = await db.IssuedInvoiceLedger.AsNoTracking()
-                    .CountAsync(x => x.ContractId == contractId &&
-                        x.MoveOutRequestId == requestId);
-                var monthlyCount = await db.MonthlyIssuedInvoices.AsNoTracking()
-                    .CountAsync(x => x.ContractId == contractId);
-                var checklist = await db.MoveOutChecklistTasks.AsNoTracking()
-                    .Where(x => x.MoveOutRequestId == requestId).ToArrayAsync();
-                var checklistComplete = checklist.Length == 5 &&
-                    checklist.Select(x => x.Type).Distinct().Count() == 5
-                    ? checklist.Count(x => x.IsCompleted) : 0;
-                // A bank review alone cannot classify a monthly payment
-                // that follows the frozen owner offset. Verify that EVERY
-                // accepted monthly receipt has its own exact signed split;
-                // prevent "paid" closeout while an allocation is missing.
-                var monthlyPostingIds = invoices
-                    .Where(x => x.Kind == OfficialInvoiceKind.Monthly)
-                    .Select(x => x.Id).ToArray();
-                var acceptedMonthly = await db.OfficialInvoiceReceiptReviews
-                    .AsNoTracking().Where(x =>
-                        monthlyPostingIds.Contains(x.ReceivablePostingId) &&
-                        x.Accepted).ToArrayAsync();
-                var reviewedIds = acceptedMonthly.Select(x => x.Id).ToArray();
-                var allocations = await db.OfficialMonthlyReceiptLineAllocations
-                    .AsNoTracking().Where(x =>
-                        reviewedIds.Contains(x.ReceiptReviewId))
-                    .ToArrayAsync();
-                var allSplitsComplete = acceptedMonthly.All(review =>
-                {
+            (db, actor, building, roomId) =>
+                AssessPostOffsetInsideScopeAsync(db, contractId, requestId,
+                    building, roomId, asOfDate));
+
+    private async Task<ContractDepositPostOffsetCloseoutReadiness>
+        AssessPostOffsetInsideScopeAsync(BuildingManagementDbContext db,
+            Guid contractId, Guid requestId, Guid building, Guid roomId,
+            DateOnly? asOfDate)
+    {
                     var source = allocations.Where(x =>
                         x.ReceiptReviewId == review.Id).ToArray();
                     return source.Length != 0 &&
                         source.Select(x => x.Category).Distinct().Count() ==
                             source.Length &&
                         source.Sum(x => x.Amount) == review.Amount;
-                });
-                var deposit = await _depositAudit.GetAsync(requestId);
-                return ContractDepositPostOffsetCloseoutEvaluator.Assess(
-                    post, approval, deposit, date, balances, finalCount,
-                    finalCount + monthlyCount, checklistComplete, 5,
-                    allSplitsComplete);
-            });
+       }
 
     private static async Task<decimal> PostedInternalOffsetForInvoiceAsync(
         BuildingManagementDbContext db, Guid contractId, Guid postingId,

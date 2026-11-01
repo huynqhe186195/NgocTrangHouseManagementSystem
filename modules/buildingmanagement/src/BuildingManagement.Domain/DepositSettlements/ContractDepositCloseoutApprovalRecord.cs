@@ -28,6 +28,7 @@ public sealed class ContractDepositCloseoutApprovalRecord : Entity<Guid>
     public Guid ApprovedByUserId { get; private set; }
     public DateTime ApprovedAtUtc { get; private set; }
     public decimal VerifiedHeldAmount { get; private set; }
+    public decimal ApprovedDebtOffsetAmount { get; private set; }
     public decimal ApprovedForfeitAmount { get; private set; }
     public decimal ApprovedRefundAmount { get; private set; }
     public Guid? RefundSettlementId { get; private set; }
@@ -66,7 +67,8 @@ public sealed class ContractDepositCloseoutApprovalRecord : Entity<Guid>
         string inspectionEvidenceReference, string handoverEvidenceReference,
         string explicitDepositPolicyReference,
         Guid? refundSettlementId, Guid? forfeitSettlementId,
-        string? refundTransactionReference, DateTime? refundPaidAtUtc)
+        string? refundTransactionReference, DateTime? refundPaidAtUtc,
+        ContractDepositPostOffsetCloseoutReadiness? offsetReadiness = null)
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(contract);
@@ -104,6 +106,23 @@ public sealed class ContractDepositCloseoutApprovalRecord : Entity<Guid>
             throw new InvalidOperationException(
                 "No complete verified held deposit ledger is available.");
 
+        var postedOffset = offsetReadiness?.PostedInternalDepositDebitVnd ?? 0m;
+        if (offsetReadiness is not null)
+        {
+            if (!offsetReadiness.CanApproveDepositDisposition ||
+                offsetReadiness.ContractId != contract.Id ||
+                offsetReadiness.MoveOutRequestId != request.Id ||
+                offsetReadiness.VerifiedOriginalHeldDepositVnd != held ||
+                offsetReadiness.PostedInternalDebtCreditVnd != postedOffset ||
+                offsetReadiness.RemainingHeldDepositVnd != held - postedOffset ||
+                offsetReadiness.OfficialOutstandingDebtVnd != 0m ||
+                offsetReadiness.PostingId == Guid.Empty ||
+                postedOffset <= 0m)
+                throw new InvalidOperationException(
+                    "Posted offset lacks final invoice and verified financial sources.");
+        }
+        else
+        {
         if (paymentAudit.Blockers.Any(x =>
                 x != "IssuedInvoiceLedgerAndAllocationAuthorizationMissing") ||
             !paymentAudit.VerifiedStagedAmount.HasValue ||
@@ -129,15 +148,17 @@ public sealed class ContractDepositCloseoutApprovalRecord : Entity<Guid>
             throw new InvalidOperationException(
                 "ALL issued contract invoices require individually audited completed receipts. No automatic deposit debt offset.");
 
+        }
+
         if (decimal.Truncate(held) != held ||
             explicitlyApprovedForfeitAmount < 0m ||
             decimal.Truncate(explicitlyApprovedForfeitAmount) !=
                 explicitlyApprovedForfeitAmount ||
-            explicitlyApprovedForfeitAmount > held)
+            explicitlyApprovedForfeitAmount > held - postedOffset)
             throw new InvalidOperationException(
                 "Explicit forfeiture must be a whole-VND amount within verified held funds.");
 
-        var refund = held - explicitlyApprovedForfeitAmount;
+        var refund = held - postedOffset - explicitlyApprovedForfeitAmount;
         if (refundedAtBeforeApproval(refundPaidAtUtc, finalInvoice.IssuedAtUtc) ||
             !HasReference(inspectionEvidenceReference, 8, 500) ||
             !HasReference(handoverEvidenceReference, 8, 500) ||
@@ -173,6 +194,7 @@ public sealed class ContractDepositCloseoutApprovalRecord : Entity<Guid>
             ApprovedByUserId = rootActorId,
             ApprovedAtUtc = approvedAtUtc,
             VerifiedHeldAmount = held,
+            ApprovedDebtOffsetAmount = postedOffset,
             ApprovedForfeitAmount = explicitlyApprovedForfeitAmount,
             ApprovedRefundAmount = refund,
             RefundSettlementId = refundSettlementId,
@@ -197,6 +219,7 @@ public sealed class ContractDepositCloseoutApprovalRecord : Entity<Guid>
             ApprovedByUserId = rootActorId,
             ApprovedAtUtc = approvedAtUtc,
             VerifiedHeldAmount = held,
+            ApprovedDebtOffsetAmount = postedOffset,
             ApprovedForfeitAmount = explicitlyApprovedForfeitAmount,
             ApprovedRefundAmount = refund,
             RefundSettlementId = refundSettlementId,
@@ -227,7 +250,10 @@ public sealed class ContractDepositCloseoutApprovalRecord : Entity<Guid>
             ApprovedRefundAmount < 0m || ApprovedForfeitAmount < 0m ||
             decimal.Truncate(ApprovedRefundAmount) != ApprovedRefundAmount ||
             decimal.Truncate(ApprovedForfeitAmount) != ApprovedForfeitAmount ||
-            ApprovedRefundAmount + ApprovedForfeitAmount != VerifiedHeldAmount ||
+            ApprovedRefundAmount + ApprovedForfeitAmount +
+                ApprovedDebtOffsetAmount != VerifiedHeldAmount ||
+            ApprovedDebtOffsetAmount < 0m ||
+            decimal.Truncate(ApprovedDebtOffsetAmount) != ApprovedDebtOffsetAmount ||
             !HasReference(InspectionEvidenceReference, 8, 500) ||
             !HasReference(HandoverEvidenceReference, 8, 500) ||
             !HasReference(ExplicitDepositPolicyReference, 8, 200) ||
@@ -271,6 +297,8 @@ public sealed class ContractDepositCloseoutApprovalRecord : Entity<Guid>
                 root.GetProperty("ApprovedByUserId").GetGuid() != ApprovedByUserId ||
                 root.GetProperty("ApprovedAtUtc").GetDateTime() != ApprovedAtUtc ||
                 root.GetProperty("VerifiedHeldAmount").GetDecimal() != VerifiedHeldAmount ||
+                (root.TryGetProperty("ApprovedDebtOffsetAmount", out var offsetJson)
+                    ? offsetJson.GetDecimal() : 0m) != ApprovedDebtOffsetAmount ||
                 root.GetProperty("ApprovedForfeitAmount").GetDecimal() != ApprovedForfeitAmount ||
                 root.GetProperty("ApprovedRefundAmount").GetDecimal() != ApprovedRefundAmount ||
                 ReadGuidOrNull(root, "RefundSettlementId") != RefundSettlementId ||

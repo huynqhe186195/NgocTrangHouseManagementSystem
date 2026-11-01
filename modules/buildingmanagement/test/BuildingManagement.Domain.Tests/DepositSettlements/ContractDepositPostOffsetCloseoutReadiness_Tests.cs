@@ -231,6 +231,40 @@ public sealed class ContractDepositPostOffsetCloseoutReadiness_Tests
         Assert.False(badStatus.IsFullyFinanciallyReconciled);
     }
 
+
+    [Fact]
+    public void OI04READY12_An_Owner_May_Approve_Zero_Debt_Plan_But_Not_Execute_Refund()
+    {
+        var (a,p) = Signed(2_000_000m);
+        var result = Evaluate(a,p,Deposit(2_000_000m),
+            new[]{Monthly(p),Final(p)},issuedFinal:1);
+        Assert.True(result.CanApproveDepositDisposition);
+        Assert.False(result.IsFullyFinanciallyReconciled);
+        Assert.False(result.CanExecuteRefund);
+        Assert.False(result.CanCompleteMoveOut);
+    }
+
+    [Fact]
+    public void OI04READY13_Unpaid_Debt_Or_Unsigned_Fee_Allocation_Blocks_Owner_Plan()
+    {
+        var (a,p) = Signed(1_000_000m);
+        var unpaidFinal = Final(p) with
+        {
+            IndependentlyReviewedManualPayments = 0m,
+            OutstandingAmount = 100_000m,
+            AcceptedPaymentCount = 0,
+            Status = IssuedInvoicePaymentStatus.Unpaid
+        };
+        var unpaid = Evaluate(a,p,Deposit(1_000_000m),
+            new[]{Monthly(p),unpaidFinal},issuedFinal:1);
+        Assert.False(unpaid.CanApproveDepositDisposition);
+        var missingSplit = ContractDepositPostOffsetCloseoutEvaluator.Assess(
+            p,a,Deposit(1_000_000m),DateFor(p),
+            new[]{Monthly(p),Final(p)},1,2,1,5,
+            allAcceptedMonthlyReceiptsHaveSignedFeeSplits:false);
+        Assert.False(missingSplit.CanApproveDepositDisposition);
+    }
+
     [Fact]
     public void OI04READY07_External_Bank_Transfer_Cannot_Be_Fabricated()
     {

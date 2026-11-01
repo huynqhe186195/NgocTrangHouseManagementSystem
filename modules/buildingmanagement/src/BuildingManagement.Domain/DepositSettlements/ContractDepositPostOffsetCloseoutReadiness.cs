@@ -26,6 +26,16 @@ public sealed record ContractDepositPostOffsetCloseoutReadiness(
     public bool IsLedgerBalanced => !Blockers.Contains("PostedOffsetLedgerMismatch");
     public bool HasUnpaidOfficialDebt => OfficialOutstandingDebtVnd > 0m;
     public bool RequiresRefundVerification => RemainingHeldDepositVnd > 0m;
+    // Owner may approve a PLAN once every authoritative debt and source is
+    // reconciled. Executing the planned refund still needs actual bank proof,
+    // and physical completion remains an independent 2G.5 commit gate.
+    public bool CanApproveDepositDisposition =>
+        HasSignedFinalInvoice && IsLedgerBalanced && !HasUnpaidOfficialDebt &&
+        !Blockers.Any(x => x is not
+            "ResidualDepositRequiresExecutedBankRefundEvidence" and
+            not "SignedMoveOutChecklistIncomplete" and
+            not "SeparateOwnerFinalCloseoutApprovalRequired");
+
     public bool IsFullyFinanciallyReconciled =>
         HasSignedFinalInvoice && IsLedgerBalanced &&
         !HasUnpaidOfficialDebt && !RequiresRefundVerification &&

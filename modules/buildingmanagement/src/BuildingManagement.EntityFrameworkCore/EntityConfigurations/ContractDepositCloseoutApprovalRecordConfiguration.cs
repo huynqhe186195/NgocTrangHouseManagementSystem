@@ -25,7 +25,8 @@ public sealed class ContractDepositCloseoutApprovalRecordConfiguration
                 "\"ApprovedRefundAmount\" >= 0 AND " +
                 "\"ApprovedForfeitAmount\" >= 0 AND " +
                 "\"VerifiedHeldAmount\" = \"ApprovedRefundAmount\" + " +
-                "\"ApprovedForfeitAmount\"");
+                "\"ApprovedForfeitAmount\" + \"ApprovedDebtOffsetAmount\" " +
+                "AND \"ApprovedDebtOffsetAmount\" >= 0");
             t.HasCheckConstraint("CK_BM_DepositCloseout_Docs",
                 "length(trim(\"InspectionEvidenceReference\")) BETWEEN 8 AND 500 " +
                 "AND length(trim(\"HandoverEvidenceReference\")) BETWEEN 8 AND 500 " +
@@ -39,6 +40,7 @@ public sealed class ContractDepositCloseoutApprovalRecordConfiguration
         builder.Property(x => x.ApprovedByUserId).IsRequired();
         builder.Property(x => x.ApprovedAtUtc).IsRequired();
         builder.Property(x => x.VerifiedHeldAmount).HasPrecision(18, 0).IsRequired();
+        builder.Property(x => x.ApprovedDebtOffsetAmount).HasPrecision(18, 0).IsRequired();
         builder.Property(x => x.ApprovedForfeitAmount).HasPrecision(18, 0).IsRequired();
         builder.Property(x => x.ApprovedRefundAmount).HasPrecision(18, 0).IsRequired();
         builder.Property(x => x.RefundSettlementId).IsRequired(false);

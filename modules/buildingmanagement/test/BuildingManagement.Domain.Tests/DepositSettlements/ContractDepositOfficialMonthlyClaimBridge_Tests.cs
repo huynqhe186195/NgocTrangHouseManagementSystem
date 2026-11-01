@@ -178,4 +178,19 @@ public sealed class ContractDepositOfficialMonthlyClaimBridge_Tests
             3_000_000m, f.Posting.ContractId, Guid.NewGuid(), false,
             "SIGNED-OWNER-OI04-001", preview.Claims).IsEvidenceCompleteForPreview);
     }
+    [Fact]
+    public void DEP_BRIDGE08_Future_Posting_Cannot_Be_Treated_As_Past_Debt()
+    {
+        var f = Invoice();
+        var result = ContractDepositOfficialMonthlyClaimBridge.Assess(
+            f.Posting, f.Issued, f.Source, f.Review,
+            new DateOnly(2026, 10, 29),
+            Array.Empty<OfficialInvoiceReceiptEvidence>(),
+            Array.Empty<OfficialInvoiceReceiptReviewRecord>(),
+            Array.Empty<MonthlyInvoiceAdjustmentRecord>(),
+            Array.Empty<MonthlyInvoiceAdjustmentDecisionRecord>());
+        Assert.Contains("OfficialPostingIsAfterEvaluationDate", result.Blockers);
+        Assert.Empty(result.Claims);
+    }
+
 }

@@ -52,6 +52,14 @@ public static class ContractDepositOfficialMonthlyClaimBridge
             posting.RoomId != source.RoomId)
             throw new InvalidDataException("Monthly official posting scope differs from source.");
 
+        // As-of balance cannot include an invoice that was not yet POSTED
+        // in Vietnam business time. A future posting is not historical debt.
+        var zone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh");
+        var postedOn = DateOnly.FromDateTime(
+            TimeZoneInfo.ConvertTimeFromUtc(posting.PostedAtUtc, zone));
+        if (postedOn > asOfDate)
+            blockers.Add("OfficialPostingIsAfterEvaluationDate");
+
         // A pending, rejected, soft-deleted or accepted payment still needs
         // confirmed CATEGORY allocation; never infer which fee is unpaid.
         if (receipts.Count != 0 || receiptReviews.Count != 0)

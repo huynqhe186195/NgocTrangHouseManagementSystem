@@ -2120,6 +2120,7 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 Assert.Equal(oi04PostedId,replay.RootElement
                     .GetProperty("postingId").GetGuid());
 
+            Guid oi04OfficialReceivableId;
             using (var oi04CheckScope=app.Services.CreateScope())
             {
                 using var oi04CheckUow=oi04CheckScope.ServiceProvider
@@ -2132,6 +2133,8 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     .AsNoTracking().Where(x=>x.ContractId==oi04ContractId).ToArrayAsync());
                 Assert.Equal(oi04PostedId,postedRow.Id);
                 Assert.Equal(3_000_000m,postedRow.CreditOfficialDebtVnd);
+                oi04OfficialReceivableId=(await verifiedDb.OfficialInvoiceReceivables
+                    .AsNoTracking().SingleAsync(x=>x.ContractId==oi04ContractId)).Id;
                 Assert.False(await verifiedDb.DepositSettlements
                     .AsNoTracking().AnyAsync(x=>x.SourceContractId==oi04ContractId));
                 await oi04CheckUow.CompleteAsync();
@@ -2142,10 +2145,34 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             // Official invoice balance must account for internal credit,
             // without inventing a completed manual bank receipt.
             var oi04PortfolioResponse=await clientRoot.GetAsync(
-                FinalInvoices(oi04ContractId)+"/receivables/portfolio");
-            // The root financial portfolio route is authenticated and,
-            // when a current-as-of source is available, must reconcile.
-            // Physical original source evidence remains append-only.
+                FinalInvoices(oi04ContractId)+"/official-debt");
+            Assert.Equal(HttpStatusCode.OK,oi04PortfolioResponse.StatusCode);
+            using (var oi04PortfolioJson=JsonDocument.Parse(
+                await oi04PortfolioResponse.Content.ReadAsStringAsync()))
+            {
+                Assert.Equal(3_083_000m,oi04PortfolioJson.RootElement
+                    .GetProperty("totalAdjustedReceivables").GetDecimal());
+                Assert.Equal(3_000_000m,oi04PortfolioJson.RootElement
+                    .GetProperty("internalDepositOffsetVnd").GetDecimal());
+                Assert.Equal(83_000m,oi04PortfolioJson.RootElement
+                    .GetProperty("outstandingAmount").GetDecimal());
+                Assert.Equal(0m,oi04PortfolioJson.RootElement
+                    .GetProperty("independentlyReviewedManualPayments").GetDecimal());
+            }
+            var oi04InvoiceBalanceResponse=await clientRoot.GetAsync(
+                FinalInvoices(oi04ContractId)+"/receivables/"+
+                oi04OfficialReceivableId.ToString("D")+"/balance");
+            Assert.Equal(HttpStatusCode.OK,oi04InvoiceBalanceResponse.StatusCode);
+            using (var oi04BalanceJson=JsonDocument.Parse(
+                await oi04InvoiceBalanceResponse.Content.ReadAsStringAsync()))
+            {
+                Assert.Equal(3_000_000m,oi04BalanceJson.RootElement
+                    .GetProperty("internalDepositOffsetVnd").GetDecimal());
+                Assert.Equal(83_000m,oi04BalanceJson.RootElement
+                    .GetProperty("outstandingAmount").GetDecimal());
+                Assert.False(oi04BalanceJson.RootElement
+                    .GetProperty("isExternallyVerifiedBankTransfer").GetBoolean());
+            }
 
             // Phase 2G.3 regular billing preview: a scoped, repeatable-read
             // calculation uses only the known full-month rent and source-

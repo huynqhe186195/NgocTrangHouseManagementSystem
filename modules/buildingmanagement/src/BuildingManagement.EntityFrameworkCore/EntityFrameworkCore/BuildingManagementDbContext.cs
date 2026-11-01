@@ -71,6 +71,8 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
     // Phase 2G.3: immutable official debt, separate from original issuance.
     public DbSet<OfficialInvoiceReceivablePostingRecord> OfficialInvoiceReceivables { get; set; } = default!;
     public DbSet<OfficialInvoiceReceiptReviewRecord> OfficialInvoiceReceiptReviews { get; set; } = default!;
+    // Staged, signed receipt-to-charge splits; never an offset or bank writer.
+    public DbSet<OfficialMonthlyReceiptLineAllocationRecord> OfficialMonthlyReceiptLineAllocations { get; set; } = default!;
     // Source-only explicit root deposit disposition approval; no automatic refund.
     public DbSet<ContractDepositSettlementDecisionRecord> DepositSettlementDecisions { get; set; } = default!;
     public DbSet<ContractDepositCloseoutApprovalRecord> DepositCloseoutApprovals { get; set; } = default!;
@@ -127,6 +129,8 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.OfficialInvoiceReceivablePostingRecordConfiguration());
         builder.ApplyConfiguration(
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.OfficialInvoiceReceiptReviewRecordConfiguration());
+        builder.ApplyConfiguration(
+            new BuildingManagement.EntityFrameworkCore.EntityConfigurations.OfficialMonthlyReceiptLineAllocationRecordConfiguration());
         builder.ApplyConfiguration(
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.ContractDepositSettlementDecisionRecordConfiguration());
         builder.ApplyConfiguration(

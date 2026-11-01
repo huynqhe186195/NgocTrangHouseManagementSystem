@@ -448,6 +448,47 @@ public sealed class Phase2G4AtomicOffsetPostingPostgreSql_Tests
         });
     }
 
+    [Fact]
+    public async Task OI04POSTSQL12_Only_One_Real_Final_Invoice_Can_Follow_Approved_Offset()
+    {
+        await Scratch(async (db,tx) =>
+        {
+            var a=Approval();var posted=Execution(a);
+            await SeedApproval(db,tx,a);
+            await Run(db,tx,InsertSql(posted));
+            await SetupPostOffsetCollectionColumns(db,tx);
+            var finalId=Guid.NewGuid();
+            var finalPosting=Guid.NewGuid();
+            await Run(db,tx,$"""
+                INSERT INTO "BuildingManagementIssuedInvoiceLedger"
+                  ("Id","ContractId","MoveOutRequestId")
+                VALUES ('{finalId:D}','{Contract:D}','{Request:D}');
+                INSERT INTO "BuildingManagementOfficialInvoiceReceivables"
+                  ("Id","Kind","IssuedInvoiceId","ContractId","SourceEvidenceSha256")
+                VALUES ('{finalPosting:D}',2,'{finalId:D}','{Contract:D}','{Hash}');
+                """);
+            await Denied(db,tx,$"""
+                INSERT INTO "BuildingManagementIssuedInvoiceLedger"
+                  ("Id","ContractId","MoveOutRequestId")
+                VALUES ('{Guid.NewGuid():D}','{Contract:D}','{Request:D}')
+                ""","23514");
+            await Denied(db,tx,$"""
+                INSERT INTO "BuildingManagementOfficialInvoiceReceivables"
+                  ("Id","Kind","IssuedInvoiceId","ContractId","SourceEvidenceSha256")
+                VALUES ('{Guid.NewGuid():D}',2,'{finalId:D}','{Contract:D}','{Hash}')
+                ""","23514");
+            await Denied(db,tx,$"""
+                UPDATE "BuildingManagementIssuedInvoiceLedger"
+                   SET "MoveOutRequestId"='{Guid.NewGuid():D}'
+                 WHERE "Id"='{finalId:D}'
+                ""","23514");
+            Assert.Equal(1L,await Scalar(db,tx,$"""
+                SELECT count(*) FROM "BuildingManagementOfficialInvoiceReceivables"
+                 WHERE "Kind"=2 AND "ContractId"='{Contract:D}'
+                """));
+        });
+    }
+
     private static async Task SetupPostOffsetCollectionColumns(
         NpgsqlConnection db,NpgsqlTransaction tx)
     {

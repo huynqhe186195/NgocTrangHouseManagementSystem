@@ -2830,7 +2830,10 @@ public sealed record OfficialContractDebtPortfolioRead(
     decimal IndependentlyReviewedManualPayments,
     decimal OutstandingAmount, int OverdueInvoiceCount,
     IReadOnlyList<OfficialInvoiceReceivableBalance> Invoices,
-    bool IsOfficialDebtPosted, bool IsExternallyVerifiedBankTransfer);
+    bool IsOfficialDebtPosted, bool IsExternallyVerifiedBankTransfer)
+{
+    public decimal InternalDepositOffsetVnd { get; init; }
+}
 
 public sealed class SliceBDepositSettlementApprovalInput
 {

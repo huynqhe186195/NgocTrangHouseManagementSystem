@@ -34,8 +34,12 @@ public sealed class Phase2G4FreezeOffsetSources : Migration
             BEGIN
               new_data := CASE WHEN TG_OP='DELETE' THEN '{}'::jsonb ELSE to_jsonb(NEW) END;
               old_data := CASE WHEN TG_OP='INSERT' THEN '{}'::jsonb ELSE to_jsonb(OLD) END;
-              new_contract := NULLIF(new_data->>'ContractId','')::uuid;
-              old_contract := NULLIF(old_data->>'ContractId','')::uuid;
+              new_contract := COALESCE(NULLIF(new_data->>'ContractId','')::uuid,
+                NULLIF(new_data->>'SourceContractId','')::uuid,
+                NULLIF(new_data->>'TargetContractId','')::uuid);
+              old_contract := COALESCE(NULLIF(old_data->>'ContractId','')::uuid,
+                NULLIF(old_data->>'SourceContractId','')::uuid,
+                NULLIF(old_data->>'TargetContractId','')::uuid);
               new_issued := NULLIF(new_data->>'IssuedInvoiceId','')::uuid;
               old_issued := NULLIF(old_data->>'IssuedInvoiceId','')::uuid;
               new_posting := NULLIF(new_data->>'ReceivablePostingId','')::uuid;
@@ -45,7 +49,12 @@ public sealed class Phase2G4FreezeOffsetSources : Migration
 
               IF EXISTS (
                 SELECT 1 FROM "BuildingManagementContractDepositDebtOffsetPostings" x
-                WHERE x."ContractId" IN (new_contract,old_contract)
+                WHERE x."ContractId" IN (
+                    new_contract,old_contract,
+                    NULLIF(new_data->>'TargetContractId','')::uuid,
+                    NULLIF(old_data->>'TargetContractId','')::uuid,
+                    NULLIF(new_data->>'SourceContractId','')::uuid,
+                    NULLIF(old_data->>'SourceContractId','')::uuid)
               ) OR EXISTS (
                 SELECT 1 FROM "BuildingManagementContractDepositDebtOffsetPostings" x
                 JOIN "BuildingManagementOfficialInvoiceReceivables" p

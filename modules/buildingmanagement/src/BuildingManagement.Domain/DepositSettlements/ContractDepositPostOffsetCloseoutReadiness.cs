@@ -31,6 +31,7 @@ public sealed record ContractDepositPostOffsetCloseoutReadiness(
         !Blockers.Contains("DepositCashSourceNotVerified") &&
         !Blockers.Contains("OfficialInvoiceHistoryNotComplete") &&
         !Blockers.Contains("PendingOrRejectedBankReceiptsNeedReview") &&
+        !Blockers.Contains("AcceptedMonthlyBankReceiptMissingSignedFeeSplit") &&
         !Blockers.Contains("InternalOffsetNotYetEffectiveAsOfDate");
     // The final transfer, bank refund and contract termination are NOT
     // authorized by a source-only reconciliation read.
@@ -49,7 +50,8 @@ public static class ContractDepositPostOffsetCloseoutEvaluator
         int issuedFinalInvoiceCount,
         int expectedIssuedInvoiceCount,
         int signedChecklistTaskCount,
-        int requiredChecklistTaskCount)
+        int requiredChecklistTaskCount,
+        bool allAcceptedMonthlyReceiptsHaveSignedFeeSplits = true)
     {
         ArgumentNullException.ThrowIfNull(posted);
         ArgumentNullException.ThrowIfNull(approval);
@@ -115,6 +117,8 @@ public static class ContractDepositPostOffsetCloseoutEvaluator
 
         if (balances.Any(x => x.PendingOrRejectedPaymentCount != 0))
             blockers.Add("PendingOrRejectedBankReceiptsNeedReview");
+        if (!allAcceptedMonthlyReceiptsHaveSignedFeeSplits)
+            blockers.Add("AcceptedMonthlyBankReceiptMissingSignedFeeSplit");
         if (unpaid > 0m)
             blockers.Add("OutstandingOfficialDebtRequiresVerifiedCollection");
         if (posted.RemainingHeldDepositVnd > 0m)

@@ -1800,6 +1800,177 @@ public sealed class SliceBStagingFinalInvoiceMutation
                     IsExternallyVerifiedBankTransfer: false);
             });
 
+    /// <summary>
+    /// Phase 2G.4: persist the COMPLETE signed per-fee split of ONE already
+    /// bank-reviewed monthly receipt. Owner-only, isolated staging, 2-person
+    /// evidence separation and SERIALIZABLE. This is NOT a deposit offset.
+    /// All rows are written in one transaction: PostgreSQL deferred commit
+    /// rejects an incomplete set, while the posting row lock serializes races.
+    /// </summary>
+    public Task<SliceBMonthlyReceiptLineSplitRead> AllocateMonthlyReceiptLinesAsync(
+        Guid contractId, Guid postingId, Guid receiptReviewId,
+        SliceBMonthlyReceiptLineSplitInput input)
+        => ExecuteScopedAsync(contractId, requireBootstrapOwner: true,
+            async (db, actor, building, roomId) =>
+            {
+                if (postingId == Guid.Empty || receiptReviewId == Guid.Empty ||
+                    input?.Lines is null ||
+                    input.Lines.Count is < 1 or > 4 ||
+                    !ValidProof(input.SignedAllocationReference) ||
+                    input.SignedAllocationReference.Trim().Length < 12 ||
+                    db.Database.CurrentTransaction?.GetDbTransaction()
+                        .IsolationLevel != System.Data.IsolationLevel.Serializable)
+                    throw Denied();
+
+                var categories = input.Lines.Select(x => x.Category).ToArray();
+                if (categories.Distinct().Count() != categories.Length ||
+                    categories.Any(x => x is not
+                        ContractDepositOffsetCategory.UnpaidRent and
+                        not ContractDepositOffsetCategory.Electricity and
+                        not ContractDepositOffsetCategory.Water and
+                        not ContractDepositOffsetCategory.ApprovedService) ||
+                    input.Lines.Any(x => x.AmountVnd <= 0m ||
+                        decimal.Truncate(x.AmountVnd) != x.AmountVnd))
+                    throw Denied();
+
+                var posting = await LockOfficialPostingAsync(
+                    db, contractId, postingId, building, roomId);
+                if (posting.Kind != OfficialInvoiceKind.Monthly)
+                    throw Denied();
+
+                await using (var cmd = Command(db, """
+                    SELECT "Id"
+                      FROM "BuildingManagementOfficialInvoiceReceiptReviews"
+                     WHERE "Id" = @review
+                       AND "ReceivablePostingId" = @posting
+                       AND "ContractId" = @contract FOR UPDATE
+                    """))
+                {
+                    Add(cmd, "review", receiptReviewId);
+                    Add(cmd, "posting", postingId);
+                    Add(cmd, "contract", contractId);
+                    if (await cmd.ExecuteScalarAsync() is not Guid)
+                        throw Denied();
+                }
+
+                var bankReview = await db.OfficialInvoiceReceiptReviews
+                    .AsNoTracking().SingleOrDefaultAsync(x =>
+                        x.Id == receiptReviewId &&
+                        x.ReceivablePostingId == postingId &&
+                        x.ContractId == contractId) ?? throw Denied();
+                if (!bankReview.Accepted || actor == bankReview.ReviewedByUserId)
+                    throw Denied();
+                var original = await LoadOfficialReceiptEvidenceAsync(
+                    db, posting, bankReview.ReceiptAllocationId);
+                try { bankReview.Verify(posting, original); }
+                catch (Exception ex) when (ex is InvalidDataException or
+                    InvalidOperationException or ArgumentException)
+                { throw Denied(); }
+
+                if (checked(input.Lines.Sum(x => x.AmountVnd)) !=
+                    bankReview.Amount)
+                    throw Denied();
+
+                var issued = await db.MonthlyIssuedInvoices.AsNoTracking()
+                    .SingleOrDefaultAsync(x =>
+                        x.Id == posting.IssuedInvoiceId &&
+                        x.ContractId == contractId) ?? throw Denied();
+                var source = await db.MonthlyInvoiceCandidates.AsNoTracking()
+                    .SingleOrDefaultAsync(x =>
+                        x.Id == issued.CandidateId &&
+                        x.ContractId == contractId) ?? throw Denied();
+                var independent = await db.MonthlyInvoiceReviews.AsNoTracking()
+                    .SingleOrDefaultAsync(x =>
+                        x.Id == issued.ReviewId) ?? throw Denied();
+                try { posting.VerifyMonthly(issued, source, independent); }
+                catch (Exception ex) when (ex is InvalidDataException or
+                    InvalidOperationException or ArgumentException)
+                { throw Denied(); }
+
+                // An adjusted invoice needs a separately reviewed correction
+                // allocation. Never silently distribute that delta among
+                // the four ORIGINAL categories.
+                if (await db.MonthlyInvoiceAdjustments.AsNoTracking()
+                        .AnyAsync(x => x.IssuedInvoiceId == issued.Id) ||
+                    await db.MonthlyInvoiceAdjustmentDecisions.AsNoTracking()
+                        .AnyAsync(x => x.IssuedInvoiceId == issued.Id) ||
+                    await db.DepositSettlementDecisions.AsNoTracking()
+                        .AnyAsync(x => x.ContractId == contractId) ||
+                    await db.DepositCloseoutApprovals.AsNoTracking()
+                        .AnyAsync(x => x.ContractId == contractId))
+                    throw Denied();
+
+                var prior = await db.OfficialMonthlyReceiptLineAllocations
+                    .AsNoTracking()
+                    .Where(x => x.ReceivablePostingId == postingId)
+                    .ToArrayAsync();
+                var already = prior.Where(x =>
+                    x.ReceiptReviewId == receiptReviewId).ToArray();
+                if (already.Length != 0)
+                {
+                    // Safe idempotent replay for precisely the SAME
+                    // authenticated actor, documentation and charge amounts.
+                    if (already.Length != input.Lines.Count ||
+                        already.Any(x => x.AllocatedByUserId != actor ||
+                            x.SignedAllocationReference !=
+                                input.SignedAllocationReference.Trim() ||
+                            !input.Lines.Any(line =>
+                                line.Category == x.Category &&
+                                line.AmountVnd == x.Amount)))
+                        throw Denied();
+                    foreach (var row in already)
+                        row.VerifyAgainst(posting, original, bankReview);
+                    return new SliceBMonthlyReceiptLineSplitRead(
+                        postingId, receiptReviewId, already.Length,
+                        already.Sum(x => x.Amount),
+                        IsBankExternallyVerified: false,
+                        CanPostDepositOffset: false);
+                }
+
+                var archived = source.VerifyStoredEvidence();
+                foreach (var line in input.Lines)
+                {
+                    decimal ceiling = line.Category switch
+                    {
+                        ContractDepositOffsetCategory.UnpaidRent =>
+                            archived.RentAmount,
+                        ContractDepositOffsetCategory.Electricity =>
+                            archived.ElectricityAmount,
+                        ContractDepositOffsetCategory.Water =>
+                            archived.WaterAmount,
+                        ContractDepositOffsetCategory.ApprovedService =>
+                            archived.AuxiliaryAmount,
+                        _ => throw Denied()
+                    };
+                    if (checked(prior.Where(x => x.Category == line.Category)
+                            .Sum(x => x.Amount) + line.AmountVnd) > ceiling)
+                        throw Denied();
+                }
+
+                var now = DateTime.UtcNow;
+                var rows = new List<OfficialMonthlyReceiptLineAllocationRecord>();
+                foreach (var line in input.Lines)
+                {
+                    try
+                    {
+                        rows.Add(OfficialMonthlyReceiptLineAllocationRecord.Capture(
+                            Guid.NewGuid(), posting, original, bankReview,
+                            line.Category, line.AmountVnd, actor, now,
+                            input.SignedAllocationReference));
+                    }
+                    catch (Exception ex) when (ex is InvalidOperationException or
+                        ArgumentException or InvalidDataException or OverflowException)
+                    { throw Denied(); }
+                }
+
+                db.OfficialMonthlyReceiptLineAllocations.AddRange(rows);
+                return new SliceBMonthlyReceiptLineSplitRead(
+                    postingId, receiptReviewId, rows.Count,
+                    rows.Sum(x => x.Amount),
+                    IsBankExternallyVerified: false,
+                    CanPostDepositOffset: false);
+            });
+
     public Task<OfficialInvoiceReceivableBalance> GetOfficialBalanceAsync(
         Guid contractId, Guid postingId, DateOnly? asOfDate)
         => ExecuteScopedAsync(contractId, requireBootstrapOwner: false,
@@ -2366,6 +2537,22 @@ public sealed class SliceBDepositSettlementApprovalInput
     public string? DamageEvidenceReference { get; set; }
     public string DepositPolicyReference { get; set; } = string.Empty;
 }
+
+public sealed record SliceBMonthlyReceiptLineSplitInput(
+    string SignedAllocationReference,
+    IReadOnlyList<SliceBMonthlyReceiptLinePart> Lines);
+
+public sealed record SliceBMonthlyReceiptLinePart(
+    ContractDepositOffsetCategory Category,
+    decimal AmountVnd);
+
+public sealed record SliceBMonthlyReceiptLineSplitRead(
+    Guid PostingId,
+    Guid ReceiptReviewId,
+    int ChargeLineCount,
+    decimal AllocatedAmountVnd,
+    bool IsBankExternallyVerified,
+    bool CanPostDepositOffset);
 
 public sealed record SliceBDepositSettlementDecisionRead(
     Guid DecisionId, Guid ContractId, Guid MoveOutRequestId,

@@ -160,6 +160,25 @@ public sealed class SliceBStagingFinalInvoiceController : ControllerBase
             contractId, postingId, allocationId, input);
     }
 
+    /// <summary>
+    /// Owner-signed classification of an already bank-reviewed receipt
+    /// against immutable monthly rent, electricity, water and service rows.
+    /// No deposit offset/refund occurs. Isolated staging databases ONLY.
+    /// </summary>
+    [HttpPost("contracts/{contractId:guid}/receivables/{postingId:guid}/receipt-reviews/{receiptReviewId:guid}/line-split")]
+    [UnitOfWork(true, System.Data.IsolationLevel.Serializable)]
+    public Task<SliceBMonthlyReceiptLineSplitRead> SplitMonthlyReceiptAsync(
+        [FromRoute] Guid contractId,
+        [FromRoute] Guid postingId,
+        [FromRoute] Guid receiptReviewId,
+        [FromBody] SliceBMonthlyReceiptLineSplitInput input)
+    {
+        RequireIsolatedStaging();
+        if (input is null) throw Denied();
+        return (_mutation ?? throw Denied()).AllocateMonthlyReceiptLinesAsync(
+            contractId, postingId, receiptReviewId, input);
+    }
+
     [HttpGet("contracts/{contractId:guid}/receivables/{postingId:guid}/balance")]
     [UnitOfWork(true, System.Data.IsolationLevel.RepeatableRead)]
     public Task<OfficialInvoiceReceivableBalance> GetOfficialBalanceAsync(

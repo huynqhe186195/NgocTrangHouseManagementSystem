@@ -102,7 +102,7 @@ public sealed class Phase2G4IndependentRefundBankReviewPostgreSql_Tests
           '{Building:D}','{reviewer:D}','2026-11-01T12:00:00Z',
           '2026-11-01T11:00:00Z',{amount},
           'BANK-REFUND-TRACE-0001','BANK-STATEMENT-0001',
-          'SIGNED-INDEPENDENT-REVIEW-0001','{{}}','{new string('a',64)}')
+          'SIGNED-INDEPENDENT-REVIEW-0001',jsonb_build_object('source','signed')::text,'{new string('a',64)}')
         """;
 
     private static string Closeout(Guid contract,Guid request,Guid owner,

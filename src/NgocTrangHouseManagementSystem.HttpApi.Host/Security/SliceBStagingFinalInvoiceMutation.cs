@@ -2243,6 +2243,54 @@ public sealed class SliceBStagingFinalInvoiceMutation
                 return OffsetPostedRead(posted);
             });
 
+    /// <summary>
+    /// Read the entire audited bank/deposit debt equation after OI-04.
+    /// Never mark move-out complete, fabricate external bank verification or
+    /// silently release residual held cọc. No HTTP-provided money amounts.
+    /// </summary>
+    public Task<ContractDepositPostOffsetCloseoutReadiness>
+        GetPostOffsetCloseoutReadinessAsync(Guid contractId, Guid requestId,
+            DateOnly? asOfDate)
+        => ExecuteScopedAsync(contractId, requireBootstrapOwner: false,
+            async (db, actor, building, roomId) =>
+            {
+                if (requestId == Guid.Empty) throw Denied();
+                var post = await db.DebtOffsetPostings.AsNoTracking()
+                    .SingleOrDefaultAsync(x => x.ContractId == contractId &&
+                        x.MoveOutRequestId == requestId &&
+                        x.BuildingId == building) ?? throw Denied();
+                var approval = await db.DebtOffsetApprovals.AsNoTracking()
+                    .SingleOrDefaultAsync(x => x.Id == post.ApprovalId &&
+                        x.BuildingId == building) ?? throw Denied();
+                try { post.VerifyStoredPosting(approval); }
+                catch (Exception ex) when (ex is InvalidDataException or
+                    InvalidOperationException or ArgumentException)
+                { throw Denied(); }
+                var date = OfficialAsOf(asOfDate);
+                var invoices = await db.OfficialInvoiceReceivables.AsNoTracking()
+                    .Where(x => x.ContractId == contractId &&
+                        x.BuildingId == building && x.RoomId == roomId)
+                    .ToArrayAsync();
+                var balances = new List<OfficialInvoiceReceivableBalance>();
+                foreach (var invoice in invoices)
+                    balances.Add(await AssessOfficialBalanceAsync(
+                        db, invoice, date));
+                var finalCount = await db.IssuedInvoiceLedger.AsNoTracking()
+                    .CountAsync(x => x.ContractId == contractId &&
+                        x.MoveOutRequestId == requestId);
+                var monthlyCount = await db.MonthlyIssuedInvoices.AsNoTracking()
+                    .CountAsync(x => x.ContractId == contractId);
+                var checklist = await db.MoveOutChecklistTasks.AsNoTracking()
+                    .Where(x => x.MoveOutRequestId == requestId).ToArrayAsync();
+                var checklistComplete = checklist.Length == 5 &&
+                    checklist.Select(x => x.Type).Distinct().Count() == 5
+                    ? checklist.Count(x => x.IsCompleted) : 0;
+                var deposit = await _depositAudit.GetAsync(requestId);
+                return ContractDepositPostOffsetCloseoutEvaluator.Assess(
+                    post, approval, deposit, date, balances, finalCount,
+                    finalCount + monthlyCount, checklistComplete, 5);
+            });
+
     private static SliceBDebtOffsetPostingRead OffsetPostedRead(
         ContractDepositDebtOffsetPostingRecord p)
         => new(p.Id, p.ApprovalId, p.ContractId, p.MoveOutRequestId,

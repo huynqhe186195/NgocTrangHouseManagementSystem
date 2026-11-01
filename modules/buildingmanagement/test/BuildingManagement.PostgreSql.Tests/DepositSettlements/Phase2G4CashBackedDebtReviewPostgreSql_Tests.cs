@@ -96,6 +96,18 @@ public sealed class Phase2G4CashBackedDebtReviewPostgreSql_Tests
                 WHERE "Id"='{payment:D}'
                 """);
             await Denied(db, tx, InsertReview(contract, 3_000_000m), "23514");
+            await Run(db, tx, $"""
+                UPDATE "BuildingManagementPayments"
+                   SET "IsDeleted"=FALSE,"DepositDisposition"=NULL
+                 WHERE "Id"='{payment:D}'
+                """);
+            await Denied(db, tx, InsertApproval(contract, 3_000_000m), "23514");
+            await Run(db, tx, $"""
+                UPDATE "BuildingManagementPayments"
+                   SET "DepositDisposition"=1,"PaidAt"=now()+interval '1 day'
+                 WHERE "Id"='{payment:D}'
+                """);
+            await Denied(db, tx, InsertReview(contract, 3_000_000m), "23514");
         });
     }
 

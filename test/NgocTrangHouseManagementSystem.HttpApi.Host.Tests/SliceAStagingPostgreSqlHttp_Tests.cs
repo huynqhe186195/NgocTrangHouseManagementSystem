@@ -2159,6 +2159,30 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 Assert.Equal(0m,oi04PortfolioJson.RootElement
                     .GetProperty("independentlyReviewedManualPayments").GetDecimal());
             }
+            // An accounting offset alone cannot close the rental or
+            // fabricate a bank refund. Read all remaining source blockers.
+            var oi04ReadinessResponse=await clientRoot.GetAsync(
+                oi04BaseRoute+"/closeout-readiness");
+            Assert.Equal(HttpStatusCode.OK,oi04ReadinessResponse.StatusCode);
+            using (var readiness=JsonDocument.Parse(
+                await oi04ReadinessResponse.Content.ReadAsStringAsync()))
+            {
+                var facts=readiness.RootElement;
+                Assert.Equal(3_000_000m,facts.GetProperty(
+                    "postedInternalDebtCreditVnd").GetDecimal());
+                Assert.Equal(83_000m,facts.GetProperty(
+                    "officialOutstandingDebtVnd").GetDecimal());
+                Assert.Equal(0m,facts.GetProperty(
+                    "remainingHeldDepositVnd").GetDecimal());
+                Assert.True(facts.GetProperty("hasUnpaidOfficialDebt").GetBoolean());
+                Assert.False(facts.GetProperty("canExecuteRefund").GetBoolean());
+                Assert.False(facts.GetProperty("canCompleteMoveOut").GetBoolean());
+                var reasons=facts.GetProperty("blockers").EnumerateArray()
+                    .Select(x=>x.GetString()).ToArray();
+                Assert.Contains("OutstandingOfficialDebtRequiresVerifiedCollection",
+                    reasons);
+                Assert.Contains("OneSignedFinalInvoiceRequired",reasons);
+            }
             var oi04InvoiceBalanceResponse=await clientRoot.GetAsync(
                 FinalInvoices(oi04ContractId)+"/receivables/"+
                 oi04OfficialReceivableId.ToString("D")+"/balance");

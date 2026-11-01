@@ -241,6 +241,82 @@ public sealed class Phase2G4AtomicOffsetPostingPostgreSql_Tests
         });
     }
 
+    [Fact]
+    public async Task OI04POSTSQL08_Two_Concurrent_Posts_Cannot_Both_Commit()
+    {
+        var cs=BuildingManagementPostgreSqlTestModule.RequireSafeConnectionString();
+        var schema="bm_oi04_postrace_"+Guid.NewGuid().ToString("N");
+        await using var admin=new NpgsqlConnection(new NpgsqlConnectionStringBuilder(cs)
+            {Pooling=false,CommandTimeout=45}.ConnectionString);
+        await admin.OpenAsync();
+        Assert.Equal(BuildingManagementPostgreSqlTestModule.DatabaseName,admin.Database);
+        var approval=Approval();
+        try
+        {
+            await using (var setup=await admin.BeginTransactionAsync(IsolationLevel.Serializable))
+            {
+                await Run(admin,setup,$"""CREATE SCHEMA "{schema}" """);
+                await Run(admin,setup,$"""SET LOCAL search_path TO "{schema}" """);
+                await Run(admin,setup,Tables);
+                await Run(admin,setup,$"""
+                    INSERT INTO "BuildingManagementContracts" VALUES
+                      ('{Contract:D}','{Room:D}',2,3000000);
+                    INSERT INTO "BuildingManagementMoveOutRequests" VALUES
+                      ('{Request:D}','{Contract:D}','{Room:D}',1);
+                    INSERT INTO "BuildingManagementPayments" VALUES
+                      ('{Receipt:D}',3000000,'{Contract:D}',NULL,2,2,FALSE,now(),1);
+                    INSERT INTO "BuildingManagementDepositSettlements" VALUES
+                      ('{Guid.NewGuid():D}',3,2,3000000,'{Receipt:D}',NULL,NULL,'{Contract:D}');
+                    INSERT INTO "BuildingManagementMonthlyInvoiceCandidates" VALUES
+                      ('{Candidate:D}','{Contract:D}','{Hash}',1000000,0,0,0);
+                    INSERT INTO "BuildingManagementMonthlyIssuedInvoiceLedger" VALUES
+                      ('{Issued:D}','{Contract:D}','{Candidate:D}');
+                    INSERT INTO "BuildingManagementOfficialInvoiceReceivables" VALUES
+                      ('{Posting:D}',1,'{Issued:D}','{Contract:D}','{Hash}');
+                    """);
+                await Run(admin,setup,CashSql);
+                await Run(admin,setup,UpSql);
+                await Run(admin,setup,FreezeSql);
+                await SeedApproval(admin,setup,approval);
+                await setup.CommitAsync();
+            }
+            await using var db1=new NpgsqlConnection(cs);
+            await using var db2=new NpgsqlConnection(cs);
+            await db1.OpenAsync();
+            await db2.OpenAsync();
+            await using var tx1=await db1.BeginTransactionAsync(IsolationLevel.Serializable);
+            await using var tx2=await db2.BeginTransactionAsync(IsolationLevel.Serializable);
+            await Run(db1,tx1,$"""SET LOCAL search_path TO "{schema}" """);
+            await Run(db2,tx2,$"""SET LOCAL search_path TO "{schema}" """);
+            await Run(db1,tx1,InsertSql(Execution(approval)));
+            var competitor=Run(db2,tx2,InsertSql(Execution(approval)));
+            await Task.Delay(150);
+            Assert.False(competitor.IsCompleted);
+            await tx1.CommitAsync();
+            PostgresException? rejected=null;
+            try { await competitor; }
+            catch(PostgresException ex){rejected=ex;}
+            Assert.NotNull(rejected);
+            Assert.Contains(rejected!.SqlState,new[]{"23505","40001"});
+            await tx2.RollbackAsync();
+            await using var verify=new NpgsqlConnection(cs);
+            await verify.OpenAsync();
+            await using var verifyTx=await verify.BeginTransactionAsync();
+            await Run(verify,verifyTx,$"""SET LOCAL search_path TO "{schema}" """);
+            Assert.Equal(1L,await Scalar(verify,verifyTx,
+                """SELECT count(*) FROM "BuildingManagementContractDepositDebtOffsetPostings" """));
+            Assert.Equal(1_000_000L,await Scalar(verify,verifyTx,
+                """SELECT sum("CreditOfficialDebtVnd") FROM "BuildingManagementContractDepositDebtOffsetPostings" """));
+            await verifyTx.RollbackAsync();
+        }
+        finally
+        {
+            // This committed random schema exists ONLY within this scratch
+            // test and is destroyed even after a failed concurrent attempt.
+            await Run(admin,null,$"""DROP SCHEMA IF EXISTS "{schema}" CASCADE""");
+        }
+    }
+
     private static async Task SeedApproval(NpgsqlConnection db,
         NpgsqlTransaction tx,ContractDepositDebtOffsetApprovalRecord a)
     {

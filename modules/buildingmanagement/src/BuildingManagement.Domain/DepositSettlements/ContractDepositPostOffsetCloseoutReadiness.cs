@@ -27,7 +27,8 @@ public sealed record ContractDepositPostOffsetCloseoutReadiness(
     public bool HasUnpaidOfficialDebt => OfficialOutstandingDebtVnd > 0m;
     public bool RequiresRefundVerification => RemainingHeldDepositVnd > 0m;
     public bool IsFullyFinanciallyReconciled =>
-        IsLedgerBalanced && !HasUnpaidOfficialDebt && !RequiresRefundVerification &&
+        HasSignedFinalInvoice && IsLedgerBalanced &&
+        !HasUnpaidOfficialDebt && !RequiresRefundVerification &&
         !Blockers.Contains("DepositCashSourceNotVerified") &&
         !Blockers.Contains("OfficialInvoiceHistoryNotComplete") &&
         !Blockers.Contains("PendingOrRejectedBankReceiptsNeedReview") &&
@@ -69,9 +70,27 @@ public static class ContractDepositPostOffsetCloseoutEvaluator
         if (balances.Any(x => x is null || x.ContractId != posted.ContractId ||
             x.AsOfDate != asOfDate || !x.IsOfficialDebtPosted ||
             x.OriginalAmount <= 0m ||
+            decimal.Truncate(x.OriginalAmount) != x.OriginalAmount ||
+            decimal.Truncate(x.ApprovedSignedAdjustment) != x.ApprovedSignedAdjustment ||
+            x.AdjustedAmount <= 0m ||
+            x.AdjustedAmount != x.OriginalAmount + x.ApprovedSignedAdjustment ||
+            decimal.Truncate(x.AdjustedAmount) != x.AdjustedAmount ||
+            x.IndependentlyReviewedManualPayments < 0m ||
+            decimal.Truncate(x.IndependentlyReviewedManualPayments) !=
+                x.IndependentlyReviewedManualPayments ||
+            x.OutstandingAmount < 0m ||
+            decimal.Truncate(x.OutstandingAmount) != x.OutstandingAmount ||
+            x.InternalDepositOffsetVnd < 0m ||
+            decimal.Truncate(x.InternalDepositOffsetVnd) !=
+                x.InternalDepositOffsetVnd ||
             x.AdjustedAmount != x.IndependentlyReviewedManualPayments +
                 x.InternalDepositOffsetVnd + x.OutstandingAmount ||
-            x.OutstandingAmount < 0m || x.InternalDepositOffsetVnd < 0m) ||
+            x.AcceptedPaymentCount < 0 || x.PendingOrRejectedPaymentCount < 0 ||
+            (x.OutstandingAmount == 0m
+                ? x.Status != IssuedInvoicePaymentStatus.Paid
+                : x.Status == IssuedInvoicePaymentStatus.Paid) ||
+            (x.Kind == OfficialInvoiceKind.Final &&
+                (x.ApprovedSignedAdjustment != 0m || x.InternalDepositOffsetVnd != 0m))) ||
             balances.Select(x => x.ReceivablePostingId).Distinct().Count() !=
             balances.Length ||
             balances.Length == 0 ||

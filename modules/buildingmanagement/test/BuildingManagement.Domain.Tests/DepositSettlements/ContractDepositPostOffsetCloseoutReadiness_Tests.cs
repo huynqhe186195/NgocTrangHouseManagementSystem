@@ -112,7 +112,7 @@ public sealed class ContractDepositPostOffsetCloseoutReadiness_Tests
         var (a,p) = Signed(1_000_000m);
         var result=Evaluate(a,p,Deposit(1_000_000m),new[]{Monthly(p)});
         Assert.Equal(0m,result.RemainingHeldDepositVnd);
-        Assert.True(result.IsFullyFinanciallyReconciled);
+        Assert.False(result.IsFullyFinanciallyReconciled);
         Assert.DoesNotContain("ResidualDepositRequiresExecutedBankRefundEvidence",
             result.Blockers);
         Assert.Contains("OneSignedFinalInvoiceRequired",result.Blockers);
@@ -182,6 +182,53 @@ public sealed class ContractDepositPostOffsetCloseoutReadiness_Tests
             result.Blockers);
         Assert.False(result.IsFullyFinanciallyReconciled);
         Assert.False(result.CanCompleteMoveOut);
+    }
+
+    [Fact]
+    public void OI04READY09_Final_Invoice_Is_Mandatory_Even_With_Zero_Debt_And_Zero_Refund()
+    {
+        var (a,p) = Signed(1_000_000m);
+        var noFinal = Evaluate(a,p,Deposit(1_000_000m),
+            new[]{Monthly(p)},checklistDone:5);
+        Assert.True(noFinal.IsLedgerBalanced);
+        Assert.False(noFinal.HasSignedFinalInvoice);
+        Assert.False(noFinal.IsFullyFinanciallyReconciled);
+        Assert.Contains("OneSignedFinalInvoiceRequired",noFinal.Blockers);
+
+        var withFinal = Evaluate(a,p,Deposit(1_000_000m),
+            new[]{Monthly(p),Final(p)},issuedFinal:1,checklistDone:5);
+        Assert.True(withFinal.IsFullyFinanciallyReconciled);
+        Assert.False(withFinal.CanExecuteRefund);
+        Assert.False(withFinal.CanCompleteMoveOut);
+    }
+
+    [Fact]
+    public void OI04READY10_Forged_Adjustment_Cannot_Pass_As_Complete_Invoice_History()
+    {
+        var (a,p) = Signed(1_000_000m);
+        var forged = Final(p) with { ApprovedSignedAdjustment = 10_000m };
+        var result = Evaluate(a,p,Deposit(1_000_000m),
+            new[]{Monthly(p),forged},issuedFinal:1,checklistDone:5);
+        Assert.Contains("OfficialInvoiceHistoryNotComplete",result.Blockers);
+        Assert.False(result.IsFullyFinanciallyReconciled);
+        Assert.False(result.CanCompleteMoveOut);
+    }
+
+    [Fact]
+    public void OI04READY11_Invalid_Receipt_Count_Or_Paid_Status_Fails_Closed()
+    {
+        var (a,p) = Signed(1_000_000m);
+        var badCount = Evaluate(a,p,Deposit(1_000_000m),
+            new[]{Monthly(p),Final(p) with { AcceptedPaymentCount = -1 }},
+            issuedFinal:1,checklistDone:5);
+        Assert.Contains("OfficialInvoiceHistoryNotComplete",badCount.Blockers);
+        Assert.False(badCount.IsFullyFinanciallyReconciled);
+
+        var badStatus = Evaluate(a,p,Deposit(1_000_000m),
+            new[]{Monthly(p),Final(p) with { Status = IssuedInvoicePaymentStatus.Unpaid }},
+            issuedFinal:1,checklistDone:5);
+        Assert.Contains("OfficialInvoiceHistoryNotComplete",badStatus.Blockers);
+        Assert.False(badStatus.IsFullyFinanciallyReconciled);
     }
 
     [Fact]

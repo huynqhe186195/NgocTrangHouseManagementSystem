@@ -625,7 +625,19 @@ public sealed class SliceBStagingFinalInvoiceMutation
                 catch (Exception ex) when (ex is InvalidDataException or
                     InvalidOperationException or ArgumentException or OverflowException)
                 { throw Denied(); }
-                if (already + input.Amount > adjusted.AdjustedAmount)
+                var official = await db.OfficialInvoiceReceivables.AsNoTracking()
+                    .SingleOrDefaultAsync(x => x.Kind == OfficialInvoiceKind.Monthly &&
+                        x.IssuedInvoiceId == issued.Id &&
+                        x.ContractId == contractId);
+                var hasOffset = await db.DebtOffsetPostings.AsNoTracking()
+                    .AnyAsync(x => x.ContractId == contractId);
+                if (hasOffset && official is null)
+                    throw Denied();
+                var internalApplied = official is null ? 0m :
+                    await PostedInternalOffsetForInvoiceAsync(db,
+                        contractId, official.Id);
+                if (checked(already + input.Amount + internalApplied) >
+                    adjusted.AdjustedAmount)
                     throw Denied();
 
                 var receiptId = Guid.NewGuid();
@@ -1799,7 +1811,9 @@ public sealed class SliceBStagingFinalInvoiceMutation
                                 posting.IssuedInvoiceId && x.Accepted)
                             .SumAsync(x => x.ApprovedSignedDeltaAmount)
                         : 0m;
-                    if (checked(alreadyVerified + candidate.Amount) >
+                    var internalApplied = await PostedInternalOffsetForInvoiceAsync(
+                        db, contractId, posting.Id);
+                    if (checked(alreadyVerified + candidate.Amount + internalApplied) >
                         checked(posting.OriginalAmount + delta))
                         throw Denied();
                 }
@@ -1952,8 +1966,12 @@ public sealed class SliceBStagingFinalInvoiceMutation
                             archived.AuxiliaryAmount,
                         _ => throw Denied()
                     };
+                    var alreadyCredited = await
+                        PostedInternalOffsetForInvoiceAsync(
+                            db, contractId, posting.Id, line.Category);
                     if (checked(prior.Where(x => x.Category == line.Category)
-                            .Sum(x => x.Amount) + line.AmountVnd) > ceiling)
+                            .Sum(x => x.Amount) + line.AmountVnd +
+                            alreadyCredited) > ceiling)
                         throw Denied();
                 }
 
@@ -2290,6 +2308,30 @@ public sealed class SliceBStagingFinalInvoiceMutation
                     post, approval, deposit, date, balances, finalCount,
                     finalCount + monthlyCount, checklistComplete, 5);
             });
+
+    private static async Task<decimal> PostedInternalOffsetForInvoiceAsync(
+        BuildingManagementDbContext db, Guid contractId, Guid postingId,
+        ContractDepositOffsetCategory? category = null)
+    {
+        var posting = await db.DebtOffsetPostings.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.ContractId == contractId);
+        if (posting is null) return 0m;
+        var approval = await db.DebtOffsetApprovals.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.Id == posting.ApprovalId)
+            ?? throw Denied();
+        try
+        {
+            var lines = posting.ReadVerifiedLines(approval);
+            return lines.Where(line =>
+                    (!category.HasValue || line.Category == category.Value) &&
+                    line.ClaimId == ContractDepositOfficialMonthlyClaimBridge
+                        .ClaimIdFor(postingId, line.Category))
+                .Sum(line => line.ProposedAppliedVnd);
+        }
+        catch (Exception ex) when (ex is InvalidDataException or
+            InvalidOperationException or ArgumentException or OverflowException)
+        { throw Denied(); }
+    }
 
     private static SliceBDebtOffsetPostingRead OffsetPostedRead(
         ContractDepositDebtOffsetPostingRecord p)

@@ -2307,6 +2307,10 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     "officialOutstandingDebtVnd").GetDecimal());
                 Assert.Equal(83_000m,proof.GetProperty(
                     "independentlyReviewedBankReceiptsVnd").GetDecimal());
+                Assert.DoesNotContain(
+                    "AcceptedMonthlyBankReceiptMissingSignedFeeSplit",
+                    proof.GetProperty("blockers").EnumerateArray()
+                        .Select(x=>x.GetString()).ToArray());
                 Assert.False(proof.GetProperty("canCompleteMoveOut").GetBoolean());
                 Assert.Contains("OneSignedFinalInvoiceRequired",
                     proof.GetProperty("blockers").EnumerateArray()

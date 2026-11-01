@@ -6,6 +6,7 @@ on:
       - wip/phase-2g2
     paths:
       - ".github/workflows/buildingmanagement-slice-a-postgres.yml"
+      - ".github/workflows/buildingmanagement-slice-a-identity.yml"
       - "modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/**"
       - "modules/buildingmanagement/src/BuildingManagement.Domain/MoveOuts/MoveOutRoomDispositionRecord.cs"
       - "modules/buildingmanagement/src/BuildingManagement.Domain/RoomChanges/**"
@@ -65,6 +66,7 @@ on:
       - wip/phase-2g2
     paths:
       - ".github/workflows/buildingmanagement-slice-a-postgres.yml"
+      - ".github/workflows/buildingmanagement-slice-a-identity.yml"
       - "modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/**"
       - "modules/buildingmanagement/src/BuildingManagement.Domain/MoveOuts/MoveOutRoomDispositionRecord.cs"
       - "modules/buildingmanagement/src/BuildingManagement.Domain/RoomChanges/**"

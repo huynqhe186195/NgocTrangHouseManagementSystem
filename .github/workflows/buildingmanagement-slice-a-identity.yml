@@ -6,6 +6,11 @@ on:
       - wip/phase-2g2
     paths:
       - "test/NgocTrangHouseManagementSystem.HttpApi.Host.Tests/**"
+      - "modules/buildingmanagement/src/BuildingManagement.Domain/DepositSettlements/**"
+      - "modules/buildingmanagement/src/BuildingManagement.Application/DepositSettlements/**"
+      - "modules/buildingmanagement/test/BuildingManagement.Domain.Tests/DepositSettlements/**"
+      - "modules/buildingmanagement/test/BuildingManagement.Application.Tests/DepositSettlements/**"
+      - "modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Migrations/*Phase2G4*.cs"
       - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/AbpIdentityBuildingOperatorAccountProbe.cs"
       - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceAStagingPersistenceAdapters.cs"
       - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceAStagingOperatorGrantQuery.cs"
@@ -30,6 +35,11 @@ on:
       - wip/phase-2g2
     paths:
       - "test/NgocTrangHouseManagementSystem.HttpApi.Host.Tests/**"
+      - "modules/buildingmanagement/src/BuildingManagement.Domain/DepositSettlements/**"
+      - "modules/buildingmanagement/src/BuildingManagement.Application/DepositSettlements/**"
+      - "modules/buildingmanagement/test/BuildingManagement.Domain.Tests/DepositSettlements/**"
+      - "modules/buildingmanagement/test/BuildingManagement.Application.Tests/DepositSettlements/**"
+      - "modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Migrations/*Phase2G4*.cs"
       - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/AbpIdentityBuildingOperatorAccountProbe.cs"
       - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceAStagingPersistenceAdapters.cs"
       - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceAStagingOperatorGrantQuery.cs"

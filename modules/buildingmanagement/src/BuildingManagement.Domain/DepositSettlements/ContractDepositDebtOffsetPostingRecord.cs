@@ -25,6 +25,7 @@ public sealed class ContractDepositDebtOffsetPostingRecord : Entity<Guid>
     public Guid ApprovalId { get; private set; }
     public Guid PostedByOwnerId { get; private set; }
     public DateTime PostedAtUtc { get; private set; }
+    public decimal VerifiedHeldAmount { get; private set; }
     public decimal DebitHeldDepositVnd { get; private set; }
     public decimal CreditOfficialDebtVnd { get; private set; }
     public decimal RemainingHeldDepositVnd { get; private set; }
@@ -87,6 +88,7 @@ public sealed class ContractDepositDebtOffsetPostingRecord : Entity<Guid>
             ApprovalId = approval.Id,
             PostedByOwnerId = actor,
             PostedAtUtc = at,
+            VerifiedHeldAmount = currentHeldDepositVnd,
             DebitHeldDepositVnd = approval.ApprovedOffsetAmount,
             CreditOfficialDebtVnd = approval.ApprovedOffsetAmount,
             RemainingHeldDepositVnd = approval.ExpectedRemainingDeposit,
@@ -102,6 +104,7 @@ public sealed class ContractDepositDebtOffsetPostingRecord : Entity<Guid>
             ApprovalId = approval.Id,
             PostedByOwnerId = actor,
             PostedAtUtc = at,
+            VerifiedHeldAmount = currentHeldDepositVnd,
             DebitHeldDepositVnd = approval.ApprovedOffsetAmount,
             CreditOfficialDebtVnd = approval.ApprovedOffsetAmount,
             RemainingHeldDepositVnd = approval.ExpectedRemainingDeposit,
@@ -133,6 +136,8 @@ public sealed class ContractDepositDebtOffsetPostingRecord : Entity<Guid>
             PostedByOwnerId != approval.ApprovedByOwnerId ||
             PostedAtUtc.Kind != DateTimeKind.Utc ||
             PostedAtUtc < approval.ApprovedAtUtc ||
+            VerifiedHeldAmount != approval.VerifiedHeldAmount ||
+            VerifiedHeldAmount != DebitHeldDepositVnd + RemainingHeldDepositVnd ||
             DebitHeldDepositVnd <= 0m ||
             DebitHeldDepositVnd != CreditOfficialDebtVnd ||
             DebitHeldDepositVnd != approval.ApprovedOffsetAmount ||
@@ -152,6 +157,7 @@ public sealed class ContractDepositDebtOffsetPostingRecord : Entity<Guid>
                 d.GetProperty("ApprovalId").GetGuid() != ApprovalId ||
                 d.GetProperty("PostedByOwnerId").GetGuid() != PostedByOwnerId ||
                 d.GetProperty("PostedAtUtc").GetDateTime() != PostedAtUtc ||
+                d.GetProperty("VerifiedHeldAmount").GetDecimal() != VerifiedHeldAmount ||
                 d.GetProperty("DebitHeldDepositVnd").GetDecimal() != DebitHeldDepositVnd ||
                 d.GetProperty("CreditOfficialDebtVnd").GetDecimal() != CreditOfficialDebtVnd ||
                 d.GetProperty("RemainingHeldDepositVnd").GetDecimal() != RemainingHeldDepositVnd ||

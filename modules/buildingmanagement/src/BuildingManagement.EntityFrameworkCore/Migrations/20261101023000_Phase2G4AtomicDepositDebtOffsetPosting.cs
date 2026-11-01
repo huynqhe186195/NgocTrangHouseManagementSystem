@@ -27,6 +27,7 @@ public sealed class Phase2G4AtomicDepositDebtOffsetPosting : Migration
               "ApprovalId" uuid NOT NULL REFERENCES "BuildingManagementContractDepositDebtOffsetApprovals"("Id") ON DELETE RESTRICT,
               "PostedByOwnerId" uuid NOT NULL,
               "PostedAtUtc" timestamptz NOT NULL,
+              "VerifiedHeldAmount" numeric(18,0) NOT NULL,
               "DebitHeldDepositVnd" numeric(18,0) NOT NULL,
               "CreditOfficialDebtVnd" numeric(18,0) NOT NULL,
               "RemainingHeldDepositVnd" numeric(18,0) NOT NULL,
@@ -35,7 +36,9 @@ public sealed class Phase2G4AtomicDepositDebtOffsetPosting : Migration
               "PostingJson" text NOT NULL,
               "PostingSha256" varchar(64) NOT NULL,
               CONSTRAINT "CK_BM_OI04OffsetPostedBalanced" CHECK (
-                "DebitHeldDepositVnd" > 0
+                "VerifiedHeldAmount" > 0
+                AND "VerifiedHeldAmount" = "DebitHeldDepositVnd" + "RemainingHeldDepositVnd"
+                AND "DebitHeldDepositVnd" > 0
                 AND "DebitHeldDepositVnd" = "CreditOfficialDebtVnd"
                 AND "RemainingHeldDepositVnd" >= 0
                 AND "RemainingOfficialDebtVnd" >= 0
@@ -91,8 +94,7 @@ public sealed class Phase2G4AtomicDepositDebtOffsetPosting : Migration
                  a."ApprovedOffsetAmount" IS DISTINCT FROM NEW."DebitHeldDepositVnd" OR
                  a."ExpectedRemainingDeposit" IS DISTINCT FROM NEW."RemainingHeldDepositVnd" OR
                  a."ExpectedUncoveredDebt" IS DISTINCT FROM NEW."RemainingOfficialDebtVnd" OR
-                 a."VerifiedHeldAmount" IS DISTINCT FROM
-                     NEW."DebitHeldDepositVnd" + NEW."RemainingHeldDepositVnd" OR
+                 a."VerifiedHeldAmount" IS DISTINCT FROM NEW."VerifiedHeldAmount" OR
                  c."DepositAmount" IS DISTINCT FROM a."VerifiedHeldAmount" OR
                  NEW."PostedAtUtc" < a."ApprovedAtUtc" OR
                  NEW."PostedAtUtc" > clock_timestamp() OR
@@ -118,6 +120,7 @@ public sealed class Phase2G4AtomicDepositDebtOffsetPosting : Migration
                  (execution_json->>'ApprovalId')::uuid IS DISTINCT FROM NEW."ApprovalId" OR
                  (execution_json->>'PostedByOwnerId')::uuid IS DISTINCT FROM NEW."PostedByOwnerId" OR
                  (execution_json->>'PostedAtUtc')::timestamptz IS DISTINCT FROM NEW."PostedAtUtc" OR
+                 (execution_json->>'VerifiedHeldAmount')::numeric IS DISTINCT FROM NEW."VerifiedHeldAmount" OR
                  (execution_json->>'DebitHeldDepositVnd')::numeric IS DISTINCT FROM NEW."DebitHeldDepositVnd" OR
                  (execution_json->>'CreditOfficialDebtVnd')::numeric IS DISTINCT FROM NEW."CreditOfficialDebtVnd" OR
                  (execution_json->>'RemainingHeldDepositVnd')::numeric IS DISTINCT FROM NEW."RemainingHeldDepositVnd" OR

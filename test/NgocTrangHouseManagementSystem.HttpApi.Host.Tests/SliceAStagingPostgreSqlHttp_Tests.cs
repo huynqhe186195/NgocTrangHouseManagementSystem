@@ -1996,6 +1996,10 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 oi04Db.MonthlyInvoiceCandidates.Add(oi04Source);
                 oi04Db.MonthlyInvoiceReviews.Add(oi04IndependentReview);
                 oi04Db.MonthlyIssuedInvoices.Add(oi04Issued);
+                // The official posting SQL trigger insists that issuance
+                // and independently reviewed frozen evidence already exist.
+                // Flush sources in THIS same transaction before posting.
+                await oi04Db.SaveChangesAsync();
                 oi04Db.OfficialInvoiceReceivables.Add(oi04Posted);
                 await oi04Db.SaveChangesAsync();
                 await oi04Uow.CompleteAsync();

@@ -17,6 +17,7 @@ public sealed class ContractDepositDebtOffsetPostingRecordConfiguration
         b.Property(x => x.ApprovalId).IsRequired();
         b.Property(x => x.PostedByOwnerId).IsRequired();
         b.Property(x => x.PostedAtUtc).IsRequired();
+        b.Property(x => x.VerifiedHeldAmount).HasPrecision(18, 0).IsRequired();
         b.Property(x => x.DebitHeldDepositVnd).HasPrecision(18, 0).IsRequired();
         b.Property(x => x.CreditOfficialDebtVnd).HasPrecision(18, 0).IsRequired();
         b.Property(x => x.RemainingHeldDepositVnd).HasPrecision(18, 0).IsRequired();

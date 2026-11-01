@@ -31,7 +31,8 @@ public static class ContractDepositOfficialMonthlyClaimBridge
         IReadOnlyCollection<OfficialInvoiceReceiptEvidence>? receipts,
         IReadOnlyCollection<OfficialInvoiceReceiptReviewRecord>? receiptReviews,
         IReadOnlyCollection<MonthlyInvoiceAdjustmentRecord>? adjustmentProposals,
-        IReadOnlyCollection<MonthlyInvoiceAdjustmentDecisionRecord>? adjustmentDecisions)
+        IReadOnlyCollection<MonthlyInvoiceAdjustmentDecisionRecord>? adjustmentDecisions,
+        IReadOnlyCollection<OfficialMonthlyReceiptLineAllocationRecord>? lineAllocations = null)
     {
         var blockers = new List<string>();
         if (posting is null || issued is null || source is null || review is null)
@@ -60,10 +61,24 @@ public static class ContractDepositOfficialMonthlyClaimBridge
         if (postedOn > asOfDate)
             blockers.Add("OfficialPostingIsAfterEvaluationDate");
 
-        // A pending, rejected, soft-deleted or accepted payment still needs
-        // confirmed CATEGORY allocation; never infer which fee is unpaid.
-        if (receipts.Count != 0 || receiptReviews.Count != 0)
-            blockers.Add("PartialOrUnresolvedPaymentsNeedLineAllocation");
+        // Existing callers without independent signed line evidence remain
+        // fail-closed for any payment. An optional fully validated new
+        // journal may explicitly classify a verified partial payment.
+        OfficialMonthlyReceiptLineAllocationSummary? paidLines = null;
+        if (receipts.Count != 0 || receiptReviews.Count != 0 ||
+            lineAllocations is { Count: > 0 })
+        {
+            if (lineAllocations is null)
+                blockers.Add("PartialOrUnresolvedPaymentsNeedLineAllocation");
+            else
+            {
+                paidLines = OfficialMonthlyReceiptLineAllocationEvaluator.Assess(
+                    posting, source, asOfDate, receipts, receiptReviews,
+                    lineAllocations);
+                if (!paidLines.CanClassifyRemainingDebt)
+                    blockers.AddRange(paidLines.Blockers);
+            }
+        }
 
         // Adjustments, even rejected/in-flight, require an official verified
         // correction chain, not an invented per-category credit assignment.
@@ -75,9 +90,12 @@ public static class ContractDepositOfficialMonthlyClaimBridge
         if (!balance.IsOfficialDebtPosted ||
             balance.OriginalAmount != source.TotalAmount ||
             balance.AdjustedAmount != source.TotalAmount ||
-            balance.IndependentlyReviewedManualPayments != 0m ||
-            balance.OutstandingAmount != source.TotalAmount ||
-            balance.AcceptedPaymentCount != 0 ||
+            (paidLines is null
+                ? balance.IndependentlyReviewedManualPayments != 0m
+                : balance.IndependentlyReviewedManualPayments !=
+                    paidLines.PaidRentVnd + paidLines.PaidElectricityVnd +
+                    paidLines.PaidWaterVnd + paidLines.PaidServiceVnd) ||
+            (paidLines is null && balance.OutstandingAmount != source.TotalAmount) ||
             balance.PendingOrRejectedPaymentCount != 0)
             blockers.Add("OfficialOutstandingDoesNotMatchFrozenLines");
 
@@ -87,13 +105,13 @@ public static class ContractDepositOfficialMonthlyClaimBridge
 
         var claims = new List<ContractDepositOffsetClaim>(4);
         Add(claims, posting, ContractDepositOffsetCategory.UnpaidRent,
-            archived.RentAmount);
+            archived.RentAmount - (paidLines?.PaidRentVnd ?? 0m));
         Add(claims, posting, ContractDepositOffsetCategory.Electricity,
-            archived.ElectricityAmount);
+            archived.ElectricityAmount - (paidLines?.PaidElectricityVnd ?? 0m));
         Add(claims, posting, ContractDepositOffsetCategory.Water,
-            archived.WaterAmount);
+            archived.WaterAmount - (paidLines?.PaidWaterVnd ?? 0m));
         Add(claims, posting, ContractDepositOffsetCategory.ApprovedService,
-            archived.AuxiliaryAmount);
+            archived.AuxiliaryAmount - (paidLines?.PaidServiceVnd ?? 0m));
 
         if (claims.Sum(x => x.OutstandingVnd) != balance.OutstandingAmount)
             throw new InvalidDataException("Monthly debt category totals do not match official outstanding.");

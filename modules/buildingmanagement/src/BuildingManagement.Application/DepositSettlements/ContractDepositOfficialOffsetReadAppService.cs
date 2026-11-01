@@ -33,6 +33,7 @@ public class ContractDepositOfficialOffsetReadAppService : ApplicationService
     private readonly IRepository<MonthlyInvoiceCandidateLedgerRecord, Guid> _candidates;
     private readonly IRepository<MonthlyInvoiceIndependentReviewRecord, Guid> _reviews;
     private readonly IRepository<MonthlyInvoicePaymentAllocationRecord, Guid> _allocations;
+    private readonly IRepository<OfficialMonthlyReceiptLineAllocationRecord, Guid> _lineAllocations;
     private readonly IRepository<InvoicePaymentAllocationJournalEntry, Guid> _finalAllocations;
     private readonly IRepository<OfficialInvoiceReceiptReviewRecord, Guid> _receiptReviews;
     private readonly IRepository<MonthlyInvoiceAdjustmentRecord, Guid> _adjustments;
@@ -53,6 +54,7 @@ public class ContractDepositOfficialOffsetReadAppService : ApplicationService
         IRepository<MonthlyInvoiceCandidateLedgerRecord, Guid> candidates,
         IRepository<MonthlyInvoiceIndependentReviewRecord, Guid> reviews,
         IRepository<MonthlyInvoicePaymentAllocationRecord, Guid> allocations,
+        IRepository<OfficialMonthlyReceiptLineAllocationRecord, Guid> lineAllocations,
         IRepository<InvoicePaymentAllocationJournalEntry, Guid> finalAllocations,
         IRepository<OfficialInvoiceReceiptReviewRecord, Guid> receiptReviews,
         IRepository<MonthlyInvoiceAdjustmentRecord, Guid> adjustments,
@@ -72,6 +74,7 @@ public class ContractDepositOfficialOffsetReadAppService : ApplicationService
         _candidates = candidates;
         _reviews = reviews;
         _allocations = allocations;
+        _lineAllocations = lineAllocations;
         _finalAllocations = finalAllocations;
         _receiptReviews = receiptReviews;
         _adjustments = adjustments;
@@ -159,9 +162,19 @@ public class ContractDepositOfficialOffsetReadAppService : ApplicationService
             x.ContractId == contract.Id);
         var adjustmentDecisions = await _adjustmentDecisions.GetListAsync(x =>
             x.ContractId == contract.Id);
+        var lineAllocations = await _lineAllocations.GetListAsync(x =>
+            x.ContractId == contract.Id);
 
-        if (payments.Count != 0 || monthlyAllocations.Count != 0 ||
-            finalAllocations.Count != 0 || receiptReviews.Count != 0)
+        // Any foreign-journal duplicate, missing original source or a
+        // final-invoice payment requires its own independently reviewed path.
+        var monthPaymentIds = monthlyAllocations.Select(x => x.PaymentId).ToArray();
+        if (finalAllocations.Count != 0 ||
+            monthlyAllocations.Count != payments.Count ||
+            monthPaymentIds.Distinct().Count() != monthPaymentIds.Length ||
+            payments.Any(x => !monthPaymentIds.Contains(x.Id)) ||
+            monthlyAllocations.Any(x => !ids.Contains(x.IssuedInvoiceId)) ||
+            lineAllocations.Any(x => !postings.Any(p =>
+                p.Id == x.ReceivablePostingId)))
             blockers.Add("InvoicePaymentsNeedVerifiedPerLineAllocation");
         if (adjustments.Count != 0 || adjustmentDecisions.Count != 0)
             blockers.Add("InvoiceCorrectionsNeedPerLineAllocation");
@@ -172,6 +185,7 @@ public class ContractDepositOfficialOffsetReadAppService : ApplicationService
             return Blocked(requestId, contract.Id, blockers);
 
         var claims = new List<ContractDepositOffsetClaim>();
+        var originalPayments = payments.ToDictionary(x => x.Id);
         foreach (var issue in monthly.OrderBy(x => x.BillingYear)
                      .ThenBy(x => x.BillingMonth))
         {
@@ -179,12 +193,22 @@ public class ContractDepositOfficialOffsetReadAppService : ApplicationService
                 x.IssuedInvoiceId == issue.Id);
             var candidate = await _candidates.GetAsync(issue.CandidateId);
             var review = await _reviews.GetAsync(issue.ReviewId);
+            // Convert stored journals back into actual bank receipt evidence.
+            // The conversion itself verifies the immutable original Payment.
+            var receiptEvidence = monthlyAllocations
+                .Where(x => x.IssuedInvoiceId == issue.Id)
+                .Select(x => OfficialInvoiceReceiptEvidence.FromMonthly(
+                    x, originalPayments[x.PaymentId])).ToArray();
+            var bankReviews = receiptReviews
+                .Where(x => x.ReceivablePostingId == posting.Id).ToArray();
+            var lineEvidence = lineAllocations
+                .Where(x => x.ReceivablePostingId == posting.Id).ToArray();
             var result = ContractDepositOfficialMonthlyClaimBridge.Assess(
                 posting, issue, candidate, review, asOfDate,
-                Array.Empty<OfficialInvoiceReceiptEvidence>(),
-                Array.Empty<OfficialInvoiceReceiptReviewRecord>(),
+                receiptEvidence, bankReviews,
                 Array.Empty<MonthlyInvoiceAdjustmentRecord>(),
-                Array.Empty<MonthlyInvoiceAdjustmentDecisionRecord>());
+                Array.Empty<MonthlyInvoiceAdjustmentDecisionRecord>(),
+                lineEvidence);
             if (!result.CanPreview)
                 blockers.AddRange(result.Blockers);
             else

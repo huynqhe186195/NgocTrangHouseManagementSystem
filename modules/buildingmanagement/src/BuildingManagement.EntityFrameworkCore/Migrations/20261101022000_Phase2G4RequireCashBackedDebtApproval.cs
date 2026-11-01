@@ -79,8 +79,11 @@ public sealed class Phase2G4RequireCashBackedDebtApproval : Migration
                  WHERE s."TargetContractId"=NEW."ContractId"
                    AND (p."Id" IS NULL OR p."IsDeleted" IS DISTINCT FROM FALSE
                         OR p."Status" IS DISTINCT FROM 2
+                        OR p."Amount" <= 0 OR s."Amount" <= 0
                         OR p."PaidAt" IS NULL
+                        OR p."PaidAt" > clock_timestamp()
                         OR p."Purpose" NOT IN (1,2)
+                        OR p."DepositDisposition" IS NULL
                         OR p."DepositDisposition" NOT IN (1,2)
                         OR (p."Purpose"=2 AND
                             (p."ContractId" IS DISTINCT FROM NEW."ContractId"

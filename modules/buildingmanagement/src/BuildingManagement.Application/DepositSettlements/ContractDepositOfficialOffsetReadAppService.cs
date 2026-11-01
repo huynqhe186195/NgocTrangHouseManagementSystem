@@ -169,6 +169,9 @@ public class ContractDepositOfficialOffsetReadAppService : ApplicationService
         // final-invoice payment requires its own independently reviewed path.
         var monthPaymentIds = monthlyAllocations.Select(x => x.PaymentId).ToArray();
         if (finalAllocations.Count != 0 ||
+            receiptReviews.Count != monthlyAllocations.Count ||
+            receiptReviews.Any(x => !postings.Any(p =>
+                p.Id == x.ReceivablePostingId)) ||
             monthlyAllocations.Count != payments.Count ||
             monthPaymentIds.Distinct().Count() != monthPaymentIds.Length ||
             payments.Any(x => !monthPaymentIds.Contains(x.Id)) ||

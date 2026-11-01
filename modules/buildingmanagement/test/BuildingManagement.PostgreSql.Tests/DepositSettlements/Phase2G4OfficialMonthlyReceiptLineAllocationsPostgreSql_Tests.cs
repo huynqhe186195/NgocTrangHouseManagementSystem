@@ -84,7 +84,9 @@ public sealed class Phase2G4OfficialMonthlyReceiptLineAllocationsPostgreSql_Test
             await Denied(db,tx,"""
                 DELETE FROM "BuildingManagementOfficialMonthlyReceiptLineAllocations"
                 ""","23514");
-            await Denied(db,tx,Insert(2,1),"23505");
+            // The source-aware trigger rejects over-allocation before
+            // the unique index, both protections are fail-closed.
+            await Denied(db,tx,Insert(2,1),"23514");
             await Denied(db,tx,DownSql,"23514");
         });
     }

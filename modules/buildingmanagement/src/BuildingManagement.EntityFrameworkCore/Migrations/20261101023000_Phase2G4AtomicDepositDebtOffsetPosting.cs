@@ -58,7 +58,7 @@ public sealed class Phase2G4AtomicDepositDebtOffsetPosting : Migration
             CREATE FUNCTION "BM_GuardOI04OffsetPosting"()
             RETURNS trigger LANGUAGE plpgsql AS $post$
             DECLARE a record;
-            DECLARE c record;
+            DECLARE contract_row record;
             DECLARE req record;
             DECLARE approval_json jsonb;
             DECLARE execution_json jsonb;
@@ -75,17 +75,17 @@ public sealed class Phase2G4AtomicDepositDebtOffsetPosting : Migration
                 RAISE EXCEPTION 'Internal debt offset requires SERIALIZABLE commit'
                   USING ERRCODE = '23514';
               END IF;
-              SELECT * INTO c FROM "BuildingManagementContracts"
+              SELECT * INTO contract_row FROM "BuildingManagementContracts"
                 WHERE "Id"=NEW."ContractId" FOR UPDATE;
               SELECT * INTO req FROM "BuildingManagementMoveOutRequests"
                 WHERE "Id"=NEW."MoveOutRequestId" FOR SHARE;
               SELECT * INTO a FROM "BuildingManagementContractDepositDebtOffsetApprovals"
                 WHERE "Id"=NEW."ApprovalId" FOR SHARE;
-              IF c."Id" IS NULL OR req."Id" IS NULL OR a."Id" IS NULL OR
-                 c."Status" IS DISTINCT FROM 2 OR
+              IF contract_row."Id" IS NULL OR req."Id" IS NULL OR a."Id" IS NULL OR
+                 contract_row."Status" IS DISTINCT FROM 2 OR
                  req."Status" IS DISTINCT FROM 1 OR
                  req."ContractId" IS DISTINCT FROM NEW."ContractId" OR
-                 req."RoomId" IS DISTINCT FROM c."RoomId" OR
+                 req."RoomId" IS DISTINCT FROM contract_row."RoomId" OR
                  a."ContractId" IS DISTINCT FROM NEW."ContractId" OR
                  a."MoveOutRequestId" IS DISTINCT FROM req."Id" OR
                  a."BuildingId" IS DISTINCT FROM NEW."BuildingId" OR
@@ -95,7 +95,7 @@ public sealed class Phase2G4AtomicDepositDebtOffsetPosting : Migration
                  a."ExpectedRemainingDeposit" IS DISTINCT FROM NEW."RemainingHeldDepositVnd" OR
                  a."ExpectedUncoveredDebt" IS DISTINCT FROM NEW."RemainingOfficialDebtVnd" OR
                  a."VerifiedHeldAmount" IS DISTINCT FROM NEW."VerifiedHeldAmount" OR
-                 c."DepositAmount" IS DISTINCT FROM a."VerifiedHeldAmount" OR
+                 contract_row."DepositAmount" IS DISTINCT FROM a."VerifiedHeldAmount" OR
                  NEW."PostedAtUtc" < a."ApprovedAtUtc" OR
                  NEW."PostedAtUtc" > clock_timestamp() OR
                  EXISTS (SELECT 1 FROM "BuildingManagementContractDepositSettlementDecisions"

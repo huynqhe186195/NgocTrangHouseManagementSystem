@@ -5143,6 +5143,7 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 transferFinance + "/monthly-issued/" +
                     transferIssued.ToString("D") + "/post-receivable", new { }))
                 transferPosting = posted.RootElement.GetProperty("postingId").GetGuid();
+            Guid transferReceiptReview;
             using (var accepted = await Positive2HPostAsync(clientB,
                 transferFinance + "/receivables/" +
                     transferPosting.ToString("D") + "/allocations/" +
@@ -5153,7 +5154,78 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                         transferContract.ToString("N"),
                     reason = "Independent reconciliation of transfer-month receipt"
                 }))
+            {
                 Assert.True(accepted.RootElement.GetProperty("accepted").GetBoolean());
+                transferReceiptReview = accepted.RootElement.GetProperty("reviewId").GetGuid();
+            }
+            // True OI-04 HTTP + PostgreSQL positive: independent staff
+            // bank approval, then owner signs a complete exact fee split.
+            decimal[] feeAmounts;
+            using (var splitScope = app.Services.CreateScope())
+            {
+                using var uow = splitScope.ServiceProvider
+                    .GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var db = await splitScope.ServiceProvider
+                    .GetRequiredService<IDbContextProvider<BuildingManagementDbContext>>()
+                    .GetDbContextAsync();
+                var frozen = await db.MonthlyInvoiceCandidates.AsNoTracking()
+                    .SingleAsync(x => x.Id == transferCandidate);
+                feeAmounts = new[] { frozen.RentAmount, frozen.ElectricityAmount,
+                    frozen.WaterAmount, frozen.AuxiliaryAmount };
+                Assert.Equal(transferBill, feeAmounts.Sum());
+                await uow.CompleteAsync();
+            }
+            var splitLines = feeAmounts.Select((amount, index) =>
+                new { category = index + 1, amountVnd = amount })
+                .Where(x => x.amountVnd > 0m).ToArray();
+            var splitRoute = transferFinance + "/receivables/" +
+                transferPosting.ToString("D") + "/receipt-reviews/" +
+                transferReceiptReview.ToString("D") + "/line-split";
+            var splitPayload = JsonSerializer.Serialize(new {
+                signedAllocationReference = "SIGNED-OWNER-TRF-RECEIPT-SPLIT-001",
+                lines = splitLines
+            });
+            var selfBankReviewer = await PostFinalAsync(
+                clientB, splitRoute, splitPayload);
+            Assert.Equal(HttpStatusCode.Forbidden, selfBankReviewer.Status);
+            var signed = await PostFinalAsync(clientRoot, splitRoute, splitPayload);
+            Assert.True(signed.Status is HttpStatusCode.OK or HttpStatusCode.Created,
+                "Signed receipt line split: " + signed.Status + " " + signed.Body);
+            using (var document = JsonDocument.Parse(signed.Body))
+            {
+                Assert.Equal(transferBill, document.RootElement
+                    .GetProperty("allocatedAmountVnd").GetDecimal());
+                Assert.False(document.RootElement
+                    .GetProperty("canPostDepositOffset").GetBoolean());
+                Assert.False(document.RootElement
+                    .GetProperty("isBankExternallyVerified").GetBoolean());
+            }
+            var replay = await PostFinalAsync(clientRoot, splitRoute, splitPayload);
+            Assert.Equal(HttpStatusCode.OK, replay.Status);
+            var altered = await PostFinalAsync(clientRoot, splitRoute,
+                JsonSerializer.Serialize(new {
+                    signedAllocationReference = "SIGNED-ALTERED-TRF-SPLIT-001",
+                    lines = splitLines
+                }));
+            Assert.Equal(HttpStatusCode.Forbidden, altered.Status);
+            using (var splitScope = app.Services.CreateScope())
+            {
+                using var uow = splitScope.ServiceProvider
+                    .GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var db = await splitScope.ServiceProvider
+                    .GetRequiredService<IDbContextProvider<BuildingManagementDbContext>>()
+                    .GetDbContextAsync();
+                var saved = await db.OfficialMonthlyReceiptLineAllocations
+                    .AsNoTracking().Where(x => x.ReceiptReviewId == transferReceiptReview)
+                    .ToArrayAsync();
+                Assert.Equal(splitLines.Length, saved.Length);
+                Assert.Equal(transferBill, saved.Sum(x => x.Amount));
+                Assert.All(saved, x => Assert.Equal(root, x.AllocatedByUserId));
+                await uow.CompleteAsync();
+            }
+
             using (var readiness = await clientB.GetAsync(
                 positiveAt + "/execution-readiness"))
             {

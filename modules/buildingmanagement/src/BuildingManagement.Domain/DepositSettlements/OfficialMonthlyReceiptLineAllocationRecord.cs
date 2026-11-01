@@ -11,6 +11,8 @@ namespace BuildingManagement.DepositSettlements;
 /// Staged, immutable per-category account of a real independently reviewed
 /// monthly invoice receipt. The approved receipt is a bank-evidence attestation,
 /// not a gateway confirmation. These records are NOT debt-offset permissions.
+/// The source receipt recorder may sign the charge split if the bank
+/// reviewer is independent; the owner still cannot self-review the bank.
 /// A complete group (all lines for one receipt review) is required before any
 /// line balance can be used for a deposit preview.
 /// </summary>
@@ -52,7 +54,6 @@ public sealed class OfficialMonthlyReceiptLineAllocationRecord : Entity<Guid>
             amount > bankReview.Amount ||
             allocationReviewer == Guid.Empty ||
             allocationReviewer == bankReview.ReviewedByUserId ||
-            allocationReviewer == receipt.RecordedByUserId ||
             allocatedAtUtc.Kind != DateTimeKind.Utc ||
             allocatedAtUtc < bankReview.ReviewedAtUtc ||
             !Reference(signedAllocationReference))
@@ -92,7 +93,6 @@ public sealed class OfficialMonthlyReceiptLineAllocationRecord : Entity<Guid>
             Amount > bankReview.Amount ||
             AllocatedByUserId == Guid.Empty ||
             AllocatedByUserId == bankReview.ReviewedByUserId ||
-            AllocatedByUserId == receipt.RecordedByUserId ||
             AllocatedAtUtc.Kind != DateTimeKind.Utc ||
             AllocatedAtUtc < bankReview.ReviewedAtUtc ||
             !Reference(SignedAllocationReference) ||

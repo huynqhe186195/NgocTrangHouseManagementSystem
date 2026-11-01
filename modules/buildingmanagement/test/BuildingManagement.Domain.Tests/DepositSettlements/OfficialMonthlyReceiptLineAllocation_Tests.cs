@@ -182,4 +182,19 @@ public sealed class OfficialMonthlyReceiptLineAllocation_Tests
                 f.Bank.ReviewedByUserId, Now.AddHours(7),
                 "SIGNED-ALLOCATION-SELF-REVIEW-001"));
     }
+    [Fact]
+    public void DEP_LINE08_ReceiptRecorderCanAllocateAfterIndependentBankReview()
+    {
+        var f = Fixture();
+        var signer = f.Receipt.RecordedByUserId;
+        Assert.NotEqual(signer, f.Bank.ReviewedByUserId);
+        var line = OfficialMonthlyReceiptLineAllocationRecord.Capture(
+            Guid.NewGuid(), f.Post, f.Receipt, f.Bank,
+            ContractDepositOffsetCategory.UnpaidRent, 250_000m,
+            signer, Now.AddHours(7),
+            "SIGNED-OWNER-AFTER-INDEPENDENT-BANK-REVIEW");
+        line.VerifyAgainst(f.Post, f.Receipt, f.Bank);
+        Assert.False(line.CanPostDebtOffset);
+    }
+
 }

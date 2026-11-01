@@ -71,7 +71,9 @@ public static class ContractDepositPostOffsetCloseoutEvaluator
             balances.Select(x => x.ReceivablePostingId).Distinct().Count() !=
             balances.Length ||
             balances.Length == 0 ||
-            balances.Length != expectedIssuedInvoiceCount)
+            balances.Length != expectedIssuedInvoiceCount ||
+            balances.Count(x => x.Kind == OfficialInvoiceKind.Final) !=
+                issuedFinalInvoiceCount)
             blockers.Add("OfficialInvoiceHistoryNotComplete");
 
         var adjusted = balances.Sum(x => x.AdjustedAmount);

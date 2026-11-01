@@ -209,6 +209,32 @@ public sealed class SliceBStagingFinalInvoiceController : ControllerBase
             .ApproveDebtOffsetAsync(contractId,requestId,reviewId,input);
     }
 
+    /// <summary>
+    /// Commit the exact independently reviewed Owner-approved internal offset.
+    /// Never transfers bank funds or closes a contract. Disabled outside two
+    /// isolated staging databases, and SERIALIZABLE with Identity lease.
+    /// </summary>
+    [HttpPost("contracts/{contractId:guid}/move-outs/{requestId:guid}/debt-offset/approvals/{approvalId:guid}/post")]
+    [UnitOfWork(true, System.Data.IsolationLevel.Serializable)]
+    public Task<SliceBDebtOffsetPostingRead> PostDebtOffsetAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid requestId,
+        [FromRoute] Guid approvalId)
+    {
+        RequireIsolatedStaging();
+        return (_mutation ?? throw Denied())
+            .PostApprovedDebtOffsetAsync(contractId, requestId, approvalId);
+    }
+
+    [HttpGet("contracts/{contractId:guid}/move-outs/{requestId:guid}/debt-offset/posting")]
+    [UnitOfWork(true, System.Data.IsolationLevel.RepeatableRead)]
+    public Task<SliceBDebtOffsetPostingRead> GetDebtOffsetPostingAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid requestId)
+    {
+        RequireIsolatedStaging();
+        return (_mutation ?? throw Denied())
+            .GetPostedDebtOffsetAsync(contractId, requestId);
+    }
+
     [HttpGet("contracts/{contractId:guid}/receivables/{postingId:guid}/balance")]
     [UnitOfWork(true, System.Data.IsolationLevel.RepeatableRead)]
     public Task<OfficialInvoiceReceivableBalance> GetOfficialBalanceAsync(

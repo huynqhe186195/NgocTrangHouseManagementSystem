@@ -45,6 +45,7 @@ public static class ContractDepositPostOffsetCloseoutEvaluator
         DateOnly asOfDate,
         IReadOnlyCollection<OfficialInvoiceReceivableBalance> allBalances,
         int issuedFinalInvoiceCount,
+        int expectedIssuedInvoiceCount,
         int signedChecklistTaskCount,
         int requiredChecklistTaskCount)
     {
@@ -54,6 +55,7 @@ public static class ContractDepositPostOffsetCloseoutEvaluator
         ArgumentNullException.ThrowIfNull(allBalances);
         posted.VerifyStoredPosting(approval);
         if (asOfDate == default || issuedFinalInvoiceCount < 0 ||
+            expectedIssuedInvoiceCount < 0 ||
             signedChecklistTaskCount < 0 || requiredChecklistTaskCount < 0 ||
             signedChecklistTaskCount > requiredChecklistTaskCount)
             throw new ArgumentException("Invalid closeout reconciliation inputs.");
@@ -68,7 +70,8 @@ public static class ContractDepositPostOffsetCloseoutEvaluator
             x.OutstandingAmount < 0m || x.InternalDepositOffsetVnd < 0m) ||
             balances.Select(x => x.ReceivablePostingId).Distinct().Count() !=
             balances.Length ||
-            balances.Length == 0)
+            balances.Length == 0 ||
+            balances.Length != expectedIssuedInvoiceCount)
             blockers.Add("OfficialInvoiceHistoryNotComplete");
 
         var adjusted = balances.Sum(x => x.AdjustedAmount);

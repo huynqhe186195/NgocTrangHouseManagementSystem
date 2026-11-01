@@ -29,6 +29,39 @@ public sealed class ContractDepositCloseoutApprovalIntegrity_Tests
         Assert.False(approval.IsVerifiedBankTransfer);
     }
 
+
+    [Fact]
+    public void OI04FINAL01_Net_Of_Posted_Offset_Approval_Archives_Exact_Refund()
+    {
+        var approval = PrepareHydrated();
+        Set(approval, "ApprovedDebtOffsetAmount", 400_000m);
+        Set(approval, "ApprovedRefundAmount", 400_000m);
+        var root = System.Text.Json.Nodes.JsonNode.Parse(
+            approval.ApprovalJson)!.AsObject();
+        root["ApprovedDebtOffsetAmount"] = 400_000m;
+        root["ApprovedRefundAmount"] = 400_000m;
+        var json = root.ToJsonString();
+        Set(approval, "ApprovalJson", json);
+        Set(approval, "ApprovalSha256",
+            Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(json)))
+                .ToLowerInvariant());
+        approval.VerifyStoredApproval();
+        Assert.Equal(1_000_000m,
+            approval.ApprovedDebtOffsetAmount +
+            approval.ApprovedForfeitAmount +
+            approval.ApprovedRefundAmount);
+        Set(approval, "ApprovedDebtOffsetAmount", 500_000m);
+        Assert.Throws<InvalidDataException>(approval.VerifyStoredApproval);
+    }
+
+    [Fact]
+    public void OI04FINAL02_Offset_Cannot_Conceal_Over_Refund()
+    {
+        var approval = PrepareHydrated();
+        Set(approval, "ApprovedDebtOffsetAmount", 400_000m);
+        Assert.Throws<InvalidDataException>(approval.VerifyStoredApproval);
+    }
+
     [Theory]
     [InlineData("ApprovedAtUtc")]
     [InlineData("RefundSettlementId")]

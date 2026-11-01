@@ -2318,13 +2318,68 @@ public sealed class SliceBStagingFinalInvoiceMutation
             Guid contractId, Guid requestId, Guid building, Guid roomId,
             DateOnly? asOfDate)
     {
+                if (requestId == Guid.Empty) throw Denied();
+                var post = await db.DebtOffsetPostings.AsNoTracking()
+                    .SingleOrDefaultAsync(x => x.ContractId == contractId &&
+                        x.MoveOutRequestId == requestId &&
+                        x.BuildingId == building) ?? throw Denied();
+                var approval = await db.DebtOffsetApprovals.AsNoTracking()
+                    .SingleOrDefaultAsync(x => x.Id == post.ApprovalId &&
+                        x.BuildingId == building) ?? throw Denied();
+                try { post.VerifyStoredPosting(approval); }
+                catch (Exception ex) when (ex is InvalidDataException or
+                    InvalidOperationException or ArgumentException)
+                { throw Denied(); }
+                var date = OfficialAsOf(asOfDate);
+                var invoices = await db.OfficialInvoiceReceivables.AsNoTracking()
+                    .Where(x => x.ContractId == contractId &&
+                        x.BuildingId == building && x.RoomId == roomId)
+                    .ToArrayAsync();
+                var balances = new List<OfficialInvoiceReceivableBalance>();
+                foreach (var invoice in invoices)
+                    balances.Add(await AssessOfficialBalanceAsync(
+                        db, invoice, date));
+                var finalCount = await db.IssuedInvoiceLedger.AsNoTracking()
+                    .CountAsync(x => x.ContractId == contractId &&
+                        x.MoveOutRequestId == requestId);
+                var monthlyCount = await db.MonthlyIssuedInvoices.AsNoTracking()
+                    .CountAsync(x => x.ContractId == contractId);
+                var checklist = await db.MoveOutChecklistTasks.AsNoTracking()
+                    .Where(x => x.MoveOutRequestId == requestId).ToArrayAsync();
+                var checklistComplete = checklist.Length == 5 &&
+                    checklist.Select(x => x.Type).Distinct().Count() == 5
+                    ? checklist.Count(x => x.IsCompleted) : 0;
+                // A bank review alone cannot classify a monthly payment
+                // that follows the frozen owner offset. Verify that EVERY
+                // accepted monthly receipt has its own exact signed split;
+                // prevent "paid" closeout while an allocation is missing.
+                var monthlyPostingIds = invoices
+                    .Where(x => x.Kind == OfficialInvoiceKind.Monthly)
+                    .Select(x => x.Id).ToArray();
+                var acceptedMonthly = await db.OfficialInvoiceReceiptReviews
+                    .AsNoTracking().Where(x =>
+                        monthlyPostingIds.Contains(x.ReceivablePostingId) &&
+                        x.Accepted).ToArrayAsync();
+                var reviewedIds = acceptedMonthly.Select(x => x.Id).ToArray();
+                var allocations = await db.OfficialMonthlyReceiptLineAllocations
+                    .AsNoTracking().Where(x =>
+                        reviewedIds.Contains(x.ReceiptReviewId))
+                    .ToArrayAsync();
+                var allSplitsComplete = acceptedMonthly.All(review =>
+                {
                     var source = allocations.Where(x =>
                         x.ReceiptReviewId == review.Id).ToArray();
                     return source.Length != 0 &&
                         source.Select(x => x.Category).Distinct().Count() ==
                             source.Length &&
                         source.Sum(x => x.Amount) == review.Amount;
-       }
+                });
+                var deposit = await _depositAudit.GetAsync(requestId);
+                return ContractDepositPostOffsetCloseoutEvaluator.Assess(
+                    post, approval, deposit, date, balances, finalCount,
+                    finalCount + monthlyCount, checklistComplete, 5,
+                    allSplitsComplete);
+    }
 
     private static async Task<decimal> PostedInternalOffsetForInvoiceAsync(
         BuildingManagementDbContext db, Guid contractId, Guid postingId,

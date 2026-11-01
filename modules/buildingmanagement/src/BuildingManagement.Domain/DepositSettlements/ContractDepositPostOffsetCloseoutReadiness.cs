@@ -29,7 +29,9 @@ public sealed record ContractDepositPostOffsetCloseoutReadiness(
     public bool IsFullyFinanciallyReconciled =>
         IsLedgerBalanced && !HasUnpaidOfficialDebt && !RequiresRefundVerification &&
         !Blockers.Contains("DepositCashSourceNotVerified") &&
-        !Blockers.Contains("OfficialInvoiceHistoryNotComplete");
+        !Blockers.Contains("OfficialInvoiceHistoryNotComplete") &&
+        !Blockers.Contains("PendingOrRejectedBankReceiptsNeedReview") &&
+        !Blockers.Contains("InternalOffsetNotYetEffectiveAsOfDate");
     // The final transfer, bank refund and contract termination are NOT
     // authorized by a source-only reconciliation read.
     public bool CanExecuteRefund => false;
@@ -80,10 +82,18 @@ public static class ContractDepositPostOffsetCloseoutEvaluator
         var bank = balances.Sum(x => x.IndependentlyReviewedManualPayments);
         var internalCredit = balances.Sum(x => x.InternalDepositOffsetVnd);
         var unpaid = balances.Sum(x => x.OutstandingAmount);
+        // The Owner snapshot freezes the monthly debt balance AT POSTING.
+        // Independently reviewed bank receipts AFTER posting may reduce it,
+        // while a separately issued FINAL invoice can add legitimate new
+        // debt. Comparing the mutable live total with the frozen snapshot
+        // for exact equality would make debt collection impossible.
+        var remainingMonthly = balances
+            .Where(x => x.Kind == OfficialInvoiceKind.Monthly)
+            .Sum(x => x.OutstandingAmount);
         if (internalCredit != posted.CreditOfficialDebtVnd ||
             posted.VerifiedHeldAmount != posted.DebitHeldDepositVnd +
                 posted.RemainingHeldDepositVnd ||
-            unpaid != posted.RemainingOfficialDebtVnd ||
+            remainingMonthly > posted.RemainingOfficialDebtVnd ||
             adjusted != bank + internalCredit + unpaid)
             blockers.Add("PostedOffsetLedgerMismatch");
 
@@ -103,6 +113,8 @@ public static class ContractDepositPostOffsetCloseoutEvaluator
                 not "RefundAuthorizationAndHandoverMissing"))
             blockers.Add("DepositCashSourceNotVerified");
 
+        if (balances.Any(x => x.PendingOrRejectedPaymentCount != 0))
+            blockers.Add("PendingOrRejectedBankReceiptsNeedReview");
         if (unpaid > 0m)
             blockers.Add("OutstandingOfficialDebtRequiresVerifiedCollection");
         if (posted.RemainingHeldDepositVnd > 0m)

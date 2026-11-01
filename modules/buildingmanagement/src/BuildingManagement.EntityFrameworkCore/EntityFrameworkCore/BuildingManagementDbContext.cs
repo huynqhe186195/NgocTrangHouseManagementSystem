@@ -75,6 +75,8 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
     public DbSet<OfficialMonthlyReceiptLineAllocationRecord> OfficialMonthlyReceiptLineAllocations { get; set; } = default!;
     // Source-only explicit root deposit disposition approval; no automatic refund.
     public DbSet<ContractDepositSettlementDecisionRecord> DepositSettlementDecisions { get; set; } = default!;
+    // OI-04 separate immutable Owner authorization: never an actual cash journal.
+    public DbSet<ContractDepositDebtOffsetApprovalRecord> DebtOffsetApprovals { get; set; } = default!;
     public DbSet<ContractDepositCloseoutApprovalRecord> DepositCloseoutApprovals { get; set; } = default!;
 
     public BuildingManagementDbContext(DbContextOptions<BuildingManagementDbContext> options)
@@ -133,6 +135,8 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.OfficialMonthlyReceiptLineAllocationRecordConfiguration());
         builder.ApplyConfiguration(
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.ContractDepositSettlementDecisionRecordConfiguration());
+        builder.ApplyConfiguration(
+            new BuildingManagement.EntityFrameworkCore.EntityConfigurations.ContractDepositDebtOffsetApprovalRecordConfiguration());
         builder.ApplyConfiguration(
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.MoveOutRoomDispositionRecordConfiguration());
         builder.ApplyConfiguration(

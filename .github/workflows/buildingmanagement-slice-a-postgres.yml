@@ -172,7 +172,7 @@ jobs:
       - name: Phase 2G.4 owner offset approval source, immutable proof and rollback
         run: |
           dotnet test modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/BuildingManagement.PostgreSql.Tests.csproj \
-            --filter "FullyQualifiedName~Phase2G4OwnerDebtOffsetApprovalPostgreSql_Tests|FullyQualifiedName~Phase2G4CashBackedDebtReviewPostgreSql_Tests" \
+            --filter "FullyQualifiedName~Phase2G4OwnerDebtOffsetApprovalPostgreSql_Tests|FullyQualifiedName~Phase2G4CashBackedDebtReviewPostgreSql_Tests|FullyQualifiedName~Phase2G4AtomicOffsetPostingPostgreSql_Tests" \
             --logger "console;verbosity=normal"
 
       - name: Phase 2G.4 signed monthly receipt-line SQL, commit, rollback and concurrency

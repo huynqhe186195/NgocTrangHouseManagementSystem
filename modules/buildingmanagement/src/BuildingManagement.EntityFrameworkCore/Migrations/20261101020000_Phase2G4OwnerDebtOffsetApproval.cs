@@ -59,7 +59,7 @@ public sealed class Phase2G4OwnerDebtOffsetApproval : Migration
 
             CREATE FUNCTION "BM_GuardOwnerDebtOffsetApproval"()
             RETURNS trigger LANGUAGE plpgsql AS $guard$
-            DECLARE c record;
+            DECLARE contract_row record;
             DECLARE req record;
             DECLARE j jsonb;
             DECLARE expected_count integer;
@@ -75,18 +75,18 @@ public sealed class Phase2G4OwnerDebtOffsetApproval : Migration
                 RAISE EXCEPTION 'Owner debt-offset approval requires SERIALIZABLE'
                   USING ERRCODE='23514';
               END IF;
-              SELECT "Id","DepositAmount","Status","RoomId" INTO c
+              SELECT "Id","DepositAmount","Status","RoomId" INTO contract_row
                 FROM "BuildingManagementContracts"
                WHERE "Id"=NEW."ContractId" FOR UPDATE;
               SELECT "Id","ContractId","RoomId","Status" INTO req
                 FROM "BuildingManagementMoveOutRequests"
                WHERE "Id"=NEW."MoveOutRequestId" FOR SHARE;
-              IF c."Id" IS NULL OR req."Id" IS NULL OR
-                 c."Status" IS DISTINCT FROM 2 OR
+              IF contract_row."Id" IS NULL OR req."Id" IS NULL OR
+                 contract_row."Status" IS DISTINCT FROM 2 OR
                  req."Status" IS DISTINCT FROM 1 OR
-                 req."ContractId" IS DISTINCT FROM c."Id" OR
-                 req."RoomId" IS DISTINCT FROM c."RoomId" OR
-                 c."DepositAmount" IS DISTINCT FROM NEW."VerifiedHeldAmount" OR
+                 req."ContractId" IS DISTINCT FROM contract_row."Id" OR
+                 req."RoomId" IS DISTINCT FROM contract_row."RoomId" OR
+                 contract_row."DepositAmount" IS DISTINCT FROM NEW."VerifiedHeldAmount" OR
                  NEW."ApprovedAtUtc" > clock_timestamp() OR
                  EXISTS (
                    SELECT 1 FROM "BuildingManagementContractDepositSettlementDecisions" d

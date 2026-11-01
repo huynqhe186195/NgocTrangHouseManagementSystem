@@ -353,5 +353,27 @@ public sealed record OfficialInvoiceReceivableBalance(
     IssuedInvoicePaymentStatus Status, DateOnly AsOfDate,
     bool IsOfficialDebtPosted, bool IsExternallyVerifiedBankTransfer)
 {
+    // Distinct from bank receipts and original invoice terms. Exactly one
+    // immutable OI-04 dual-leg posting may reduce an official receivable.
+    public decimal InternalDepositOffsetVnd { get; init; }
+
+    public OfficialInvoiceReceivableBalance WithVerifiedInternalOffset(decimal amount)
+    {
+        if (amount < 0m || decimal.Truncate(amount) != amount ||
+            amount > OutstandingAmount || InternalDepositOffsetVnd != 0m)
+            throw new InvalidDataException("Unbalanced or repeated internal deposit offset.");
+        var remaining = OutstandingAmount - amount;
+        var status = remaining == 0m
+            ? IssuedInvoicePaymentStatus.Paid : Status;
+        // Do not label an incomplete offset as a bank payment.
+        if (remaining > 0m && amount > 0m && status != IssuedInvoicePaymentStatus.Overdue)
+            status = IssuedInvoicePaymentStatus.PartiallyPaid;
+        return this with {
+            InternalDepositOffsetVnd = amount,
+            OutstandingAmount = remaining,
+            Status = status
+        };
+    }
+
     public bool CanOffsetDeposit => false;
 }

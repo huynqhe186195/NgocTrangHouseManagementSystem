@@ -299,6 +299,19 @@ public sealed class Phase2G4OwnerDebtOffsetApproval : Migration
                   USING ERRCODE='23514';
               END IF;
 
+              IF NEW."ApprovedOffsetAmount" IS DISTINCT FROM
+                    LEAST(NEW."VerifiedHeldAmount", debt_sum)
+                 OR NEW."ExpectedUncoveredDebt" IS DISTINCT FROM
+                    GREATEST(debt_sum - NEW."ApprovedOffsetAmount", 0)
+                 OR NEW."ExpectedRemainingDeposit" IS DISTINCT FROM
+                    NEW."VerifiedHeldAmount" - NEW."ApprovedOffsetAmount"
+                 OR encode(sha256(convert_to(NEW."ApprovalJson",'UTF8')),'hex')
+                    IS DISTINCT FROM NEW."ApprovalSha256"
+              THEN
+                RAISE EXCEPTION 'Offset totals or proof checksum mismatch immutable official debt'
+                  USING ERRCODE='23514';
+              END IF;
+
               -- These approvals CANNOT be used as fully settled closeout:
               -- old no-offset ledger and COMMIT guards remain unchanged.
               RETURN NEW;

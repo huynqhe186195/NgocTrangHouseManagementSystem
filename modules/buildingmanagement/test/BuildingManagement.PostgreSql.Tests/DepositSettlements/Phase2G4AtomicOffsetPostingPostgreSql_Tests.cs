@@ -61,7 +61,8 @@ public sealed class Phase2G4AtomicOffsetPostingPostgreSql_Tests
         CREATE TABLE "BuildingManagementMonthlyIssuedInvoiceLedger" (
           "Id" uuid PRIMARY KEY,"ContractId" uuid,"CandidateId" uuid);
         CREATE TABLE "BuildingManagementMonthlyInvoiceCandidates" (
-          "Id" uuid PRIMARY KEY,"FrozenEvidenceSha256" varchar(64),
+          "Id" uuid PRIMARY KEY,"ContractId" uuid,
+          "FrozenEvidenceSha256" varchar(64),
           "RentAmount" numeric(18,0),"ElectricityAmount" numeric(18,0),
           "WaterAmount" numeric(18,0),"AuxiliaryAmount" numeric(18,0));
         CREATE TABLE "BuildingManagementMonthlyInvoiceAdjustments" ("IssuedInvoiceId" uuid);
@@ -182,6 +183,18 @@ public sealed class Phase2G4AtomicOffsetPostingPostgreSql_Tests
                    SET "Amount"=1 WHERE "Id"='{Receipt:D}'
                 ""","23514");
             await Denied(db,tx,$"""
+                UPDATE "BuildingManagementMonthlyInvoiceCandidates"
+                   SET "RentAmount"=1 WHERE "Id"='{Candidate:D}'
+                ""","23514");
+            await Denied(db,tx,$"""
+                INSERT INTO "BuildingManagementContractDepositSettlementDecisions"
+                  VALUES ('{Contract:D}')
+                ""","23514");
+            await Denied(db,tx,$"""
+                INSERT INTO "BuildingManagementContractDepositCloseoutApprovals"
+                  VALUES ('{Contract:D}')
+                ""","23514");
+            await Denied(db,tx,$"""
                 UPDATE "BuildingManagementDepositSettlements"
                    SET "Amount"=1 WHERE "TargetContractId"='{Contract:D}'
                 ""","23514");
@@ -286,7 +299,7 @@ public sealed class Phase2G4AtomicOffsetPostingPostgreSql_Tests
                 INSERT INTO "BuildingManagementDepositSettlements" VALUES
                   ('{Guid.NewGuid():D}',3,2,3000000,'{Receipt:D}',NULL,NULL,'{Contract:D}');
                 INSERT INTO "BuildingManagementMonthlyInvoiceCandidates" VALUES
-                  ('{Candidate:D}','{Hash}',1000000,0,0,0);
+                  ('{Candidate:D}','{Contract:D}','{Hash}',1000000,0,0,0);
                 INSERT INTO "BuildingManagementMonthlyIssuedInvoiceLedger" VALUES
                   ('{Issued:D}','{Contract:D}','{Candidate:D}');
                 INSERT INTO "BuildingManagementOfficialInvoiceReceivables" VALUES

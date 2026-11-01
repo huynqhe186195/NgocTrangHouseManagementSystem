@@ -183,6 +183,46 @@ public sealed class Phase2G4AtomicDepositDebtOffsetPosting : Migration
                   USING ERRCODE = '23514';
               END IF;
 
+              -- A source-evidence hash is not an invoice-line identifier.
+              -- Two separate monthly invoices can share a legacy/imported
+              -- hash. Such a collision MUST fail closed before joining
+              -- signed claims, otherwise a single claim can match two debts.
+              IF EXISTS (
+                SELECT 1
+                FROM "BuildingManagementOfficialInvoiceReceivables" p
+                JOIN "BuildingManagementMonthlyIssuedInvoiceLedger" i
+                  ON i."Id"=p."IssuedInvoiceId"
+                JOIN "BuildingManagementMonthlyInvoiceCandidates" src
+                  ON src."Id"=i."CandidateId"
+                CROSS JOIN LATERAL (VALUES
+                   (1,src."RentAmount"),(2,src."ElectricityAmount"),
+                   (3,src."WaterAmount"),(4,src."AuxiliaryAmount")
+                ) v(category,original_amount)
+                WHERE p."ContractId"=NEW."ContractId" AND p."Kind"=1
+                  AND v.original_amount-COALESCE((
+                      SELECT sum(l."Amount")
+                        FROM "BuildingManagementOfficialMonthlyReceiptLineAllocations" l
+                       WHERE l."ReceivablePostingId"=p."Id"
+                         AND l."Category"=v.category),0)>0
+                GROUP BY p."SourceEvidenceSha256",v.category
+                HAVING count(*)>1
+              ) OR EXISTS (
+                SELECT 1 FROM jsonb_array_elements(approval_json->'Claims') claim
+                GROUP BY claim->>'ClaimId'
+                HAVING count(*)>1
+              ) OR EXISTS (
+                SELECT 1 FROM jsonb_array_elements(approval_json->'ApprovedLines') line
+                GROUP BY line->>'ClaimId'
+                HAVING count(*)>1
+              ) OR
+                (SELECT count(*) FROM jsonb_array_elements(approval_json->'Claims'))
+                  IS DISTINCT FROM
+                (SELECT count(*) FROM jsonb_array_elements(approval_json->'ApprovedLines'))
+              THEN
+                RAISE EXCEPTION 'Non-unique signed debt claim or ambiguous invoice source'
+                  USING ERRCODE='23514';
+              END IF;
+
               -- Source snapshot is recalculated at posting time, not merely
               -- read from Owner JSON. Exactly match one current charge per
               -- frozen claim (source SHA+category). No external bank proof is

@@ -2134,6 +2134,115 @@ public sealed class SliceBStagingFinalInvoiceMutation
                     IsMoneyPosted:false,CanCompleteMoveOut:false);
             });
 
+    /// <summary>
+    /// OI-04 real INTERNAL offset: one immutable balanced posting in the
+    /// SAME serializable isolated Building transaction. Root Identity and
+    /// per-building membership are held through commit. No client amounts,
+    /// no payment receipt, no refund and no move-out completion.
+    /// </summary>
+    public Task<SliceBDebtOffsetPostingRead> PostApprovedDebtOffsetAsync(
+        Guid contractId, Guid requestId, Guid approvalId)
+        => ExecuteScopedAsync(contractId, requireBootstrapOwner: true,
+            async (db, actor, building, roomId) =>
+            {
+                if (requestId == Guid.Empty || approvalId == Guid.Empty ||
+                    db.Database.CurrentTransaction?.GetDbTransaction()
+                        .IsolationLevel != System.Data.IsolationLevel.Serializable)
+                    throw Denied();
+                await LockRequestAsync(db, requestId, contractId, roomId);
+                var approval = await db.DebtOffsetApprovals.AsNoTracking()
+                    .SingleOrDefaultAsync(x => x.Id == approvalId &&
+                        x.ContractId == contractId &&
+                        x.MoveOutRequestId == requestId &&
+                        x.BuildingId == building) ?? throw Denied();
+                if (approval.ApprovedByOwnerId != actor)
+                    throw Denied();
+                var previous = await db.DebtOffsetPostings.AsNoTracking()
+                    .SingleOrDefaultAsync(x => x.ContractId == contractId);
+                if (previous is not null)
+                {
+                    if (previous.ApprovalId != approvalId ||
+                        previous.MoveOutRequestId != requestId)
+                        throw Denied();
+                    try { previous.VerifyStoredPosting(approval); }
+                    catch (Exception ex) when (ex is InvalidDataException or
+                        InvalidOperationException or ArgumentException)
+                    { throw Denied(); }
+                    return OffsetPostedRead(previous);
+                }
+                // Both preflight and PostgreSQL INSERT reverify the SAME
+                // cash-backed invoice evidence, signed allocation, contract,
+                // payment source and competing dispositions.
+                var current = await _offsetReader.GetAsync(requestId,
+                    OfficialAsOf(null));
+                if (!current.EvidenceReviewable ||
+                    current.ContractId != contractId ||
+                    current.MoveOutRequestId != requestId ||
+                    current.VerifiedHeldVndForReview is not decimal held ||
+                    current.OfficialUnpaidMonthlyClaims.Count == 0 ||
+                    await db.DepositSettlementDecisions.AsNoTracking()
+                        .AnyAsync(x => x.ContractId == contractId) ||
+                    await db.DepositCloseoutApprovals.AsNoTracking()
+                        .AnyAsync(x => x.ContractId == contractId))
+                    throw Denied();
+                var review = await db.DebtOffsetReviews.AsNoTracking()
+                    .SingleOrDefaultAsync(x => x.ContractId == contractId &&
+                        x.MoveOutRequestId == requestId &&
+                        x.ReviewedByUserId == approval.IndependentDebtReviewerId)
+                    ?? throw Denied();
+                try
+                {
+                    review.RequireCurrentEvidence(contractId, requestId,
+                        building, held, current.OfficialUnpaidMonthlyClaims);
+                    approval.RequireCurrentEvidence(contractId, requestId,
+                        building, held, current.OfficialUnpaidMonthlyClaims);
+                }
+                catch (Exception ex) when (ex is InvalidDataException or
+                    InvalidOperationException or ArgumentException)
+                { throw Denied(); }
+                ContractDepositDebtOffsetPostingRecord posted;
+                try
+                {
+                    posted = ContractDepositDebtOffsetPostingRecord.Post(
+                        Guid.NewGuid(), actor, DateTime.UtcNow, approval,
+                        held, current.OfficialUnpaidMonthlyClaims);
+                }
+                catch (Exception ex) when (ex is InvalidDataException or
+                    InvalidOperationException or ArgumentException or
+                    OverflowException)
+                { throw Denied(); }
+                db.DebtOffsetPostings.Add(posted);
+                // A single append-only row contains BOTH financial legs.
+                // If PostgreSQL rejects any invariant at COMMIT, both roll back.
+                return OffsetPostedRead(posted);
+            });
+
+    public Task<SliceBDebtOffsetPostingRead> GetPostedDebtOffsetAsync(
+        Guid contractId, Guid requestId)
+        => ExecuteScopedAsync(contractId, requireBootstrapOwner: false,
+            async (db, actor, building, roomId) =>
+            {
+                var posted = await db.DebtOffsetPostings.AsNoTracking()
+                    .SingleOrDefaultAsync(x => x.ContractId == contractId &&
+                        x.MoveOutRequestId == requestId &&
+                        x.BuildingId == building) ?? throw Denied();
+                var approval = await db.DebtOffsetApprovals.AsNoTracking()
+                    .SingleOrDefaultAsync(x => x.Id == posted.ApprovalId)
+                    ?? throw Denied();
+                try { posted.VerifyStoredPosting(approval); }
+                catch (Exception ex) when (ex is InvalidDataException or
+                    InvalidOperationException or ArgumentException)
+                { throw Denied(); }
+                return OffsetPostedRead(posted);
+            });
+
+    private static SliceBDebtOffsetPostingRead OffsetPostedRead(
+        ContractDepositDebtOffsetPostingRecord p)
+        => new(p.Id, p.ApprovalId, p.ContractId, p.MoveOutRequestId,
+            p.DebitHeldDepositVnd, p.CreditOfficialDebtVnd,
+            p.RemainingHeldDepositVnd, p.RemainingOfficialDebtVnd,
+            p.PostingSha256, true, false, false);
+
     public Task<OfficialInvoiceReceivableBalance> GetOfficialBalanceAsync(
         Guid contractId, Guid postingId, DateOnly? asOfDate)
         => ExecuteScopedAsync(contractId, requireBootstrapOwner: false,
@@ -2734,6 +2843,13 @@ public sealed record SliceBOwnerDebtOffsetApprovalRead(
     decimal ExpectedRemainingDepositVnd,
     decimal ExpectedUncoveredDebtVnd,
     bool IsMoneyPosted, bool CanCompleteMoveOut);
+
+public sealed record SliceBDebtOffsetPostingRead(
+    Guid PostingId, Guid ApprovalId, Guid ContractId, Guid MoveOutRequestId,
+    decimal DebitHeldDepositVnd, decimal CreditOfficialDebtVnd,
+    decimal RemainingHeldDepositVnd, decimal RemainingOfficialDebtVnd,
+    string PostingSha256, bool IsInternalOffsetPosted,
+    bool IsBankRefundExecuted, bool CanCompleteMoveOut);
 
 public sealed record SliceBDepositSettlementDecisionRead(
     Guid DecisionId, Guid ContractId, Guid MoveOutRequestId,

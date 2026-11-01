@@ -67,14 +67,15 @@ public sealed class Phase2G4PostOffsetVerifiedCollections : Migration
                   USING ERRCODE='23514';
               END IF;
 
+              -- NEW is an anonymous trigger RECORD. Access columns
+              -- through JSON so a Payment INSERT never attempts to resolve
+              -- the line-only ReceivablePostingId field (SQLSTATE 42703).
               contract_id := CASE TG_TABLE_NAME
-                WHEN 'BuildingManagementOfficialInvoiceReceiptReviews'
-                  THEN NEW."ContractId"
                 WHEN 'BuildingManagementOfficialMonthlyReceiptLineAllocations'
                   THEN (SELECT p."ContractId"
                         FROM "BuildingManagementOfficialInvoiceReceivables" p
-                       WHERE p."Id"=NEW."ReceivablePostingId")
-                ELSE NEW."ContractId"
+                       WHERE p."Id"=NULLIF(to_jsonb(NEW)->>'ReceivablePostingId','')::uuid)
+                ELSE NULLIF(to_jsonb(NEW)->>'ContractId','')::uuid
                 END;
               SELECT * INTO offset_row
                 FROM "BuildingManagementContractDepositDebtOffsetPostings"

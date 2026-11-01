@@ -129,6 +129,85 @@ public sealed class Phase2G4OfficialMonthlyReceiptLineAllocationsPostgreSql_Test
         }, completed: false);
     }
 
+    [Fact]
+    public async Task OI04SQL05_Concurrent_Receipts_Cannot_Exceed_One_Frozen_Rent_Line()
+    {
+        var source = BuildingManagementPostgreSqlTestModule.RequireSafeConnectionString();
+        var cs = new NpgsqlConnectionStringBuilder(source)
+        { Pooling = false, CommandTimeout = 30 }.ConnectionString;
+        var schema = "bm_oi04_race_" + Guid.NewGuid().ToString("N");
+        var secondReview = Guid.NewGuid();
+        var secondJournal = Guid.NewGuid();
+        var secondPayment = Guid.NewGuid();
+        await using var setup = new NpgsqlConnection(cs);
+        await setup.OpenAsync();
+        Assert.Equal(BuildingManagementPostgreSqlTestModule.DatabaseName, setup.Database);
+        try
+        {
+            await Run(setup, null, $"CREATE SCHEMA \"{schema}\"");
+            await Run(setup, null, $"SET search_path TO \"{schema}\"");
+            await Run(setup, null, Fixtures);
+            await Run(setup, null, UpSql);
+            await Run(setup, null, $"""
+                INSERT INTO "BuildingManagementMonthlyInvoiceCandidates" VALUES
+                ('{Candidate:D}','{Contract:D}','{Hash}',3000000,35000,15000,0);
+                INSERT INTO "BuildingManagementMonthlyIssuedInvoiceLedger" VALUES
+                ('{Issued:D}','{Contract:D}','{Candidate:D}');
+                INSERT INTO "BuildingManagementOfficialInvoiceReceivables" VALUES
+                ('{Posting:D}',1,'{Issued:D}','{Contract:D}','{Hash}');
+                INSERT INTO "BuildingManagementMonthlyInvoicePaymentAllocation" VALUES
+                ('{Receipt:D}','{Payment:D}','{Issued:D}','{Contract:D}',250000),
+                ('{secondJournal:D}','{secondPayment:D}','{Issued:D}','{Contract:D}',2900000);
+                INSERT INTO "BuildingManagementOfficialInvoiceReceiptReviews" VALUES
+                ('{Review:D}','{Posting:D}','{Receipt:D}','{Payment:D}',
+                 '{Contract:D}',250000,TRUE,'{BankReviewer:D}',now()-interval '1 day'),
+                ('{secondReview:D}','{Posting:D}','{secondJournal:D}','{secondPayment:D}',
+                 '{Contract:D}',2900000,TRUE,'{BankReviewer:D}',now()-interval '1 day');
+                """);
+            await using var first = new NpgsqlConnection(cs);
+            await using var second = new NpgsqlConnection(cs);
+            await first.OpenAsync();
+            await second.OpenAsync();
+            await Run(first, null, $"SET search_path TO \"{schema}\"");
+            await Run(second, null, $"SET search_path TO \"{schema}\"");
+            await using var tx1 = await first.BeginTransactionAsync();
+            await using var tx2 = await second.BeginTransactionAsync();
+
+            await Run(first, tx1, Insert(1, 200000));
+            await Run(first, tx1, Insert(2, 35000));
+            await Run(first, tx1, Insert(3, 15000));
+            // A second signed bank review attempts to spend another
+            // 2.9M of the same archived 3.0M rent category. It MUST wait
+            // on the invoice lock and see the first committed allocation.
+            var race = Run(second, tx2, $"""
+                INSERT INTO "BuildingManagementOfficialMonthlyReceiptLineAllocations"(
+                  "Id","ReceivablePostingId","ReceiptReviewId","ReceiptAllocationId",
+                  "PaymentId","ContractId","Category","Amount","AllocatedByUserId",
+                  "AllocatedAtUtc","SignedAllocationReference","InvoiceEvidenceSha256")
+                VALUES ('{Guid.NewGuid():D}','{Posting:D}','{secondReview:D}',
+                    '{secondJournal:D}','{secondPayment:D}','{Contract:D}',1,2900000,
+                    '{SplitReviewer:D}',now(),'SIGNED-SECOND-ALLOCATION-REVIEW-001','{Hash}');
+                """);
+            await Task.Delay(150);
+            Assert.False(race.IsCompleted,
+                "A competing receipt must wait on the frozen invoice lock.");
+            await tx1.CommitAsync();
+            var error = await Assert.ThrowsAsync<PostgresException>(() => race);
+            Assert.Equal("23514", error.SqlState);
+            await tx2.RollbackAsync();
+            Assert.Equal(3L, await Scalar(setup, null, """
+                SELECT count(*) FROM "BuildingManagementOfficialMonthlyReceiptLineAllocations"
+                """));
+        }
+        finally
+        {
+            await Run(setup, null, "RESET search_path");
+            await Run(setup, null, $"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE");
+        }
+        Assert.Equal(0L, await Scalar(setup, null,
+            $"SELECT count(*) FROM pg_namespace WHERE nspname='{schema}'"));
+    }
+
     private static async Task Scratch(
         Func<NpgsqlConnection,NpgsqlTransaction,Task> run, bool completed = true)
     {

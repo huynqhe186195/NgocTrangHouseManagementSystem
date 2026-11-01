@@ -38,14 +38,15 @@ public sealed class MoveOutNoticePolicy_Tests
     [InlineData(2028, 1, 31, 2028, 2, 28, 2028, 2, 29)]
     [InlineData(2026, 4, 30, 2026, 5, 30, 2026, 5, 31)]
     public void OI01_NoticeBoundary_Rejects_PreviousDay_But_Accepts_ExactMonthEnd(
-        int year, int month, int day, int checkYear, int checkMonth,
-        int tooEarlyDay, int acceptedDay)
+        int year, int month, int day,
+        int earlyYear, int earlyMonth, int tooEarlyDay,
+        int acceptedYear, int acceptedMonth, int acceptedDay)
     {
         var submitted = new DateOnly(year, month, day);
         Assert.False(MoveOutNoticePolicy.IsValid(
-            submitted, new DateOnly(checkYear, checkMonth, tooEarlyDay)));
+            submitted, new DateOnly(earlyYear, earlyMonth, tooEarlyDay)));
         Assert.True(MoveOutNoticePolicy.IsValid(
-            submitted, new DateOnly(checkYear, checkMonth, acceptedDay)));
+            submitted, new DateOnly(acceptedYear, acceptedMonth, acceptedDay)));
     }
 
     [Fact]

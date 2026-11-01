@@ -57,6 +57,23 @@ public sealed class SliceBOwnerDebtOffsetStageBoundary_Tests
             read.GetCustomAttribute<UnitOfWorkAttribute>()!.IsolationLevel);
     }
 
+    [Theory]
+    [InlineData(nameof(SliceBStagingFinalInvoiceController.IssueCandidateAsync))]
+    [InlineData(nameof(SliceBStagingFinalInvoiceController.RecordManualReceiptAsync))]
+    [InlineData(nameof(SliceBStagingFinalInvoiceController.RecordMonthlyReceiptAsync))]
+    [InlineData(nameof(SliceBStagingFinalInvoiceController.ReviewOfficialReceiptAsync))]
+    [InlineData(nameof(SliceBStagingFinalInvoiceController.SplitMonthlyReceiptAsync))]
+    public void OI04POSTHTTP02_PostOffset_Financial_Commands_Serialize_With_Approval(
+        string actionName)
+    {
+        var action=typeof(SliceBStagingFinalInvoiceController).GetMethod(actionName)!;
+        Assert.NotNull(action.GetCustomAttribute<HttpPostAttribute>());
+        var attribute=action.GetCustomAttribute<UnitOfWorkAttribute>();
+        Assert.NotNull(attribute);
+        Assert.True(attribute!.IsTransactional);
+        Assert.Equal(IsolationLevel.Serializable,attribute.IsolationLevel);
+    }
+
     [Fact]
     public void OI04AUTHHTTP03_Review_And_Owner_Writers_Are_Separate()
     {

@@ -169,6 +169,12 @@ jobs:
             --filter "FullyQualifiedName~SliceBFullFinancialMigrationChainPostgreSql_Tests" \
             --logger "console;verbosity=normal"
 
+      - name: Phase 2G.4 signed monthly receipt-line SQL, commit, rollback and concurrency
+        run: |
+          dotnet test modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/BuildingManagement.PostgreSql.Tests.csproj \
+            --filter "FullyQualifiedName~Phase2G4OfficialMonthlyReceiptLineAllocationsPostgreSql_Tests" \
+            --logger "console;verbosity=normal"
+
       - name: Slice B staged final invoice evidence PostgreSQL rollback probes
         run: |
           dotnet test modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/BuildingManagement.PostgreSql.Tests.csproj \

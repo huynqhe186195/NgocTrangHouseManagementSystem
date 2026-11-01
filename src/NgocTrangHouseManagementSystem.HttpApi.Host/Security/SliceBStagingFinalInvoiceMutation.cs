@@ -2303,10 +2303,36 @@ public sealed class SliceBStagingFinalInvoiceMutation
                 var checklistComplete = checklist.Length == 5 &&
                     checklist.Select(x => x.Type).Distinct().Count() == 5
                     ? checklist.Count(x => x.IsCompleted) : 0;
+                // A bank review alone cannot classify a monthly payment
+                // that follows the frozen owner offset. Verify that EVERY
+                // accepted monthly receipt has its own exact signed split;
+                // prevent "paid" closeout while an allocation is missing.
+                var monthlyPostingIds = invoices
+                    .Where(x => x.Kind == OfficialInvoiceKind.Monthly)
+                    .Select(x => x.Id).ToArray();
+                var acceptedMonthly = await db.OfficialInvoiceReceiptReviews
+                    .AsNoTracking().Where(x =>
+                        monthlyPostingIds.Contains(x.ReceivablePostingId) &&
+                        x.Accepted).ToArrayAsync();
+                var reviewedIds = acceptedMonthly.Select(x => x.Id).ToArray();
+                var allocations = await db.OfficialMonthlyReceiptLineAllocations
+                    .AsNoTracking().Where(x =>
+                        reviewedIds.Contains(x.ReceiptReviewId))
+                    .ToArrayAsync();
+                var allSplitsComplete = acceptedMonthly.All(review =>
+                {
+                    var source = allocations.Where(x =>
+                        x.ReceiptReviewId == review.Id).ToArray();
+                    return source.Length != 0 &&
+                        source.Select(x => x.Category).Distinct().Count() ==
+                            source.Length &&
+                        source.Sum(x => x.Amount) == review.Amount;
+                });
                 var deposit = await _depositAudit.GetAsync(requestId);
                 return ContractDepositPostOffsetCloseoutEvaluator.Assess(
                     post, approval, deposit, date, balances, finalCount,
-                    finalCount + monthlyCount, checklistComplete, 5);
+                    finalCount + monthlyCount, checklistComplete, 5,
+                    allSplitsComplete);
             });
 
     private static async Task<decimal> PostedInternalOffsetForInvoiceAsync(

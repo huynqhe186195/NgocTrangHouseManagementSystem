@@ -41,6 +41,7 @@ public sealed class SliceBStagingFinalInvoiceMutation
     private readonly FinalInvoiceIssueEvidenceDriftAppService _drift;
     private readonly FinalInvoiceSourceProvenanceAppService _provenance;
     private readonly ContractDepositLedgerReviewAppService _depositAudit;
+    private readonly ContractDepositOfficialOffsetReadAppService _offsetReader;
     private readonly MonthlyInvoiceBasePreviewAppService _monthlyPreview;
     private readonly IInvoiceDraftStorageAppService _utilityDrafts;
 
@@ -54,6 +55,7 @@ public sealed class SliceBStagingFinalInvoiceMutation
         FinalInvoiceIssueEvidenceDriftAppService drift,
         FinalInvoiceSourceProvenanceAppService provenance,
         ContractDepositLedgerReviewAppService depositAudit,
+        ContractDepositOfficialOffsetReadAppService offsetReader,
         MonthlyInvoiceBasePreviewAppService monthlyPreview,
         IInvoiceDraftStorageAppService utilityDrafts)
     {
@@ -66,6 +68,7 @@ public sealed class SliceBStagingFinalInvoiceMutation
         _drift = drift;
         _provenance = provenance;
         _depositAudit = depositAudit;
+        _offsetReader = offsetReader;
         _monthlyPreview = monthlyPreview;
         _utilityDrafts = utilityDrafts;
     }
@@ -1971,6 +1974,166 @@ public sealed class SliceBStagingFinalInvoiceMutation
                     CanPostDepositOffset: false);
             });
 
+    /// <summary>
+    /// Separate staff finance review of CURRENT original posted invoice
+    /// claims. Only server-loaded evidence is signed, never request money.
+    /// This is not an Owner approval, offset posting, or bank transfer.
+    /// </summary>
+    public Task<SliceBOffsetDebtReviewRead> ReviewDebtOffsetEvidenceAsync(
+        Guid contractId, Guid requestId, SliceBOffsetDebtReviewInput input)
+        => ExecuteScopedAsync(contractId, requireBootstrapOwner: false,
+            async (db, actor, building, roomId) =>
+            {
+                if (requestId == Guid.Empty || input is null ||
+                    !ValidProof(input.SignedReviewReference) ||
+                    input.SignedReviewReference.Trim().Length < 12 ||
+                    db.Database.CurrentTransaction?.GetDbTransaction()
+                        .IsolationLevel != System.Data.IsolationLevel.Serializable)
+                    throw Denied();
+                await LockRequestAsync(db, requestId, contractId, roomId);
+                var asOf = OfficialAsOf(input.AsOfDate);
+                var proof = await _offsetReader.GetAsync(requestId, asOf);
+                if (!proof.EvidenceReviewable ||
+                    proof.ContractId != contractId ||
+                    proof.MoveOutRequestId != requestId ||
+                    proof.VerifiedHeldVndForReview is not decimal held ||
+                    proof.OfficialUnpaidMonthlyClaims.Count == 0)
+                    throw Denied();
+
+                var previous = await db.DebtOffsetReviews.AsNoTracking()
+                    .SingleOrDefaultAsync(x => x.ContractId == contractId);
+                if (previous is not null)
+                {
+                    if (previous.MoveOutRequestId != requestId ||
+                        previous.ReviewedByUserId != actor ||
+                        previous.ReviewedAsOfDate != asOf ||
+                        previous.SignedReviewReference != input.SignedReviewReference.Trim())
+                        throw Denied();
+                    try {
+                        previous.RequireCurrentEvidence(contractId, requestId,
+                            building, held, proof.OfficialUnpaidMonthlyClaims);
+                    }
+                    catch (Exception ex) when (ex is InvalidDataException or
+                        InvalidOperationException or ArgumentException)
+                    { throw Denied(); }
+                    return new SliceBOffsetDebtReviewRead(previous.Id, requestId,
+                        previous.VerifiedOutstandingAmount,
+                        IsIndependentDebtReview: true,
+                        CanPostDepositOffset: false);
+                }
+
+                ContractDepositDebtReviewRecord review;
+                try
+                {
+                    review = ContractDepositDebtReviewRecord.Capture(
+                        Guid.NewGuid(), contractId, requestId, building,
+                        actor, asOf, DateTime.UtcNow, held,
+                        proof.OfficialUnpaidMonthlyClaims,
+                        input.SignedReviewReference);
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or
+                    InvalidDataException or ArgumentException or OverflowException)
+                { throw Denied(); }
+                db.DebtOffsetReviews.Add(review);
+                return new SliceBOffsetDebtReviewRead(review.Id, requestId,
+                    review.VerifiedOutstandingAmount,
+                    IsIndependentDebtReview: true,
+                    CanPostDepositOffset: false);
+            });
+
+    /// <summary>
+    /// Root-only Owner authorization; exact prior independent review and
+    /// all original bank/charge evidence must still match at SERIALIZABLE.
+    /// No settlement, refund, invoice amendment or contract termination.
+    /// </summary>
+    public Task<SliceBOwnerDebtOffsetApprovalRead> ApproveDebtOffsetAsync(
+        Guid contractId, Guid requestId, Guid reviewId,
+        SliceBOwnerDebtOffsetApprovalInput input)
+        => ExecuteScopedAsync(contractId, requireBootstrapOwner: true,
+            async (db, actor, building, roomId) =>
+            {
+                if (requestId == Guid.Empty || reviewId == Guid.Empty ||
+                    input is null ||
+                    !ValidProof(input.SignedPolicyReference) ||
+                    input.SignedPolicyReference.Trim().Length < 12 ||
+                    db.Database.CurrentTransaction?.GetDbTransaction()
+                        .IsolationLevel != System.Data.IsolationLevel.Serializable)
+                    throw Denied();
+                await LockRequestAsync(db, requestId, contractId, roomId);
+                var approvedReview = await db.DebtOffsetReviews.AsNoTracking()
+                    .SingleOrDefaultAsync(x => x.Id == reviewId &&
+                        x.ContractId == contractId &&
+                        x.MoveOutRequestId == requestId &&
+                        x.BuildingId == building) ?? throw Denied();
+                if (approvedReview.ReviewedByUserId == actor)
+                    throw Denied();
+                // Do NOT permit a caller to choose a stale review date or a
+                // fabricated debt/held amount via an HTTP request body.
+                var current = await _offsetReader.GetAsync(requestId,
+                    OfficialAsOf(null));
+                if (!current.EvidenceReviewable ||
+                    current.ContractId != contractId ||
+                    current.VerifiedHeldVndForReview is not decimal held ||
+                    current.OfficialUnpaidMonthlyClaims.Count == 0)
+                    throw Denied();
+                try
+                {
+                    approvedReview.RequireCurrentEvidence(contractId,
+                        requestId, building, held,
+                        current.OfficialUnpaidMonthlyClaims);
+                }
+                catch (Exception ex) when (ex is InvalidDataException or
+                    InvalidOperationException or ArgumentException)
+                { throw Denied(); }
+
+                var older = await db.DebtOffsetApprovals.AsNoTracking()
+                    .SingleOrDefaultAsync(x => x.ContractId == contractId);
+                if (older is not null)
+                {
+                    if (older.MoveOutRequestId != requestId ||
+                        older.ApprovedByOwnerId != actor ||
+                        older.IndependentDebtReviewerId !=
+                            approvedReview.ReviewedByUserId ||
+                        older.IndependentReviewReference !=
+                            approvedReview.SignedReviewReference ||
+                        older.SignedPolicyReference !=
+                            input.SignedPolicyReference.Trim())
+                        throw Denied();
+                    try {
+                        older.RequireCurrentEvidence(contractId,requestId,
+                            building,held,current.OfficialUnpaidMonthlyClaims);
+                    }
+                    catch (Exception ex) when (ex is InvalidDataException or
+                        InvalidOperationException or ArgumentException)
+                    { throw Denied(); }
+                    return new SliceBOwnerDebtOffsetApprovalRead(older.Id,
+                        contractId,older.ApprovedOffsetAmount,
+                        older.ExpectedRemainingDeposit,older.ExpectedUncoveredDebt,
+                        IsMoneyPosted:false,CanCompleteMoveOut:false);
+                }
+
+                ContractDepositDebtOffsetApprovalRecord approval;
+                try
+                {
+                    approval = ContractDepositDebtOffsetApprovalRecord.Approve(
+                        Guid.NewGuid(),contractId,requestId,building,actor,
+                        approvedReview.ReviewedByUserId,DateTime.UtcNow,held,
+                        input.SignedPolicyReference,
+                        approvedReview.SignedReviewReference,
+                        current.OfficialUnpaidMonthlyClaims);
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or
+                    InvalidDataException or ArgumentException or OverflowException)
+                { throw Denied(); }
+
+                db.DebtOffsetApprovals.Add(approval);
+                return new SliceBOwnerDebtOffsetApprovalRead(approval.Id,
+                    contractId,approval.ApprovedOffsetAmount,
+                    approval.ExpectedRemainingDeposit,
+                    approval.ExpectedUncoveredDebt,
+                    IsMoneyPosted:false,CanCompleteMoveOut:false);
+            });
+
     public Task<OfficialInvoiceReceivableBalance> GetOfficialBalanceAsync(
         Guid contractId, Guid postingId, DateOnly? asOfDate)
         => ExecuteScopedAsync(contractId, requireBootstrapOwner: false,
@@ -2553,6 +2716,24 @@ public sealed record SliceBMonthlyReceiptLineSplitRead(
     decimal AllocatedAmountVnd,
     bool IsBankExternallyVerified,
     bool CanPostDepositOffset);
+
+public sealed record SliceBOffsetDebtReviewInput(
+    string SignedReviewReference, DateOnly? AsOfDate);
+
+public sealed record SliceBOwnerDebtOffsetApprovalInput(
+    string SignedPolicyReference);
+
+public sealed record SliceBOffsetDebtReviewRead(
+    Guid ReviewId, Guid MoveOutRequestId,
+    decimal VerifiedOutstandingVnd,
+    bool IsIndependentDebtReview, bool CanPostDepositOffset);
+
+public sealed record SliceBOwnerDebtOffsetApprovalRead(
+    Guid ApprovalId, Guid ContractId,
+    decimal ApprovedOffsetVnd,
+    decimal ExpectedRemainingDepositVnd,
+    decimal ExpectedUncoveredDebtVnd,
+    bool IsMoneyPosted, bool CanCompleteMoveOut);
 
 public sealed record SliceBDepositSettlementDecisionRead(
     Guid DecisionId, Guid ContractId, Guid MoveOutRequestId,

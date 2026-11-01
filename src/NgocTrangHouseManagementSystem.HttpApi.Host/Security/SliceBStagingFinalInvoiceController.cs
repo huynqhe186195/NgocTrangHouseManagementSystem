@@ -179,6 +179,36 @@ public sealed class SliceBStagingFinalInvoiceController : ControllerBase
             contractId, postingId, receiptReviewId, input);
     }
 
+    /// <summary>
+    /// Staff must independently audit original official debt before
+    /// Root Owner can authorize any potential deposit credit.
+    /// No auto bank/refund settlement and isolated staging only.
+    /// </summary>
+    [HttpPost("contracts/{contractId:guid}/move-outs/{requestId:guid}/debt-offset/review")]
+    [UnitOfWork(true, System.Data.IsolationLevel.Serializable)]
+    public Task<SliceBOffsetDebtReviewRead> ReviewDebtOffsetAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid requestId,
+        [FromBody] SliceBOffsetDebtReviewInput input)
+    {
+        RequireIsolatedStaging();
+        if (input is null) throw Denied();
+        return (_mutation ?? throw Denied())
+            .ReviewDebtOffsetEvidenceAsync(contractId,requestId,input);
+    }
+
+    [HttpPost("contracts/{contractId:guid}/move-outs/{requestId:guid}/debt-offset/reviews/{reviewId:guid}/approve")]
+    [UnitOfWork(true, System.Data.IsolationLevel.Serializable)]
+    public Task<SliceBOwnerDebtOffsetApprovalRead> ApproveDebtOffsetAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid requestId,
+        [FromRoute] Guid reviewId,
+        [FromBody] SliceBOwnerDebtOffsetApprovalInput input)
+    {
+        RequireIsolatedStaging();
+        if (input is null) throw Denied();
+        return (_mutation ?? throw Denied())
+            .ApproveDebtOffsetAsync(contractId,requestId,reviewId,input);
+    }
+
     [HttpGet("contracts/{contractId:guid}/receivables/{postingId:guid}/balance")]
     [UnitOfWork(true, System.Data.IsolationLevel.RepeatableRead)]
     public Task<OfficialInvoiceReceivableBalance> GetOfficialBalanceAsync(

@@ -81,6 +81,7 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
     // One balanced internal deposit/debt posting, never an external refund.
     public DbSet<ContractDepositDebtOffsetPostingRecord> DebtOffsetPostings { get; set; } = default!;
     public DbSet<ContractDepositCloseoutApprovalRecord> DepositCloseoutApprovals { get; set; } = default!;
+    public DbSet<ContractDepositRefundBankReviewRecord> DepositRefundBankReviews { get; set; } = default!;
 
     public BuildingManagementDbContext(DbContextOptions<BuildingManagementDbContext> options)
         : base(options)
@@ -160,5 +161,7 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.RoomChangeCompletionConfiguration());
         builder.ApplyConfiguration(
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.ContractDepositCloseoutApprovalRecordConfiguration());
+        builder.ApplyConfiguration(
+            new BuildingManagement.EntityFrameworkCore.EntityConfigurations.ContractDepositRefundBankReviewRecordConfiguration());
     }
 }

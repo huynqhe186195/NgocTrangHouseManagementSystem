@@ -1278,6 +1278,71 @@ public sealed class SliceBStagingFinalInvoiceMutation
             IsRefundExecuted: refundExecuted, IsAutomaticDebtOffset: false);
 
     /// <summary>
+    /// A building-scoped operator OTHER THAN the signing root Owner
+    /// independently reviews the already executed bank refund in staging.
+    /// No bank transfer is initiated. Only persisted signed decision values
+    /// determine the amount; user input is solely documentary evidence.
+    /// </summary>
+    public Task<Guid> ReviewPostOffsetRefundAsync(
+        Guid contractId, Guid requestId,
+        SliceBPostOffsetRefundReviewInput input)
+        => ExecuteScopedAsync(contractId, requireBootstrapOwner: false,
+            async (db, actor, building, roomId) =>
+            {
+                if (requestId == Guid.Empty || input is null ||
+                    db.Database.CurrentTransaction?.GetDbTransaction()
+                        .IsolationLevel != System.Data.IsolationLevel.Serializable)
+                    throw Denied();
+                await LockRequestAsync(db, requestId, contractId, roomId);
+                var decision = await db.DepositSettlementDecisions.AsNoTracking()
+                    .SingleOrDefaultAsync(x =>
+                        x.ContractId == contractId &&
+                        x.MoveOutRequestId == requestId &&
+                        x.BuildingId == building) ?? throw Denied();
+                var posted = await db.DebtOffsetPostings.AsNoTracking()
+                    .SingleOrDefaultAsync(x =>
+                        x.ContractId == contractId &&
+                        x.MoveOutRequestId == requestId) ?? throw Denied();
+                if (decision.ApprovedDebtOffsetAmount != posted.DebitHeldDepositVnd ||
+                    decision.ApprovedRefundAmount <= 0m ||
+                    actor == decision.ApprovedByUserId ||
+                    await db.DepositCloseoutApprovals.AsNoTracking().AnyAsync(x =>
+                        x.ContractId == contractId))
+                    throw Denied();
+                var prior = await db.DepositRefundBankReviews.AsNoTracking()
+                    .SingleOrDefaultAsync(x =>
+                        x.ContractId == contractId ||
+                        x.MoveOutRequestId == requestId);
+                ContractDepositRefundBankReviewRecord signed;
+                try
+                {
+                    signed = ContractDepositRefundBankReviewRecord.Attest(
+                        Guid.NewGuid(), decision, actor, DateTime.UtcNow,
+                        input.PaidAtUtc,
+                        input.TransactionReference ?? string.Empty,
+                        input.BankStatementEvidenceReference ?? string.Empty,
+                        input.SignedIndependentReviewReference ?? string.Empty);
+                    if (prior is not null)
+                    {
+                        prior.Verify(decision);
+                        prior.RequireForCloseout(decision,
+                            decision.ApprovedByUserId, input.PaidAtUtc,
+                            input.TransactionReference ?? string.Empty,
+                            input.BankStatementEvidenceReference ?? string.Empty);
+                        if (prior.SignedReviewReference !=
+                                input.SignedIndependentReviewReference?.Trim())
+                            throw Denied();
+                        return prior.Id;
+                    }
+                }
+                catch (Exception ex) when (ex is InvalidDataException or
+                    InvalidOperationException or ArgumentException or OverflowException)
+                { throw Denied(); }
+                db.DepositRefundBankReviews.Add(signed);
+                return signed.Id;
+            });
+
+    /// <summary>
     /// Explicit root-only, isolated staging final handover. A MANUAL refund
     /// bank reference is a human attestation, not automatic bank verification.
     /// Never deduct deposit from invoice debt: every issued invoice MUST be
@@ -1543,6 +1608,29 @@ public sealed class SliceBStagingFinalInvoiceMutation
                     (input.RefundPaidAtUtc.HasValue ||
                      !string.IsNullOrWhiteSpace(input.RefundTransactionReference) ||
                      !string.IsNullOrWhiteSpace(input.RefundBankEvidenceReference)))
+                    throw Denied();
+
+                if (postedOffset is not null && refundAmount > 0m)
+                {
+                    var reviewedRefund = await db.DepositRefundBankReviews
+                        .AsNoTracking().SingleOrDefaultAsync(x =>
+                            x.ContractId == contractId &&
+                            x.MoveOutRequestId == requestId &&
+                            x.BuildingId == building) ?? throw Denied();
+                    try
+                    {
+                        reviewedRefund.RequireForCloseout(decision, actor,
+                            input.RefundPaidAtUtc!.Value,
+                            input.RefundTransactionReference ?? string.Empty,
+                            input.RefundBankEvidenceReference ?? string.Empty);
+                    }
+                    catch (Exception ex) when (ex is InvalidDataException or
+                        InvalidOperationException or ArgumentException)
+                    { throw Denied(); }
+                }
+                if (postedOffset is not null && refundAmount == 0m &&
+                    await db.DepositRefundBankReviews.AsNoTracking().AnyAsync(x =>
+                        x.ContractId == contractId))
                     throw Denied();
 
                 var refundId = refundAmount > 0m ? Guid.NewGuid() : (Guid?)null;

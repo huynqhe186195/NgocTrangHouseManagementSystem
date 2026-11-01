@@ -207,6 +207,16 @@ public sealed class Phase2G4PostOffsetFinalDispositionPostgreSql_Tests
             await Run(db,tx,$"""SET LOCAL search_path TO "{schema}" """);
             await Run(db,tx,Tables);
             await Run(db,tx,Up);
+            // Narrow money-disposition fixture: previous 2G.4 official
+            // receivable provenance and signed approval are covered by
+            // their separate real-PG suites. Replace only the upstream
+            // approval trigger here, so this test isolates NEW final
+            // refund and anti-replay rules without fabricating invoices.
+            await Run(db,tx,"""
+                CREATE OR REPLACE FUNCTION "BM_GuardDepositSettlementDecision"()
+                RETURNS trigger LANGUAGE plpgsql AS $test_scope$
+                BEGIN RETURN NEW; END; $test_scope$;
+                """);
             await Run(db,tx,$"""
                 INSERT INTO "BuildingManagementContracts"
                   VALUES ('{contract:D}',3000000,2);

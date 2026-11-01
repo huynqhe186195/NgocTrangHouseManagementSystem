@@ -350,6 +350,23 @@ public sealed class SliceBStagingFinalInvoiceController : ControllerBase
             contractId, requestId, input);
     }
 
+    /// <summary>
+    /// Independent manual bank-statement attestation required before an
+    /// internally-offset contract can close with a positive refund.
+    /// The reviewer may not be the approving root Owner.
+    /// </summary>
+    [HttpPost("contracts/{contractId:guid}/move-outs/{requestId:guid}/deposit-settlement/refund-bank-review")]
+    [UnitOfWork(true, System.Data.IsolationLevel.Serializable)]
+    public Task<Guid> ReviewPostOffsetRefundAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid requestId,
+        [FromBody] SliceBPostOffsetRefundReviewInput input)
+    {
+        RequireIsolatedStaging();
+        if (input is null) throw Denied();
+        return (_mutation ?? throw Denied())
+            .ReviewPostOffsetRefundAsync(contractId, requestId, input);
+    }
+
     [HttpGet("contracts/{contractId:guid}/move-outs/{requestId:guid}/deposit-settlement")]
     [UnitOfWork(true, System.Data.IsolationLevel.RepeatableRead)]
     public Task<SliceBDepositSettlementDecisionRead> GetDepositSettlementAsync(

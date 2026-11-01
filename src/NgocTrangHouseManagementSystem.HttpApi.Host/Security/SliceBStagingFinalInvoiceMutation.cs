@@ -2294,7 +2294,10 @@ public sealed class SliceBStagingFinalInvoiceMutation
                     building, asOf, rows.Length, amount, receipts, outstanding,
                     rows.Count(x => x.Status == IssuedInvoicePaymentStatus.Overdue),
                     rows, IsOfficialDebtPosted: true,
-                    IsExternallyVerifiedBankTransfer: false);
+                    IsExternallyVerifiedBankTransfer: false)
+                {
+                    InternalDepositOffsetVnd = rows.Sum(x => x.InternalDepositOffsetVnd)
+                };
             }, permitEndedContract: true);
 
     private static DateOnly OfficialAsOf(DateOnly? requested)
@@ -2430,8 +2433,35 @@ public sealed class SliceBStagingFinalInvoiceMutation
             var reviews = await db.OfficialInvoiceReceiptReviews.AsNoTracking()
                 .Where(x => x.ReceivablePostingId == posted.Id)
                 .ToArrayAsync();
-            return OfficialInvoiceReceivableBalanceEvaluator.Assess(
+            var result = OfficialInvoiceReceivableBalanceEvaluator.Assess(
                 posted, asOf, signedDelta, evidence, reviews);
+            var offset = await db.DebtOffsetPostings.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.ContractId == posted.ContractId);
+            if (offset is not null)
+            {
+                var approval = await db.DebtOffsetApprovals.AsNoTracking()
+                    .SingleOrDefaultAsync(x => x.Id == offset.ApprovalId)
+                    ?? throw Denied();
+                offset.VerifyStoredPosting(approval);
+                var local = DateOnly.FromDateTime(
+                    TimeZoneInfo.ConvertTimeFromUtc(offset.PostedAtUtc,
+                        TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh")));
+                if (local <= asOf)
+                {
+                    decimal applied = 0m;
+                    foreach (var line in offset.ReadVerifiedLines(approval))
+                    {
+                        var matchesThisInvoice = line.ClaimId ==
+                            ContractDepositOfficialMonthlyClaimBridge.ClaimIdFor(
+                                posted.Id, line.Category);
+                        if (matchesThisInvoice)
+                            applied = checked(applied + line.ProposedAppliedVnd);
+                    }
+                    if (applied > 0m)
+                        result = result.WithVerifiedInternalOffset(applied);
+                }
+            }
+            return result;
         }
         catch (Exception ex) when (ex is InvalidDataException or
             InvalidOperationException or ArgumentException or OverflowException)

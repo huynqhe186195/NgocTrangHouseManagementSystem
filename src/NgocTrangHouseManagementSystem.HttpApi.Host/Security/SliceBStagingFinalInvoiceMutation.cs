@@ -1651,9 +1651,32 @@ public sealed class SliceBStagingFinalInvoiceMutation
                     AddValue(query,"contract",contractId);
                     failed = Convert.ToInt64(await query.ExecuteScalarAsync());
                 }
-                var verified = await db.DepositRefundBankReviews.AsNoTracking()
-                    .AnyAsync(x => x.ContractId == contractId &&
-                        x.MoveOutRequestId == requestId);
+                // A historical review alone is not proof of an authorized
+                // refund. Only the matching Owner instruction, amount and
+                // payment timestamp may yield RefundVerified.
+                bool verified;
+                await using (var check = Command(db, """
+                    SELECT EXISTS(
+                      SELECT 1
+                        FROM "BuildingManagementContractDepositRefundBankReviews" r
+                        JOIN "BuildingManagementContractDepositRefundInstructions" i
+                          ON i."ContractId"=r."ContractId"
+                         AND i."MoveOutRequestId"=r."MoveOutRequestId"
+                         AND i."DecisionId"=r."DepositDecisionId"
+                       WHERE r."ContractId"=@contract
+                         AND r."MoveOutRequestId"=@request
+                         AND r."DepositDecisionId"=@decision
+                         AND r."VerifiedRefundAmountVnd"=@amount
+                         AND i."ApprovedRefundAmountVnd"=@amount
+                         AND r."PaidAtUtc">=i."ApprovedAtUtc")
+                    """))
+                {
+                    AddValue(check,"contract",contractId);
+                    AddValue(check,"request",requestId);
+                    AddValue(check,"decision",decision.Id);
+                    AddValue(check,"amount",decision.ApprovedRefundAmount);
+                    verified = await check.ExecuteScalarAsync() is true;
+                }
                 var today = DateOnly.FromDateTime(
                     TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow,
                         TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh")));

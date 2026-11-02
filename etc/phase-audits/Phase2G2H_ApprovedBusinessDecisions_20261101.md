@@ -97,7 +97,15 @@ manual payout process** without pretending an external bank integration exists.
    official corrective evidence is handled through the existing immutable
    invoice-adjustment process. No unsafe automatic allocation within an
    underfunded shared E/W priority tier is authorized.
-6. **Scope and environment:** staging-only, isolated disposable PostgreSQL.
+6. **Partial same-priority debt:** when the remaining held deposit
+   cannot fully fund multiple electricity/water (or other same-rank)
+   claims, the root Owner must explicitly sign each claim ID and exact
+   whole-VND amount. The signed allocation must cover **every** claim
+   in the underfunded rank, apply exactly the remaining held amount,
+   remain within each approved debt, and cannot alter higher-priority
+   allocations. Without this explicit per-claim split, deny posting.
+   The split is frozen inside the immutable Owner approval JSON/SHA.
+7. **Scope and environment:** staging-only, isolated disposable PostgreSQL.
    No bank API verification, bank transfer execution, production deployment,
    feature switch, production migration or live transaction is authorized.
    This settles D04/D07 only for *ordinary Phase 2G.4 manual refunds*;

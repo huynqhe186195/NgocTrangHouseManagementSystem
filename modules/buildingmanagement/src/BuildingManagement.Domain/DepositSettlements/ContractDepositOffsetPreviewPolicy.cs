@@ -20,7 +20,8 @@ public static class ContractDepositOffsetPreviewPolicy
         Guid ownerApprovalId,
         bool ownerApprovalVerified,
         string? signedPolicyReference,
-        IReadOnlyCollection<ContractDepositOffsetClaim>? verifiedClaims)
+        IReadOnlyCollection<ContractDepositOffsetClaim>? verifiedClaims,
+        IReadOnlyCollection<ContractDepositOwnerTierAllocation>? ownerTierAllocations = null)
     {
         var blockers = new List<string>();
         if (contractId == Guid.Empty || ownerApprovalId == Guid.Empty ||
@@ -86,6 +87,16 @@ public static class ContractDepositOffsetPreviewPolicy
             .OrderBy(x => Priority(x.Category))
             .ThenBy(x => x.ClaimId)
             .ToArray();
+        var ownerSplit = ownerTierAllocations?.ToArray()
+            ?? Array.Empty<ContractDepositOwnerTierAllocation>();
+        if (ownerSplit.Any(x => x.ClaimId == Guid.Empty ||
+                x.ApprovedAppliedVnd < 0m ||
+                !WholeVnd(x.ApprovedAppliedVnd)) ||
+            ownerSplit.Select(x => x.ClaimId).Distinct().Count() != ownerSplit.Length)
+            return Denied(verifiedHeldVnd,
+                new[] { "InvalidOwnerSignedTierSplit" });
+        var splitByClaim = ownerSplit.ToDictionary(x => x.ClaimId);
+        int? splitPriority = null;
         // The owner approved rent -> (electricity and water) -> service
         // -> damage, but NOT precedence among multiple claims at the same
         // rank. If insufficient cash would split one rank, never select a
@@ -95,17 +106,32 @@ public static class ContractDepositOffsetPreviewPolicy
         {
             var required = tier.Sum(x => x.OutstandingVnd);
             if (available > 0m && available < required && tier.Count() > 1)
-                return Denied(verifiedHeldVnd,
-                    new[] { "PartialPriorityTierRequiresAllocationRule" });
+            {
+                var items = tier.ToArray();
+                if (ownerSplit.Length != items.Length ||
+                    items.Any(x => !splitByClaim.TryGetValue(x.ClaimId, out var split) ||
+                        split.ApprovedAppliedVnd > x.OutstandingVnd) ||
+                    ownerSplit.Sum(x => x.ApprovedAppliedVnd) != available)
+                    return Denied(verifiedHeldVnd,
+                        new[] { "PartialPriorityTierRequiresAllocationRule" });
+                splitPriority = tier.Key;
+                break;
+            }
             available = Math.Max(0m, available - required);
         }
+
+        if (splitPriority is null && ownerSplit.Length > 0)
+            return Denied(verifiedHeldVnd,
+                new[] { "UnexpectedOwnerTierSplit" });
 
         var remaining = verifiedHeldVnd;
         var allocations = new List<ContractDepositOffsetPreviewLine>(ordered.Length);
         decimal unpaid = 0m;
         foreach (var claim in ordered)
         {
-            var applied = Math.Min(remaining, claim.OutstandingVnd);
+            var applied = splitPriority == Priority(claim.Category)
+                ? splitByClaim[claim.ClaimId].ApprovedAppliedVnd
+                : Math.Min(remaining, claim.OutstandingVnd);
             remaining -= applied;
             var stillDue = claim.OutstandingVnd - applied;
             unpaid += stillDue;
@@ -166,6 +192,14 @@ public sealed record ContractDepositOffsetClaim(
     string? SignedEvidenceReference,
     string? DamageReason = null,
     string? DamageEvidenceReference = null);
+
+/// <summary>
+    /// Exact Owner-signed per-claim VND allocation ONLY for an underfunded
+    /// equal-priority tier (e.g. electricity versus water). This cannot
+    /// modify verified original debt or re-order higher-priority charges.
+    /// </summary>
+public sealed record ContractDepositOwnerTierAllocation(Guid ClaimId,
+    decimal ApprovedAppliedVnd);
 
 public sealed record ContractDepositOffsetPreviewLine(
     Guid ClaimId,

@@ -2592,7 +2592,11 @@ public sealed class SliceBStagingFinalInvoiceMutation
                         older.IndependentReviewReference !=
                             approvedReview.SignedReviewReference ||
                         older.SignedPolicyReference !=
-                            input.SignedPolicyReference.Trim())
+                            input.SignedPolicyReference.Trim() ||
+                        !older.ReadOwnerTierAllocations().OrderBy(x => x.ClaimId)
+                            .SequenceEqual((input.OwnerTierAllocations ??
+                                Array.Empty<ContractDepositOwnerTierAllocation>())
+                                .OrderBy(x => x.ClaimId)))
                         throw Denied();
                     try {
                         older.RequireCurrentEvidence(contractId,requestId,
@@ -2615,7 +2619,8 @@ public sealed class SliceBStagingFinalInvoiceMutation
                         approvedReview.ReviewedByUserId,DateTime.UtcNow,held,
                         input.SignedPolicyReference,
                         approvedReview.SignedReviewReference,
-                        current.OfficialUnpaidMonthlyClaims);
+                        current.OfficialUnpaidMonthlyClaims,
+                        input.OwnerTierAllocations);
                 }
                 catch (Exception ex) when (ex is InvalidOperationException or
                     InvalidDataException or ArgumentException or OverflowException)
@@ -3512,7 +3517,8 @@ public sealed record SliceBOffsetDebtReviewInput(
     string SignedReviewReference, DateOnly? AsOfDate);
 
 public sealed record SliceBOwnerDebtOffsetApprovalInput(
-    string SignedPolicyReference);
+    string SignedPolicyReference,
+    IReadOnlyList<ContractDepositOwnerTierAllocation>? OwnerTierAllocations = null);
 
 public sealed record SliceBOffsetDebtReviewRead(
     Guid ReviewId, Guid MoveOutRequestId,

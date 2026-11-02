@@ -44,7 +44,8 @@ public sealed class ContractDepositDebtOffsetApprovalRecord : Entity<Guid>
         Guid ownerId, Guid independentDebtReviewerId, DateTime approvedAtUtc,
         decimal verifiedHeld, string? policyReference,
         string? independentReviewReference,
-        IReadOnlyCollection<ContractDepositOffsetClaim>? verifiedClaims)
+        IReadOnlyCollection<ContractDepositOffsetClaim>? verifiedClaims,
+        IReadOnlyCollection<ContractDepositOwnerTierAllocation>? ownerTierAllocations = null)
     {
         if (id == Guid.Empty || contractId == Guid.Empty ||
             moveOutRequestId == Guid.Empty || buildingId == Guid.Empty ||
@@ -57,8 +58,10 @@ public sealed class ContractDepositDebtOffsetApprovalRecord : Entity<Guid>
                 "An independent reviewed debt set and authenticated Owner approval are required.");
 
         var snapshot = verifiedClaims.ToArray();
+        var ownerSplit = ownerTierAllocations?.OrderBy(x => x.ClaimId).ToArray()
+            ?? Array.Empty<ContractDepositOwnerTierAllocation>();
         var review = ContractDepositOffsetPreviewPolicy.Assess(
-            verifiedHeld, contractId, id, true, policyReference, snapshot);
+            verifiedHeld, contractId, id, true, policyReference, snapshot, ownerSplit);
         if (!review.IsEvidenceCompleteForPreview ||
             review.ProposedAllocations.Count != snapshot.Length ||
             review.ProposedRefundableVnd is not decimal heldAfter ||
@@ -89,6 +92,7 @@ public sealed class ContractDepositDebtOffsetApprovalRecord : Entity<Guid>
             SignedPolicyReference = policyReference!.Trim(),
             IndependentReviewReference = independentReviewReference!.Trim(),
             Claims = canonical,
+            OwnerTierAllocations = ownerSplit,
             ApprovedLines = review.ProposedAllocations
         });
         if (proof.Length is < 100 or > 1000000)
@@ -157,9 +161,14 @@ public sealed class ContractDepositDebtOffsetApprovalRecord : Entity<Guid>
             var claims = JsonSerializer.Deserialize<ContractDepositOffsetClaim[]>(
                 root.GetProperty("Claims").GetRawText()) ??
                 throw new InvalidDataException("Missing signed claim list.");
+            var ownerSplit = root.TryGetProperty("OwnerTierAllocations", out var splits)
+                ? JsonSerializer.Deserialize<ContractDepositOwnerTierAllocation[]>(
+                    splits.GetRawText()) ?? throw new InvalidDataException(
+                        "Invalid signed owner tier allocation.")
+                : Array.Empty<ContractDepositOwnerTierAllocation>();
             var expected = ContractDepositOffsetPreviewPolicy.Assess(
                 VerifiedHeldAmount, ContractId, Id, true,
-                SignedPolicyReference, claims);
+                SignedPolicyReference, claims, ownerSplit);
             if (!expected.IsEvidenceCompleteForPreview ||
                 expected.ProposedRefundableVnd != ExpectedRemainingDeposit ||
                 expected.ProposedUncoveredDebtVnd != ExpectedUncoveredDebt ||
@@ -182,6 +191,17 @@ public sealed class ContractDepositDebtOffsetApprovalRecord : Entity<Guid>
             throw new InvalidDataException(
                 "Owner debt offset approval JSON is invalid or unbalanced.", ex);
         }
+    }
+
+    public IReadOnlyList<ContractDepositOwnerTierAllocation> ReadOwnerTierAllocations()
+    {
+        VerifyStoredApproval();
+        using var doc = JsonDocument.Parse(ApprovalJson);
+        if (!doc.RootElement.TryGetProperty("OwnerTierAllocations", out var split))
+            return Array.Empty<ContractDepositOwnerTierAllocation>();
+        return Array.AsReadOnly(
+            JsonSerializer.Deserialize<ContractDepositOwnerTierAllocation[]>(
+                split.GetRawText()) ?? Array.Empty<ContractDepositOwnerTierAllocation>());
     }
 
     public void RequireCurrentEvidence(

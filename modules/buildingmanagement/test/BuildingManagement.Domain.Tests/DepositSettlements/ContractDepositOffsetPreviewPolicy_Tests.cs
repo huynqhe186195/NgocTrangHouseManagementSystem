@@ -187,6 +187,57 @@ public sealed class ContractDepositOffsetPreviewPolicy_Tests
     }
 
     [Fact]
+    public void DEP_POL15_Explicit_Owner_Split_Can_Allocate_Underfunded_Utility_Tier()
+    {
+        var claims = new[]
+        {
+            Claim(1, ContractDepositOffsetCategory.UnpaidRent, 50m),
+            Claim(2, ContractDepositOffsetCategory.Electricity, 90m),
+            Claim(3, ContractDepositOffsetCategory.Water, 90m)
+        };
+        var policy = ContractDepositOffsetPreviewPolicy.Assess(
+            130m, Contract, Approval, true, "OWNER-SIGNED-TIER-POLICY-001",
+            claims, new[]
+            {
+                new ContractDepositOwnerTierAllocation(claims[2].ClaimId, 50m),
+                new ContractDepositOwnerTierAllocation(claims[1].ClaimId, 30m)
+            });
+        Assert.True(policy.IsEvidenceCompleteForPreview);
+        Assert.Equal(new[] {50m,30m,50m},
+            policy.ProposedAllocations.Select(x => x.ProposedAppliedVnd));
+        Assert.Equal(0m, policy.ProposedRefundableVnd);
+        Assert.Equal(100m, policy.ProposedUncoveredDebtVnd);
+    }
+
+    [Fact]
+    public void DEP_POL16_Split_Must_Balance_And_Only_Contain_Exactly_Funded_Tier()
+    {
+        var claims = new[]
+        {
+            Claim(2, ContractDepositOffsetCategory.Electricity, 90m),
+            Claim(3, ContractDepositOffsetCategory.Water, 90m)
+        };
+        ContractDepositOffsetPreview PreviewSplit(
+            ContractDepositOwnerTierAllocation[] splits) =>
+            ContractDepositOffsetPreviewPolicy.Assess(100m,Contract,Approval,
+                true,"OWNER-SIGNED-TIER-POLICY-001",claims,splits);
+        Assert.Contains("PartialPriorityTierRequiresAllocationRule",
+            PreviewSplit(new [] {
+                new ContractDepositOwnerTierAllocation(claims[0].ClaimId, 90m),
+                new ContractDepositOwnerTierAllocation(claims[1].ClaimId, 20m)
+            }).Blockers);
+        Assert.Contains("PartialPriorityTierRequiresAllocationRule",
+            PreviewSplit(new [] {
+                new ContractDepositOwnerTierAllocation(claims[0].ClaimId, 50m),
+                new ContractDepositOwnerTierAllocation(Guid.NewGuid(), 50m)
+            }).Blockers);
+        Assert.Contains("InvalidOwnerSignedTierSplit",
+            PreviewSplit(new [] {
+                new ContractDepositOwnerTierAllocation(claims[0].ClaimId, -1m)
+            }).Blockers);
+    }
+
+    [Fact]
     public void DEP_POL14_One_Partially_Funded_Claim_Is_Unambiguous()
     {
         var a = Preview(100m,

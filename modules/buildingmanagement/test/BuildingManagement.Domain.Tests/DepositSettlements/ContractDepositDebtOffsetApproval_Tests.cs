@@ -104,6 +104,34 @@ public sealed class ContractDepositDebtOffsetApproval_Tests
     }
 
     [Fact]
+    public void DEP_AUTH09_Owner_Signed_Partial_Tier_Persists_Exact_Individual_Lines()
+    {
+        var claims = new[]
+        {
+            Claim(1, ContractDepositOffsetCategory.UnpaidRent, 50_000m),
+            Claim(2, ContractDepositOffsetCategory.Electricity, 90_000m),
+            Claim(3, ContractDepositOffsetCategory.Water, 90_000m)
+        };
+        var split = new[]
+        {
+            new ContractDepositOwnerTierAllocation(claims[1].ClaimId, 30_000m),
+            new ContractDepositOwnerTierAllocation(claims[2].ClaimId, 50_000m)
+        };
+        var approval = ContractDepositDebtOffsetApprovalRecord.Approve(
+            Guid.NewGuid(), Contract, Request, Building, Owner, Reviewer, When,
+            130_000m, "OWNER-SIGNED-EW-SPLIT-POLICY-0001",
+            "SIGNED-INDEPENDENT-DEBT-RECONCILIATION-001",claims,split);
+        approval.VerifyStoredApproval();
+        approval.RequireCurrentEvidence(Contract,Request,Building,
+            130_000m,claims.Reverse().ToArray());
+        Assert.Equal(130_000m,approval.ApprovedOffsetAmount);
+        Assert.Equal(100_000m,approval.ExpectedUncoveredDebt);
+        Assert.Equal(split,approval.ReadOwnerTierAllocations()
+            .OrderBy(x => x.ClaimId).ToArray());
+        Assert.False(approval.IsBankRefundCompleted);
+    }
+
+    [Fact]
     public void DEP_AUTH07_Any_Changed_Official_Balance_Invalidates_Signoff()
     {
         var claims = new[] { Claim(1,

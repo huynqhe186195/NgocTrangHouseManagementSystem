@@ -87,7 +87,7 @@ public sealed class Phase2G4RefundHolidaySnapshotAndSlaAnchor : Migration
           FOR holiday_text IN SELECT jsonb_array_elements_text(
               NEW."StatutoryHolidaysJson"::jsonb)
           LOOP
-            IF holiday_text !~ '^\\d{4}-\\d{2}-\\d{2}$' OR
+            IF holiday_text !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' OR
                holiday_text::date < start_day OR
                holiday_text::date > start_day + 30
             THEN

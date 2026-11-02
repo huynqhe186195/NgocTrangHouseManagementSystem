@@ -3611,6 +3611,23 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             var sameDestination = await PostFinalAsync(
                 clientRoot, destinationRoute, destinationBody);
             Assert.Equal(approvedDestination.Body, sameDestination.Body);
+            // The reference alone is insufficient. Changing the signed
+            // statutory holiday dates must not be an idempotent replay.
+            var changedHoliday = DateOnly.FromDateTime(
+                TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow,
+                    TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh")))
+                .AddDays(1);
+            var changedCalendar = await PostFinalAsync(
+                clientRoot, destinationRoute, JsonSerializer.Serialize(new {
+                    beneficiaryName = "Nguyen Van A",
+                    bankName = "Isolated Test Bank",
+                    accountNumber = "123456789012",
+                    signedDestinationReference = "SIGNED-BENEFICIARY-APPROVAL-0001",
+                    holidayCalendarReference = "SIGNED-VIETNAM-HOLIDAYS-2026",
+                    statutoryHolidays = new [] { changedHoliday.ToString("yyyy-MM-dd") }
+                }));
+            Assert.Equal(HttpStatusCode.Forbidden, changedCalendar.Status);
+
             var conflictingDestination = await PostFinalAsync(
                 clientRoot, destinationRoute, JsonSerializer.Serialize(new {
                     beneficiaryName = "Different Recipient",

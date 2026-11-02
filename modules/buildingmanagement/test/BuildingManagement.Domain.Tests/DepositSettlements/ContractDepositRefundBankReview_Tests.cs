@@ -14,14 +14,14 @@ public sealed class ContractDepositRefundBankReview_Tests
     private static readonly DateTime Reviewed = Paid.AddHours(1);
 
     private static ContractDepositSettlementDecisionRecord Decision(
-        decimal damage = 250_000m) =>
+        decimal damage = 250_000m, decimal offset = 400_000m) =>
         ContractDepositSettlementDecisionRecord.Approve(
             Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
             Guid.NewGuid(), Guid.NewGuid(), Approved, Issued,
             3_000_000m, 0m, damage,
             damage == 0m ? null : "Cracked window in room 203",
             damage == 0m ? null : "PHOTO-SIGNED-DAMAGE-REPORT-203",
-            "SIGNED-DEPOSIT-POLICY-001", 400_000m);
+            "SIGNED-DEPOSIT-POLICY-001", offset);
 
     private static ContractDepositRefundBankReviewRecord Review(
         ContractDepositSettlementDecisionRecord d, Guid? reviewer = null,
@@ -152,5 +152,26 @@ public sealed class ContractDepositRefundBankReview_Tests
             .SetValue(review, forgedHash);
 
         Assert.Throws<InvalidDataException>(() => review.Verify(decision));
+    }
+
+    [Fact]
+    public void OI04REF10_Full_Deposit_Refund_Also_Requires_Independent_Bank_Review()
+    {
+        var decision = Decision(damage: 0m, offset: 0m);
+        Assert.Equal(3_000_000m, decision.ApprovedRefundAmount);
+        var review = Review(decision);
+        review.RequireForCloseout(decision, decision.ApprovedByUserId,
+            Paid, review.BankTransactionReference,
+            review.BankStatementEvidenceReference);
+        Assert.False(review.IsBankApiVerified);
+    }
+
+    [Fact]
+    public void OI04REF11_Unrelated_Manual_Refund_Cannot_Replay_Another_Decision()
+    {
+        var zeroOffset = Decision(damage: 0m, offset: 0m);
+        var other = Decision(damage: 0m, offset: 0m);
+        var bank = Review(zeroOffset);
+        Assert.Throws<InvalidDataException>(() => bank.Verify(other));
     }
 }

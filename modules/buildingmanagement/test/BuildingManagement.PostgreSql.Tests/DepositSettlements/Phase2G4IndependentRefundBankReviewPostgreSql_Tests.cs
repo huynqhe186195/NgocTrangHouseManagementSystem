@@ -23,6 +23,12 @@ public sealed class Phase2G4IndependentRefundBankReviewPostgreSql_Tests
     private static readonly string IntegrityDown = Assert.Single(
         new Phase2G4RefundBankReviewPayloadIntegrity().DownOperations
             .OfType<SqlOperation>()).Sql;
+    private static readonly string AllRefundUp = Assert.Single(
+        new Phase2G4RequireBankReviewForAllRefunds().UpOperations
+            .OfType<SqlOperation>()).Sql;
+    private static readonly string AllRefundDown = Assert.Single(
+        new Phase2G4RequireBankReviewForAllRefunds().DownOperations
+            .OfType<SqlOperation>()).Sql;
     private const string Tables = """
         CREATE TABLE "BuildingManagementContracts" ("Id" uuid PRIMARY KEY);
         CREATE TABLE "BuildingManagementMoveOutRequests" ("Id" uuid PRIMARY KEY);
@@ -66,6 +72,7 @@ public sealed class Phase2G4IndependentRefundBankReviewPostgreSql_Tests
                 UPDATE "BuildingManagementContractDepositRefundBankReviews"
                  SET "VerifiedRefundAmountVnd"=2700000 WHERE "Id"='{bankReview:D}';
                 ""","23514");
+            await Denied(db,tx,AllRefundDown,"23514");
             await Denied(db,tx,IntegrityDown,"23514");
             await Denied(db,tx,Down,"23514");
         });
@@ -92,10 +99,12 @@ public sealed class Phase2G4IndependentRefundBankReviewPostgreSql_Tests
     {
         await Scratch(async (db,tx,_,_,_,_,_) =>
         {
+            await Run(db,tx,AllRefundDown);
             await Run(db,tx,IntegrityDown);
             await Run(db,tx,Down);
             await Run(db,tx,Up);
             await Run(db,tx,IntegrityUp);
+            await Run(db,tx,AllRefundUp);
         });
     }
 
@@ -124,6 +133,55 @@ public sealed class Phase2G4IndependentRefundBankReviewPostgreSql_Tests
             await Denied(db,tx,Review(Guid.NewGuid(),contract,request,
                 decision,reviewer,2_350_000m,
                 reuseStatementAsSignature:true),"23514");
+        });
+    }
+
+
+    [Fact]
+    public async Task OI04REFSQL06_NoOffset_FullRefund_Needs_Independent_Bank_Statement()
+    {
+        await Scratch(async (db,tx,contract,request,owner,reviewer,decision) =>
+        {
+            await Run(db,tx,$"""
+                DELETE FROM "BuildingManagementContractDepositDebtOffsetPostings"
+                 WHERE "ContractId"='{contract:D}';
+                UPDATE "BuildingManagementContractDepositSettlementDecisions"
+                   SET "ApprovedDebtOffsetAmount"=0,
+                       "ApprovedRefundAmount"=3000000
+                 WHERE "Id"='{decision:D}';
+                """);
+            var settlement=Guid.NewGuid();
+            await Run(db,tx,$"""
+                INSERT INTO "BuildingManagementDepositSettlements" VALUES
+                 ('{settlement:D}','MANUAL BANK REF BANK-REFUND-TRACE-0001 / BANK-STATEMENT-0001');
+                """);
+            await Denied(db,tx,
+                Closeout(contract,request,owner,settlement,0m,3000000m),"23514");
+            await Run(db,tx,Review(Guid.NewGuid(),contract,request,
+                decision,reviewer,3000000m));
+            await Run(db,tx,
+                Closeout(contract,request,owner,settlement,0m,3000000m));
+            await Denied(db,tx,AllRefundDown,"23514");
+        });
+    }
+
+    [Fact]
+    public async Task OI04REFSQL07_NoOffset_Review_Does_Not_Allow_Another_Amount()
+    {
+        await Scratch(async (db,tx,contract,request,_,reviewer,decision) =>
+        {
+            await Run(db,tx,$"""
+                DELETE FROM "BuildingManagementContractDepositDebtOffsetPostings"
+                 WHERE "ContractId"='{contract:D}';
+                UPDATE "BuildingManagementContractDepositSettlementDecisions"
+                   SET "ApprovedDebtOffsetAmount"=0,
+                       "ApprovedRefundAmount"=3000000
+                 WHERE "Id"='{decision:D}';
+                """);
+            await Denied(db,tx,Review(Guid.NewGuid(),contract,request,
+                decision,reviewer,2350000m),"23514");
+            await Run(db,tx,Review(Guid.NewGuid(),contract,request,
+                decision,reviewer,3000000m));
         });
     }
 
@@ -168,13 +226,14 @@ public sealed class Phase2G4IndependentRefundBankReviewPostgreSql_Tests
     }
 
     private static string Closeout(Guid contract,Guid request,Guid owner,
-        Guid settlement) => $"""
+        Guid settlement, decimal offset = 400000m,
+        decimal refund = 2350000m) => $"""
         INSERT INTO "BuildingManagementContractDepositCloseoutApprovals"
           ("Id","ContractId","MoveOutRequestId","ApprovedDebtOffsetAmount",
            "ApprovedRefundAmount","ApprovedByUserId",
            "RefundTransactionReference","RefundPaidAtUtc","RefundSettlementId")
         VALUES ('{Guid.NewGuid():D}','{contract:D}','{request:D}',
-          400000,2350000,'{owner:D}','BANK-REFUND-TRACE-0001',
+          {offset},{refund},'{owner:D}','BANK-REFUND-TRACE-0001',
           '2026-11-01T11:00:00Z','{settlement:D}')
         """;
 
@@ -199,6 +258,7 @@ public sealed class Phase2G4IndependentRefundBankReviewPostgreSql_Tests
             await Run(db,tx,Tables);
             await Run(db,tx,Up);
             await Run(db,tx,IntegrityUp);
+            await Run(db,tx,AllRefundUp);
             await Run(db,tx,$"""
                 INSERT INTO "BuildingManagementContracts" VALUES ('{contract:D}');
                 INSERT INTO "BuildingManagementMoveOutRequests" VALUES ('{request:D}');

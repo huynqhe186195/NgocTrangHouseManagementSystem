@@ -3651,6 +3651,46 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 }));
             Assert.Equal(HttpStatusCode.Forbidden, backdatedRefund.Status);
 
+            var refundBankPaidAt = DateTime.UtcNow;
+            refundBankPaidAt = refundBankPaidAt.AddTicks(
+                -(refundBankPaidAt.Ticks % 10L));
+            var refundReviewRoute = financeRoot + "/move-outs/" +
+                financeMoveOut.ToString("D") +
+                "/deposit-settlement/refund-bank-review";
+            var fullRefundReviewBody = JsonSerializer.Serialize(new {
+                paidAtUtc = refundBankPaidAt,
+                transactionReference = "SCRATCH-MANUAL-REFUND-0001",
+                bankStatementEvidenceReference = "SCRATCH-REFUND-SIGNED-PROOF-0001",
+                signedIndependentReviewReference =
+                    "SIGNED-INDEPENDENT-REFUND-REVIEW-0001"
+            });
+            var selfReviewed = await PostFinalAsync(
+                clientRoot, refundReviewRoute, fullRefundReviewBody);
+            Assert.Equal(HttpStatusCode.Forbidden, selfReviewed.Status);
+            var notReviewedYet = await PostFinalAsync(
+                clientRoot,
+                financeRoot + "/move-outs/" + financeMoveOut.ToString("D") +
+                    "/complete",
+                JsonSerializer.Serialize(new {
+                    forfeitAmount = 0m,
+                    inspectionEvidenceReference = "SCRATCH-SIGNED-INSPECTION-0001",
+                    handoverEvidenceReference = "SCRATCH-SIGNED-HANDOVER-0001",
+                    depositPolicyReference = "SCRATCH-CONTRACT-DEPOSIT-POLICY-2026",
+                    confirmManualRefundPaid = true,
+                    refundPaidAtUtc = refundBankPaidAt,
+                    refundTransactionReference = "SCRATCH-MANUAL-REFUND-0001",
+                    refundBankEvidenceReference = "SCRATCH-REFUND-SIGNED-PROOF-0001"
+                }));
+            Assert.Equal(HttpStatusCode.Forbidden, notReviewedYet.Status);
+            var reviewed = await PostFinalAsync(
+                clientB, refundReviewRoute, fullRefundReviewBody);
+            Assert.True(reviewed.Status is HttpStatusCode.OK or
+                HttpStatusCode.Created,
+                $"Independent full-refund review: {reviewed.Status} {reviewed.Body}");
+            var replayedReview = await PostFinalAsync(
+                clientB, refundReviewRoute, fullRefundReviewBody);
+            Assert.Equal(reviewed.Body, replayedReview.Body);
+
             using var closeout = await PostValidFinanceAsync(
                 clientRoot,
                 financeRoot + "/move-outs/" + financeMoveOut.ToString("D") +
@@ -3661,7 +3701,7 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     handoverEvidenceReference = "SCRATCH-SIGNED-HANDOVER-0001",
                     depositPolicyReference = "SCRATCH-CONTRACT-DEPOSIT-POLICY-2026",
                     confirmManualRefundPaid = true,
-                    refundPaidAtUtc = DateTime.UtcNow,
+                    refundPaidAtUtc = refundBankPaidAt,
                     refundTransactionReference = "SCRATCH-MANUAL-REFUND-0001",
                     refundBankEvidenceReference = "SCRATCH-REFUND-SIGNED-PROOF-0001"
                 });

@@ -9,7 +9,7 @@ using Volo.Abp.Domain.Entities;
 namespace BuildingManagement.DepositSettlements;
 
 /// <summary>
-/// Two-person review of an EXTERNALLY EXECUTED manual refund. This does
+/// Two-person review of ANY EXTERNALLY EXECUTED manual refund. This does
 /// not initiate bank transfers, query a bank API, or claim automatic bank
 /// verification. The reviewer attests a concrete bank statement reference
 /// independently of the root Owner who approved the final disposition.
@@ -47,7 +47,6 @@ public sealed class ContractDepositRefundBankReviewRecord : Entity<Guid>
         var signature = signedReviewReference?.Trim() ?? string.Empty;
         if (id == Guid.Empty || reviewerId == Guid.Empty ||
             reviewerId == decision.ApprovedByUserId ||
-            decision.ApprovedDebtOffsetAmount <= 0m ||
             decision.ApprovedRefundAmount <= 0m ||
             reviewedAtUtc.Kind != DateTimeKind.Utc ||
             paidAtUtc.Kind != DateTimeKind.Utc ||
@@ -108,7 +107,6 @@ public sealed class ContractDepositRefundBankReviewRecord : Entity<Guid>
             BuildingId != decision.BuildingId ||
             ReviewedByUserId == Guid.Empty ||
             ReviewedByUserId == decision.ApprovedByUserId ||
-            decision.ApprovedDebtOffsetAmount <= 0m ||
             VerifiedRefundAmountVnd != decision.ApprovedRefundAmount ||
             VerifiedRefundAmountVnd <= 0m ||
             ReviewedAtUtc.Kind != DateTimeKind.Utc ||

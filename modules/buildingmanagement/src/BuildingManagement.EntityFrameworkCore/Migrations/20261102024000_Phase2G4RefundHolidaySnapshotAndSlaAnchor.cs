@@ -26,7 +26,7 @@ public sealed class Phase2G4RefundHolidaySnapshotAndSlaAnchor : Migration
               'Existing refund instructions lack a frozen holiday set; reconcile before migration'
               USING ERRCODE='23514';
           END IF;
-        END $guard$;
+        END; $guard$;
 
         ALTER TABLE "BuildingManagementContractDepositRefundInstructions"
           ADD COLUMN "StatutoryHolidaysJson" text NOT NULL;
@@ -126,7 +126,7 @@ public sealed class Phase2G4RefundHolidaySnapshotAndSlaAnchor : Migration
           END IF;
 
           RETURN NEW;
-        END $sla$;
+        END; $sla$;
 
         CREATE TRIGGER "TR_BM_VerifyRefundHolidaySnapshotSla"
           BEFORE INSERT ON "BuildingManagementContractDepositRefundInstructions"
@@ -145,7 +145,7 @@ public sealed class Phase2G4RefundHolidaySnapshotAndSlaAnchor : Migration
               'Cannot discard signed holiday snapshots with existing refund history'
               USING ERRCODE='23514';
           END IF;
-        END $rollback$;
+        END; $rollback$;
 
         DROP TRIGGER "TR_BM_VerifyRefundHolidaySnapshotSla"
           ON "BuildingManagementContractDepositRefundInstructions";

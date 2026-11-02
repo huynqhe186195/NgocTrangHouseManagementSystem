@@ -41,6 +41,12 @@ public sealed class Phase2G4IndependentRefundBankReviewPostgreSql_Tests
     private static readonly string GlobalBankDown = Assert.Single(
         new Phase2G4GlobalBankEvidenceReferenceClaims().DownOperations
             .OfType<SqlOperation>()).Sql;
+    private static readonly string OpsUp = Assert.Single(
+        new Phase2G4RefundInstructionsAndFailedTransfers().UpOperations
+            .OfType<SqlOperation>()).Sql;
+    private static readonly string OpsDown = Assert.Single(
+        new Phase2G4RefundInstructionsAndFailedTransfers().DownOperations
+            .OfType<SqlOperation>()).Sql;
     private const string Tables = """
         CREATE TABLE "BuildingManagementContracts" ("Id" uuid PRIMARY KEY);
         CREATE TABLE "BuildingManagementMoveOutRequests" ("Id" uuid PRIMARY KEY);
@@ -86,6 +92,7 @@ public sealed class Phase2G4IndependentRefundBankReviewPostgreSql_Tests
                 UPDATE "BuildingManagementContractDepositRefundBankReviews"
                  SET "VerifiedRefundAmountVnd"=2700000 WHERE "Id"='{bankReview:D}';
                 ""","23514");
+            await Denied(db,tx,OpsDown,"23514");
             await Denied(db,tx,GlobalBankDown,"23514");
             await Denied(db,tx,WallClockDown,"23514");
             await Denied(db,tx,AllRefundDown,"23514");
@@ -106,7 +113,7 @@ public sealed class Phase2G4IndependentRefundBankReviewPostgreSql_Tests
             await Run(db,tx,Review(Guid.NewGuid(),contract,request,
                 decision,reviewer,2_350_000m));
             await Denied(db,tx,Review(Guid.NewGuid(),contract,request,
-                decision,reviewer,2_350_000m),"23505");
+                decision,reviewer,2_350_000m),"23514");
         });
     }
 
@@ -115,6 +122,7 @@ public sealed class Phase2G4IndependentRefundBankReviewPostgreSql_Tests
     {
         await Scratch(async (db,tx,_,_,_,_,_) =>
         {
+            await Run(db,tx,OpsDown);
             await Run(db,tx,GlobalBankDown);
             await Run(db,tx,WallClockDown);
             await Run(db,tx,AllRefundDown);
@@ -125,6 +133,7 @@ public sealed class Phase2G4IndependentRefundBankReviewPostgreSql_Tests
             await Run(db,tx,AllRefundUp);
             await Run(db,tx,WallClockUp);
             await Run(db,tx,GlobalBankUp);
+            await Run(db,tx,OpsUp);
         });
     }
 
@@ -213,6 +222,7 @@ public sealed class Phase2G4IndependentRefundBankReviewPostgreSql_Tests
         {
             // The test transaction began before migrations and fixture
             // inserts. now() is older than this new, genuine review.
+            await Run(db,tx,Instruction(contract,request,decision));
             await Run(db,tx,$"""
                 WITH ts AS (
                   SELECT clock_timestamp() AS reviewed
@@ -303,10 +313,70 @@ public sealed class Phase2G4IndependentRefundBankReviewPostgreSql_Tests
         });
     }
 
+
+    [Fact]
+    public async Task OI04REFSQL15_Refund_Review_Requires_Owner_Destination()
+    {
+        await Scratch(async (db,tx,contract,request,_,reviewer,decision) =>
+        {
+            await Denied(db,tx,Review(Guid.NewGuid(),contract,request,
+                decision,reviewer,2_350_000m,createInstruction:false),"23514");
+        });
+    }
+
+    [Fact]
+    public async Task OI04REFSQL16_Failed_Bank_Reference_Never_Becomes_Paid()
+    {
+        await Scratch(async (db,tx,contract,request,owner,reviewer,decision) =>
+        {
+            await Run(db,tx,Instruction(contract,request,decision));
+            var instructionId=await ScalarGuid(db,tx,$"""
+                SELECT "Id" FROM "BuildingManagementContractDepositRefundInstructions"
+                 WHERE "ContractId"='{contract:D}'
+                """);
+            await Run(db,tx,$"""
+                INSERT INTO "BuildingManagementContractDepositRefundFailedTransfers"
+                  ("Id","InstructionId","ContractId","OwnerId","Reference",
+                   "FailedAtUtc","Reason","BankEvidenceReference")
+                VALUES ('{Guid.NewGuid():D}','{instructionId:D}','{contract:D}',
+                  '{owner:D}','BANK-REFUND-TRACE-0001','2026-11-02T05:00:00Z',
+                  'Bank rejected the attempted transfer','FAILED-BANK-EVIDENCE-0001')
+                """);
+            await Denied(db,tx,Review(Guid.NewGuid(),contract,request,
+                decision,reviewer,2_350_000m),"23514");
+            await Denied(db,tx,OpsDown,"23514");
+        });
+    }
+
+    private static string Instruction(Guid contract,Guid request,Guid decision) => $"""
+        INSERT INTO "BuildingManagementContractDepositRefundInstructions"
+          ("Id","ContractId","MoveOutRequestId","DecisionId","BuildingId",
+           "OwnerId","ApprovedAtUtc","ApprovedRefundAmountVnd","PayeeName",
+           "PayeeBank","PayeeAccount","SignedDestinationReference",
+           "HolidayCalendarReference","DueOn")
+        SELECT '{Guid.NewGuid():D}',d."ContractId",d."MoveOutRequestId",d."Id",
+          d."BuildingId",d."ApprovedByUserId",'2026-11-01T10:30:00Z',
+          d."ApprovedRefundAmount",'Nguyen Van A','Test Bank','123456789012',
+          'OWNER-APPROVED-BENEFICIARY-0001','VIETNAM-SIGNED-HOLIDAY-CALENDAR',
+          '2026-11-11'
+        FROM "BuildingManagementContractDepositSettlementDecisions" d
+        WHERE d."Id"='{decision:D}' AND d."ContractId"='{contract:D}'
+          AND d."MoveOutRequestId"='{request:D}'
+        ON CONFLICT ("ContractId") DO NOTHING;
+        """;
+
+    private static async Task<Guid> ScalarGuid(NpgsqlConnection db,
+        NpgsqlTransaction tx, string sql)
+    {
+        await using var cmd = new NpgsqlCommand(sql,db,tx);
+        return (Guid)(await cmd.ExecuteScalarAsync() ?? Guid.Empty);
+    }
+
     private static string Review(Guid id, Guid contract, Guid request,
         Guid decision, Guid reviewer, decimal amount,
         decimal? archivedAmount = null, bool forgedDigest = false,
-        bool reuseStatementAsSignature = false)
+        bool reuseStatementAsSignature = false,
+        bool createInstruction = true)
     {
         var archived = archivedAmount ?? amount;
         var signed = reuseStatementAsSignature
@@ -315,7 +385,8 @@ public sealed class Phase2G4IndependentRefundBankReviewPostgreSql_Tests
         var digest = forgedDigest
             ? $"'{new string('a', 64)}'"
             : "encode(sha256(convert_to(proof.payload, 'UTF8')), 'hex')";
-        return $"""
+        return (createInstruction
+            ? Instruction(contract,request,decision) : string.Empty) + $"""
             INSERT INTO "BuildingManagementContractDepositRefundBankReviews" (
                 "Id","ContractId","MoveOutRequestId","DepositDecisionId",
                 "BuildingId","ReviewedByUserId","ReviewedAtUtc","PaidAtUtc",
@@ -379,6 +450,7 @@ public sealed class Phase2G4IndependentRefundBankReviewPostgreSql_Tests
             await Run(db,tx,AllRefundUp);
             await Run(db,tx,WallClockUp);
             await Run(db,tx,GlobalBankUp);
+            await Run(db,tx,OpsUp);
             await Run(db,tx,$"""
                 INSERT INTO "BuildingManagementContracts" VALUES ('{contract:D}');
                 INSERT INTO "BuildingManagementMoveOutRequests" VALUES ('{request:D}');

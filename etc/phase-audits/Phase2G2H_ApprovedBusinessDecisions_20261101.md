@@ -61,6 +61,53 @@
 
 **These are refinement gates, not re-openings of H1–H6/OI-01–OI-06.** Once chosen and tested, add versioned policy references. Never hardcode defaults that change tenants' financial obligations.
 
+## Approved Phase 2G.4 operational addendum — 2026-11-02
+
+**Owner acceptance:** the owner explicitly approved the proposed manual-refund,
+recipient, disputed-debt, retry and 7-business-day handling in the 2026-11-02
+project conversation. This addendum resolves the **ordinary 2G.4 move-out
+manual payout process** without pretending an external bank integration exists.
+
+1. **Destination:** root Owner approves the exact beneficiary name, bank,
+   account and signed destination reference before any refund confirmation.
+   The amount is inherited exclusively from the immutable deposit decision;
+   the customer/client never supplies a trusted refund amount.
+2. **Payment evidence:** external manual transfer and bank statement,
+   separate transaction reference and signed independent review are required.
+   The reviewer differs from the approving Owner. A recorded Owner confirmation
+   alone does not equal a completed payment or trigger contract closeout.
+   Duplicate references across incoming receipts, failed attempts and refunds
+   must be blocked at PostgreSQL commit, including direct SQL.
+3. **Deadline:** seven **business days after approved final reconciliation**,
+   counting from the next day. Saturdays/Sundays and statutory holidays
+   supplied in the *signed Vietnam holiday calendar* are excluded; the
+   calendar reference and calculated due date are frozen with the Owner
+   destination instruction. Missing/unapproved holiday schedules are NOT
+   grounds to invent a longer payment deadline.
+4. **Failure/late handling:** record each failed bank attempt with immutable
+   reason, failed timestamp and bank reference. A failed reference must not
+   be reused as proof of an executed refund. Retry uses a **new** transaction
+   reference; overdue/pending/failed are not settled statuses. Reconciliation
+   remains pending until a new distinct independently reviewed transfer exists.
+5. **Dispute:** open a dispute only for an original official receivable,
+   preserve disputed evidence and amount, and deny cấn trừ/deposit closeout
+   while disputed. Owner independently signs an AcceptDebt or RejectDebt
+   resolution. AcceptDebt resumes source reconciliation; RejectDebt does
+   **not** delete or rewrite the issued invoice and remains blocked until
+   official corrective evidence is handled through the existing immutable
+   invoice-adjustment process. No unsafe automatic allocation within an
+   underfunded shared E/W priority tier is authorized.
+6. **Scope and environment:** staging-only, isolated disposable PostgreSQL.
+   No bank API verification, bank transfer execution, production deployment,
+   feature switch, production migration or live transaction is authorized.
+   This settles D04/D07 only for *ordinary Phase 2G.4 manual refunds*;
+   different-contract deposit top-ups, partial transfer and the H4 room-change
+   financial lane remain separate Phase 2H gates.
+
+The implementation must pass real PostgreSQL migration, SQL-bypass, immutable
+history, failure/retry, authenticated HTTP and Full regression on the exact
+commit SHA before declaring 2G.4 staging technical acceptance.
+
 ## Audit baseline and compliance
 
 - Last code commit before this decision: `c12e37031b8ac42a1ca6d2dfc58d3956f16055ab`. Full regression, scratch PostgreSQL including authenticated positive/concurrent 2H HTTP and immutable history, and ABP Identity CI were reported successful **for that SHA**. Do not reuse that PASS claim to certify a later SHA or new business paths.

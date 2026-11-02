@@ -1175,6 +1175,7 @@ public sealed class SliceBStagingFinalInvoiceMutation
                         throw Denied();
                 }
 
+                await RequireNoBlockedDebtDisputeAsync(db, contractId);
                 var depositAudit = await _depositAudit.GetAsync(requestId);
                 if (depositAudit.VerifiedIncomingAllocationTotal is not decimal held ||
                     held <= 0m || held != contract.DepositAmount ||
@@ -1276,6 +1277,344 @@ public sealed class SliceBStagingFinalInvoiceMutation
             decision.ApprovedForfeitAmount, decision.ApprovedRefundAmount,
             decision.ApprovedDebtOffsetAmount, decision.ApprovedAtUtc,
             IsRefundExecuted: refundExecuted, IsAutomaticDebtOffset: false);
+
+
+
+    /// <summary>
+    /// A disputed official receivable is frozen out of deposit offsets.
+    /// No application or client Boolean may certify it as legitimate.
+    /// </summary>
+    public Task<Guid> OpenDepositDebtDisputeAsync(
+        Guid contractId, Guid requestId, SliceBDebtDisputeInput input)
+        => ExecuteScopedAsync(contractId, requireBootstrapOwner: false,
+            async (db, actor, building, roomId) =>
+            {
+                if (input is null || input.PostingId == Guid.Empty ||
+                    !ValidProof(input.Reason) || input.Reason!.Trim().Length < 12 ||
+                    !ValidProof(input.EvidenceReference) ||
+                    input.EvidenceReference!.Trim().Length < 12 ||
+                    db.Database.CurrentTransaction?.GetDbTransaction()
+                        .IsolationLevel != System.Data.IsolationLevel.Serializable)
+                    throw Denied();
+                await LockRequestAsync(db, requestId, contractId, roomId);
+                if (!await db.OfficialInvoiceReceivables.AsNoTracking()
+                    .AnyAsync(x => x.Id == input.PostingId &&
+                        x.ContractId == contractId && x.BuildingId == building) ||
+                    await db.DebtOffsetPostings.AsNoTracking()
+                    .AnyAsync(x => x.ContractId == contractId))
+                    throw Denied();
+                var id = Guid.NewGuid();
+                await using var cmd=Command(db, """
+                    INSERT INTO "BuildingManagementContractDepositDebtDisputes"
+                      ("Id","ContractId","MoveOutRequestId","BuildingId",
+                       "OfficialPostingId","OpenedByUserId","OpenedAtUtc",
+                       "Reason","EvidenceReference")
+                    VALUES (@id,@contract,@request,@building,@posting,
+                            @actor,@at,@reason,@evidence)
+                    RETURNING "Id"
+                    """);
+                AddValue(cmd,"id",id); AddValue(cmd,"contract",contractId);
+                AddValue(cmd,"request",requestId); AddValue(cmd,"building",building);
+                AddValue(cmd,"posting",input.PostingId); AddValue(cmd,"actor",actor);
+                AddValue(cmd,"at",DateTime.UtcNow);
+                AddValue(cmd,"reason",input.Reason.Trim());
+                AddValue(cmd,"evidence",input.EvidenceReference.Trim());
+                return await cmd.ExecuteScalarAsync() is Guid created
+                    ? created : throw Denied();
+            });
+
+    /// <summary>
+    /// Owner accepts an independently supported charge or rejects it.
+    /// Rejection keeps offsets closed until the underlying invoice debt is
+    /// separately corrected; a resolution is not itself a payment.
+    /// </summary>
+    public Task<Guid> ResolveDepositDebtDisputeAsync(
+        Guid contractId, Guid requestId, Guid disputeId,
+        SliceBDebtDisputeResolutionInput input)
+        => ExecuteScopedAsync(contractId, requireBootstrapOwner: true,
+            async (db, actor, building, roomId) =>
+            {
+                if (disputeId == Guid.Empty || input is null ||
+                    !ValidProof(input.SignedOwnerResolutionReference) ||
+                    input.SignedOwnerResolutionReference!.Trim().Length < 12 ||
+                    db.Database.CurrentTransaction?.GetDbTransaction()
+                        .IsolationLevel != System.Data.IsolationLevel.Serializable)
+                    throw Denied();
+                await LockRequestAsync(db, requestId, contractId, roomId);
+                await using(var find=Command(db, """
+                    SELECT "Id" FROM "BuildingManagementContractDepositDebtDisputes"
+                     WHERE "Id"=@id AND "ContractId"=@contract
+                       AND "MoveOutRequestId"=@request AND "BuildingId"=@building
+                     FOR SHARE
+                    """))
+                {
+                    AddValue(find,"id",disputeId); AddValue(find,"contract",contractId);
+                    AddValue(find,"request",requestId); AddValue(find,"building",building);
+                    if (await find.ExecuteScalarAsync() is not Guid) throw Denied();
+                }
+                var id=Guid.NewGuid();
+                await using var cmd=Command(db, """
+                    INSERT INTO "BuildingManagementContractDepositDebtDisputeResolutions"
+                      ("Id","DisputeId","ContractId","OwnerId","ResolvedAtUtc",
+                       "DebtAccepted","SignedOwnerResolutionReference")
+                    VALUES (@id,@dispute,@contract,@owner,@at,@accepted,@evidence)
+                    RETURNING "Id"
+                    """);
+                AddValue(cmd,"id",id); AddValue(cmd,"dispute",disputeId);
+                AddValue(cmd,"contract",contractId); AddValue(cmd,"owner",actor);
+                AddValue(cmd,"at",DateTime.UtcNow);
+                AddValue(cmd,"accepted",input.DebtAccepted);
+                AddValue(cmd,"evidence",input.SignedOwnerResolutionReference.Trim());
+                return await cmd.ExecuteScalarAsync() is Guid created
+                    ? created : throw Denied();
+            });
+
+    public Task<SliceBDebtDisputeStatusRead> GetDepositDebtDisputeStatusAsync(
+        Guid contractId, Guid requestId)
+        => ExecuteScopedAsync(contractId, requireBootstrapOwner: false,
+            async (db, actor, building, roomId) =>
+            {
+                await using var cmd=Command(db, """
+                    SELECT
+                      count(*) FILTER (WHERE r."Id" IS NULL),
+                      count(*) FILTER (WHERE r."Id" IS NOT NULL AND
+                                           r."DebtAccepted"=FALSE),
+                      count(*) FILTER (WHERE r."DebtAccepted"=TRUE)
+                    FROM "BuildingManagementContractDepositDebtDisputes" d
+                    LEFT JOIN "BuildingManagementContractDepositDebtDisputeResolutions" r
+                      ON r."DisputeId"=d."Id"
+                    WHERE d."ContractId"=@contract AND
+                          d."MoveOutRequestId"=@request AND
+                          d."BuildingId"=@building
+                    """);
+                AddValue(cmd,"contract",contractId); AddValue(cmd,"request",requestId);
+                AddValue(cmd,"building",building);
+                await using var reader=await cmd.ExecuteReaderAsync();
+                if (!await reader.ReadAsync()) throw Denied();
+                var open=reader.GetInt64(0);var rejected=reader.GetInt64(1);
+                var accepted=reader.GetInt64(2);
+                return new SliceBDebtDisputeStatusRead(
+                    contractId,requestId,open,rejected,accepted,
+                    open==0 && rejected==0);
+            });
+
+    private static async Task RequireNoBlockedDebtDisputeAsync(
+        BuildingManagementDbContext db, Guid contractId)
+    {
+        await using var cmd=Command(db, """
+            SELECT EXISTS(
+              SELECT 1 FROM "BuildingManagementContractDepositDebtDisputes" d
+              LEFT JOIN "BuildingManagementContractDepositDebtDisputeResolutions" r
+                ON r."DisputeId"=d."Id"
+              WHERE d."ContractId"=@contract AND
+                (r."Id" IS NULL OR r."DebtAccepted"=FALSE))
+            """);
+        AddValue(cmd,"contract",contractId);
+        if (await cmd.ExecuteScalarAsync() is true) throw Denied();
+    }
+
+    /// <summary>
+    /// Owner signs the destination and a Vietnam holiday-calendar reference.
+    /// This is a bank instruction ONLY; it never initiates a transfer.
+    /// </summary>
+    public Task<Guid> ApproveRefundDestinationAsync(
+        Guid contractId, Guid requestId, SliceBRefundDestinationApprovalInput input)
+        => ExecuteScopedAsync(contractId, requireBootstrapOwner: true,
+            async (db, actor, building, roomId) =>
+            {
+                if (input is null ||
+                    db.Database.CurrentTransaction?.GetDbTransaction()
+                        .IsolationLevel != System.Data.IsolationLevel.Serializable ||
+                    !ContractDepositRefundOperationsPolicy.ValidRecipient(
+                        input.BeneficiaryName, input.BankName,
+                        input.AccountNumber, input.SignedDestinationReference) ||
+                    !ValidProof(input.HolidayCalendarReference) ||
+                    input.StatutoryHolidays is null ||
+                    input.StatutoryHolidays.Count > 80)
+                    throw Denied();
+                await LockRequestAsync(db, requestId, contractId, roomId);
+                var signed = await db.DepositSettlementDecisions.AsNoTracking()
+                    .SingleOrDefaultAsync(x => x.ContractId == contractId &&
+                        x.MoveOutRequestId == requestId && x.BuildingId == building)
+                    ?? throw Denied();
+                try { signed.VerifyStoredDecision(); }
+                catch (Exception ex) when (ex is InvalidDataException or
+                    InvalidOperationException or ArgumentException)
+                { throw Denied(); }
+                if (signed.ApprovedByUserId != actor ||
+                    signed.ApprovedRefundAmount <= 0m)
+                    throw Denied();
+                var approved = DateTime.UtcNow;
+                var vnDate = DateOnly.FromDateTime(
+                    TimeZoneInfo.ConvertTimeFromUtc(approved,
+                        TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh")));
+                if (input.StatutoryHolidays.Any(x =>
+                    x < vnDate || x > vnDate.AddDays(30)))
+                    throw Denied();
+                var due = ContractDepositRefundOperationsPolicy.DueOn(
+                    vnDate, input.StatutoryHolidays);
+                var name = input.BeneficiaryName!.Trim();
+                var bank = input.BankName!.Trim();
+                var account = input.AccountNumber!.Trim();
+                var signedRef = input.SignedDestinationReference!.Trim();
+                var calendar = input.HolidayCalendarReference!.Trim();
+                await using (var insert = Command(db, """
+                    INSERT INTO "BuildingManagementContractDepositRefundInstructions"
+                      ("Id","ContractId","MoveOutRequestId","DecisionId",
+                       "BuildingId","OwnerId","ApprovedAtUtc","ApprovedRefundAmountVnd",
+                       "PayeeName","PayeeBank","PayeeAccount",
+                       "SignedDestinationReference","HolidayCalendarReference","DueOn")
+                    VALUES (@id,@contract,@request,@decision,@building,@owner,
+                      @at,@amount,@name,@bank,@account,@signed,@calendar,@due)
+                    ON CONFLICT ("ContractId") DO NOTHING
+                    RETURNING "Id"
+                    """))
+                {
+                    var id = Guid.NewGuid();
+                    AddValue(insert,"id",id);
+                    AddValue(insert,"contract",contractId);
+                    AddValue(insert,"request",requestId);
+                    AddValue(insert,"decision",signed.Id);
+                    AddValue(insert,"building",building);
+                    AddValue(insert,"owner",actor);
+                    AddValue(insert,"at",approved);
+                    AddValue(insert,"amount",signed.ApprovedRefundAmount);
+                    AddValue(insert,"name",name);
+                    AddValue(insert,"bank",bank);
+                    AddValue(insert,"account",account);
+                    AddValue(insert,"signed",signedRef);
+                    AddValue(insert,"calendar",calendar);
+                    AddValue(insert,"due",due);
+                    if (await insert.ExecuteScalarAsync() is Guid created)
+                        return created;
+                }
+                // Idempotence is allowed ONLY for the same previously signed
+                // destination and calendar. Never silently redirect money.
+                await using var replay = Command(db, """
+                    SELECT "Id" FROM "BuildingManagementContractDepositRefundInstructions"
+                     WHERE "ContractId"=@contract AND "MoveOutRequestId"=@request
+                       AND "DecisionId"=@decision AND "OwnerId"=@owner
+                       AND "ApprovedRefundAmountVnd"=@amount
+                       AND "PayeeName"=@name AND "PayeeBank"=@bank
+                       AND "PayeeAccount"=@account
+                       AND "SignedDestinationReference"=@signed
+                       AND "HolidayCalendarReference"=@calendar
+                    """);
+                AddValue(replay,"contract",contractId);
+                AddValue(replay,"request",requestId);
+                AddValue(replay,"decision",signed.Id);
+                AddValue(replay,"owner",actor);
+                AddValue(replay,"amount",signed.ApprovedRefundAmount);
+                AddValue(replay,"name",name);
+                AddValue(replay,"bank",bank);
+                AddValue(replay,"account",account);
+                AddValue(replay,"signed",signedRef);
+                AddValue(replay,"calendar",calendar);
+                AddValue(replay,"due",due);
+                return await replay.ExecuteScalarAsync() is Guid found
+                    ? found : throw Denied();
+            });
+
+    /// <summary>
+    /// Records a failed bank transfer as a distinct immutable claim; failed
+    /// references cannot later be presented as independently paid refunds.
+    /// </summary>
+    public Task<Guid> RecordRefundTransferFailureAsync(
+        Guid contractId, Guid requestId, SliceBRefundTransferFailureInput input)
+        => ExecuteScopedAsync(contractId, requireBootstrapOwner: true,
+            async (db, actor, building, roomId) =>
+            {
+                if (input is null ||
+                    db.Database.CurrentTransaction?.GetDbTransaction()
+                        .IsolationLevel != System.Data.IsolationLevel.Serializable ||
+                    !ValidProof(input.BankReference) ||
+                    !ValidProof(input.Reason) ||
+                    !ValidProof(input.BankFailureEvidenceReference))
+                    throw Denied();
+                await LockRequestAsync(db, requestId, contractId, roomId);
+                Guid instructionId;
+                await using (var find = Command(db, """
+                    SELECT "Id" FROM "BuildingManagementContractDepositRefundInstructions"
+                     WHERE "ContractId"=@contract AND "MoveOutRequestId"=@request
+                       AND "BuildingId"=@building AND "OwnerId"=@owner FOR SHARE
+                    """))
+                {
+                    AddValue(find,"contract",contractId);
+                    AddValue(find,"request",requestId);
+                    AddValue(find,"building",building);
+                    AddValue(find,"owner",actor);
+                    instructionId = await find.ExecuteScalarAsync() is Guid id
+                        ? id : throw Denied();
+                }
+                var eventId = Guid.NewGuid();
+                await using var insert = Command(db, """
+                    INSERT INTO "BuildingManagementContractDepositRefundFailedTransfers"
+                      ("Id","InstructionId","ContractId","OwnerId",
+                       "Reference","FailedAtUtc","Reason","BankEvidenceReference")
+                    VALUES (@id,@instruction,@contract,@owner,@bank,@at,@reason,@evidence)
+                    RETURNING "Id"
+                    """);
+                AddValue(insert,"id",eventId);
+                AddValue(insert,"instruction",instructionId);
+                AddValue(insert,"contract",contractId);
+                AddValue(insert,"owner",actor);
+                AddValue(insert,"bank",input.BankReference!.Trim());
+                AddValue(insert,"at",DateTime.UtcNow);
+                AddValue(insert,"reason",input.Reason!.Trim());
+                AddValue(insert,"evidence",input.BankFailureEvidenceReference!.Trim());
+                return await insert.ExecuteScalarAsync() is Guid inserted
+                    ? inserted : throw Denied();
+            });
+
+    /// <summary>Read-only status. Never expose the beneficiary bank account.</summary>
+    public Task<SliceBRefundOperatingStatusRead> GetRefundOperatingStatusAsync(
+        Guid contractId, Guid requestId)
+        => ExecuteScopedAsync(contractId, requireBootstrapOwner: false,
+            async (db, actor, building, roomId) =>
+            {
+                var decision = await db.DepositSettlementDecisions.AsNoTracking()
+                    .SingleOrDefaultAsync(x => x.ContractId == contractId &&
+                        x.MoveOutRequestId == requestId && x.BuildingId == building)
+                    ?? throw Denied();
+                try { decision.VerifyStoredDecision(); }
+                catch (Exception ex) when (ex is InvalidDataException or
+                    InvalidOperationException or ArgumentException)
+                { throw Denied(); }
+                DateOnly? due = null;
+                await using (var query = Command(db, """
+                    SELECT "DueOn" FROM "BuildingManagementContractDepositRefundInstructions"
+                     WHERE "ContractId"=@contract AND "MoveOutRequestId"=@request
+                       AND "DecisionId"=@decision
+                    """))
+                {
+                    AddValue(query,"contract",contractId);
+                    AddValue(query,"request",requestId);
+                    AddValue(query,"decision",decision.Id);
+                    if (await query.ExecuteScalarAsync() is DateOnly d)
+                        due = d;
+                }
+                long failed;
+                await using (var query = Command(db, """
+                    SELECT count(*) FROM "BuildingManagementContractDepositRefundFailedTransfers"
+                     WHERE "ContractId"=@contract
+                    """))
+                {
+                    AddValue(query,"contract",contractId);
+                    failed = Convert.ToInt64(await query.ExecuteScalarAsync());
+                }
+                var verified = await db.DepositRefundBankReviews.AsNoTracking()
+                    .AnyAsync(x => x.ContractId == contractId &&
+                        x.MoveOutRequestId == requestId);
+                var today = DateOnly.FromDateTime(
+                    TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow,
+                        TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh")));
+                var status = ContractDepositRefundOperationsPolicy.Status(
+                    decision.ApprovedRefundAmount, due.HasValue, verified,
+                    failed > 0, due, today);
+                return new SliceBRefundOperatingStatusRead(
+                    contractId, requestId, decision.ApprovedRefundAmount,
+                    due, status, failed, verified);
+            }, permitEndedContract: true);
 
     /// <summary>
     /// A building-scoped operator OTHER THAN the signing root Owner
@@ -1560,6 +1899,7 @@ public sealed class SliceBStagingFinalInvoiceMutation
                 // The contract lock and same-transaction deposit table
                 // audit prevent other scoped writers from settling while
                 // this explicit root owner closeout is in progress.
+                await RequireNoBlockedDebtDisputeAsync(db, contractId);
                 var depositAudit = await _depositAudit.GetAsync(requestId);
                 if (depositAudit.VerifiedIncomingAllocationTotal is not decimal held ||
                     held <= 0m || held != contract.DepositAmount ||
@@ -2953,6 +3293,14 @@ public sealed class SliceBStagingFinalInvoiceMutation
         cmd.Parameters.Add(p);
     }
 
+    private static void AddValue(DbCommand cmd, string name, object value)
+    {
+        var p = cmd.CreateParameter();
+        p.ParameterName = name;
+        p.Value = value;
+        cmd.Parameters.Add(p);
+    }
+
     private Guid RequireActor()
     {
         if (!_user.IsAuthenticated || _user.Id is not Guid id ||
@@ -3094,6 +3442,47 @@ public sealed record OfficialContractDebtPortfolioRead(
 {
     public decimal InternalDepositOffsetVnd { get; init; }
 }
+
+public sealed class SliceBDebtDisputeInput
+{
+    public Guid PostingId { get; set; }
+    public string? Reason { get; set; }
+    public string? EvidenceReference { get; set; }
+}
+
+public sealed class SliceBDebtDisputeResolutionInput
+{
+    public bool DebtAccepted { get; set; }
+    public string? SignedOwnerResolutionReference { get; set; }
+}
+
+public sealed record SliceBDebtDisputeStatusRead(
+    Guid ContractId, Guid MoveOutRequestId,
+    long OpenCount, long RejectedCount, long AcceptedCount,
+    bool CanConsiderDepositOffset);
+
+public sealed class SliceBRefundDestinationApprovalInput
+{
+    public string? BeneficiaryName { get; set; }
+    public string? BankName { get; set; }
+    public string? AccountNumber { get; set; }
+    public string? SignedDestinationReference { get; set; }
+    public string? HolidayCalendarReference { get; set; }
+    public IReadOnlyList<DateOnly> StatutoryHolidays { get; set; } =
+        Array.Empty<DateOnly>();
+}
+
+public sealed class SliceBRefundTransferFailureInput
+{
+    public string? BankReference { get; set; }
+    public string? Reason { get; set; }
+    public string? BankFailureEvidenceReference { get; set; }
+}
+
+public sealed record SliceBRefundOperatingStatusRead(
+    Guid ContractId, Guid MoveOutRequestId, decimal ApprovedRefundVnd,
+    DateOnly? DueOn, ContractDepositRefundOperatingStatus Status,
+    long FailedTransferCount, bool IsIndependentlyVerified);
 
 public sealed class SliceBDepositSettlementApprovalInput
 {

@@ -350,6 +350,81 @@ public sealed class SliceBStagingFinalInvoiceController : ControllerBase
             contractId, requestId, input);
     }
 
+    /// <summary>Scoped operator records a disputed original official charge.</summary>
+    [HttpPost("contracts/{contractId:guid}/move-outs/{requestId:guid}/deposit-settlement/debt-disputes")]
+    [UnitOfWork(true, System.Data.IsolationLevel.Serializable)]
+    public Task<Guid> OpenDepositDebtDisputeAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid requestId,
+        [FromBody] SliceBDebtDisputeInput input)
+    {
+        RequireIsolatedStaging();
+        if (input is null) throw Denied();
+        return (_mutation ?? throw Denied())
+            .OpenDepositDebtDisputeAsync(contractId, requestId, input);
+    }
+
+    /// <summary>Owner independently resolves a documented charge dispute.</summary>
+    [HttpPost("contracts/{contractId:guid}/move-outs/{requestId:guid}/deposit-settlement/debt-disputes/{disputeId:guid}/resolve")]
+    [UnitOfWork(true, System.Data.IsolationLevel.Serializable)]
+    public Task<Guid> ResolveDepositDebtDisputeAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid requestId,
+        [FromRoute] Guid disputeId,
+        [FromBody] SliceBDebtDisputeResolutionInput input)
+    {
+        RequireIsolatedStaging();
+        if (input is null) throw Denied();
+        return (_mutation ?? throw Denied())
+            .ResolveDepositDebtDisputeAsync(contractId, requestId, disputeId, input);
+    }
+
+    [HttpGet("contracts/{contractId:guid}/move-outs/{requestId:guid}/deposit-settlement/debt-dispute-status")]
+    [UnitOfWork(true, System.Data.IsolationLevel.RepeatableRead)]
+    public Task<SliceBDebtDisputeStatusRead> GetDepositDebtDisputeStatusAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid requestId)
+    {
+        RequireIsolatedStaging();
+        return (_mutation ?? throw Denied())
+            .GetDepositDebtDisputeStatusAsync(contractId, requestId);
+    }
+
+    /// <summary>Owner-approved destination and seven-business-day schedule.
+    /// This does not initiate payment. Staging-only.</summary>
+    [HttpPost("contracts/{contractId:guid}/move-outs/{requestId:guid}/deposit-settlement/refund-destination")]
+    [UnitOfWork(true, System.Data.IsolationLevel.Serializable)]
+    public Task<Guid> ApproveRefundDestinationAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid requestId,
+        [FromBody] SliceBRefundDestinationApprovalInput input)
+    {
+        RequireIsolatedStaging();
+        if (input is null) throw Denied();
+        return (_mutation ?? throw Denied())
+            .ApproveRefundDestinationAsync(contractId, requestId, input);
+    }
+
+    /// <summary>Owner records failed external bank attempt, never a paid receipt.</summary>
+    [HttpPost("contracts/{contractId:guid}/move-outs/{requestId:guid}/deposit-settlement/refund-failed-transfer")]
+    [UnitOfWork(true, System.Data.IsolationLevel.Serializable)]
+    public Task<Guid> RecordRefundTransferFailureAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid requestId,
+        [FromBody] SliceBRefundTransferFailureInput input)
+    {
+        RequireIsolatedStaging();
+        if (input is null) throw Denied();
+        return (_mutation ?? throw Denied())
+            .RecordRefundTransferFailureAsync(contractId, requestId, input);
+    }
+
+    /// <summary>Current status without exposing destination account details.</summary>
+    [HttpGet("contracts/{contractId:guid}/move-outs/{requestId:guid}/deposit-settlement/refund-operating-status")]
+    [UnitOfWork(true, System.Data.IsolationLevel.RepeatableRead)]
+    public Task<SliceBRefundOperatingStatusRead> GetRefundOperatingStatusAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid requestId)
+    {
+        RequireIsolatedStaging();
+        return (_mutation ?? throw Denied())
+            .GetRefundOperatingStatusAsync(contractId, requestId);
+    }
+
     /// <summary>
     /// Independent manual bank-statement attestation required before an
     /// internally-offset contract can close with a positive refund.

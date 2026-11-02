@@ -3498,6 +3498,48 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     depositPolicyReference = "SCRATCH-CONTRACT-DEPOSIT-POLICY-2026"
                 }));
             Assert.Equal(HttpStatusCode.Forbidden, unjustifiedForfeit.Status);
+            var disputeRoot = financeRoot + "/move-outs/" +
+                financeMoveOut.ToString("D") +
+                "/deposit-settlement/debt-disputes";
+            var disputeCreated = await PostFinalAsync(
+                clientB, disputeRoot, JsonSerializer.Serialize(new {
+                    postingId = officialFinalPostingId,
+                    reason = "Tenant disputes the final invoice charge",
+                    evidenceReference = "SIGNED-TENANT-DISPUTE-DOCUMENT-0001"
+                }));
+            Assert.True(disputeCreated.Status is HttpStatusCode.OK or
+                HttpStatusCode.Created,
+                $"Debt dispute create: {disputeCreated.Status} {disputeCreated.Body}");
+            var disputeId = Guid.Parse(disputeCreated.Body.Trim('"'));
+            var whileDisputed = await PostFinalAsync(
+                clientRoot, depositApproveRoute, depositPlanBody);
+            Assert.Equal(HttpStatusCode.Forbidden, whileDisputed.Status);
+            using(var active = await clientB.GetAsync(
+                financeRoot + "/move-outs/" + financeMoveOut.ToString("D") +
+                "/deposit-settlement/debt-dispute-status"))
+            {
+                Assert.Equal(HttpStatusCode.OK, active.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await active.Content.ReadAsStringAsync());
+                Assert.Equal(1, json.RootElement.GetProperty("openCount").GetInt64());
+                Assert.False(json.RootElement
+                    .GetProperty("canConsiderDepositOffset").GetBoolean());
+            }
+            var resolutionRoute = disputeRoot + "/" +
+                disputeId.ToString("D") + "/resolve";
+            var resolutionBody = JsonSerializer.Serialize(new {
+                debtAccepted = true,
+                signedOwnerResolutionReference =
+                    "SIGNED-OWNER-RECONCILED-DEBT-0001"
+            });
+            var staffRelease = await PostFinalAsync(
+                clientB, resolutionRoute, resolutionBody);
+            Assert.Equal(HttpStatusCode.Forbidden, staffRelease.Status);
+            var ownerRelease = await PostFinalAsync(
+                clientRoot, resolutionRoute, resolutionBody);
+            Assert.True(ownerRelease.Status is HttpStatusCode.OK or
+                HttpStatusCode.Created,
+                $"Owner dispute resolution: {ownerRelease.Status} {ownerRelease.Body}");
             var decisionResponse = await PostFinalAsync(
                 clientRoot, depositApproveRoute, depositPlanBody);
             Assert.True(decisionResponse.Status is HttpStatusCode.OK or
@@ -3529,6 +3571,65 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     depositPolicyReference = "SCRATCH-CONTRACT-DEPOSIT-POLICY-2026"
                 }));
             Assert.Equal(HttpStatusCode.Forbidden, conflictingDecision.Status);
+            // D04: destination must be signed by the Owner, with an
+            // explicit statutory-holiday calendar, before bank review.
+            var destinationRoute = financeRoot + "/move-outs/" +
+                financeMoveOut.ToString("D") +
+                "/deposit-settlement/refund-destination";
+            var destinationBody = JsonSerializer.Serialize(new {
+                beneficiaryName = "Nguyen Van A",
+                bankName = "Isolated Test Bank",
+                accountNumber = "123456789012",
+                signedDestinationReference = "SIGNED-BENEFICIARY-APPROVAL-0001",
+                holidayCalendarReference = "SIGNED-VIETNAM-HOLIDAYS-2026",
+                statutoryHolidays = Array.Empty<string>()
+            });
+            var unauthorizedPayee = await PostFinalAsync(
+                clientB, destinationRoute, destinationBody);
+            Assert.Equal(HttpStatusCode.Forbidden, unauthorizedPayee.Status);
+            var approvedDestination = await PostFinalAsync(
+                clientRoot, destinationRoute, destinationBody);
+            Assert.True(approvedDestination.Status is HttpStatusCode.OK or
+                HttpStatusCode.Created,
+                $"Approved destination: {approvedDestination.Status} {approvedDestination.Body}");
+            var sameDestination = await PostFinalAsync(
+                clientRoot, destinationRoute, destinationBody);
+            Assert.Equal(approvedDestination.Body, sameDestination.Body);
+            var conflictingDestination = await PostFinalAsync(
+                clientRoot, destinationRoute, JsonSerializer.Serialize(new {
+                    beneficiaryName = "Different Recipient",
+                    bankName = "Isolated Test Bank",
+                    accountNumber = "000000000000",
+                    signedDestinationReference = "SIGNED-BENEFICIARY-APPROVAL-0002",
+                    holidayCalendarReference = "SIGNED-VIETNAM-HOLIDAYS-2026",
+                    statutoryHolidays = Array.Empty<string>()
+                }));
+            Assert.NotEqual(HttpStatusCode.OK, conflictingDestination.Status);
+            var failureRoute = financeRoot + "/move-outs/" +
+                financeMoveOut.ToString("D") +
+                "/deposit-settlement/refund-failed-transfer";
+            var failedTransfer = await PostFinalAsync(
+                clientRoot, failureRoute, JsonSerializer.Serialize(new {
+                    bankReference = "SCRATCH-FAILED-TRANSFER-0001",
+                    reason = "Bank returned transfer; recipient unreachable",
+                    bankFailureEvidenceReference =
+                        "BANK-FAILURE-RETURNED-REFUND-0001"
+                }));
+            Assert.True(failedTransfer.Status is HttpStatusCode.OK or
+                HttpStatusCode.Created,
+                $"Failed bank trace: {failedTransfer.Status} {failedTransfer.Body}");
+            var refundStatusRoute = financeRoot + "/move-outs/" +
+                financeMoveOut.ToString("D") +
+                "/deposit-settlement/refund-operating-status";
+            using (var pending = await clientB.GetAsync(refundStatusRoute))
+            {
+                Assert.Equal(HttpStatusCode.OK, pending.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await pending.Content.ReadAsStringAsync());
+                Assert.Equal(3, json.RootElement.GetProperty("status").GetInt32());
+                Assert.Equal(1, json.RootElement.GetProperty("failedTransferCount").GetInt64());
+                Assert.False(json.RootElement.GetProperty("isIndependentlyVerified").GetBoolean());
+            }
             var readPlanRoute = financeRoot + "/move-outs/" +
                 financeMoveOut.ToString("D") + "/deposit-settlement";
             using (var readPlan = await clientB.GetAsync(readPlanRoute))

@@ -29,6 +29,12 @@ public sealed class Phase2G4IndependentRefundBankReviewPostgreSql_Tests
     private static readonly string AllRefundDown = Assert.Single(
         new Phase2G4RequireBankReviewForAllRefunds().DownOperations
             .OfType<SqlOperation>()).Sql;
+    private static readonly string WallClockUp = Assert.Single(
+        new Phase2G4RefundReviewUseWallClock().UpOperations
+            .OfType<SqlOperation>()).Sql;
+    private static readonly string WallClockDown = Assert.Single(
+        new Phase2G4RefundReviewUseWallClock().DownOperations
+            .OfType<SqlOperation>()).Sql;
     private const string Tables = """
         CREATE TABLE "BuildingManagementContracts" ("Id" uuid PRIMARY KEY);
         CREATE TABLE "BuildingManagementMoveOutRequests" ("Id" uuid PRIMARY KEY);
@@ -72,6 +78,7 @@ public sealed class Phase2G4IndependentRefundBankReviewPostgreSql_Tests
                 UPDATE "BuildingManagementContractDepositRefundBankReviews"
                  SET "VerifiedRefundAmountVnd"=2700000 WHERE "Id"='{bankReview:D}';
                 ""","23514");
+            await Denied(db,tx,WallClockDown,"23514");
             await Denied(db,tx,AllRefundDown,"23514");
             await Denied(db,tx,IntegrityDown,"23514");
             await Denied(db,tx,Down,"23514");
@@ -99,12 +106,14 @@ public sealed class Phase2G4IndependentRefundBankReviewPostgreSql_Tests
     {
         await Scratch(async (db,tx,_,_,_,_,_) =>
         {
+            await Run(db,tx,WallClockDown);
             await Run(db,tx,AllRefundDown);
             await Run(db,tx,IntegrityDown);
             await Run(db,tx,Down);
             await Run(db,tx,Up);
             await Run(db,tx,IntegrityUp);
             await Run(db,tx,AllRefundUp);
+            await Run(db,tx,WallClockUp);
         });
     }
 
@@ -185,6 +194,50 @@ public sealed class Phase2G4IndependentRefundBankReviewPostgreSql_Tests
         });
     }
 
+
+    [Fact]
+    public async Task OI04REFSQL11_Review_Signed_After_Transaction_Start_Is_Not_Future_Dated()
+    {
+        await Scratch(async (db,tx,contract,request,_,reviewer,decision) =>
+        {
+            // The test transaction began before migrations and fixture
+            // inserts. now() is older than this new, genuine review.
+            await Run(db,tx,$"""
+                WITH ts AS (
+                  SELECT clock_timestamp() AS reviewed
+                ), proof AS (
+                  SELECT ts.reviewed, jsonb_build_object(
+                    'ContractId','{contract:D}',
+                    'MoveOutRequestId','{request:D}',
+                    'DepositDecisionId','{decision:D}',
+                    'BuildingId','{Building:D}',
+                    'ReviewedByUserId','{reviewer:D}',
+                    'ReviewedAtUtc',ts.reviewed,
+                    'PaidAtUtc','2026-11-01T11:00:00Z',
+                    'VerifiedRefundAmountVnd',2350000,
+                    'BankTransactionReference','BANK-LIVE-REVIEW-0001',
+                    'BankStatementEvidenceReference','BANK-LIVE-STATEMENT-0001',
+                    'SignedReviewReference','SIGNED-LIVE-REVIEW-0001'
+                  )::text AS payload FROM ts
+                )
+                INSERT INTO "BuildingManagementContractDepositRefundBankReviews" (
+                    "Id","ContractId","MoveOutRequestId","DepositDecisionId",
+                    "BuildingId","ReviewedByUserId","ReviewedAtUtc","PaidAtUtc",
+                    "VerifiedRefundAmountVnd","BankTransactionReference",
+                    "BankStatementEvidenceReference","SignedReviewReference",
+                    "ReviewJson","ReviewSha256")
+                SELECT '{Guid.NewGuid():D}','{contract:D}','{request:D}','{decision:D}',
+                  '{Building:D}','{reviewer:D}',proof.reviewed,
+                  '2026-11-01T11:00:00Z',2350000,'BANK-LIVE-REVIEW-0001',
+                  'BANK-LIVE-STATEMENT-0001','SIGNED-LIVE-REVIEW-0001',
+                  proof.payload,encode(sha256(convert_to(proof.payload,'UTF8')),'hex')
+                FROM proof
+                """);
+            Assert.Equal(1L,await Count(db,tx,
+                """SELECT count(*) FROM "BuildingManagementContractDepositRefundBankReviews" """));
+        });
+    }
+
     private static string Review(Guid id, Guid contract, Guid request,
         Guid decision, Guid reviewer, decimal amount,
         decimal? archivedAmount = null, bool forgedDigest = false,
@@ -259,6 +312,7 @@ public sealed class Phase2G4IndependentRefundBankReviewPostgreSql_Tests
             await Run(db,tx,Up);
             await Run(db,tx,IntegrityUp);
             await Run(db,tx,AllRefundUp);
+            await Run(db,tx,WallClockUp);
             await Run(db,tx,$"""
                 INSERT INTO "BuildingManagementContracts" VALUES ('{contract:D}');
                 INSERT INTO "BuildingManagementMoveOutRequests" VALUES ('{request:D}');

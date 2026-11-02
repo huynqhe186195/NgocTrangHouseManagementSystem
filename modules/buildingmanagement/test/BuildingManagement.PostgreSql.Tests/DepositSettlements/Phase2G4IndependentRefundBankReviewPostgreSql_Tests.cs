@@ -47,6 +47,12 @@ public sealed class Phase2G4IndependentRefundBankReviewPostgreSql_Tests
     private static readonly string OpsDown = Assert.Single(
         new Phase2G4RefundInstructionsAndFailedTransfers().DownOperations
             .OfType<SqlOperation>()).Sql;
+    private static readonly string HolidayUp = Assert.Single(
+        new Phase2G4RefundHolidaySnapshotAndSlaAnchor().UpOperations
+            .OfType<SqlOperation>()).Sql;
+    private static readonly string HolidayDown = Assert.Single(
+        new Phase2G4RefundHolidaySnapshotAndSlaAnchor().DownOperations
+            .OfType<SqlOperation>()).Sql;
     private const string Tables = """
         CREATE TABLE "BuildingManagementContracts" ("Id" uuid PRIMARY KEY);
         CREATE TABLE "BuildingManagementMoveOutRequests" ("Id" uuid PRIMARY KEY);
@@ -134,6 +140,7 @@ public sealed class Phase2G4IndependentRefundBankReviewPostgreSql_Tests
             await Run(db,tx,WallClockUp);
             await Run(db,tx,GlobalBankUp);
             await Run(db,tx,OpsUp);
+            if (withHolidaySla) await Run(db,tx,HolidayUp);
         });
     }
 
@@ -348,6 +355,65 @@ public sealed class Phase2G4IndependentRefundBankReviewPostgreSql_Tests
         });
     }
 
+    [Fact]
+    public async Task OI04REFSQL17_Signed_Holiday_Snapshot_Correct_Deadline_And_Immutable()
+    {
+        await Scratch(async (db, tx, contract, request, _, _, decision) =>
+        {
+            // Decision was signed on Sunday 2026-11-01 Vietnam time.
+            // The seventh weekday is Tuesday Nov 10 without holidays;
+            // the signed Nov 4 holiday moves it to Wednesday Nov 11.
+            await Denied(db, tx, HolidayInstruction(contract, request, decision,
+                "[\\"2026-11-04\\"]", "2026-11-10"), "23514");
+            await Denied(db, tx, HolidayInstruction(contract, request, decision,
+                "[]", "2026-11-11"), "23514");
+
+            await Run(db, tx, HolidayInstruction(contract, request, decision,
+                "[\\"2026-11-04\\"]", "2026-11-11"));
+            Assert.Equal(1L, await Count(db, tx,
+                """SELECT count(*) FROM "BuildingManagementContractDepositRefundInstructions" """));
+            await Denied(db, tx,
+                """UPDATE "BuildingManagementContractDepositRefundInstructions"
+                      SET "StatutoryHolidaysJson"='[]' """, "23514");
+            await Denied(db, tx, HolidayDown, "23514");
+        }, withHolidaySla: true);
+    }
+
+    [Fact]
+    public async Task OI04REFSQL18_Duplicate_Or_Backdated_Holiday_Instruction_Denied()
+    {
+        await Scratch(async (db, tx, contract, request, _, _, decision) =>
+        {
+            await Denied(db, tx, HolidayInstruction(contract, request, decision,
+                "[\\"2026-11-04\\",\\"2026-11-04\\"]", "2026-11-11"), "23514");
+            await Denied(db, tx, HolidayInstruction(contract, request, decision,
+                "[\\"2026-12-25\\"]", "2026-11-11"), "23514");
+            await Denied(db, tx, HolidayInstruction(contract, request, decision,
+                "[\\"2026-11-04\\"]", "2026-11-11",
+                "2026-11-01T09:30:00Z"), "23514");
+            Assert.Equal(0L, await Count(db, tx,
+                """SELECT count(*) FROM "BuildingManagementContractDepositRefundInstructions" """));
+        }, withHolidaySla: true);
+    }
+
+    private static string HolidayInstruction(Guid contract, Guid request,
+        Guid decision, string holidays, string due,
+        string approved = "2026-11-01T10:30:00Z") => $"""
+        INSERT INTO "BuildingManagementContractDepositRefundInstructions"
+          ("Id","ContractId","MoveOutRequestId","DecisionId","BuildingId",
+           "OwnerId","ApprovedAtUtc","ApprovedRefundAmountVnd","PayeeName",
+           "PayeeBank","PayeeAccount","SignedDestinationReference",
+           "HolidayCalendarReference","DueOn","StatutoryHolidaysJson")
+        SELECT '{Guid.NewGuid():D}',d."ContractId",d."MoveOutRequestId",
+          d."Id",d."BuildingId",d."ApprovedByUserId",'{approved}',
+          d."ApprovedRefundAmount",'Nguyen Van A','Test Bank','123456789012',
+          'OWNER-APPROVED-BENEFICIARY-0001',
+          'VIETNAM-SIGNED-HOLIDAY-CALENDAR','{due}','{holidays}'
+        FROM "BuildingManagementContractDepositSettlementDecisions" d
+        WHERE d."Id"='{decision:D}' AND d."ContractId"='{contract:D}'
+          AND d."MoveOutRequestId"='{request:D}'
+        """;
+
     private static string Instruction(Guid contract,Guid request,Guid decision) => $"""
         INSERT INTO "BuildingManagementContractDepositRefundInstructions"
           ("Id","ContractId","MoveOutRequestId","DecisionId","BuildingId",
@@ -428,7 +494,8 @@ public sealed class Phase2G4IndependentRefundBankReviewPostgreSql_Tests
 
     private static readonly Guid Building=Guid.NewGuid();
     private static async Task Scratch(
-        Func<NpgsqlConnection,NpgsqlTransaction,Guid,Guid,Guid,Guid,Guid,Task> test)
+        Func<NpgsqlConnection,NpgsqlTransaction,Guid,Guid,Guid,Guid,Guid,Task> test,
+        bool withHolidaySla = false)
     {
         var cs=BuildingManagementPostgreSqlTestModule.RequireSafeConnectionString();
         await using var db=new NpgsqlConnection(new NpgsqlConnectionStringBuilder(cs)

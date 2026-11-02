@@ -19,7 +19,7 @@ public sealed class FullInvoiceMigrationChainPostgreSql_Tests
     private const string OptInVariable = "BM_ALLOW_FULL_MIGRATION_REHEARSAL";
     private const string OptInValue = "CREATE_AND_DROP_FRESH_LOCAL_TEST_DATABASE";
     private const string ExpectedLatestMigration =
-        "20261023182226_Phase2G3A4_AddInvoiceDraftSnapshots";
+        "20261102024000_Phase2G4RefundHolidaySnapshotAndSlaAnchor";
 
     [Fact]
     public async Task PGMIG01_Full_EF_Migrations_Succeed_In_Fresh_Disposable_Database()
@@ -172,6 +172,34 @@ public sealed class FullInvoiceMigrationChainPostgreSql_Tests
                 {
                     Assert.Equal(6L,
                         Convert.ToInt64(await foreignKeys.ExecuteScalarAsync()));
+                }
+
+                // Confirm Phase 2G.4 refund SLA schema exists after the
+                // complete migration chain, not merely old invoice tables.
+                await using (var refundCalendar = new NpgsqlCommand(
+                    """
+                    SELECT COUNT(*)
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = 'BuildingManagementContractDepositRefundInstructions'
+                      AND column_name = 'StatutoryHolidaysJson'
+                    """, verification))
+                {
+                    Assert.Equal(1L,
+                        Convert.ToInt64(await refundCalendar.ExecuteScalarAsync()));
+                }
+
+                await using (var refundSlaTrigger = new NpgsqlCommand(
+                    """
+                    SELECT COUNT(*) FROM pg_trigger
+                    WHERE NOT tgisinternal
+                      AND tgname = 'TR_BM_VerifyRefundHolidaySnapshotSla'
+                      AND tgrelid =
+                        '"BuildingManagementContractDepositRefundInstructions"'::regclass
+                    """, verification))
+                {
+                    Assert.Equal(1L,
+                        Convert.ToInt64(await refundSlaTrigger.ExecuteScalarAsync()));
                 }
 
                 await using (var extension = new NpgsqlCommand(

@@ -54,10 +54,12 @@ public static class ContractDepositRefundOperationsPolicy
         if (approvedRefundVnd == 0m) return ContractDepositRefundOperatingStatus.NotRequired;
         if (independentlyReviewed) return ContractDepositRefundOperatingStatus.RefundVerified;
         if (!recipientApproved) return ContractDepositRefundOperatingStatus.AwaitingRecipientApproval;
-        if (hasFailedAttempt) return ContractDepositRefundOperatingStatus.TransferFailed;
         if (dueOn is null) throw new ArgumentException("Approved refund missing due date.");
-        return asOf > dueOn
-            ? ContractDepositRefundOperatingStatus.Overdue
+        // An earlier failed attempt cannot conceal an expired refund SLA.
+        // Only independent proof of completed transfer outranks overdue.
+        if (asOf > dueOn) return ContractDepositRefundOperatingStatus.Overdue;
+        return hasFailedAttempt
+            ? ContractDepositRefundOperatingStatus.TransferFailed
             : ContractDepositRefundOperatingStatus.AwaitingManualTransferAndReview;
     }
 }

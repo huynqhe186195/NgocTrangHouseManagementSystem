@@ -17,6 +17,12 @@ public sealed class Phase2G4IndependentRefundBankReviewPostgreSql_Tests
     private static readonly string Down = Assert.Single(
         new Phase2G4IndependentRefundBankReview().DownOperations
             .OfType<SqlOperation>()).Sql;
+    private static readonly string IntegrityUp = Assert.Single(
+        new Phase2G4RefundBankReviewPayloadIntegrity().UpOperations
+            .OfType<SqlOperation>()).Sql;
+    private static readonly string IntegrityDown = Assert.Single(
+        new Phase2G4RefundBankReviewPayloadIntegrity().DownOperations
+            .OfType<SqlOperation>()).Sql;
     private const string Tables = """
         CREATE TABLE "BuildingManagementContracts" ("Id" uuid PRIMARY KEY);
         CREATE TABLE "BuildingManagementMoveOutRequests" ("Id" uuid PRIMARY KEY);
@@ -60,6 +66,7 @@ public sealed class Phase2G4IndependentRefundBankReviewPostgreSql_Tests
                 UPDATE "BuildingManagementContractDepositRefundBankReviews"
                  SET "VerifiedRefundAmountVnd"=2700000 WHERE "Id"='{bankReview:D}';
                 ""","23514");
+            await Denied(db,tx,IntegrityDown,"23514");
             await Denied(db,tx,Down,"23514");
         });
     }
@@ -85,25 +92,80 @@ public sealed class Phase2G4IndependentRefundBankReviewPostgreSql_Tests
     {
         await Scratch(async (db,tx,_,_,_,_,_) =>
         {
+            await Run(db,tx,IntegrityDown);
             await Run(db,tx,Down);
             await Run(db,tx,Up);
+            await Run(db,tx,IntegrityUp);
         });
     }
 
-    private static string Review(Guid id,Guid contract,Guid request,
-        Guid decision,Guid reviewer,decimal amount) => $"""
-        INSERT INTO "BuildingManagementContractDepositRefundBankReviews" (
-            "Id","ContractId","MoveOutRequestId","DepositDecisionId",
-            "BuildingId","ReviewedByUserId","ReviewedAtUtc","PaidAtUtc",
-            "VerifiedRefundAmountVnd","BankTransactionReference",
-            "BankStatementEvidenceReference","SignedReviewReference",
-            "ReviewJson","ReviewSha256")
-        VALUES ('{id:D}','{contract:D}','{request:D}','{decision:D}',
-          '{Building:D}','{reviewer:D}','2026-11-01T12:00:00Z',
-          '2026-11-01T11:00:00Z',{amount},
-          'BANK-REFUND-TRACE-0001','BANK-STATEMENT-0001',
-          'SIGNED-INDEPENDENT-REVIEW-0001',jsonb_build_object('source','signed')::text,'{new string('a',64)}')
-        """;
+
+    [Fact]
+    public async Task OI04REFSQL04_Invalid_Sha256_And_Archived_Amount_Cannot_Be_Inserted()
+    {
+        await Scratch(async (db,tx,contract,request,_,reviewer,decision) =>
+        {
+            await Denied(db,tx,Review(Guid.NewGuid(),contract,request,
+                decision,reviewer,2_350_000m,forgedDigest:true),"23514");
+            await Denied(db,tx,Review(Guid.NewGuid(),contract,request,
+                decision,reviewer,2_350_000m,archivedAmount:2_700_000m),"23514");
+            Assert.Equal(0L,await Count(db,tx,
+                """SELECT count(*) FROM "BuildingManagementContractDepositRefundBankReviews" """));
+            await Run(db,tx,Review(Guid.NewGuid(),contract,request,
+                decision,reviewer,2_350_000m));
+        });
+    }
+
+    [Fact]
+    public async Task OI04REFSQL05_Statement_Reference_Is_Not_Independent_Review_Signature()
+    {
+        await Scratch(async (db,tx,contract,request,_,reviewer,decision) =>
+        {
+            await Denied(db,tx,Review(Guid.NewGuid(),contract,request,
+                decision,reviewer,2_350_000m,
+                reuseStatementAsSignature:true),"23514");
+        });
+    }
+
+    private static string Review(Guid id, Guid contract, Guid request,
+        Guid decision, Guid reviewer, decimal amount,
+        decimal? archivedAmount = null, bool forgedDigest = false,
+        bool reuseStatementAsSignature = false)
+    {
+        var archived = archivedAmount ?? amount;
+        var signed = reuseStatementAsSignature
+            ? "BANK-STATEMENT-0001"
+            : "SIGNED-INDEPENDENT-REVIEW-0001";
+        var digest = forgedDigest
+            ? $"'{new string('a', 64)}'"
+            : "encode(sha256(convert_to(proof.payload, 'UTF8')), 'hex')";
+        return $"""
+            INSERT INTO "BuildingManagementContractDepositRefundBankReviews" (
+                "Id","ContractId","MoveOutRequestId","DepositDecisionId",
+                "BuildingId","ReviewedByUserId","ReviewedAtUtc","PaidAtUtc",
+                "VerifiedRefundAmountVnd","BankTransactionReference",
+                "BankStatementEvidenceReference","SignedReviewReference",
+                "ReviewJson","ReviewSha256")
+            SELECT '{id:D}','{contract:D}','{request:D}','{decision:D}',
+              '{Building:D}','{reviewer:D}','2026-11-01T12:00:00Z',
+              '2026-11-01T11:00:00Z',{amount},
+              'BANK-REFUND-TRACE-0001','BANK-STATEMENT-0001',
+              '{signed}',proof.payload,{digest}
+            FROM (SELECT jsonb_build_object(
+              'ContractId','{contract:D}',
+              'MoveOutRequestId','{request:D}',
+              'DepositDecisionId','{decision:D}',
+              'BuildingId','{Building:D}',
+              'ReviewedByUserId','{reviewer:D}',
+              'ReviewedAtUtc','2026-11-01T12:00:00Z',
+              'PaidAtUtc','2026-11-01T11:00:00Z',
+              'VerifiedRefundAmountVnd',{archived},
+              'BankTransactionReference','BANK-REFUND-TRACE-0001',
+              'BankStatementEvidenceReference','BANK-STATEMENT-0001',
+              'SignedReviewReference','{signed}'
+            )::text AS payload) proof
+            """;
+    }
 
     private static string Closeout(Guid contract,Guid request,Guid owner,
         Guid settlement) => $"""
@@ -136,6 +198,7 @@ public sealed class Phase2G4IndependentRefundBankReviewPostgreSql_Tests
             await Run(db,tx,$"""SET LOCAL search_path TO "{schema}" """);
             await Run(db,tx,Tables);
             await Run(db,tx,Up);
+            await Run(db,tx,IntegrityUp);
             await Run(db,tx,$"""
                 INSERT INTO "BuildingManagementContracts" VALUES ('{contract:D}');
                 INSERT INTO "BuildingManagementMoveOutRequests" VALUES ('{request:D}');

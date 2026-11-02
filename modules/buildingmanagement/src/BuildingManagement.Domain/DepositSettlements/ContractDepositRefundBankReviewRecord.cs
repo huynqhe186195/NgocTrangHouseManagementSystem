@@ -58,7 +58,8 @@ public sealed class ContractDepositRefundBankReviewRecord : Entity<Guid>
             statement.Length is < 12 or > 500 ||
             signature.Length is < 12 or > 500 ||
             string.Equals(bank, statement, StringComparison.Ordinal) ||
-            string.Equals(bank, signature, StringComparison.Ordinal))
+            string.Equals(bank, signature, StringComparison.Ordinal) ||
+            string.Equals(statement, signature, StringComparison.Ordinal))
             throw new InvalidOperationException(
                 "Refund needs a distinct reviewer, actual paid bank evidence and signed reference.");
         var at = reviewedAtUtc.AddTicks(-(reviewedAtUtc.Ticks % 10L));
@@ -117,6 +118,12 @@ public sealed class ContractDepositRefundBankReviewRecord : Entity<Guid>
             BankTransactionReference.Length is < 8 or > 128 ||
             BankStatementEvidenceReference.Length is < 12 or > 500 ||
             SignedReviewReference.Length is < 12 or > 500 ||
+            string.Equals(BankTransactionReference,
+                BankStatementEvidenceReference, StringComparison.Ordinal) ||
+            string.Equals(BankTransactionReference,
+                SignedReviewReference, StringComparison.Ordinal) ||
+            string.Equals(BankStatementEvidenceReference,
+                SignedReviewReference, StringComparison.Ordinal) ||
             ReviewJson.Length is < 10 or > 1000000 ||
             ReviewSha256 != Sha(ReviewJson))
             throw new InvalidDataException(

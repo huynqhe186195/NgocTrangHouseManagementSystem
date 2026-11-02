@@ -114,4 +114,43 @@ public sealed class ContractDepositRefundBankReview_Tests
         Assert.Equal(0m,decision.ApprovedRefundAmount);
         Assert.Throws<InvalidOperationException>(() => Review(decision));
     }
+
+    [Fact]
+    public void OI04REF08_Bank_Statement_And_Signed_Review_Must_Be_Different_Proofs()
+    {
+        var decision = Decision();
+        Assert.Throws<InvalidOperationException>(() =>
+            ContractDepositRefundBankReviewRecord.Attest(
+                Guid.NewGuid(), decision, Guid.NewGuid(), Reviewed, Paid,
+                "BANK-REFUND-TRACE-20261101-001",
+                "BANK-STATEMENT-APPROVED-20261101-001",
+                "BANK-STATEMENT-APPROVED-20261101-001"));
+    }
+
+    [Fact]
+    public void OI04REF09_Rehashed_Duplicate_Statement_And_Review_Is_Still_Invalid()
+    {
+        var decision = Decision();
+        var review = Review(decision);
+        var duplicate = review.BankStatementEvidenceReference;
+        var original = review.SignedReviewReference;
+        var forgedJson = review.ReviewJson.Replace(
+            original, duplicate, StringComparison.Ordinal);
+        var forgedHash = Convert.ToHexString(
+            System.Security.Cryptography.SHA256.HashData(
+                System.Text.Encoding.UTF8.GetBytes(forgedJson)))
+            .ToLowerInvariant();
+
+        typeof(ContractDepositRefundBankReviewRecord)
+            .GetProperty(nameof(review.SignedReviewReference))!
+            .SetValue(review, duplicate);
+        typeof(ContractDepositRefundBankReviewRecord)
+            .GetProperty(nameof(review.ReviewJson))!
+            .SetValue(review, forgedJson);
+        typeof(ContractDepositRefundBankReviewRecord)
+            .GetProperty(nameof(review.ReviewSha256))!
+            .SetValue(review, forgedHash);
+
+        Assert.Throws<InvalidDataException>(() => review.Verify(decision));
+    }
 }

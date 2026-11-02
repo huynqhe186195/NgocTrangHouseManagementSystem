@@ -364,12 +364,12 @@ public sealed class Phase2G4IndependentRefundBankReviewPostgreSql_Tests
             // The seventh weekday is Tuesday Nov 10 without holidays;
             // the signed Nov 4 holiday moves it to Wednesday Nov 11.
             await Denied(db, tx, HolidayInstruction(contract, request, decision,
-                "[\\"2026-11-04\\"]", "2026-11-10"), "23514");
+                "[\"2026-11-04\"]", "2026-11-10"), "23514");
             await Denied(db, tx, HolidayInstruction(contract, request, decision,
                 "[]", "2026-11-11"), "23514");
 
             await Run(db, tx, HolidayInstruction(contract, request, decision,
-                "[\\"2026-11-04\\"]", "2026-11-11"));
+                "[\"2026-11-04\"]", "2026-11-11"));
             Assert.Equal(1L, await Count(db, tx,
                 """SELECT count(*) FROM "BuildingManagementContractDepositRefundInstructions" """));
             await Denied(db, tx,
@@ -385,11 +385,11 @@ public sealed class Phase2G4IndependentRefundBankReviewPostgreSql_Tests
         await Scratch(async (db, tx, contract, request, _, _, decision) =>
         {
             await Denied(db, tx, HolidayInstruction(contract, request, decision,
-                "[\\"2026-11-04\\",\\"2026-11-04\\"]", "2026-11-11"), "23514");
+                "[\"2026-11-04\",\"2026-11-04\"]", "2026-11-11"), "23514");
             await Denied(db, tx, HolidayInstruction(contract, request, decision,
-                "[\\"2026-12-25\\"]", "2026-11-11"), "23514");
+                "[\"2026-12-25\"]", "2026-11-11"), "23514");
             await Denied(db, tx, HolidayInstruction(contract, request, decision,
-                "[\\"2026-11-04\\"]", "2026-11-11",
+                "[\"2026-11-04\"]", "2026-11-11",
                 "2026-11-01T09:30:00Z"), "23514");
             Assert.Equal(0L, await Count(db, tx,
                 """SELECT count(*) FROM "BuildingManagementContractDepositRefundInstructions" """));

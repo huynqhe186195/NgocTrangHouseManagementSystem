@@ -3571,6 +3571,22 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     depositPolicyReference = "SCRATCH-CONTRACT-DEPOSIT-POLICY-2026"
                 }));
             Assert.Equal(HttpStatusCode.Forbidden, conflictingDecision.Status);
+            // Negative HTTP/PG proof: independent bank review cannot
+            // certify a transfer before an Owner-signed payee instruction.
+            var earlyReviewRoute = financeRoot + "/move-outs/" +
+                financeMoveOut.ToString("D") +
+                "/deposit-settlement/refund-bank-review";
+            var beforePayeeApproval = await PostFinalAsync(
+                clientB, earlyReviewRoute, JsonSerializer.Serialize(new {
+                    paidAtUtc = DateTime.UtcNow,
+                    transactionReference = "SCRATCH-REFUND-BEFORE-PAYEE-0001",
+                    bankStatementEvidenceReference =
+                        "SIGNED-BANK-BEFORE-PAYEE-REVIEW-0001",
+                    signedIndependentReviewReference =
+                        "SIGNED-REVIEW-BEFORE-PAYEE-0001"
+                }));
+            Assert.Equal(HttpStatusCode.Forbidden, beforePayeeApproval.Status);
+
             // D04: destination must be signed by the Owner, with an
             // explicit statutory-holiday calendar, before bank review.
             var destinationRoute = financeRoot + "/move-outs/" +

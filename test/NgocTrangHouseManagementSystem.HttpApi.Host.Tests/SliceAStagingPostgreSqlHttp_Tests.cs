@@ -3682,14 +3682,14 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     refundBankEvidenceReference = "SCRATCH-REFUND-SIGNED-PROOF-0001"
                 }));
             Assert.Equal(HttpStatusCode.Forbidden, notReviewedYet.Status);
-            var reviewed = await PostFinalAsync(
+            var fullRefundReviewed = await PostFinalAsync(
                 clientB, refundReviewRoute, fullRefundReviewBody);
-            Assert.True(reviewed.Status is HttpStatusCode.OK or
+            Assert.True(fullRefundReviewed.Status is HttpStatusCode.OK or
                 HttpStatusCode.Created,
-                $"Independent full-refund review: {reviewed.Status} {reviewed.Body}");
+                $"Independent full-refund review: {fullRefundReviewed.Status} {fullRefundReviewed.Body}");
             var replayedReview = await PostFinalAsync(
                 clientB, refundReviewRoute, fullRefundReviewBody);
-            Assert.Equal(reviewed.Body, replayedReview.Body);
+            Assert.Equal(fullRefundReviewed.Body, replayedReview.Body);
 
             using var closeout = await PostValidFinanceAsync(
                 clientRoot,

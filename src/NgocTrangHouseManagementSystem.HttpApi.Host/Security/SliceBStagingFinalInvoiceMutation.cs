@@ -1414,6 +1414,40 @@ public sealed class SliceBStagingFinalInvoiceMutation
     }
 
     /// <summary>
+    /// A signed Owner payee instruction must exist BEFORE the reported bank
+    /// transfer. Matching the immutable decision scope and approved amount
+    /// prevents a second or stale instruction from authorizing other funds.
+    /// The row share-lock is held through the surrounding serializable UoW.
+    /// </summary>
+    private static async Task RequireApprovedRefundDestinationForPaymentAsync(
+        BuildingManagementDbContext db,
+        ContractDepositSettlementDecisionRecord decision,
+        DateTime paidAtUtc)
+    {
+        if (paidAtUtc.Kind != DateTimeKind.Utc ||
+            decision.ApprovedRefundAmount <= 0m)
+            throw Denied();
+        await using var cmd = Command(db, """
+            SELECT "ApprovedAtUtc"
+              FROM "BuildingManagementContractDepositRefundInstructions"
+             WHERE "ContractId"=@contract AND "MoveOutRequestId"=@request
+               AND "DecisionId"=@decision AND "BuildingId"=@building
+               AND "OwnerId"=@owner AND "ApprovedRefundAmountVnd"=@amount
+             FOR SHARE
+            """);
+        AddValue(cmd, "contract", decision.ContractId);
+        AddValue(cmd, "request", decision.MoveOutRequestId);
+        AddValue(cmd, "decision", decision.Id);
+        AddValue(cmd, "building", decision.BuildingId);
+        AddValue(cmd, "owner", decision.ApprovedByUserId);
+        AddValue(cmd, "amount", decision.ApprovedRefundAmount);
+        if (await cmd.ExecuteScalarAsync() is not DateTime approvedAtUtc ||
+            approvedAtUtc.Kind != DateTimeKind.Utc ||
+            paidAtUtc < approvedAtUtc)
+            throw Denied();
+    }
+
+    /// <summary>
     /// Owner signs the destination and a Vietnam holiday-calendar reference.
     /// This is a bank instruction ONLY; it never initiates a transfer.
     /// </summary>
@@ -1445,8 +1479,11 @@ public sealed class SliceBStagingFinalInvoiceMutation
                     signed.ApprovedRefundAmount <= 0m)
                     throw Denied();
                 var approved = DateTime.UtcNow;
+                // The refund SLA starts at approved final reconciliation,
+                // NOT at a later recipient-instruction time. A delayed Owner
+                // instruction cannot move the contractual deadline forward.
                 var vnDate = DateOnly.FromDateTime(
-                    TimeZoneInfo.ConvertTimeFromUtc(approved,
+                    TimeZoneInfo.ConvertTimeFromUtc(signed.ApprovedAtUtc,
                         TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh")));
                 if (input.StatutoryHolidays.Any(x =>
                     x < vnDate || x > vnDate.AddDays(30)))
@@ -1650,6 +1687,8 @@ public sealed class SliceBStagingFinalInvoiceMutation
                     await db.DepositCloseoutApprovals.AsNoTracking().AnyAsync(x =>
                         x.ContractId == contractId))
                     throw Denied();
+                await RequireApprovedRefundDestinationForPaymentAsync(
+                    db, decision, input.PaidAtUtc);
                 var prior = await db.DepositRefundBankReviews.AsNoTracking()
                     .SingleOrDefaultAsync(x =>
                         x.ContractId == contractId ||
@@ -1955,6 +1994,10 @@ public sealed class SliceBStagingFinalInvoiceMutation
 
                 if (refundAmount > 0m)
                 {
+                    // Also protect previously recorded bank reviews: no
+                    // closeout unless the Owner instruction predates payment.
+                    await RequireApprovedRefundDestinationForPaymentAsync(
+                        db, decision, input.RefundPaidAtUtc!.Value);
                     var reviewedRefund = await db.DepositRefundBankReviews
                         .AsNoTracking().SingleOrDefaultAsync(x =>
                             x.ContractId == contractId &&

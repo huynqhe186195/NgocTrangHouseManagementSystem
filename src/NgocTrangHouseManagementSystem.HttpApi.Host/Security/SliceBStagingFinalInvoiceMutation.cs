@@ -1464,7 +1464,9 @@ public sealed class SliceBStagingFinalInvoiceMutation
                         input.AccountNumber, input.SignedDestinationReference) ||
                     !ValidProof(input.HolidayCalendarReference) ||
                     input.StatutoryHolidays is null ||
-                    input.StatutoryHolidays.Count > 80)
+                    input.StatutoryHolidays.Count > 80 ||
+                    input.StatutoryHolidays.Distinct().Count() !=
+                        input.StatutoryHolidays.Count)
                     throw Denied();
                 await LockRequestAsync(db, requestId, contractId, roomId);
                 var signed = await db.DepositSettlementDecisions.AsNoTracking()
@@ -1490,6 +1492,12 @@ public sealed class SliceBStagingFinalInvoiceMutation
                     throw Denied();
                 var due = ContractDepositRefundOperationsPolicy.DueOn(
                     vnDate, input.StatutoryHolidays);
+                // Preserve the exact Owner-approved holiday set; the DB
+                // independently recomputes the seven-business-day deadline.
+                if (due > vnDate.AddDays(30))
+                    throw Denied();
+                var holidaysJson = JsonSerializer.Serialize(
+                    input.StatutoryHolidays.OrderBy(x => x));
                 var name = input.BeneficiaryName!.Trim();
                 var bank = input.BankName!.Trim();
                 var account = input.AccountNumber!.Trim();
@@ -1500,9 +1508,10 @@ public sealed class SliceBStagingFinalInvoiceMutation
                       ("Id","ContractId","MoveOutRequestId","DecisionId",
                        "BuildingId","OwnerId","ApprovedAtUtc","ApprovedRefundAmountVnd",
                        "PayeeName","PayeeBank","PayeeAccount",
-                       "SignedDestinationReference","HolidayCalendarReference","DueOn")
+                       "SignedDestinationReference","HolidayCalendarReference",
+                        "StatutoryHolidaysJson","DueOn")
                     VALUES (@id,@contract,@request,@decision,@building,@owner,
-                      @at,@amount,@name,@bank,@account,@signed,@calendar,@due)
+                      @at,@amount,@name,@bank,@account,@signed,@calendar,@holidays,@due)
                     ON CONFLICT ("ContractId") DO NOTHING
                     RETURNING "Id"
                     """))
@@ -1521,6 +1530,7 @@ public sealed class SliceBStagingFinalInvoiceMutation
                     AddValue(insert,"account",account);
                     AddValue(insert,"signed",signedRef);
                     AddValue(insert,"calendar",calendar);
+                    AddValue(insert,"holidays",holidaysJson);
                     AddValue(insert,"due",due);
                     if (await insert.ExecuteScalarAsync() is Guid created)
                         return created;
@@ -1536,6 +1546,7 @@ public sealed class SliceBStagingFinalInvoiceMutation
                        AND "PayeeAccount"=@account
                        AND "SignedDestinationReference"=@signed
                        AND "HolidayCalendarReference"=@calendar
+                        AND "StatutoryHolidaysJson"=@holidays
                     """);
                 AddValue(replay,"contract",contractId);
                 AddValue(replay,"request",requestId);
@@ -1547,6 +1558,7 @@ public sealed class SliceBStagingFinalInvoiceMutation
                 AddValue(replay,"account",account);
                 AddValue(replay,"signed",signedRef);
                 AddValue(replay,"calendar",calendar);
+                AddValue(replay,"holidays",holidaysJson);
                 AddValue(replay,"due",due);
                 return await replay.ExecuteScalarAsync() is Guid found
                     ? found : throw Denied();

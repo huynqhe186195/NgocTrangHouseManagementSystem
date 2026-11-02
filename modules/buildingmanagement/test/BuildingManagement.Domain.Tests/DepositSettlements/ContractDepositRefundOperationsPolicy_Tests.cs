@@ -60,6 +60,24 @@ public sealed class ContractDepositRefundOperationsPolicy_Tests
     }
 
     [Fact]
+    public void OI04OPS07_Overdue_Takes_Precedence_Over_Failed_Retry()
+    {
+        // Recording a failed payment must never mask a breached 7-day SLA.
+        Assert.Equal(ContractDepositRefundOperatingStatus.TransferFailed,
+            ContractDepositRefundOperationsPolicy.Status(1_000_000m, true,
+                false, true, new DateOnly(2026, 11, 11),
+                new DateOnly(2026, 11, 11)));
+        Assert.Equal(ContractDepositRefundOperatingStatus.Overdue,
+            ContractDepositRefundOperationsPolicy.Status(1_000_000m, true,
+                false, true, new DateOnly(2026, 11, 11),
+                new DateOnly(2026, 11, 12)));
+        Assert.Equal(ContractDepositRefundOperatingStatus.RefundVerified,
+            ContractDepositRefundOperationsPolicy.Status(1_000_000m, true,
+                true, true, new DateOnly(2026, 11, 11),
+                new DateOnly(2026, 11, 12)));
+    }
+
+    [Fact]
     public void OI04OPS06_Overdue_Does_Not_Mark_Refund_As_Executed()
     {
         Assert.Equal(ContractDepositRefundOperatingStatus.Overdue,

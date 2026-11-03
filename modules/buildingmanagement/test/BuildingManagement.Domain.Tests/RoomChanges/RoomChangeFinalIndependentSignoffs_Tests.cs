@@ -21,7 +21,9 @@ public sealed class RoomChangeFinalIndependentSignoffs_Tests
         RoomChangeBusinessPolicyReviewRecord Review,
         RoomChangeDayPricingRuleCandidate Rule,
         RoomChangeHandoverEvidenceRecord Physical,
-        Guid PrimaryTenantId);
+        Guid PrimaryTenantId, UtilityMeter ElectricityMeter,
+        MeterReading ElectricityReading, UtilityMeter WaterMeter,
+        MeterReading WaterReading);
 
     private static Facts Create()
     {
@@ -81,7 +83,7 @@ public sealed class RoomChangeFinalIndependentSignoffs_Tests
             "SIGNED-METER-HANDOVER-H6-2026",
             Guid.NewGuid(), Now.AddSeconds(5));
         return new Facts(request, source, roster, policy, review,
-            rule, physical, primary);
+            rule, physical, primary, electricity, e, water, w);
     }
 
     private static RoomChangeDayPricingOwnerSignoff OwnerSign(Facts f,
@@ -196,4 +198,58 @@ public sealed class RoomChangeFinalIndependentSignoffs_Tests
         Assert.ThrowsAny<Exception>(() =>
             signed.Verify(other.Request, other.Roster, other.Physical));
     }
+    [Fact]
+    public void TRF_ARCH01_Pricing_Owner_Proof_Archives_Original_Fingerprints()
+    {
+        var f = Create();
+        var owner = OwnerSign(f);
+        var saved = RoomChangeEvidenceArchiveRecord.CapturePricing(
+            Guid.NewGuid(), f.Request, f.Source, f.Roster,
+            f.Policy, f.Review, f.Rule, owner, Now.AddSeconds(10));
+        saved.VerifyStoredSnapshot();
+        Assert.Equal(RoomChangeEvidenceArchiveKind.SignedExactPricing, saved.Kind);
+        Assert.Equal(f.Request.Id, saved.RequestId);
+        Assert.Equal(owner.Id, saved.EvidenceId);
+        Assert.Equal(owner.EvidenceSha256, saved.SourceEvidenceSha256);
+        Assert.Equal(f.Rule.Id, saved.ParentEvidenceId);
+        Assert.Equal(f.Rule.EvidenceSha256, saved.ParentEvidenceSha256);
+        Assert.Equal(64, saved.RecordSha256.Length);
+        Assert.False(saved.CanPostReceivable);
+        Assert.False(saved.CanExecuteRoomChange);
+    }
+
+    [Fact]
+    public void TRF_ARCH02_Three_Signatures_Archive_Exactly_The_Signed_Physical_Proof()
+    {
+        var f = Create();
+        var signoff = HandoverSign(f);
+        var saved = RoomChangeEvidenceArchiveRecord.CaptureThreePartyHandover(
+            Guid.NewGuid(), f.Request, f.Roster, f.Physical,
+            f.ElectricityMeter, f.ElectricityReading,
+            f.WaterMeter, f.WaterReading, signoff, Now.AddSeconds(10));
+        saved.VerifyStoredSnapshot();
+        Assert.Equal(RoomChangeEvidenceArchiveKind.ThreePartyPhysicalHandover, saved.Kind);
+        Assert.Equal(signoff.Id, saved.EvidenceId);
+        Assert.Equal(f.Physical.Id, saved.ParentEvidenceId);
+        Assert.Equal(f.Physical.EvidenceSha256, saved.ParentEvidenceSha256);
+        Assert.False(saved.CanExecuteRoomChange);
+    }
+
+    [Fact]
+    public void TRF_ARCH03_Archive_Rejects_Forged_Time_And_Another_Request()
+    {
+        var f = Create();
+        var owner = OwnerSign(f);
+        Assert.Throws<InvalidOperationException>(() =>
+            RoomChangeEvidenceArchiveRecord.CapturePricing(
+                Guid.NewGuid(), f.Request, f.Source, f.Roster,
+                f.Policy, f.Review, f.Rule, owner, Now.AddSeconds(2)));
+        var different = Create();
+        Assert.ThrowsAny<Exception>(() =>
+            RoomChangeEvidenceArchiveRecord.CapturePricing(
+                Guid.NewGuid(), different.Request, different.Source,
+                different.Roster, different.Policy, different.Review,
+                f.Rule, owner, Now.AddSeconds(10)));
+    }
+
 }

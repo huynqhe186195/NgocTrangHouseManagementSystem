@@ -200,3 +200,46 @@ matrix and signed asset/defect review; full mid-month H2/H3/H4 writer.
 No production deploy or live migration; keep the untracked 2G.3
 RevisionLedger review SQL unchanged. This documentation-only update
 does not require repeating already-passed tests.
+
+
+## 2026-11-03 — unified mid-month financial packet: 5/5 LOCAL PASS
+
+**Operator-tested exact code SHA:** `b2e65af134042a2df34cc36823e10e6a59a625fd`.
+
+The operator submitted the terminal output from
+`etc/scripts/verify-phase-2h-financial-foundations.ps1`:
+
+```text
+=== PHASE 2H FINANCIAL FOUNDATIONS: ALL FIVE GROUPS PASSED ===
+COMMIT=b2e65af134042a2df34cc36823e10e6a59a625fd
+Full mid-month contract/cash writer remains HOLD; production not used.
+```
+
+The script's gated checks at this code SHA are:
+- **50/50 Domain**: prior 32 H2/H3/H4/H6 cases and 18 new
+  cross-document financial-packet tests `TRF_PACKET01–18`.
+- **30/30 PostgreSQL** transfer, room-state and H6 handover tests.
+- Full disposable PostgreSQL migration rehearsal.
+- Authenticated HTTP using disposable test databases.
+- Full .NET isolated regression.
+
+**Scope:** LOCAL/STAGING technical verification of the unified
+*read-only* financial proposal and the existing safe month-end
+writer. The SHA-bound packet links the source contract, prospective
+target contract, approved OI-07 choice and review, roster, transfer
+date, source issued-rent and cash-backed deposit candidate, with
+recalculation and a checksum to detect drift. It does NOT authenticate
+independent bank transactions, post invoice adjustments, distribute
+cash, end a mid-month contract, or open new permissions.
+
+**Business acceptance remains HOLD** for D01 (handover-day owner),
+D02 (VND rounding/residual), D03 (independent invoice adjustment and
+verified receipt treatment), D04 (cash-backed top-up or partial-refund
+execution), D06 (approved human signatory matrix) and full mid-month
+HTTP/EF/PostgreSQL transactional execution. Prior SRS full-month
+2G.5 policy stays unchanged. No production migration/deployment or
+live data writes. This is operator-reported local test evidence, not
+a CI-run citation or proof of document signature authenticity.
+
+This documentation-only acceptance update does not change executable
+code; no rerun is required solely because of this commit.

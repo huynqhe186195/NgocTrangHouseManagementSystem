@@ -195,3 +195,35 @@ full migration, authenticated HTTP/PostgreSQL and Full .NET regression.
   before calling this additional slice STAGING VERIFIED. A prior
   PASS at `b2e65af134042a2df34cc36823e10e6a59a625fd` does
   not certify these added Domain and SQL files.
+
+
+### Staging-only D01/D02 intake and idempotent retrieval
+
+The `SliceBStagingRoomChangesController` now exposes only under the
+existing **isolated staging** and authenticated building/contract grant:
+
+- `POST /api/slice-b-staging/contracts/{contractId}/room-changes/{requestId}/day-pricing-rule-candidate`
+- `GET /api/slice-b-staging/contracts/{contractId}/room-changes/{requestId}/day-pricing-rule-candidate`
+
+`POST` accepts ONLY explicit `TargetMonthlyRentVnd`,
+`TransferDayOwner`, and `Rounding` (no default or client-supplied
+`Accepted`, ledger claims, signed policy reference, money value
+calculation or privilege flag). The service locks the contract,
+request, destination room and full current tenant roster inside the
+scoped serializable UoW, loads independently reviewed OI-07 policy
+evidence and calculates the quote from authoritative source rent.
+A second identical request returns the already-verified immutable
+candidate; a different candidate for the same request is denied.
+The SQL unique index rejects simultaneous duplicate writes.
+`GET` revalidates the stored hash, source, roster and approved policy
+before returning a non-executing candidate.
+
+The isolated security boundary regression is updated for the two
+new endpoints and checks authentication and UoW attributes. This
+does **not** authorize actual mid-month rent debit, invoice,
+deposit disbursement, signed-handover completion or an unrestricted
+production route. The individual day-owner/rounding choices are
+documented **candidate inputs**, not a project-wide D01/D02 rule,
+and the reviewed OI-07 reference is not itself documentary proof
+that the specific monetary parameters were signed by all parties.
+Test evidence is required at the new code SHA before acceptance.

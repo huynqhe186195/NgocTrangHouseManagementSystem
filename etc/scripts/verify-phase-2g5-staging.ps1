@@ -20,17 +20,13 @@ try {
         throw 'Set BM_PG_TEST_CONNECTION for the isolated local test database first.'
     }
 
-    # Inspect only the local DB name/host/port; never print the password.
-    $settings = New-Object System.Data.Common.DbConnectionStringBuilder
-    $settings.ConnectionString = $env:BM_PG_TEST_CONNECTION
-    if (-not $settings.ContainsKey('Database') -or
-        -not $settings.ContainsKey('Host') -or
-        -not $settings.ContainsKey('Port') -or
-        [string]$settings['Database'] -cne 'ngoctrang_integration_test' -or
-        [string]$settings['Host'] -notin @('127.0.0.1', 'localhost') -or
-        [int]$settings['Port'] -ne 5432) {
-        throw 'Safety stop: only 127.0.0.1/localhost:5432/ngoctrang_integration_test is allowed.'
-    }
+    # The canonical safety guard is the NpgsqlConnectionStringBuilder in
+    # BuildingManagementPostgreSqlTestModule.RequireSafeConnectionString().
+    # Every invoked PostgreSQL test requires that guard BEFORE connecting:
+    # Database=ngoctrang_integration_test, localhost/127.0.0.1, port 5432.
+    # Do not reimplement the Npgsql parser with generic PowerShell string
+    # parsing: it can misclassify otherwise valid PostgreSQL connection strings.
+    # Neither migration nor HTTP fixtures bypass the canonical test DB guard.
 
     $sha = (& git rev-parse HEAD | Out-String).Trim()
     if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($sha)) {

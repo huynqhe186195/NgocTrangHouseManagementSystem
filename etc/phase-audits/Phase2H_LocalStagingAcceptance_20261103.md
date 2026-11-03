@@ -85,3 +85,38 @@ migration rehearsal, authenticated HTTP and Full regression.
 must pass at its **new** commit SHA before staging verification. The
 mid-month pricing/receipt/refund writer remains HOLD, no default day policy
 is chosen, no production migration or banking action is authorized.
+
+
+## 2026-11-03 — source-disposition SQL hardening verified at exact SHA
+
+**Operator-supplied Windows PowerShell result:**
+
+```text
+=== PHASE 2H FINANCIAL FOUNDATIONS: ALL FIVE GROUPS PASSED ===
+COMMIT=40d691389e78098cd58a12e6c0011b2641a05682
+Full mid-month contract/cash writer remains HOLD; production not used.
+```
+
+This supersedes the **test PENDING** statement above **only for the
+exact code SHA `40d691389e78098cd58a12e6c0011b2641a05682`**.
+The verification script hard-stops unless all five groups succeed:
+32/32 focused H2/H3/H4/H6 Domain cases, 24/24 2H PostgreSQL cases
+(including the new TRFPG18–24 source commitment and commit-gate probes),
+fresh disposable PostgreSQL full migration, authenticated staging HTTP
+with isolated PostgreSQL databases, and Full .NET regression.
+
+**Acceptance scope:** Phase 2H *local/staging technical* PASS for the
+existing **month-end, full-carry-forward** transfer and the
+H2/H3/H4/H6 read-only/supporting foundations. **NOT** Phase 2H full
+BUSINESS ACCEPTED or production-ready; mid-month execution with
+invoice corrections, independently posted top-up/partial refunds,
+handover signatory detail and policy D01–D04/D06 remains HOLD.
+The result is operator-reported local evidence, not an independent
+GitHub Actions execution record. An exact-SHA GitHub Actions run was
+not found through commit workflow-run/status lookup. Do not claim CI
+passed based on local test output.
+
+No code change is required to record this evidence. The existing
+untracked `etc/phase-audits/Phase2G3A7_RevisionLedger_Generated_Review.sql`
+remains outside the commit and must not be altered by this status
+update.

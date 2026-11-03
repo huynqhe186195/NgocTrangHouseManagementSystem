@@ -134,3 +134,64 @@ D01–D04/D06 final business details, independently authenticated source
 records, signed physical checklist and the full 2H mid-month transaction
 remain HOLD. Production is excluded. Exact new SHA runtime test PASS
 is still required; older PASS logs are not evidence for the new code.
+
+
+## 2026-11-03 — D01/D02 versioned daily-pricing rule candidate with SQL parity
+
+The approved H3 **principle** is daily rent for the actual days spent
+in each room. This does not approve a universal owner of the handover
+day or a universal VND rounding/residual rule. Those **detail gates
+remain open**.
+
+Delivered an additive, append-only **per-request candidate**:
+`RoomChangeDayPricingRuleCandidate.Prepare` requires the current active
+source Contract, single-source/target RoomChangeRequest, full verified
+immutable tenant roster, approved OI-07 independently reviewed policy
+specifically selecting `AgreedDayProration`, explicit signed pricing
+reference, UTC actor/review chronology, actual calendar month length,
+transfer-day owner and independent VND rounding choice. It recomputes
+`RoomChangeDailyRentQuoteCalculator` rather than accepting user-entered
+amounts; the original source monthly rate must match the live Contract.
+A candidate neither approves a **global** tariff nor posts an adjustment.
+
+Persisted via migration
+`20261103070000_Phase2HDayProrationRuleCandidates` as
+`BuildingManagementRoomChangeDayPricingRuleCandidates`. A unique
+request index, restrictive foreign keys, immutable insert-only and
+no-truncate triggers, SERIALIZABLE requirement and original independently
+reviewed policy/source scope checks reject direct SQL bypass. PostgreSQL
+recomputes the same source/target day splits and nearest-VND / truncate
+candidate amounts plus the full canonical SHA-256 field digest. Rollback
+refuses to discard any historical candidates. The .NET Domain and
+EF model are configured for this archived read-only record; the existing
+root-only month-end completion writer does not read it or change its
+eligibility.
+
+Added 8 Domain cases `TRF_RULE01–08` (approved source/target
+handover ownership, 29/31 days, explicit rounding, rejected review,
+separate proposer/reviewer, quote forging and immutable drift),
+7 PostgreSQL cases `TRFPG31–37` (actual Domain SHA parity,
+forged amounts/evidence, unapproved policy, leap-year calendar,
+immutability/rollback, non-SERIALIZABLE and empty up/down). Full
+disposable migration test expects the pricing migration last and
+checks its trigger. The one-shot script requires **58/58 focused
+Domain + 37/37 room-change PostgreSQL cases**, fresh disposable
+full migration, authenticated HTTP/PostgreSQL and Full .NET regression.
+
+**Non-acceptance boundaries**:
+- An independently reviewed OI-07 reference is necessary but NOT
+  self-authenticating human signature proof; per-request candidate
+  is not an Owner-approved universal policy or a final D01/D02
+  residual allocation decision.
+- This code does not select a handover-day owner, silently change
+  the ordinary 2G.5 full-final-month rule, repair an already issued
+  invoice, post bank cash, move occupants or enable a new HTTP writer.
+- D01/D02 signed golden pricing fixtures with rounding residual
+  treatment, D03 approved issued invoice/service correction,
+  D04 actual cash/bank-reviewed cọc top-up/refund,
+  D06 final signatories and full mid-month commit-time race-proof
+  remain **BUSINESS HOLD**. Production is excluded.
+- New code SHA must pass the local/staging five-gate verifier
+  before calling this additional slice STAGING VERIFIED. A prior
+  PASS at `b2e65af134042a2df34cc36823e10e6a59a625fd` does
+  not certify these added Domain and SQL files.

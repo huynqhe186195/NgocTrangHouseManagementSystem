@@ -19,7 +19,7 @@ public sealed class FullInvoiceMigrationChainPostgreSql_Tests
     private const string OptInVariable = "BM_ALLOW_FULL_MIGRATION_REHEARSAL";
     private const string OptInValue = "CREATE_AND_DROP_FRESH_LOCAL_TEST_DATABASE";
     private const string ExpectedLatestMigration =
-        "20261103060000_Phase2HPhysicalHandoverDigestIntegrity";
+        "20261103070000_Phase2HDayProrationRuleCandidates";
 
     [Fact]
     public async Task PGMIG01_Full_EF_Migrations_Succeed_In_Fresh_Disposable_Database()
@@ -247,6 +247,21 @@ public sealed class FullInvoiceMigrationChainPostgreSql_Tests
                 {
                     Assert.Equal(1L,
                         Convert.ToInt64(await handoverDigestProof.ExecuteScalarAsync()));
+                }
+
+                // D01/D02 must have a real append-only SQL guard in
+                // the completely migrated isolated PostgreSQL database.
+                await using (var pricingDecisionTrigger = new NpgsqlCommand(
+                    """
+                    SELECT count(*) FROM pg_trigger
+                     WHERE NOT tgisinternal
+                       AND tgname = 'TR_BM_RoomChangeDayPricingRule_Integrity'
+                       AND tgrelid =
+                         '"BuildingManagementRoomChangeDayPricingRuleCandidates"'::regclass
+                    """, verification))
+                {
+                    Assert.Equal(1L,
+                        Convert.ToInt64(await pricingDecisionTrigger.ExecuteScalarAsync()));
                 }
 
                 await using (var extension = new NpgsqlCommand(

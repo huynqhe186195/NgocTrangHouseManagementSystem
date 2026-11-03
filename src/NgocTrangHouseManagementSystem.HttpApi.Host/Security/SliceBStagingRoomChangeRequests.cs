@@ -927,6 +927,30 @@ public sealed class SliceBStagingRoomChangeRequests
                 handover.ElectricityReadingId, handover.WaterReadingId);
             await VerifyTransferDepositAsync(db, source);
             var utc = _clock.GetUtcNow().UtcDateTime;
+
+            // H6: server-owned reduced checklist after the LIVE source
+            // E/W, complete tenant roster, official receivables and held
+            // deposit have all been verified inside this SERIALIZABLE UoW.
+            // No request/body-supplied Boolean can attest these prerequisites.
+            try
+            {
+                RoomChangeReducedHandoverChecklistGate.RequireForAtomicCompletion(
+                    new RoomChangeReducedHandoverCompletionFacts(
+                        request, roster, policy, review, handover,
+                        input.SourceRoomDisposition, sourceReserved,
+                        input.DispositionEvidenceReference,
+                        input.CompletionReference, actor, utc,
+                        ServerVerifiedOriginalElectricityWaterReadings: true,
+                        ServerVerifiedExactFullTenantRoster: true,
+                        ServerVerifiedAllOfficialSourceReceivablesSettled: true,
+                        ServerVerifiedActualCashBackedHeldDeposit: true));
+            }
+            catch (Exception ex) when (ex is System.IO.InvalidDataException or
+                InvalidOperationException or ArgumentException)
+            {
+                throw Denied();
+            }
+
             var newId = Guid.NewGuid();
             var target = new Contract(newId, "TRF-" + newId.ToString("N"),
                 request.TargetRoomId,

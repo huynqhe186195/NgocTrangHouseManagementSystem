@@ -9,7 +9,7 @@ using Xunit;
 
 namespace BuildingManagement.DomainTests.RoomChanges;
 
-public sealed class RoomChangeCompletion_Tests
+public sealed partial class RoomChangeCompletion_Tests
 {
     private static readonly DateTime Created = new(
         2026, 10, 1, 8, 0, 0, DateTimeKind.Utc);

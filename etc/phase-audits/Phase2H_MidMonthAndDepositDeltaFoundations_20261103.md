@@ -41,3 +41,30 @@ The identity source-available = carry + refund and target-required = carry + top
 D01: transfer-day charge owner/time; D02: final VND rounding and residual policy; D03: existing issued invoice reconciliation including services, adjustments, due/overdue and monthly receivables; D04: actual bank-confirmed top-up/partial refund, destination and unique transaction ledger; H6: reduced signed handover accepted by both source/target financial writer; mid-month authenticated and PostgreSQL commit-time authorization/race/rollback.
 
 No production enablement, new EF migration, invoice posting, actual refund, contract ending or tenant access is included. This change can become **local/staging foundation verified** when its new exact commit passes all five groups; it is not full Phase 2H BUSINESS ACCEPTED.
+
+
+## H6 minimum handover gate — 2026-11-03 additive checkpoint
+
+Added `RoomChangeReducedHandoverChecklistGate.RequireForAtomicCompletion`
+as a **server-only transaction-local** last check for the existing 2H month-end
+safe lane. It is invoked in `CompleteRoomChangeAsync` strictly **after**
+the code has separately verified real original E/W readings, full current
+tenant roster vs immutable snapshot, all official source invoice/debt reviews
+and actual source held deposit payments. It rejects missing/request-mismatched
+inspection, handover, signed policy/review, tenant roster, audit actor/time,
+source disposition evidence, completion reference and conflicting future
+booking/status. It does not accept checkboxes or "verified" flags from the HTTP
+request: those flags are fixed only after the server verification steps succeed.
+
+New regression IDs `TRF_HAND01–08` cover signed minimum package, missing
+meter/roster/debt/deposit proof, future committed booking vs Available/
+Maintenance mismatch, missing completion references and foreign/backdated
+requests. The one-shot verifier now runs 32 focused Domain cases (24 H2/H3/H4
+plus 8 H6) before PostgreSQL/HTTP/full regression. No new migration or
+public endpoint is added; existing root-only execution and SQL triggers stay.
+
+**Boundary:** evidence references are operator attestations, not independent
+cryptographic verification of human signatures. H6 D06 final signatory matrix,
+asset/defect evidence review, mid-month H2/H3 financial cutoff and H4 actual
+verified top-up/refund execution remain HOLD. Neither this checklist nor its
+tests activate the mid-month writer or production.

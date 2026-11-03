@@ -30,11 +30,11 @@ try {
     $http = '.\test\NgocTrangHouseManagementSystem.HttpApi.Host.Tests\NgocTrangHouseManagementSystem.HttpApi.Host.Tests.csproj'
 
     Write-Host "=== PHASE 2H FINANCIAL FOUNDATIONS / COMMIT $sha ==="
-    Write-Host '== 1/5: H2/H3/H4 exact rent and deposit math =='
-    & dotnet test $domain --filter 'FullyQualifiedName~RoomChangeMidMonthRentReconciliation_Tests|FullyQualifiedName~RoomChangeDepositDifferencePreview_Tests|FullyQualifiedName~TRF_HAND' --logger 'console;verbosity=normal' *>&1 | Tee-Object -FilePath (Join-Path $logs '15-2h-financial-domain.log')
+    Write-Host '== 1/5: H2/H3/H4/H6 financial packet, daily rent and cash evidence =='
+    & dotnet test $domain --filter 'FullyQualifiedName~RoomChangeMidMonthRentReconciliation_Tests|FullyQualifiedName~RoomChangeDepositDifferencePreview_Tests|FullyQualifiedName~TRF_HAND|FullyQualifiedName~RoomChangeMidMonthFinancialReconciliationPacket_Tests' --logger 'console;verbosity=normal' *>&1 | Tee-Object -FilePath (Join-Path $logs '15-2h-financial-domain.log')
     if ($LASTEXITCODE -ne 0) { throw '2H rent/deposit domain tests FAILED.' }
-    if (-not (Select-String -Path (Join-Path $logs '15-2h-financial-domain.log') -Pattern 'Total tests:\s*32\b' -Quiet) -or -not (Select-String -Path (Join-Path $logs '15-2h-financial-domain.log') -Pattern 'Passed:\s*32\b' -Quiet)) {
-        throw 'Expected exactly 32/32 H2/H3/H4 cases.'
+    if (-not (Select-String -Path (Join-Path $logs '15-2h-financial-domain.log') -Pattern 'Total tests:\s*50\b' -Quiet) -or -not (Select-String -Path (Join-Path $logs '15-2h-financial-domain.log') -Pattern 'Passed:\s*50\b' -Quiet)) {
+        throw 'Expected exactly 50/50 H2/H3/H4 cases.'
     }
 
     Write-Host '== 2/5: Phase 2H PostgreSQL concurrency and atomic transfer =='

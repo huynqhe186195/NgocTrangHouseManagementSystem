@@ -68,3 +68,69 @@ cryptographic verification of human signatures. H6 D06 final signatory matrix,
 asset/defect evidence review, mid-month H2/H3 financial cutoff and H4 actual
 verified top-up/refund execution remain HOLD. Neither this checklist nor its
 tests activate the mid-month writer or production.
+
+
+## 2026-11-03 — unified mid-month reconciliation packet (code committed, verification pending)
+
+**New domain-only preparation:** `RoomChangeMidMonthFinancialReconciliationPacketFactory.Prepare`
+binds one specific open RoomChangeRequest, active source Contract, intended
+target contract ID, entire immutable tenant roster snapshot, independently
+accepted OI-07 policy review, the signed **candidate** daily rent rule, the
+issued-source-rent-only ledger snapshot and the actual-cash-backed deposit
+split into a single version-1 SHA-256 audit candidate.
+
+This addresses a previously independent-input failure mode: the H2/H3
+quote, D03 source invoice correction and H4 cash split could each be
+arithmetically correct but refer to **different contracts, dates, policy
+revisions or new-contract identifiers**. The packet refuses such mixing.
+It requires:
+
+- Source contract active, its room matching the request, transfer date
+  within the source contract term, target contract ID distinct from source.
+- Exact request date = quote date; source monthly rent = signed quote
+  old-room tariff; original rent ledger contract and billing month match.
+- An approved, independent OI-07 review of an immutable all-tenant roster;
+  NEW linked contract and AgreedDayProration selected explicitly; policy
+  pricing reference identical to the quote's stated rule reference.
+- Policy deposit reference identical to target-required-deposit evidence;
+  selected deposit lane must equal recomputed carry/top-up/refund amounts.
+- Actual held source cọc = nominal source Contract.DepositAmount and target
+  required deposit = target proposed monthly rent, because the present
+  Contract aggregate still ties a contract's deposit to its monthly rent.
+  Until that model is explicitly decoupled, this is an intentional
+  fail-closed restriction rather than a silent new deposit rule.
+- UTC preparation after the independent policy review; recompute both
+  original pricing and cash splits; SHA the versioned entire candidate.
+- `VerifyFingerprint` rejects later altered amounts; `VerifyAgainst`
+  additionally rebuilds the packet from the current request/source,
+  original policy, independent review and roster.
+
+**Illustrative scenarios, not authoritative tariffs:**
+
+| Source rent / source cọc | Target rent / new required cọc | Proposed source rent for Sep 1–14 | Proposed target rent from Sep 15 | Candidate cọc disposition |
+|---|---|---|---|---|
+| 3,000,000 | 3,000,000 | 1,400,000 | 1,600,000 | Carry 3,000,000 |
+| 3,000,000 | 4,000,000 | 1,400,000 | 2,133,333 | Carry 3,000,000, collect 1,000,000 later |
+| 3,000,000 | 2,000,000 | 1,400,000 | 1,066,667 | Carry 2,000,000, refund 1,000,000 later |
+
+These figures assume a **hypothetical** September 15 handover charged to
+the target room and nearest-VND rounding. Neither D01's charge-day owner
+nor D02's rounding option has been authorized as a global business tariff.
+An invoice already issued is never edited; any computed credit, excess
+receipt or future top-up/refund remains a **non-posted proposal**.
+
+18 new `TRF_PACKET01–18` Domain tests cover referential consistency,
+transfer date, rent and deposit policy selection, rejected independent
+review, historic corrections, excess receipts, disputed held cash, forged
+source ledger, candidate tampering, foreign policy/roster re-verification
+and UTC preparation. The one-command verifier now requires **50/50
+focused Domain and 30/30 transfer PostgreSQL tests**, a fresh scratch
+migration, authenticated HTTP/PostgreSQL and Full regression.
+
+**Do not treat preview SHA as independent identity or bank authentication**.
+It has no EF mapping, persisted financial journal, remote API or contract,
+invoice, debt, bank or deposit writer; all execution flags are false.
+D01–D04/D06 final business details, independently authenticated source
+records, signed physical checklist and the full 2H mid-month transaction
+remain HOLD. Production is excluded. Exact new SHA runtime test PASS
+is still required; older PASS logs are not evidence for the new code.

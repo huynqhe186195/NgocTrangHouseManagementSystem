@@ -19,7 +19,7 @@ public sealed class FullInvoiceMigrationChainPostgreSql_Tests
     private const string OptInVariable = "BM_ALLOW_FULL_MIGRATION_REHEARSAL";
     private const string OptInValue = "CREATE_AND_DROP_FRESH_LOCAL_TEST_DATABASE";
     private const string ExpectedLatestMigration =
-        "20261103050000_Phase2HSourceRoomDispositionCommitGuard";
+        "20261103060000_Phase2HPhysicalHandoverDigestIntegrity";
 
     [Fact]
     public async Task PGMIG01_Full_EF_Migrations_Succeed_In_Fresh_Disposable_Database()
@@ -231,6 +231,22 @@ public sealed class FullInvoiceMigrationChainPostgreSql_Tests
                 {
                     Assert.Equal(1L,
                         Convert.ToInt64(await sourceDispositionGuard.ExecuteScalarAsync()));
+                }
+
+                // H6 document authenticity-of-bytes: the canonical
+                // handover digest must be checked by PostgreSQL on INSERT,
+                // not only verified when the .NET domain reads it.
+                await using (var handoverDigestProof = new NpgsqlCommand(
+                    """
+                    SELECT count(*) FROM pg_trigger
+                     WHERE NOT tgisinternal
+                       AND tgname = 'TR_BM_RoomChangeHandover_DigestIntegrity'
+                       AND tgrelid =
+                         '"BuildingManagementRoomChangeHandoverEvidence"'::regclass
+                    """, verification))
+                {
+                    Assert.Equal(1L,
+                        Convert.ToInt64(await handoverDigestProof.ExecuteScalarAsync()));
                 }
 
                 await using (var extension = new NpgsqlCommand(

@@ -120,3 +120,45 @@ No code change is required to record this evidence. The existing
 untracked `etc/phase-audits/Phase2G3A7_RevisionLedger_Generated_Review.sql`
 remains outside the commit and must not be altered by this status
 update.
+
+
+## 2026-11-03 — additive H6 signed-physical-handover checksum guard (test pending)
+
+During review, the existing `Phase2HPhysicalHandoverEvidence`
+migration was found to check only the *format* of
+`RoomChangeHandoverEvidence.EvidenceSha256`, while its original-reading
+trigger correctly scoped physical electricity/water meters. An attacker
+writing directly to the SQL table could persist a mismatched but
+well-formed 64-hex H6 payload without crossing the Domain factory.
+
+The additive `20261103060000_Phase2HPhysicalHandoverDigestIntegrity`
+migration fixes only that gap: PostgreSQL recomputes the **exact Domain
+canonical digest** over request/contract/room/building IDs, handover
+business date, original E/W IDs and three-decimal readings, inspection
+and handover references, actor and normalized UTC instant before
+an insert is accepted. Historical rows must pass the same checksum
+before migration; corrupted history makes the migration fail closed
+rather than rewriting signed artifacts. Down fails if *any* handover
+history exists. It does not change the original source-meter guards,
+the financial/cash guards or authorization.
+
+Six new transaction-isolated PostgreSQL tests `TRFPG25–30` cover
+real Domain canonical SHA parity (including fractional readings and
+microsecond UTC), direct-SQL forgery of hash/reference/reading,
+corrupted pre-existing history migration denial, nonserializable write
+denial, clean reversible schema and valid pre-existing record upgrades.
+The full fresh EF migration-chain test now expects the new migration
+as the latest and checks its PostgreSQL trigger. The single 2H
+verification script now requires **32/32 Domain, 30/30 PostgreSQL 2H
+cases, scratch full migration, authenticated HTTP/PostgreSQL and full
+regression** at the exact new code SHA.
+
+**Status:** Code committed; **runtime PostgreSQL evidence on this
+new SHA pending**. The operator's prior five-group PASS at
+`40d691389e78098cd58a12e6c0011b2641a05682`
+is historical only. Full mid-month transfer with invoice
+corrections, actual top-up/refund and the remaining D01–D04/D06
+business detail gates remains HOLD. A consistent SHA does not
+cryptographically prove a human signed the referenced document;
+independent signature/identity verification is a separate gate.
+Production is not deployed.

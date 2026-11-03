@@ -174,6 +174,15 @@ public sealed class SliceBStagingRoomChangesController : ControllerBase
         return _requests!.GetExecutionReadinessAsync(contractId, requestId);
     }
 
+    [HttpGet("{requestId:guid}/mid-month-financial-journal")]
+    [UnitOfWork(true, IsolationLevel.Serializable)]
+    public Task<SliceBRoomChangeFinancialJournalRead> GetMidMonthFinancialJournalAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid requestId)
+    {
+        RequireIsolatedStaging();
+        return _requests!.GetMidMonthFinancialJournalAsync(contractId, requestId);
+    }
+
     [HttpPost("{requestId:guid}/complete-room-change")]
     [UnitOfWork(true, IsolationLevel.Serializable)]
     public Task<SliceBRoomChangeCompletionRead> CompleteRoomChangeAsync(

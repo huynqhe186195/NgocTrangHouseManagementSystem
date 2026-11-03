@@ -22,9 +22,15 @@ public sealed class Phase2HRoomChangeSecurityBoundary_Tests
 
         var methods = controller.GetMethods(BindingFlags.Public |
             BindingFlags.Instance | BindingFlags.DeclaredOnly);
-        Assert.Equal(19, methods.Length);
+        Assert.Equal(20, methods.Length);
         Assert.Contains(methods, m => m.Name == "CompleteRoomChangeAsync");
         Assert.Contains(methods, m => m.Name == "GetExecutionReadinessAsync");
+        var journal = Assert.Single(methods.Where(
+            m => m.Name == "GetMidMonthFinancialJournalAsync"));
+        Assert.NotNull(journal.GetCustomAttribute<HttpGetAttribute>());
+        Assert.Equal("{requestId:guid}/mid-month-financial-journal",
+            journal.GetCustomAttribute<HttpGetAttribute>()?.Template);
+        Assert.NotNull(journal.GetCustomAttribute<UnitOfWorkAttribute>());
         Assert.Contains(methods, m => m.Name == "AttestHandoverAsync");
         Assert.Contains(methods, m => m.Name == "GetHandoverAsync");
         Assert.Contains(methods, m => m.Name == "ProposeDayPricingRuleAsync");
@@ -49,6 +55,27 @@ public sealed class Phase2HRoomChangeSecurityBoundary_Tests
             Assert.NotNull(method.GetCustomAttribute<Microsoft.AspNetCore.Mvc.Routing.HttpMethodAttribute>());
             Assert.NotNull(method.GetCustomAttribute<UnitOfWorkAttribute>());
         }
+    }
+
+    [Fact]
+    public void TRFHTTP03_Operator_Financial_Journal_Is_Observational_Only()
+    {
+        var route = typeof(SliceBStagingRoomChangesController).GetMethod(
+            nameof(SliceBStagingRoomChangesController.GetMidMonthFinancialJournalAsync));
+        Assert.NotNull(route);
+        Assert.NotNull(route!.GetCustomAttribute<HttpGetAttribute>());
+        Assert.NotNull(route.GetCustomAttribute<UnitOfWorkAttribute>());
+
+        var projection = new SliceBRoomChangeFinancialJournalRead(
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
+            2, -50000m, 1, 1000000m,
+            IsActualOutboundBankRefundVerified: false,
+            IsMidMonthContractCommitEnabled: false,
+            CanExecuteTransfer: false);
+        Assert.False(projection.CanExecuteTransfer);
+        Assert.False(projection.IsActualOutboundBankRefundVerified);
+        Assert.False(projection.IsMidMonthContractCommitEnabled);
+        Assert.Equal(-50000m, projection.SignedCorrectionNetVnd);
     }
 
     [Fact]

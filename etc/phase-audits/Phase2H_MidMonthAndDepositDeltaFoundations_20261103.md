@@ -526,3 +526,30 @@ The D04 outbound refund is still fail-closed, and the original
 authenticated bank gateway/settlement plus atomic contract-room-deposit
 writer are not present. Production excluded. This new SHA must be
 tested locally before it can be marked PASS.
+
+
+## 2026-11-03 — Authenticated operator-facing D03/D04 staging journal read (TEST PENDING)
+
+The previously unconsumed SQL finance journal can now be read at
+`GET /api/slice-b-staging/contracts/{contractId}/room-changes/{requestId}/mid-month-financial-journal`.
+This read-only endpoint uses the **same authenticated Contract.Manage
+identity lease, live building membership commit fence and source
+contract lock** as existing staging business operations. It additionally
+authorizes and locks the target room under the SAME building, and
+reads original PostgreSQL journal rows under `SERIALIZABLE` using
+server-bound scoped GUID parameters. It exposes only the counts and
+exact VND sums of accepted D03 correction and D04 top-up postings,
+never payment account, bank statement, or original witness IDs.
+No client-supplied money/verification flags are trusted.
+
+The response explicitly returns false for actual outgoing bank refund,
+mid-month atomic contract enablement, and `CanExecuteTransfer`. It
+never posts funds or modifies source/target room/contract lifecycle.
+Existing month-end completion route stays unchanged. Metadata tests
+have been updated to verify the 20 authenticated staging routes and
+the new non-executing projection.
+
+This does not substitute for a live authenticated HTTP cross-building
+attack test against the actual PostgreSQL adapter; code metadata
+checks alone do not establish this. NEW code remains unverified at
+runtime until the exact-SHA combined verification completes.

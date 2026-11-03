@@ -936,6 +936,81 @@ public sealed class SliceBStagingRoomChangeRequests
     /// No inferred proration, no partial tenants and no silent refund/topup.
     /// Old invoices, originals and contract parties remain untouched.
     /// </summary>
+
+    /// <summary>
+    /// Authenticated, building-scoped, committed PostgreSQL D03/D04 journal
+    /// READ. The original entries are immutable but this projection is
+    /// NOT authenticated banking proof, not a transfer approval and not
+    /// a mid-month transactional writer. No user-provided monetary totals.
+    /// The same identity lease + membership commit fence used by the
+    /// other staging business routes applies here.
+    /// </summary>
+    public Task<SliceBRoomChangeFinancialJournalRead> GetMidMonthFinancialJournalAsync(
+        Guid contractId, Guid requestId)
+        => ExecuteScopedAsync(contractId, async (db, _, building, sourceRoom) =>
+        {
+            if (db.Database.CurrentTransaction?.GetDbTransaction()
+                    .IsolationLevel != System.Data.IsolationLevel.Serializable)
+                throw Denied();
+
+            var request = await LockRequestAsync(
+                db, requestId, contractId, sourceRoom, building);
+            await _policy.EnsureResourceAsync(
+                BuildingBusinessResourceKind.Room, request.TargetRoomId,
+                BuildingBusinessCapability.ManageContract);
+            var room = await LockRoomStatusAsync(db, request.TargetRoomId);
+            if (room.Building != building || request.BuildingId != building ||
+                request.SourceContractId != contractId ||
+                request.SourceRoomId != sourceRoom)
+                throw Denied();
+
+            int correctionCount = 0, topUpCount = 0;
+            decimal correctionDelta = 0m, topUpAmount = 0m;
+            await using (var cmd = Command(db, """
+                SELECT "Kind", "SignedAmountVnd"
+                  FROM "BuildingManagementRoomChangeMidMonthFinancialPostings"
+                 WHERE "RequestId"=@request
+                   AND "SourceContractId"=@contract
+                   AND "BuildingId"=@building
+                 ORDER BY "Id" FOR SHARE
+                """))
+            {
+                Add(cmd, "request", requestId);
+                Add(cmd, "contract", contractId);
+                Add(cmd, "building", building);
+                await using var reader = await cmd.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    var kind = reader.GetInt32(0);
+                    var amount = reader.GetDecimal(1);
+                    switch (kind)
+                    {
+                        case 1:
+                            correctionCount++;
+                            correctionDelta = checked(correctionDelta + amount);
+                            break;
+                        case 2:
+                            topUpCount++;
+                            if (amount <= 0m) throw Denied();
+                            topUpAmount = checked(topUpAmount + amount);
+                            break;
+                        default:
+                            // Unknown journal type or outgoing refund must
+                            // not appear as executed in an operator view.
+                            throw Denied();
+                    }
+                }
+            }
+
+            return new SliceBRoomChangeFinancialJournalRead(
+                request.Id, contractId, building,
+                correctionCount, correctionDelta,
+                topUpCount, topUpAmount,
+                IsActualOutboundBankRefundVerified: false,
+                IsMidMonthContractCommitEnabled: false,
+                CanExecuteTransfer: false);
+        });
+
     public Task<SliceBRoomChangeCompletionRead> CompleteRoomChangeAsync(
         Guid contractId, Guid requestId, SliceBRoomChangeCompletionInput input)
         => ExecuteScopedAsync(contractId, async (db, actor, building, sourceRoom) =>
@@ -1599,3 +1674,13 @@ public sealed record SliceBRoomChangeCompletionRead(
     Guid SourceRoomId, Guid TargetRoomId,
     decimal CarriedDepositAmount, RoomStatus SourceRoomDisposition,
     string EvidenceSha256, bool IsCompleted);
+
+// Financial archive observation is deliberately independent of any execution
+// approval. A positive D03/D04 sum cannot authorize contract mutation.
+public sealed record SliceBRoomChangeFinancialJournalRead(
+    Guid RequestId, Guid SourceContractId, Guid BuildingId,
+    int ApprovedCorrectionPostingCount, decimal SignedCorrectionNetVnd,
+    int OriginalTopUpPostingCount, decimal ReviewedTopUpTotalVnd,
+    bool IsActualOutboundBankRefundVerified,
+    bool IsMidMonthContractCommitEnabled,
+    bool CanExecuteTransfer);

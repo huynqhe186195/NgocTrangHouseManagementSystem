@@ -447,4 +447,149 @@ public sealed class RoomChangeOfficialSourceRentEvidenceBridge_Tests
             lines: Array.Empty<OfficialMonthlyReceiptLineAllocationRecord>())
             .CanPreview);
     }
+    private static (
+        MonthlyInvoiceAdjustmentRecord Proposal,
+        MonthlyInvoiceAdjustmentDecisionRecord Decision)
+        Correction(F f, decimal delta, bool accepted = true)
+    {
+        var proposal = MonthlyInvoiceAdjustmentRecord.Propose(
+            Guid.NewGuid(), f.Issued, Guid.NewGuid(), Now.AddHours(8),
+            delta, "Signed invoice correction classified by type of charge",
+            "SIGNED-INVOICE-ADJUSTMENT-PROPOSAL-OCT2026");
+        var decision = MonthlyInvoiceAdjustmentDecisionRecord.Decide(
+            Guid.NewGuid(), proposal, f.Issued, Guid.NewGuid(),
+            Now.AddHours(9), accepted,
+            "Independently reviewed source invoice correction");
+        return (proposal, decision);
+    }
+
+    private static RoomChangeIssuedAdjustmentCategoryProof Categorize(
+        F f, MonthlyInvoiceAdjustmentRecord proposal,
+        MonthlyInvoiceAdjustmentDecisionRecord decision,
+        params RoomChangeIssuedAdjustmentCategoryLine[] lines)
+        => RoomChangeIssuedAdjustmentCategoryProof.Capture(
+            Guid.NewGuid(), f.Issued, proposal, decision, lines,
+            Guid.NewGuid(), Now.AddHours(10),
+            "SIGNED-OWNER-CLASSIFIED-CORRECTION-OCT2026");
+
+    private static RoomChangeIssuedAdjustmentCategoryLine LineCorrection(
+        ContractDepositOffsetCategory category, decimal amount)
+        => new(category, amount, "SIGNED-ORIGINAL-CATEGORY-EVIDENCE-D03");
+
+    [Fact]
+    public void TRF_D03_18_Independent_Rent_Line_Credit_Is_Classified_Not_Posted()
+    {
+        var f = Fixture();
+        var (p,d) = Correction(f, -100_000m);
+        var review = Categorize(f, p, d,
+            LineCorrection(ContractDepositOffsetCategory.UnpaidRent, -100_000m));
+        review.Verify(f.Issued, p, d);
+        var result = RoomChangeIssuedAdjustmentCategoryEvaluator.Assess(
+            f.Issued, f.Frozen, AsOf,
+            new[] { p }, new[] { d }, new[] { review });
+        Assert.Equal(-100_000m, result.RentSignedDeltaVnd);
+        Assert.Equal(0m, result.ElectricitySignedDeltaVnd);
+        Assert.False(result.IsOfficialPosting);
+        Assert.False(result.CanApplyCreditToRealDebt);
+        Assert.False(result.CanExecuteRoomChange);
+    }
+
+    [Fact]
+    public void TRF_D03_19_Utility_Only_Adjustment_Cannot_Launder_Rent_Credit()
+    {
+        var f = Fixture();
+        var (p,d) = Correction(f, -40_000m);
+        var classified = Categorize(f, p, d,
+            LineCorrection(ContractDepositOffsetCategory.Electricity, -25_000m),
+            LineCorrection(ContractDepositOffsetCategory.Water, -15_000m));
+        var result = RoomChangeIssuedAdjustmentCategoryEvaluator.Assess(
+            f.Issued, f.Frozen, AsOf,
+            new[] { p }, new[] { d }, new[] { classified });
+        Assert.Equal(0m, result.RentSignedDeltaVnd);
+        Assert.Equal(-25_000m, result.ElectricitySignedDeltaVnd);
+        Assert.Equal(-15_000m, result.WaterSignedDeltaVnd);
+    }
+
+    [Fact]
+    public void TRF_D03_20_Missing_Amount_Or_Duplicate_Category_Refused()
+    {
+        var f = Fixture();
+        var (p,d) = Correction(f, -50_000m);
+        Assert.Throws<InvalidOperationException>(() =>
+            Categorize(f, p, d,
+                LineCorrection(ContractDepositOffsetCategory.UnpaidRent, -25_000m)));
+        Assert.Throws<InvalidOperationException>(() =>
+            Categorize(f, p, d,
+                LineCorrection(ContractDepositOffsetCategory.UnpaidRent, -25_000m),
+                LineCorrection(ContractDepositOffsetCategory.UnpaidRent, -25_000m)));
+        Assert.Throws<InvalidOperationException>(() =>
+            Categorize(f, p, d,
+                LineCorrection(ContractDepositOffsetCategory.UnpaidRent, -60_000m),
+                LineCorrection(ContractDepositOffsetCategory.Electricity, 10_000m)));
+    }
+
+    [Fact]
+    public void TRF_D03_21_Missing_Decision_Or_Classified_Approval_Blocks()
+    {
+        var f = Fixture();
+        var (p,d) = Correction(f, -50_000m);
+        Assert.Throws<InvalidDataException>(() =>
+            RoomChangeIssuedAdjustmentCategoryEvaluator.Assess(
+                f.Issued, f.Frozen, AsOf,
+                new[] { p }, Array.Empty<MonthlyInvoiceAdjustmentDecisionRecord>(),
+                Array.Empty<RoomChangeIssuedAdjustmentCategoryProof>()));
+        Assert.Throws<InvalidDataException>(() =>
+            RoomChangeIssuedAdjustmentCategoryEvaluator.Assess(
+                f.Issued, f.Frozen, AsOf, new[] { p }, new[] { d },
+                Array.Empty<RoomChangeIssuedAdjustmentCategoryProof>()));
+    }
+
+    [Fact]
+    public void TRF_D03_22_Rejected_Correction_Has_Zero_Effect_Without_Proof()
+    {
+        var f = Fixture();
+        var (p,d) = Correction(f, -50_000m, accepted: false);
+        var result = RoomChangeIssuedAdjustmentCategoryEvaluator.Assess(
+            f.Issued, f.Frozen, AsOf, new[] { p }, new[] { d },
+            Array.Empty<RoomChangeIssuedAdjustmentCategoryProof>());
+        Assert.Equal(0m, result.RentSignedDeltaVnd);
+        Assert.Equal(0, result.ClassifiedAdjustmentCount);
+        Assert.Throws<InvalidOperationException>(() =>
+            Categorize(f, p, d,
+                LineCorrection(ContractDepositOffsetCategory.UnpaidRent, -50_000m)));
+    }
+
+    [Fact]
+    public void TRF_D03_23_Another_Invoice_Or_Orphaned_Classified_Line_Fails()
+    {
+        var f = Fixture();
+        var g = Fixture();
+        var (p,d) = Correction(f, -30_000m);
+        var classification = Categorize(f, p, d,
+            LineCorrection(ContractDepositOffsetCategory.UnpaidRent, -30_000m));
+        Assert.Throws<InvalidDataException>(() =>
+            classification.Verify(g.Issued, p, d));
+        Assert.Throws<InvalidDataException>(() =>
+            RoomChangeIssuedAdjustmentCategoryEvaluator.Assess(
+                f.Issued, f.Frozen, AsOf,
+                Array.Empty<MonthlyInvoiceAdjustmentRecord>(),
+                Array.Empty<MonthlyInvoiceAdjustmentDecisionRecord>(),
+                new[] { classification }));
+    }
+
+    [Fact]
+    public void TRF_D03_24_Classification_Cannot_Turn_Whole_Invoice_Negative()
+    {
+        var f = Fixture();
+        var (p,d) = Correction(f, -3_050_000m);
+        var classification = Categorize(f, p, d,
+            LineCorrection(ContractDepositOffsetCategory.UnpaidRent, -3_000_000m),
+            LineCorrection(ContractDepositOffsetCategory.Electricity, -35_000m),
+            LineCorrection(ContractDepositOffsetCategory.Water, -15_000m));
+        Assert.Throws<InvalidDataException>(() =>
+            RoomChangeIssuedAdjustmentCategoryEvaluator.Assess(
+                f.Issued, f.Frozen, AsOf,
+                new[] { p }, new[] { d }, new[] { classification }));
+    }
+
 }

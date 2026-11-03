@@ -197,6 +197,16 @@ public sealed class RoomChangeDayPricingRulePostgreSql_Tests
             var f = Fixture();
             await Seed(db, tx, f);
             await Insert(db, tx, f.Rule);
+            // Even a correctly hashed second rule for the same request
+            // must not overwrite or coexist with the first reviewed decision.
+            var quote = RoomChangeDailyRentQuoteCalculator.Calculate(
+                f.Rule.TransferDate, f.Source.MonthlyRent,
+                f.Rule.TargetMonthlyRentVnd, f.Rule.TransferDayOwner,
+                f.Rule.Rounding, f.Policy.PricingPolicyReference);
+            var replay = RoomChangeDayPricingRuleCandidate.Prepare(
+                Guid.NewGuid(), f.Request, f.Source, f.Roster, f.Policy,
+                f.Review, quote, Guid.NewGuid(), Created.AddSeconds(5));
+            await Denied(db, tx, () => Insert(db, tx, replay), "23505");
             await Denied(db, tx, () => Run(db, tx, $"""
                 UPDATE "BuildingManagementRoomChangeDayPricingRuleCandidates"
                  SET "EvidenceSha256"='{new string('a', 64)}'

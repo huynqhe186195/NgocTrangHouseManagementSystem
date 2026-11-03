@@ -95,7 +95,23 @@ public sealed class Phase2HMidMonthFinancialJournal : Migration
          END IF;
         
          packet_json := archive."EvidenceJson"::jsonb;
-         IF NEW."Kind"=1 THEN
+         -- Financial rows cannot bypass the independently signed day
+         -- choice or physical three-party handover of this exact request.
+         IF NOT EXISTS (
+           SELECT 1 FROM "BuildingManagementRoomChangeEvidenceArchives" a
+           WHERE a."RequestId"=NEW."RequestId"
+             AND a."SourceContractId"=NEW."SourceContractId"
+             AND a."BuildingId"=NEW."BuildingId" AND a."Kind"=1
+         ) OR NOT EXISTS (
+           SELECT 1 FROM "BuildingManagementRoomChangeEvidenceArchives" a
+           WHERE a."RequestId"=NEW."RequestId"
+             AND a."SourceContractId"=NEW."SourceContractId"
+             AND a."BuildingId"=NEW."BuildingId" AND a."Kind"=4
+         ) THEN
+           RAISE EXCEPTION 'D01/D02 pricing and D06 handover must be signed first'
+             USING ERRCODE='23514';
+         END IF;
+                 IF NEW."Kind"=1 THEN
           IF archive."Kind" <> 2 THEN
            RAISE EXCEPTION 'D03 requires independently classified source invoice'
             USING ERRCODE='23514';
@@ -165,7 +181,7 @@ public sealed class Phase2HMidMonthFinancialJournal : Migration
           SELECT * INTO payment FROM "BuildingManagementPayments"
            WHERE "Id"=NEW."SourcePaymentId" FOR UPDATE;
           IF payment."Id" IS NULL OR payment."Status"<>2
-             OR payment."Purpose"<>3
+             OR payment."Purpose"<>2
              OR payment."Method"<>2 OR payment."Channel"<>1
              OR payment."DepositDisposition"<>1
              OR payment."Amount" IS DISTINCT FROM NEW."SignedAmountVnd"

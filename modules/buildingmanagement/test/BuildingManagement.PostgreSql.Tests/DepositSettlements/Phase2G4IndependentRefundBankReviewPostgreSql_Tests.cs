@@ -373,8 +373,10 @@ public sealed class Phase2G4IndependentRefundBankReviewPostgreSql_Tests
             Assert.Equal(1L, await Count(db, tx,
                 """SELECT count(*) FROM "BuildingManagementContractDepositRefundInstructions" """));
             await Denied(db, tx,
-                """UPDATE "BuildingManagementContractDepositRefundInstructions"
-                      SET "StatutoryHolidaysJson"='[]' """, "23514");
+                """
+                UPDATE "BuildingManagementContractDepositRefundInstructions"
+                   SET "StatutoryHolidaysJson"='[]'
+                """, "23514");
             await Denied(db, tx, HolidayDown, "23514");
         }, withHolidaySla: true);
     }

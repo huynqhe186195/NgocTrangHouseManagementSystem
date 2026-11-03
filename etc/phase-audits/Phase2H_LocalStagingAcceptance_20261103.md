@@ -162,3 +162,41 @@ business detail gates remains HOLD. A consistent SHA does not
 cryptographically prove a human signed the referenced document;
 independent signature/identity verification is a separate gate.
 Production is not deployed.
+
+
+## 2026-11-03 — H6 physical-handover digest — 5/5 LOCAL PASS
+
+**Exact operator-tested SHA:** `ab320bab4f3d9eccbc0a2ada9072bdee6d9b0060`.
+
+The operator supplied the terminal result from
+`etc/scripts/verify-phase-2h-financial-foundations.ps1`:
+
+```text
+=== PHASE 2H FINANCIAL FOUNDATIONS: ALL FIVE GROUPS PASSED ===
+COMMIT=ab320bab4f3d9eccbc0a2ada9072bdee6d9b0060
+Full mid-month contract/cash writer remains HOLD; production not used.
+```
+
+This **supersedes the "test pending" status immediately above for this
+exact code SHA**. The script checks 32/32 focused Domain tests,
+30/30 PostgreSQL transfer/handover cases, a disposable full migration,
+authenticated HTTP/PostgreSQL and Full isolated regression. The report
+confirms a LOCAL/STAGING technical PASS for H6 digest parity and
+existing safe-lane regression; it does not grant full Phase 2H business
+acceptance or authorize financial/contract writes in unapproved
+mid-month lanes.
+
+No matching GitHub Actions workflow run or combined status was found
+when checked for this SHA. This is an **operator-reported local PASS**,
+not verified independent CI evidence. The SHA proves code identity in
+the supplied log, but it is not evidence of digital signatures on
+the underlying paper/scan handover references.
+
+**Still HOLD:** D01 effective transfer-day charge owner; D02
+rounding/residual policy; D03 approved existing-invoice credit/debit
+posting and paid-receipts reconciliation; D04 independent cash-backed
+deposit top-up/partial refund and replay/race controls; D06 signatory
+matrix and signed asset/defect review; full mid-month H2/H3/H4 writer.
+No production deploy or live migration; keep the untracked 2G.3
+RevisionLedger review SQL unchanged. This documentation-only update
+does not require repeating already-passed tests.

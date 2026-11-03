@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using BuildingManagement.DepositSettlements;
+using BuildingManagement.Contracts;
+using BuildingManagement.Rooms;
 using BuildingManagement.Invoices;
 using BuildingManagement.Payments;
 using BuildingManagement.Payments.BuildingManagement.Payments;
@@ -119,6 +121,121 @@ public sealed class RoomChangeOfficialSourceRentEvidenceBridge_Tests
             Line(f, ContractDepositOffsetCategory.Electricity, 35_000m),
             Line(f, ContractDepositOffsetCategory.Water, 15_000m)
         };
+
+    private static (
+        Contract Source, RoomChangeRequest Request,
+        RoomChangeTenantRosterSnapshotRecord Roster,
+        RoomChangeBusinessPolicyRecord Policy,
+        RoomChangeBusinessPolicyReviewRecord PolicyReview,
+        RoomChangeDepositDifferenceFacts DepositFacts,
+        Guid TargetId) Transfer(F f)
+    {
+        var begin = new DateTime(2026, 10, 1, 8, 0, 0, DateTimeKind.Utc);
+        var source = new Contract(
+            f.Frozen.ContractId, "SOURCE-D03-TRANSFER-OCT2026",
+            f.Frozen.RoomId, new DateTime(2026, 9, 1),
+            null, 3_000_000m);
+        source.Activate();
+        var request = RoomChangeRequest.Submit(
+            Guid.NewGuid(), source.Id, source.RoomId, Guid.NewGuid(),
+            f.Frozen.BuildingId, f.Quote.TransferDate,
+            "Documented day-proration of official October rent",
+            Guid.NewGuid(), begin, ContractStatus.Active,
+            RoomStatus.Occupied, RoomStatus.Available);
+        var roster = RoomChangeTenantRosterSnapshotRecord.Capture(
+            Guid.NewGuid(), request, new[] {
+                new RoomChangeRosterMember(
+                    Guid.NewGuid(), ContractTenantRole.PrimaryTenant)
+            }, Guid.NewGuid(), begin.AddSeconds(1));
+        const string depositPolicy = "SIGNED-OWNER-DEPOSIT-REQUIREMENT-OCT2026";
+        var policy = RoomChangeBusinessPolicyRecord.Propose(
+            Guid.NewGuid(), request, roster,
+            RoomChangeContractTreatment.NewContract,
+            RoomChangePricingTreatment.AgreedDayProration,
+            RoomChangeDepositTreatment.CarryWithVerifiedTopUp,
+            RoomChangeTenantTreatment.AllCurrentTenants,
+            "SIGNED-LINKED-NEW-CONTRACT-D03-OCT2026",
+            f.Quote.SignedRuleReference,
+            depositPolicy,
+            "SIGNED-TRANSFER-ALL-PARTIES-D03-OCT2026",
+            Guid.NewGuid(), begin.AddSeconds(2));
+        var review = RoomChangeBusinessPolicyReviewRecord.Review(
+            Guid.NewGuid(), policy, request, roster, Guid.NewGuid(),
+            begin.AddSeconds(3), true,
+            "INDEPENDENT-REVIEW-D03-OCTOBER-2026",
+            "Reviewed complete source and target policy documentation");
+        var targetId = Guid.NewGuid();
+        var deposit = new RoomChangeDepositDifferenceFacts(
+            source.Id, targetId, 3_000_000m, 0m, 4_000_000m,
+            "CASH-BACKED-SOURCE-RECEIPT-PROOF-D03",
+            depositPolicy, null, false, false);
+        return (source, request, roster, policy, review, deposit, targetId);
+    }
+
+    private static RoomChangeMidMonthFinancialReconciliationPacket
+        PreparedFromOfficial(F f,
+        MonthlyInvoiceAdjustmentRecord[]? proposals = null,
+        MonthlyInvoiceAdjustmentDecisionRecord[]? decisions = null,
+        Contract? overrideSource = null)
+    {
+        var t = Transfer(f);
+        return RoomChangeMidMonthFinancialReconciliationPacketFactory
+            .PrepareFromOfficialMonthlyEvidence(
+                Guid.NewGuid(), t.Request, overrideSource ?? t.Source,
+                t.TargetId, t.Roster, t.Policy, t.PolicyReview,
+                f.Quote, t.DepositFacts, f.Posting, f.Issued,
+                f.Frozen, f.InvoiceReview, AsOf,
+                new[] { f.Receipt }, new[] { f.Bank },
+                FullSplit(f),
+                proposals ?? Array.Empty<MonthlyInvoiceAdjustmentRecord>(),
+                decisions ?? Array.Empty<MonthlyInvoiceAdjustmentDecisionRecord>(),
+                Guid.NewGuid(), new DateTime(
+                    2026, 11, 1, 10, 0, 0, DateTimeKind.Utc));
+    }
+
+    [Fact]
+    public void TRF_D03_15_Official_Receipt_Source_Reaches_One_Shared_Transfer_Packet()
+    {
+        var f = Fixture();
+        var packet = PreparedFromOfficial(f);
+        packet.VerifyFingerprint();
+        Assert.Equal(f.Frozen.ContractId, packet.SourceContractId);
+        Assert.Equal(f.Issued.Id,
+            packet.SourceRentLedger.IssuedMonthlyInvoiceId);
+        Assert.Equal(200_000m,
+            packet.SourceRentLedger.ReviewedRentReceiptsVnd);
+        Assert.Equal(1_154_839m,
+            packet.Rent.RemainingProposedSourceRentVnd);
+        Assert.Equal(1_000_000m,
+            packet.Deposit.UnpaidTopUpRequirementVnd);
+        Assert.False(packet.CanExecuteRoomChange);
+        Assert.False(packet.IsOfficialInvoicePosting);
+        Assert.False(packet.IsIndependentlyCashVerified);
+    }
+
+    [Fact]
+    public void TRF_D03_16_Unclassified_Invoice_Credit_Blocks_Shared_Packet()
+    {
+        var f = Fixture();
+        var correction = MonthlyInvoiceAdjustmentRecord.Propose(
+            Guid.NewGuid(), f.Issued, Guid.NewGuid(),
+            Now.AddHours(8), -15_000m,
+            "Source invoice service credit not classified as rent",
+            "SIGNED-UNCLASSIFIED-SERVICE-CREDIT-D03");
+        Assert.Throws<InvalidOperationException>(() =>
+            PreparedFromOfficial(f, proposals: new[] { correction }));
+    }
+
+    [Fact]
+    public void TRF_D03_17_Foreign_Contract_Cannot_Consume_Posted_Monthly_Rent()
+    {
+        var f = Fixture();
+        var foreign = new Contract(Guid.NewGuid(), "FOREIGN-CONTRACT-D03",
+            f.Frozen.RoomId, new DateTime(2026, 9, 1), null, 3_000_000m);
+        foreign.Activate();
+        Assert.Throws<InvalidOperationException>(() =>
+            PreparedFromOfficial(f, overrideSource: foreign));
+    }
 
     [Fact]
     public void TRF_D03_01_Unpaid_Issued_Monthly_Rent_Only_Not_Whole_Invoice()

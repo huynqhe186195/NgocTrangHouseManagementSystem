@@ -384,3 +384,68 @@ groups before technical acceptance.
 
 Do not claim the above future writer or money journal is implemented,
 even if a source-only or full foundation test suite passes.
+
+
+## 2026-11-03 — D01/D03/D04/D06 append-only PostgreSQL evidence archive (new code, TEST PENDING)
+
+The Phase 2H evidence candidates introduced in the prior verified
+code SHA are **Domain-only**: until stored transactionally, they can
+be dropped, replayed or reattributed by a nonconforming adapter.
+The new `RoomChangeEvidenceArchiveRecord` explicitly captures one
+SHA-verified immutable original documentary proof and its exact
+parent into a canonical JSON + SHA-256 evidence envelope, with
+the original transfer `RequestId`, source `ContractId`,
+`BuildingId`, actor and UTC timestamp.
+
+Four SOURCE-TYPED capture paths enforce the ORIGINAL documents:
+
+- `SignedExactPricing`: signed Owner D01/D02 candidate and source
+  daily rule, policy review and immutable current roster;
+- `ClassifiedInvoiceCorrection`: independently issued original
+  monthly invoice, exact period/source room and independently reviewed
+  classified D03 correction;
+- `ReviewedTransferCash`: independently reviewed D04 transfer
+  top-up/refund evidence checked against the same source-scoped
+  non-posting financial packet and original completed target Payment
+  for a top-up;
+- `ThreePartyPhysicalHandover`: D06 3-party signer matrix,
+  original H6 signed E/W meter source and exact roster.
+
+New EF configuration and additive migration
+`20261103080000_Phase2HDocumentaryEvidenceArchive` create
+`BuildingManagementRoomChangeEvidenceArchives`. The SQL trigger
+denies updates, deletes and TRUNCATE; requires SERIALIZABLE;
+cross-checks the locked request/contract/building and parent
+day-price, original monthly invoice or physical handover where
+already persisted; validates the JSON payload identity and both
+payload/envelope SHA-256 checksums; rejects reuse of a signed
+evidence ID or a second D01/D04/D06 archive for the same request.
+D03 can hold several independently classified corrections, but may
+not archive the SAME issued invoice parent twice within one request
+until a future per-correction parent key is introduced.
+The migration refuses downgrade if any signed archive exists.
+
+**Important evidentiary boundary**: D04's parent financial packet
+is currently read-only and not persisted as an authoritative
+debit/cash journal. Database checks the packet SHA/IDs preserved
+in the D04 JSON but CANNOT independently prove source held cash
+or executed bank transfer by that SHA. No human signature
+authentication or gateway verification is claimed. These archive
+rows cannot execute a transfer, issue an invoice, post a monetary
+liability, refund or move held cọc.
+
+Added 6 Domain `TRF_ARCH01–06` capture/negative tests, plus
+7 PostgreSQL `TRFARCHPG01–07` tests checking all kinds,
+canonical archive SHA parity, forged JSON, incorrect scope/parent,
+uniqueness, append-only mutations, rollback and non-SERIALIZABLE
+denial. One-shot acceptance script now requires **106/106 Domain +
+44/44 PostgreSQL**, full disposable EF migration chain (checking
+the new integrity trigger), authenticated PostgreSQL HTTP and
+Full regression. **New code SHA remains unverified at runtime**
+until operator's exact-SHA 5/5 test output is received.
+
+This is NOT Phase 2H BUSINESS ACCEPTED: D01/D02 system-wide detail
+decisions, official D03 per-line receivable posting, D04 cash-backed
+unique settlement/refund posting and D06 final human authority
+remain gated, followed by one commit-time protected mid-month atomic
+contract and bank/invoice writer. Production remains excluded.

@@ -19,7 +19,7 @@ public sealed class FullInvoiceMigrationChainPostgreSql_Tests
     private const string OptInVariable = "BM_ALLOW_FULL_MIGRATION_REHEARSAL";
     private const string OptInValue = "CREATE_AND_DROP_FRESH_LOCAL_TEST_DATABASE";
     private const string ExpectedLatestMigration =
-        "20261103070000_Phase2HDayProrationRuleCandidates";
+        "20261103080000_Phase2HDocumentaryEvidenceArchive";
 
     [Fact]
     public async Task PGMIG01_Full_EF_Migrations_Succeed_In_Fresh_Disposable_Database()
@@ -262,6 +262,21 @@ public sealed class FullInvoiceMigrationChainPostgreSql_Tests
                 {
                     Assert.Equal(1L,
                         Convert.ToInt64(await pricingDecisionTrigger.ExecuteScalarAsync()));
+                }
+
+                // D01/D03/D04/D06 append-only documentary archive must
+                // survive the full EF migration chain on a fresh database.
+                await using (var archiveTrigger = new NpgsqlCommand(
+                    """
+                    SELECT count(*) FROM pg_trigger
+                     WHERE NOT tgisinternal
+                       AND tgname = 'TR_BM_2HArchive_ImmutableIntegrity'
+                       AND tgrelid =
+                         '"BuildingManagementRoomChangeEvidenceArchives"'::regclass
+                    """, verification))
+                {
+                    Assert.Equal(1L,
+                        Convert.ToInt64(await archiveTrigger.ExecuteScalarAsync()));
                 }
 
                 await using (var extension = new NpgsqlCommand(

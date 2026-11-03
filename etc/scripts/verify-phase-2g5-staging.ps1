@@ -42,13 +42,13 @@ try {
     $http = '.\test\NgocTrangHouseManagementSystem.HttpApi.Host.Tests\NgocTrangHouseManagementSystem.HttpApi.Host.Tests.csproj'
 
     Write-Host "=== PHASE 2G.5 / COMMIT $sha / LOCAL DISPOSABLE PG ONLY ==="
-    Write-Host '== 1/4: Real PostgreSQL room disposition integrity and rollback =='
-    & dotnet test $pg --filter 'FullyQualifiedName~Phase2G5RoomDispositionArchiveIntegrityPostgreSql_Tests' --logger 'console;verbosity=normal' *>&1 |
+    Write-Host '== 1/4: Real PostgreSQL 2G.4 cross-phase + 2G.5 room archive =='
+    & dotnet test $pg --filter 'FullyQualifiedName~Phase2G4|FullyQualifiedName~Phase2G5RoomDispositionArchiveIntegrityPostgreSql_Tests' --logger 'console;verbosity=normal' *>&1 |
         Tee-Object -FilePath (Join-Path $logs '11-2g5-archive-pg.log')
     if ($LASTEXITCODE -ne 0) { throw 'Phase 2G.5 PostgreSQL archive tests FAILED.' }
-    if (-not (Select-String -Path (Join-Path $logs '11-2g5-archive-pg.log') -Pattern 'Total tests:\s*4' -Quiet) -or
-        -not (Select-String -Path (Join-Path $logs '11-2g5-archive-pg.log') -Pattern 'Passed:\s*4' -Quiet)) {
-        throw 'Phase 2G.5 PostgreSQL test count did not match 4/4.'
+    if (-not (Select-String -Path (Join-Path $logs '11-2g5-archive-pg.log') -Pattern 'Total tests:\s*58' -Quiet) -or
+        -not (Select-String -Path (Join-Path $logs '11-2g5-archive-pg.log') -Pattern 'Passed:\s*58' -Quiet)) {
+        throw 'PostgreSQL 2G.4 + 2G.5 test count did not match 58/58.'
     }
 
     Write-Host '== 2/4: Fresh disposable PostgreSQL full migration chain =='

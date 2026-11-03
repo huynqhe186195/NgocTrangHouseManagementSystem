@@ -405,3 +405,62 @@ The prior safe month-end transfer path and production hold are
 unchanged. This is operator-reported local test output, not a GitHub
 Actions CI citation. This documentation-only acceptance commit
 does not require rerunning the passing code SHA.
+
+
+## 2026-11-03 — D01/D03/D04/D06 immutable documentary archive: 5/5 LOCAL PASS
+
+**Operator-tested exact code SHA:** `1e98af248bf340d7601ebf766215e29a0a388681`, branch `wip/phase-2g2`.
+
+The operator reported:
+
+```text
+=== QUALITY GATE PASS: ALL REQUESTED TEST RUNS SUCCEEDED ===
+NO DATABASE MIGRATION, NO POSTGRESQL TEST (COMPILE ONLY), NO LIVE APPLICATION STARTED.
+Source-only checks are NOT proof of authenticated cross-building CRUD security.
+?? etc/phase-audits/Phase2G3A7_RevisionLedger_Generated_Review.sql
+=== PHASE 2H FINANCIAL FOUNDATIONS: ALL FIVE GROUPS PASSED ===
+COMMIT=1e98af248bf340d7601ebf766215e29a0a388681
+Full mid-month contract/cash writer remains HOLD; production not used.
+```
+
+**Results and evidence scope:** The embedded source-only quality gate
+explicitly omitted PostgreSQL and migrations. The **separate outer**
+`verify-phase-2h-financial-foundations.ps1` completed all five
+hard-stop groups at the SHA above:
+1. **106/106 focused Domain** rent/deposit/financial-dossier plus
+   six new D01/D03/D04/D06 original-source archive cases.
+2. **44/44 isolated PostgreSQL** transfer, signed physical evidence,
+   pricing choice and seven new archive SQL integrity tests.
+3. Disposable PostgreSQL full EF migration-chain rehearsal,
+   now including `20261103080000_Phase2HDocumentaryEvidenceArchive`.
+4. Authenticated isolated PostgreSQL HTTP tests.
+5. Full isolated .NET regression.
+
+The documentary archival migration is **technically verified in the
+isolated LOCAL/STAGING test harness**, including SHA-256, immutable
+insert-only guard, serializable requirement, request/contract/building
+parent scoping, unique signed proof, restricted replays and rollback
+behavior. This is operator-provided local evidence, not an independent
+GitHub Actions execution record, production database migration or
+blanket claim of cross-building CRUD authorization.
+
+**Crucial business boundary:** These archives preserve evidence;
+they do not themselves establish an approved transfer-day/rounding
+*global* tariff, official append-only invoice correction posting,
+executed cash-backed refund or target deposit disposition, authenticated
+signature, verified real bank transfer, or complete linked
+mid-month contract/room lifecycle writer. The safety flags remain
+non-executing. The pre-existing safe month-end lane is unchanged.
+
+**Phase 2H remains BUSINESS HOLD** for final D01/D02 approved
+financial policy with golden examples, D03 original issued
+invoice per-line receivable posting and overcollection treatment,
+D04 independently reviewed unique cash settlement and refund
+journals (with bank evidence and idempotent SQL commit guards),
+D06 legally accepted signer/tenant-consent matrix, and the final
+SERIALIZABLE atomic mid-month request-to-closeout scenario plus
+authenticated PostgreSQL/HTTP race/replay tests.
+
+The untracked `etc/phase-audits/Phase2G3A7_RevisionLedger_Generated_Review.sql`
+is not modified or staged. This acceptance commit is documentation-only:
+do not require a new test run solely due to changing these audit notes.

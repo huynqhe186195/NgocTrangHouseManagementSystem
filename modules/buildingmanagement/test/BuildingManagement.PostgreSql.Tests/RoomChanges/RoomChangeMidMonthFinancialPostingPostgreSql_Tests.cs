@@ -1,5 +1,6 @@
 using System;
 using System.Data;
+using System.Text.Json;
 using System.Threading.Tasks;
 using BuildingManagement.Migrations;
 using Microsoft.EntityFrameworkCore.Migrations.Operations;
@@ -157,6 +158,25 @@ public sealed class RoomChangeMidMonthFinancialPostingPostgreSql_Tests
                     Guid.NewGuid(),Guid.NewGuid(),Guid.NewGuid(),
                     Guid.NewGuid(),Guid.NewGuid(),Guid.NewGuid(),
                     Guid.NewGuid(),Guid.NewGuid(),Guid.NewGuid());
+                // Serialize JSON separately: braces in an interpolated C# raw
+                // SQL string otherwise conflict with C# interpolation delimiters.
+                var emptyEvidenceJson = "{}";
+                var d03EvidenceJson = JsonSerializer.Serialize(new
+                {
+                    IssuedInvoiceId = f.Invoice,
+                    AdjustmentId = f.Adjustment,
+                    DecisionId = f.Decision,
+                    ApprovedSignedDeltaVnd = -50000m,
+                    Lines = new[] { new { Category = 1, SignedDeltaVnd = -50000m } }
+                });
+                var d04EvidenceJson = JsonSerializer.Serialize(new
+                {
+                    Leg = 1,
+                    OriginalPaymentId = f.Payment,
+                    ExactAmountVnd = 1000000m,
+                    TransactionReference = "BANK-2H-ORIGINAL-RECEIPT-001",
+                    TargetContractId = f.Target
+                });
                 await Run(db,tx,$"""
                     INSERT INTO "BuildingManagementContracts" VALUES ('{f.Contract:D}');
                     INSERT INTO "BuildingManagementRoomChangeRequests" VALUES
@@ -180,18 +200,18 @@ public sealed class RoomChangeMidMonthFinancialPostingPostgreSql_Tests
                        '2026-10-16T09:00:00Z','BANK-PROOF: SIGNED-INDEPENDENT-STMT-2026');
                     INSERT INTO "BuildingManagementRoomChangeEvidenceArchives" VALUES
                      ('{f.D01:D}','{f.Request:D}','{f.Contract:D}','{f.Building:D}',
-                      1,'2026-11-01T09:00:00Z','{f.Actor:D}','{{}}',
+                      1,'2026-11-01T09:00:00Z','{f.Actor:D}','{emptyEvidenceJson}',
                       '{Guid.NewGuid():D}','{Hash}'),
                      ('{f.D06:D}','{f.Request:D}','{f.Contract:D}','{f.Building:D}',
-                      4,'2026-11-01T09:00:00Z','{f.Actor:D}','{{}}',
+                      4,'2026-11-01T09:00:00Z','{f.Actor:D}','{emptyEvidenceJson}',
                       '{Guid.NewGuid():D}','{Hash}'),
                      ('{f.D03:D}','{f.Request:D}','{f.Contract:D}','{f.Building:D}',
                       2,'2026-11-01T09:00:00Z','{f.Actor:D}',
-                      '{{"IssuedInvoiceId":"{f.Invoice:D}","AdjustmentId":"{f.Adjustment:D}","DecisionId":"{f.Decision:D}","ApprovedSignedDeltaVnd":-50000,"Lines":[{{"Category":1,"SignedDeltaVnd":-50000}}]}}',
+                      '{d03EvidenceJson}',
                       '{f.Invoice:D}','{Hash}'),
                      ('{f.D04:D}','{f.Request:D}','{f.Contract:D}','{f.Building:D}',
                       3,'2026-11-01T09:00:00Z','{f.Actor:D}',
-                      '{{"Leg":1,"OriginalPaymentId":"{f.Payment:D}","ExactAmountVnd":1000000,"TransactionReference":"BANK-2H-ORIGINAL-RECEIPT-001","TargetContractId":"{f.Target:D}"}}',
+                      '{d04EvidenceJson}',
                       '{Guid.NewGuid():D}','{Hash}');
                     """);
                 await action(db,tx,f);

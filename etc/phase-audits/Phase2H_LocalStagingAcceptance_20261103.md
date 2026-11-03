@@ -243,3 +243,59 @@ a CI-run citation or proof of document signature authenticity.
 
 This documentation-only acceptance update does not change executable
 code; no rerun is required solely because of this commit.
+
+
+## 2026-11-03 — D01/D02 candidate + PostgreSQL full verifier: 5/5 LOCAL PASS
+
+**Operator-tested exact SHA:** `fb754eae455aec7ec03c366bb7ecd16360024fd0` on `wip/phase-2g2`.
+
+The operator supplied the following local PowerShell output from
+`etc/scripts/verify-phase-2h-financial-foundations.ps1`:
+
+```text
+=== PHASE 2H FINANCIAL FOUNDATIONS: ALL FIVE GROUPS PASSED ===
+COMMIT=fb754eae455aec7ec03c366bb7ecd16360024fd0
+Full mid-month contract/cash writer remains HOLD; production not used.
+```
+
+The five hard-stop groups at this SHA:
+1. **58/58 focused Domain tests** covering rent, deposit, reduced handover,
+   unified packet and D01/D02 pricing-rule candidate.
+2. **37/37 PostgreSQL tests** covering prior request/roster/money
+   commitments, H6 document digests and D01/D02 immutable day-pricing
+   rows, including hash parity and SQL bypass negative probes.
+3. Full EF migration chain on an isolated, newly created/disposed
+   local PostgreSQL database.
+4. Authenticated staging HTTP tests against disposable PostgreSQL
+   fixtures.
+5. Full isolated .NET regression.
+
+**Prior failure resolved:** The earlier PostgreSQL phase ended during
+.NET compile with `CS0103` in `BuildingManagementDbContext`, because
+`modelBuilder.ApplyConfiguration` was used inside
+`OnModelCreating(ModelBuilder builder)`. Commit
+`f35a9773d8dfcaba3d36529744c0f752b26653fb` corrected the
+receiver to `builder`. The final tested SHA also includes diagnostics
+that surface the underlying group log on failure.
+
+**Acceptance:** D01/D02 per-request explicit charging-day and
+VND-rounding *candidate persistence, isolated authenticated staging
+creation/read, SQL canonical SHA/immutability, unique request scope and
+full regression* are TECHNICALLY VERIFIED (LOCAL/STAGING). These
+candidate choices are **not** an approved global financial algorithm.
+No posted financial writer, transfer transaction, invoice correction,
+bank evidence or production feature has been authorized by this PASS.
+
+**BUSINESS HOLD remains:** owner approval of exact day-owner,
+rounding residual allocation and signed pricing examples under D01/D02;
+D03 immutable issued-bill adjustment and independently confirmed
+receipts; D04 cash-backed collection/refund with evidence and
+idempotency; D06 physical handover signatory matrix; integrated
+full mid-month commit-time concurrency and authenticated end-to-end
+approval. Ordinary 2G.5 full-final-month policy is unchanged.
+
+**Evidence classification:** user-reported LOCAL test output tied to
+an exact SHA. It is not an independent GitHub Actions run citation
+or proof of a human/bank signature. No production deployment or
+live database changes. This documentation-only acceptance commit
+does not require rerunning the passing code SHA.

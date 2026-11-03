@@ -295,3 +295,92 @@ invoice correction, fee treatment and authority; D04 actual cash
 top-up/partial refund journal, bank evidence and replay control;
 D06 legally/contractually approved signatories; the complete
 mid-month contract/payment writer. Production remains unused.
+
+
+## 2026-11-03 — cohesive D01/D02/D03/D04/D06 documentary evidence + last preflight (NEW CODE, TEST PENDING)
+
+This batch is the remaining **non-posting foundations**, not a
+mid-month contract or cash implementation. Existing signed
+`RoomChangeDayPricingRuleCandidate` only established a user-selected
+per-request numeric choice; its prior OI-07 review was already signed
+before the actual handover-day/rounding fields were chosen. New
+`RoomChangeDayPricingOwnerSignoff` closes that documentary gap by
+requiring a SECOND explicit Owner signoff bound by SHA-256 to the
+*exact* day choice, rate pair and the original independently reviewed
+request. No hardcoded global D01 or D02 rule is introduced.
+
+New `RoomChangeHandoverThreePartySignoff` requires separate documented
+Owner, handover Staff and source **primary tenant** signers, checked
+against the verified full-tenant roster and source H6 physical
+electricity/water handover digest. A signed asset/defect document
+reference is mandatory. This is a **candidate D06 matrix**, not a
+project-owner approved legal signer policy or cryptographic signature
+verification; the complete tenant-consent reference remains separate.
+
+New `RoomChangeIssuedAdjustmentCategoryProof` signs each independently
+accepted original monthly invoice correction into complete, unique
+rent/electricity/water/service categories, requiring exactly the
+original whole-VND total and a third actor to classify after the
+independent financial review. The
+`RoomChangeIssuedAdjustmentCategoryEvaluator` requires **all**
+proposals, decisions and accepted category proofs, validates original
+independent monthly issuance, rejects missing/double/future/orphan
+history and negative invoice components. It distinguishes approved
+**classification** from **official posted receivable adjustment**.
+Existing `RoomChangeOfficialSourceRentEvidenceBridge` still properly
+HOLDs any unposted category corrections; no fake debt reduction.
+
+New `RoomChangeTransferDepositCashReview` accepts exact completed,
+source-linked bank-transfer `PaymentPurpose.ContractDeposit` receipts
+for target **top-up** only, or owner-destination-authorized independent
+manual bank statement evidence for an outbound **partial refund**.
+The original H4 deposit split, packet SHA, proposed target contract,
+actual payment status, actor separation, signed references, amount
+and UTC chronology must match. Neither leg is a bank gateway
+confirmation, a posted refund or an authenticated SQL uniqueness
+journal. The existing full-carried cọc safe lane is unchanged.
+
+New `RoomChangeMidMonthDossierPreflight` cross-checks one full
+financial packet against the exact signed daily pricing, original H6
+electricity/water readings, roster and the candidate D06 signatories,
+plus required H4 cash evidence. It returns explicit blockers for
+missing/different sources, D03 official invoice posting and any
+unresolved overcollection. **It always denies execution** and has
+no client-trusted financial/verification flag.
+
+The one-shot verifier now requires **100/100 focused Domain cases**:
+previous SHA-verified 75 + 8 `TRF_FINAL01–08` independent policy
+and signatory tests + 7 `TRF_CASH01–07` cash bank review cases
++ 7 `TRF_D03_18–24` categorized adjustment cases
++ 3 `TRF_DOSSIER01–03` integrated dossier tests.
+The remaining 37/37 PostgreSQL transfer cases, scratch full migration,
+authenticated PostgreSQL HTTP and full .NET regression are unchanged.
+**This is a new code SHA and has NOT yet been executed in the
+operator's Windows/PostgreSQL environment.** It must pass all five
+groups before technical acceptance.
+
+**Explicit remaining work before BUSINESS ACCEPTED / final writer:**
+1. Owner-approved D01 charge-day instant and project-wide exception
+   precedence; D02 residual allocation and signed numerical golden
+   cases — candidate signoffs alone do not ratify universal terms.
+2. D03 add a genuinely posted, append-only official **per-category**
+   adjustment ledger plus receipts/overcollection dispositions,
+   invoice due-date and any service fee treatment, commit-time SQL
+   and authenticated integration tests.
+3. D04 add transfer-specific, unique outgoing refund and target
+   top-up cash/disposition journals linked to original source held
+   cash and bank/receipt evidence, with independent review and
+   concurrency/idempotency proofs. A Payment row or reference is
+   not itself proof of new-contract deposit carry-forward.
+4. Owner-approved D06 legal signature/tenant consent matrix and
+   identity proof implementation (the three-role class is a candidate).
+5. One scoped, SERIALIZABLE / commit-proofed EF/PostgreSQL **mid-month
+   atomic writer** that ends the old contract, starts linked target
+   contract, transfers full roster, posts only independently authorized
+   invoice and deposit legs and changes both room states. Must pass
+   real HTTP/PG concurrency/replay and full regression.
+6. Explicit owner BUSINESS ACCEPTED signoff after executing this full
+   scenario matrix. No production action is within scope.
+
+Do not claim the above future writer or money journal is implemented,
+even if a source-only or full foundation test suite passes.

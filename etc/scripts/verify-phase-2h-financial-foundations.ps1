@@ -42,11 +42,11 @@ try {
     }
 
     Write-Host "=== PHASE 2H FINANCIAL FOUNDATIONS / COMMIT $sha ==="
-    Write-Host '== 1/5: H2/H3/H4/H6/D01/D02/D03 financial packet, official rent receipts and cash evidence =='
-    & dotnet test $domain --filter 'FullyQualifiedName~RoomChangeMidMonthRentReconciliation_Tests|FullyQualifiedName~RoomChangeDepositDifferencePreview_Tests|FullyQualifiedName~TRF_HAND|FullyQualifiedName~RoomChangeMidMonthFinancialReconciliationPacket_Tests|FullyQualifiedName~RoomChangeDayPricingRuleCandidate_Tests|FullyQualifiedName~RoomChangeOfficialSourceRentEvidenceBridge_Tests' --logger 'console;verbosity=normal' *>&1 | Tee-Object -FilePath (Join-Path $logs '15-2h-financial-domain.log')
+    Write-Host '== 1/5: H2-H6 D01-D04/D06 100 full dossier, invoice-line, cash and signatory cases =='
+    & dotnet test $domain --filter 'FullyQualifiedName~RoomChangeMidMonthRentReconciliation_Tests|FullyQualifiedName~RoomChangeDepositDifferencePreview_Tests|FullyQualifiedName~TRF_HAND|FullyQualifiedName~RoomChangeMidMonthFinancialReconciliationPacket_Tests|FullyQualifiedName~RoomChangeDayPricingRuleCandidate_Tests|FullyQualifiedName~RoomChangeOfficialSourceRentEvidenceBridge_Tests|FullyQualifiedName~RoomChangeFinalIndependentSignoffs_Tests' --logger 'console;verbosity=normal' *>&1 | Tee-Object -FilePath (Join-Path $logs '15-2h-financial-domain.log')
     if ($LASTEXITCODE -ne 0) { Throw-WithTestLog '2H rent/deposit domain tests FAILED.' '15-2h-financial-domain.log' }
-    if (-not (Select-String -Path (Join-Path $logs '15-2h-financial-domain.log') -Pattern 'Total tests:\s*75\b' -Quiet) -or -not (Select-String -Path (Join-Path $logs '15-2h-financial-domain.log') -Pattern 'Passed:\s*75\b' -Quiet)) {
-        Throw-WithTestLog 'Expected exactly 75/75 H2/H3/H4/H6/D01/D02/D03 cases.' '15-2h-financial-domain.log'
+    if (-not (Select-String -Path (Join-Path $logs '15-2h-financial-domain.log') -Pattern 'Total tests:\s*100\b' -Quiet) -or -not (Select-String -Path (Join-Path $logs '15-2h-financial-domain.log') -Pattern 'Passed:\s*100\b' -Quiet)) {
+        Throw-WithTestLog 'Expected exactly 100/100 H2/H3/H4/H6/D01/D02/D03/D04/D06 dossier cases.' '15-2h-financial-domain.log'
     }
 
     Write-Host '== 2/5: Phase 2H PostgreSQL concurrency and atomic transfer =='

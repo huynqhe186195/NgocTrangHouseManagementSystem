@@ -121,3 +121,28 @@ commit SHA before declaring 2G.4 staging technical acceptance.
 - Last code commit before this decision: `c12e37031b8ac42a1ca6d2dfc58d3956f16055ab`. Full regression, scratch PostgreSQL including authenticated positive/concurrent 2H HTTP and immutable history, and ABP Identity CI were reported successful **for that SHA**. Do not reuse that PASS claim to certify a later SHA or new business paths.
 - Code presently implements one **month-end, same-rent/same-deposit, all-tenants, new-contract** safe lane. Additional mid-month/delta lanes remain denied pending implementation and PostgreSQL proofs.
 - **Decision recorded only; no production deployment, runtime feature switch, migration or transfer/refund is authorized by this document.**
+
+
+## 2026-11-03 — Phase 2H open detail gate progress (not additional owner approval)
+
+Code now offers D01/D02 per-request SHA-256 pricing snapshots and a
+second signed Owner-review candidate that binds the exact choice;
+D03 source-only official rent reconciliation and separately approved
+per-category **candidate** correction evidence; D04 source cash-backed
+deposit split with completed-target-payment/manual-refund independent
+review **candidate**; D06 proposed Owner/Staff/primary-tenant signoff
+and full source H6 digest/roster binding; unified read-only dossier
+preflight. This implements documentary proof requirements but makes
+**no business-rule choice on the owner's behalf**.
+
+Original signed H1–H6/OI01–OI06 principles remain unchanged.
+D01/D02 effective day/rounding residual and exception precedence;
+D03 official posted line-specific adjustments, received overcollection
+and service treatment; D04 actual outgoing transfer refund,
+destination/timing and unique bank settlement; D06 final legal signer
+matrix require owner authorization before a mid-month writer may be
+enabled. Proposed three-party signing is **not** an approved D06 legal
+matrix; the manual refund review is **not** a settled payment.
+The approved 2G.4 seven-business-day refund rule is not silently
+repurposed to the separate 2H H4 transfer exception.
+Production remains excluded.

@@ -188,6 +188,7 @@ public static class RoomChangeIssuedAdjustmentCategoryEvaluator
     public static RoomChangeIssuedAdjustmentCategorySummary Assess(
         MonthlyIssuedInvoiceRecord issued,
         MonthlyInvoiceCandidateLedgerRecord frozen,
+        MonthlyInvoiceIndependentReviewRecord issuanceReview,
         DateOnly asOfDate,
         IReadOnlyCollection<MonthlyInvoiceAdjustmentRecord> proposals,
         IReadOnlyCollection<MonthlyInvoiceAdjustmentDecisionRecord> decisions,
@@ -195,12 +196,14 @@ public static class RoomChangeIssuedAdjustmentCategoryEvaluator
     {
         ArgumentNullException.ThrowIfNull(issued);
         ArgumentNullException.ThrowIfNull(frozen);
+        ArgumentNullException.ThrowIfNull(issuanceReview);
         ArgumentNullException.ThrowIfNull(proposals);
         ArgumentNullException.ThrowIfNull(decisions);
         ArgumentNullException.ThrowIfNull(classifications);
         if (asOfDate == default)
             throw new InvalidOperationException("D03 date required.");
 
+        issued.VerifyAgainst(frozen, issuanceReview);
         frozen.VerifyStoredEvidence();
         if (frozen.ContractId != issued.ContractId ||
             frozen.BuildingId != issued.BuildingId ||

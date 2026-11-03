@@ -485,7 +485,7 @@ public sealed class RoomChangeOfficialSourceRentEvidenceBridge_Tests
             LineCorrection(ContractDepositOffsetCategory.UnpaidRent, -100_000m));
         review.Verify(f.Issued, p, d);
         var result = RoomChangeIssuedAdjustmentCategoryEvaluator.Assess(
-            f.Issued, f.Frozen, AsOf,
+            f.Issued, f.Frozen, f.InvoiceReview, AsOf,
             new[] { p }, new[] { d }, new[] { review });
         Assert.Equal(-100_000m, result.RentSignedDeltaVnd);
         Assert.Equal(0m, result.ElectricitySignedDeltaVnd);
@@ -503,7 +503,7 @@ public sealed class RoomChangeOfficialSourceRentEvidenceBridge_Tests
             LineCorrection(ContractDepositOffsetCategory.Electricity, -25_000m),
             LineCorrection(ContractDepositOffsetCategory.Water, -15_000m));
         var result = RoomChangeIssuedAdjustmentCategoryEvaluator.Assess(
-            f.Issued, f.Frozen, AsOf,
+            f.Issued, f.Frozen, f.InvoiceReview, AsOf,
             new[] { p }, new[] { d }, new[] { classified });
         Assert.Equal(0m, result.RentSignedDeltaVnd);
         Assert.Equal(-25_000m, result.ElectricitySignedDeltaVnd);
@@ -535,12 +535,12 @@ public sealed class RoomChangeOfficialSourceRentEvidenceBridge_Tests
         var (p,d) = Correction(f, -50_000m);
         Assert.Throws<InvalidDataException>(() =>
             RoomChangeIssuedAdjustmentCategoryEvaluator.Assess(
-                f.Issued, f.Frozen, AsOf,
+                f.Issued, f.Frozen, f.InvoiceReview, AsOf,
                 new[] { p }, Array.Empty<MonthlyInvoiceAdjustmentDecisionRecord>(),
                 Array.Empty<RoomChangeIssuedAdjustmentCategoryProof>()));
         Assert.Throws<InvalidDataException>(() =>
             RoomChangeIssuedAdjustmentCategoryEvaluator.Assess(
-                f.Issued, f.Frozen, AsOf, new[] { p }, new[] { d },
+                f.Issued, f.Frozen, f.InvoiceReview, AsOf, new[] { p }, new[] { d },
                 Array.Empty<RoomChangeIssuedAdjustmentCategoryProof>()));
     }
 
@@ -550,7 +550,7 @@ public sealed class RoomChangeOfficialSourceRentEvidenceBridge_Tests
         var f = Fixture();
         var (p,d) = Correction(f, -50_000m, accepted: false);
         var result = RoomChangeIssuedAdjustmentCategoryEvaluator.Assess(
-            f.Issued, f.Frozen, AsOf, new[] { p }, new[] { d },
+            f.Issued, f.Frozen, f.InvoiceReview, AsOf, new[] { p }, new[] { d },
             Array.Empty<RoomChangeIssuedAdjustmentCategoryProof>());
         Assert.Equal(0m, result.RentSignedDeltaVnd);
         Assert.Equal(0, result.ClassifiedAdjustmentCount);
@@ -571,7 +571,7 @@ public sealed class RoomChangeOfficialSourceRentEvidenceBridge_Tests
             classification.Verify(g.Issued, p, d));
         Assert.Throws<InvalidDataException>(() =>
             RoomChangeIssuedAdjustmentCategoryEvaluator.Assess(
-                f.Issued, f.Frozen, AsOf,
+                f.Issued, f.Frozen, f.InvoiceReview, AsOf,
                 Array.Empty<MonthlyInvoiceAdjustmentRecord>(),
                 Array.Empty<MonthlyInvoiceAdjustmentDecisionRecord>(),
                 new[] { classification }));
@@ -588,7 +588,7 @@ public sealed class RoomChangeOfficialSourceRentEvidenceBridge_Tests
             LineCorrection(ContractDepositOffsetCategory.Water, -15_000m));
         Assert.Throws<InvalidDataException>(() =>
             RoomChangeIssuedAdjustmentCategoryEvaluator.Assess(
-                f.Issued, f.Frozen, AsOf,
+                f.Issued, f.Frozen, f.InvoiceReview, AsOf,
                 new[] { p }, new[] { d }, new[] { classification }));
     }
 

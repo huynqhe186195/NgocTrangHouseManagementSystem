@@ -29,37 +29,49 @@ try {
     $pg = '.\modules\buildingmanagement\test\BuildingManagement.PostgreSql.Tests\BuildingManagement.PostgreSql.Tests.csproj'
     $http = '.\test\NgocTrangHouseManagementSystem.HttpApi.Host.Tests\NgocTrangHouseManagementSystem.HttpApi.Host.Tests.csproj'
 
+    # Show the actual failing compiler/SQL/test output, not only the
+    # wrapper failure at the final throw statement.
+    function Throw-WithTestLog([string]$reason, [string]$relativeLogName) {
+        $logPath = Join-Path $logs $relativeLogName
+        Write-Host "=== FAILED GROUP: $reason ===" -ForegroundColor Red
+        if (Test-Path -LiteralPath $logPath) {
+            Write-Host "=== Last 120 lines: $logPath ===" -ForegroundColor Yellow
+            Get-Content -LiteralPath $logPath -Tail 120 | ForEach-Object { Write-Host $_ }
+        }
+        throw $reason
+    }
+
     Write-Host "=== PHASE 2H FINANCIAL FOUNDATIONS / COMMIT $sha ==="
     Write-Host '== 1/5: H2/H3/H4/H6 financial packet, daily rent and cash evidence =='
     & dotnet test $domain --filter 'FullyQualifiedName~RoomChangeMidMonthRentReconciliation_Tests|FullyQualifiedName~RoomChangeDepositDifferencePreview_Tests|FullyQualifiedName~TRF_HAND|FullyQualifiedName~RoomChangeMidMonthFinancialReconciliationPacket_Tests|FullyQualifiedName~RoomChangeDayPricingRuleCandidate_Tests' --logger 'console;verbosity=normal' *>&1 | Tee-Object -FilePath (Join-Path $logs '15-2h-financial-domain.log')
-    if ($LASTEXITCODE -ne 0) { throw '2H rent/deposit domain tests FAILED.' }
+    if ($LASTEXITCODE -ne 0) { Throw-WithTestLog '2H rent/deposit domain tests FAILED.' '15-2h-financial-domain.log' }
     if (-not (Select-String -Path (Join-Path $logs '15-2h-financial-domain.log') -Pattern 'Total tests:\s*58\b' -Quiet) -or -not (Select-String -Path (Join-Path $logs '15-2h-financial-domain.log') -Pattern 'Passed:\s*58\b' -Quiet)) {
-        throw 'Expected exactly 58/58 H2/H3/H4/H6/D01/D02 cases.'
+        Throw-WithTestLog 'Expected exactly 58/58 H2/H3/H4/H6/D01/D02 cases.' '15-2h-financial-domain.log'
     }
 
     Write-Host '== 2/5: Phase 2H PostgreSQL concurrency and atomic transfer =='
     & dotnet test $pg --filter 'FullyQualifiedName~RoomChangeRequestsPostgreSql_Tests|FullyQualifiedName~RoomChangeTenantRosterPostgreSql_Tests|FullyQualifiedName~RoomChangeSourceDispositionPostgreSql_Tests|FullyQualifiedName~RoomChangeHandoverDigestPostgreSql_Tests|FullyQualifiedName~RoomChangeDayPricingRulePostgreSql_Tests' --logger 'console;verbosity=normal' *>&1 | Tee-Object -FilePath (Join-Path $logs '16-2h-postgresql.log')
-    if ($LASTEXITCODE -ne 0) { throw '2H PostgreSQL suite FAILED.' }
+    if ($LASTEXITCODE -ne 0) { Throw-WithTestLog '2H PostgreSQL suite FAILED.' '16-2h-postgresql.log' }
     if (-not (Select-String -Path (Join-Path $logs '16-2h-postgresql.log') -Pattern 'Total tests:\s*37\b' -Quiet) -or -not (Select-String -Path (Join-Path $logs '16-2h-postgresql.log') -Pattern 'Passed:\s*37\b' -Quiet)) {
-        throw 'Expected exactly 37/37 PostgreSQL transfer cases.'
+        Throw-WithTestLog 'Expected exactly 37/37 PostgreSQL transfer cases.' '16-2h-postgresql.log'
     }
 
     Write-Host '== 3/5: Fresh disposable PostgreSQL migration chain =='
     $env:BM_ALLOW_FULL_MIGRATION_REHEARSAL = 'CREATE_AND_DROP_FRESH_LOCAL_TEST_DATABASE'
     & dotnet test $pg --filter 'FullyQualifiedName~FullInvoiceMigrationChainPostgreSql_Tests' --logger 'console;verbosity=normal' *>&1 | Tee-Object -FilePath (Join-Path $logs '17-2h-full-migration.log')
-    if ($LASTEXITCODE -ne 0) { throw 'PostgreSQL migration chain FAILED.' }
+    if ($LASTEXITCODE -ne 0) { Throw-WithTestLog 'PostgreSQL migration chain FAILED.' '17-2h-full-migration.log' }
     Remove-Item Env:\BM_ALLOW_FULL_MIGRATION_REHEARSAL -ErrorAction SilentlyContinue
 
     Write-Host '== 4/5: Authenticated HTTP / two disposable PostgreSQL DBs =='
     $env:BM_PG_SLICE_A_HTTP_OPT_IN = 'I_ACCEPT_DISPOSABLE_PG_STAGING_HTTP'
     & dotnet test $http --filter 'FullyQualifiedName~SliceAStagingPostgreSqlHttp_Tests' --logger 'console;verbosity=minimal' *>&1 | Tee-Object -FilePath (Join-Path $logs '18-2h-auth-http.log')
-    if ($LASTEXITCODE -ne 0) { throw 'Authenticated PostgreSQL HTTP test FAILED.' }
+    if ($LASTEXITCODE -ne 0) { Throw-WithTestLog 'Authenticated PostgreSQL HTTP test FAILED.' '18-2h-auth-http.log' }
     Remove-Item Env:\BM_PG_SLICE_A_HTTP_OPT_IN -ErrorAction SilentlyContinue
 
     Write-Host '== 5/5: Full isolated Domain / Application / EF / HTTP regression =='
     & .\etc\scripts\verify-2g-security-batch.ps1 -Mode Full *>&1 | Tee-Object -FilePath (Join-Path $logs '19-2h-full-regression.log')
     if (-not (Select-String -Path (Join-Path $logs '19-2h-full-regression.log') -Pattern '=== QUALITY GATE PASS: ALL REQUESTED TEST RUNS SUCCEEDED ===' -SimpleMatch -Quiet)) {
-        throw 'Full regression quality gate FAILED.'
+        Throw-WithTestLog 'Full regression quality gate FAILED.' '19-2h-full-regression.log'
     }
 
     Write-Host '=== PHASE 2H FINANCIAL FOUNDATIONS: ALL FIVE GROUPS PASSED ==='

@@ -159,7 +159,7 @@ public sealed class RoomChangeMidMonthFinancialPostingPostgreSql_Tests
                     INSERT INTO "BuildingManagementContracts" VALUES ('{f.Contract:D}');
                     INSERT INTO "BuildingManagementRoomChangeRequests" VALUES
                      ('{f.Request:D}','{f.Contract:D}','{f.Room:D}',
-                      '{f.Building:D}',0,'2026-11-15');
+                      '{f.Building:D}',0,'2026-10-15');
                     INSERT INTO "BuildingManagementMonthlyIssuedInvoiceLedger"
                      VALUES ('{f.Invoice:D}','{Hash}');
                     INSERT INTO "BuildingManagementOfficialInvoiceReceivables"

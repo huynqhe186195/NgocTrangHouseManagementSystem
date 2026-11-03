@@ -89,6 +89,9 @@ public sealed class Phase2HMidMonthFinancialJournal : Migration
           OR req."RequestedDate" = (
             date_trunc('month',req."RequestedDate"::timestamp)
                + interval '1 month - 1 day')::date
+          OR (NEW."RecordedAtUtc" AT TIME ZONE 'Asia/Ho_Chi_Minh')::date
+               < req."RequestedDate"
+          OR NEW."RecordedAtUtc" > clock_timestamp()
          THEN
           RAISE EXCEPTION 'Mid-month posting request, actor or archive scope invalid'
            USING ERRCODE='23514';
@@ -150,10 +153,22 @@ public sealed class Phase2HMidMonthFinancialJournal : Migration
            RAISE EXCEPTION 'D03 actual posted receivable lacks original approved line correction'
             USING ERRCODE='23514';
           END IF;
-          SELECT COALESCE(sum(("line"->>'SignedDeltaVnd')::numeric),0)
+          SELECT COALESCE(sum((element.value->>'SignedDeltaVnd')::numeric),0)
             INTO categories_sum
-            FROM jsonb_array_elements(packet_json->'Lines') AS line;
-          IF categories_sum IS DISTINCT FROM NEW."SignedAmountVnd" THEN
+            FROM jsonb_array_elements(packet_json->'Lines') AS element(value);
+          IF jsonb_typeof(packet_json->'Lines') IS DISTINCT FROM 'array'
+             OR jsonb_array_length(packet_json->'Lines') NOT BETWEEN 1 AND 4
+             OR EXISTS (
+                SELECT 1 FROM jsonb_array_elements(packet_json->'Lines') AS element(value)
+                 WHERE (element.value->>'Category')::integer NOT IN (1,2,3,4)
+                    OR (element.value->>'SignedDeltaVnd')::numeric = 0
+                    OR sign((element.value->>'SignedDeltaVnd')::numeric)
+                         <> sign(NEW."SignedAmountVnd")
+             )
+             OR (SELECT count(DISTINCT (element.value->>'Category')::integer)
+                 FROM jsonb_array_elements(packet_json->'Lines') AS element(value))
+                   IS DISTINCT FROM jsonb_array_length(packet_json->'Lines')
+             OR categories_sum IS DISTINCT FROM NEW."SignedAmountVnd" THEN
            RAISE EXCEPTION 'D03 approved category split is not balanced'
             USING ERRCODE='23514';
           END IF;

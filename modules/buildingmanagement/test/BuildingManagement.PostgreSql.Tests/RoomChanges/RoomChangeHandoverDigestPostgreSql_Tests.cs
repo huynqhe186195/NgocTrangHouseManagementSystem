@@ -134,6 +134,25 @@ public sealed class RoomChangeHandoverDigestPostgreSql_Tests
         });
     }
 
+    [Fact]
+    public async Task TRFPG30_Valid_Preexisting_Handover_History_Upgrades_Without_Rewrite()
+    {
+        await Scratch(IsolationLevel.Serializable, async (db, tx) =>
+        {
+            await Run(db, tx, Down);
+            var original = Create();
+            await Insert(db, tx, original);
+            await Run(db, tx, Up);
+            Assert.Equal(original.EvidenceSha256, await StringScalar(db, tx,
+                $"""
+                SELECT "EvidenceSha256"
+                  FROM "BuildingManagementRoomChangeHandoverEvidence"
+                 WHERE "Id"='{original.Id:D}'
+                """));
+            await Denied(db, tx, () => Run(db, tx, Down));
+        });
+    }
+
     private static RoomChangeHandoverEvidenceRecord Create()
     {
         var room = Guid.NewGuid();

@@ -299,3 +299,51 @@ an exact SHA. It is not an independent GitHub Actions run citation
 or proof of a human/bank signature. No production deployment or
 live database changes. This documentation-only acceptance commit
 does not require rerunning the passing code SHA.
+
+
+## 2026-11-03 — D03 rent from official monthly issuance and reviewed line receipts: 5/5 LOCAL PASS
+
+**Operator-tested code SHA:** `388082575f8a9d4bea4f4b51d60bbce41c2b9fbb` on `wip/phase-2g2`.
+
+The user reported:
+
+```text
+=== QUALITY GATE PASS: ALL REQUESTED TEST RUNS SUCCEEDED ===
+NO DATABASE MIGRATION, NO POSTGRESQL TEST (COMPILE ONLY), NO LIVE APPLICATION STARTED.
+Source-only checks are NOT proof of authenticated cross-building CRUD security.
+?? etc/phase-audits/Phase2G3A7_RevisionLedger_Generated_Review.sql
+=== PHASE 2H FINANCIAL FOUNDATIONS: ALL FIVE GROUPS PASSED ===
+COMMIT=388082575f8a9d4bea4f4b51d60bbce41c2b9fbb
+Full mid-month contract/cash writer remains HOLD; production not used.
+```
+
+**Interpretation of the mixed log:** The nested source-only quality
+gate expressly did not run PostgreSQL migrations/tests; that line is
+not evidence of those tests. The SEPARATE outer
+`verify-phase-2h-financial-foundations.ps1` hard-stop did report
+all five groups passed at exactly this SHA: 75/75 focused Domain
+(including 17 D03 cases), 37/37 focused PostgreSQL,
+full isolated PostgreSQL migration chain,
+authenticated local HTTP/PostgreSQL tests and full isolated regression.
+This is operator-reported LOCAL evidence, not independently verified
+GitHub CI or proof of universal cross-building CRUD isolation.
+
+D03 technical scope: a DOMAIN-ONLY read-only bridge derives RENT
+from the issued monthly invoice's immutable frozen source, separately
+posted receivable and complete independently reviewed bank receipt
+allocations across rent/utilities/services. Missing, rejected,
+duplicated or mismatched allocation evidence and ALL unclassified
+invoice-wide adjustment proposals/decisions are HOLD, not silently
+treated as rent corrections. The linked non-executing transfer packet
+can now be prepared from that verified D03 source.
+
+**Remaining BUSINESS HOLD:** D01/D02 globally authorized handover-day,
+rounding and residual rules; D03 per-line issuer correction and actual
+posting; D04 independent cash-backed deposit top-up/refund and
+replay/race-proof transaction; D06 signatory matrix; the complete
+mid-month contract/invoice/bank writer. No production deploy. The
+untracked `etc/phase-audits/Phase2G3A7_RevisionLedger_Generated_Review.sql`
+is unchanged and must stay out of this acceptance commit.
+
+This is a documentation-only acceptance update; no re-run is necessary
+solely due to this commit.

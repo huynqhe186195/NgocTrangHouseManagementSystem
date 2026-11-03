@@ -492,3 +492,37 @@ local PostgreSQL and .NET test output is received.**
 The existing month-end completion writer remains unchanged.
 The Phase 2H financial rule and legal-signature business approvals
 and full bank payout/atomic mid-month writer are still HOLD.
+
+
+## 2026-11-03 — Original financial claim idempotency + bank actor separation (TEST PENDING)
+
+A full five-group PASS on `db117bcdee473dce43d8e76034430ba55052acbb`
+was recorded before this change. The previous D03 journal deduplicated only
+by archived *evidence ID*: one independently approved adjustment could be
+presented under a fresh archive and posted twice. That is not adequate
+original financial source idempotency.
+
+The additive `20261103100000_Phase2HFinancialOriginalClaims` migration
+adds `ApprovedAdjustmentId` with a unique original-adjustment claim,
+a reference to the genuine monthly adjustment, and a SERIALIZABLE
+commit-time trigger. The D03 trigger rechecks immutable original
+proposal, accepted decision, same source contract/building, review time
+and separation of proposer/reviewer/classifier/posting actors. The
+D04 trigger rechecks the original bank payment against bank statement
+reference, distinct independently reviewing and owner-approving humans,
+and signed review time. The older SQL guards must ALSO pass.
+
+An existing D03 journal requires manual historical audit before migration;
+it is never silently backfilled. Down refuses to drop protections if ANY
+journal history exists. The new test cases `TRFPOSTPG05–08` cover
+duplicate *original* adjustment with a new archive ID, same-person
+review rejection, missing D04 bank proof and two original financial
+legs in one request. Script now requires **106 focused Domain and
+52 focused PostgreSQL**; full disposable EF migration, authenticated
+HTTP and Full regression remain mandatory.
+
+**This is NOT a transactionally integrated mid-month contract writer.**
+The D04 outbound refund is still fail-closed, and the original
+authenticated bank gateway/settlement plus atomic contract-room-deposit
+writer are not present. Production excluded. This new SHA must be
+tested locally before it can be marked PASS.

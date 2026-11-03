@@ -12,9 +12,10 @@ namespace BuildingManagement.PostgreSqlTests;
 
 public sealed class RoomChangeMidMonthFinancialPostingPostgreSql_Tests
 {
-    private static readonly string Up = Assert.Single(
-        new Phase2HMidMonthFinancialJournal().UpOperations
-            .OfType<SqlOperation>()).Sql;
+    private static readonly string Up = string.Join("\n",
+        new Phase2HMidMonthFinancialJournal().UpOperations.OfType<SqlOperation>()
+            .Concat(new Phase2HFinancialOriginalClaims().UpOperations.OfType<SqlOperation>())
+            .Select(x => x.Sql));
     private const string Hash =
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     private const string Stub = """
@@ -43,11 +44,13 @@ public sealed class RoomChangeMidMonthFinancialPostingPostgreSql_Tests
         );
         CREATE TABLE "BuildingManagementMonthlyInvoiceAdjustments"(
           "Id" uuid PRIMARY KEY,"IssuedInvoiceId" uuid,
-          "ContractId" uuid,"BuildingId" uuid,"SignedDeltaAmount" numeric(18,0)
+          "ContractId" uuid,"BuildingId" uuid,"SignedDeltaAmount" numeric(18,0),
+          "ProposedByUserId" uuid,"ProposedAtUtc" timestamptz
         );
         CREATE TABLE "BuildingManagementMonthlyInvoiceAdjustmentDecisions"(
           "Id" uuid PRIMARY KEY,"AdjustmentId" uuid,
-          "Accepted" boolean,"ApprovedSignedDeltaAmount" numeric(18,0)
+          "Accepted" boolean,"ApprovedSignedDeltaAmount" numeric(18,0),
+          "ReviewedByUserId" uuid,"ReviewedAtUtc" timestamptz
         );
         CREATE TABLE "BuildingManagementOfficialInvoiceReceiptReviews"(
           "Id" uuid PRIMARY KEY,"ReceivablePostingId" uuid,
@@ -75,14 +78,15 @@ public sealed class RoomChangeMidMonthFinancialPostingPostgreSql_Tests
             INSERT INTO "BuildingManagementRoomChangeMidMonthFinancialPostings"
               ("Id","RequestId","SourceContractId","BuildingId","ArchiveId",
                "OfficialReceivableId","SourcePaymentId","Kind","SignedAmountVnd",
-               "BankTransactionReference","RecordedByUserId","RecordedAtUtc")
+               "BankTransactionReference","RecordedByUserId","RecordedAtUtc","ApprovedAdjustmentId")
             VALUES ('{Guid.NewGuid():D}','{f.Request:D}','{f.Contract:D}',
               '{f.Building:D}','{(kind==1?f.D03:f.D04):D}',
               {(kind==1?$"'{receivable??f.Receivable:D}'":"NULL")},
               {(kind==2?$"'{payment??f.Payment:D}'":"NULL")},
               {kind},{(amount??(kind==1?-50000m:1000000m)).ToString(System.Globalization.CultureInfo.InvariantCulture)},
               {(kind==1?"NULL":"'BANK-2H-ORIGINAL-RECEIPT-001'")},
-              '{Guid.NewGuid():D}','2026-11-02T10:00:00Z')
+              '{Guid.NewGuid():D}','2026-11-02T10:00:00Z',
+              {(kind==1?$"'{f.Adjustment:D}'":"NULL")})
             """;
 
     [Fact]
@@ -137,6 +141,84 @@ public sealed class RoomChangeMidMonthFinancialPostingPostgreSql_Tests
         });
     }
 
+
+    [Fact]
+    public async Task TRFPOSTPG05_Rearchiving_The_Same_Approved_D03_Does_Not_Double_Post()
+    {
+        await Scratch(IsolationLevel.Serializable, async (db,tx,f) =>
+        {
+            await Run(db,tx,Posting(f,1));
+            var anotherArchive = Guid.NewGuid();
+            await Run(db,tx,$"""
+                INSERT INTO "BuildingManagementRoomChangeEvidenceArchives"
+                SELECT '{anotherArchive:D}',"RequestId","SourceContractId","BuildingId",
+                    "Kind","ArchivedAtUtc","ArchivedByUserId","EvidenceJson",
+                    "ParentEvidenceId","ParentEvidenceSha256"
+                FROM "BuildingManagementRoomChangeEvidenceArchives"
+                WHERE "Id"='{f.D03:D}'
+                """);
+            var duplicate = Posting(f,1).Replace(
+                f.D03.ToString("D"), anotherArchive.ToString("D"),
+                StringComparison.Ordinal);
+            await Denied(db,tx,duplicate,"23505");
+            Assert.Equal(1L,await Count(db,tx));
+        });
+    }
+
+    [Fact]
+    public async Task TRFPOSTPG06_D03_Proposer_And_Reviewer_Cannot_Be_One_Person()
+    {
+        await Scratch(IsolationLevel.Serializable, async (db,tx,f) =>
+        {
+            await Run(db,tx,$"""
+                UPDATE "BuildingManagementMonthlyInvoiceAdjustmentDecisions"
+                SET "ReviewedByUserId" = (
+                    SELECT "ProposedByUserId"
+                    FROM "BuildingManagementMonthlyInvoiceAdjustments"
+                    WHERE "Id"='{f.Adjustment:D}'
+                )
+                WHERE "Id"='{f.Decision:D}'
+                """);
+            await Denied(db,tx,Posting(f,1),"23514");
+        });
+    }
+
+    [Fact]
+    public async Task TRFPOSTPG07_D04_Missing_Independent_Bank_Evidence_Denied()
+    {
+        await Scratch(IsolationLevel.Serializable, async (db,tx,f) =>
+        {
+            await Run(db,tx,$"""
+                UPDATE "BuildingManagementRoomChangeEvidenceArchives"
+                SET "EvidenceJson" = (
+                  ("EvidenceJson"::jsonb
+                   - 'BankStatementReference'
+                   || jsonb_build_object('BankStatementReference',''))::text
+                )
+                WHERE "Id"='{f.D04:D}'
+                """);
+            await Denied(db,tx,Posting(f,2),"23514");
+        });
+    }
+
+    [Fact]
+    public async Task TRFPOSTPG08_Both_Original_D03_D04_Postings_Coexist_Without_Money_Movement()
+    {
+        await Scratch(IsolationLevel.Serializable, async (db,tx,f) =>
+        {
+            await Run(db,tx,Posting(f,1));
+            await Run(db,tx,Posting(f,2));
+            Assert.Equal(2L,await Count(db,tx));
+            await using var cmd = new NpgsqlCommand("""
+                SELECT count(*) FROM "BuildingManagementRoomChangeMidMonthFinancialPostings"
+                WHERE ("Kind"=1 AND "ApprovedAdjustmentId" IS NOT NULL)
+                   OR ("Kind"=2 AND "ApprovedAdjustmentId" IS NULL)
+                """,db,tx);
+            Assert.Equal(2L,Convert.ToInt64(await cmd.ExecuteScalarAsync()));
+            await Denied(db,tx,Posting(f,3,amount:-1000000m),"23514");
+        });
+    }
+
     private static async Task Scratch(IsolationLevel isolation,
         Func<NpgsqlConnection,NpgsqlTransaction,F,Task> action)
     {
@@ -167,6 +249,7 @@ public sealed class RoomChangeMidMonthFinancialPostingPostgreSql_Tests
                     IssuedInvoiceId = f.Invoice,
                     AdjustmentId = f.Adjustment,
                     DecisionId = f.Decision,
+                    ClassifiedByUserId = f.Actor,
                     ApprovedSignedDeltaVnd = -50000m,
                     Lines = new[] { new { Category = 1, SignedDeltaVnd = -50000m } }
                 });
@@ -174,6 +257,13 @@ public sealed class RoomChangeMidMonthFinancialPostingPostgreSql_Tests
                 {
                     Leg = 1,
                     OriginalPaymentId = f.Payment,
+                    ApprovedByOwnerId = Guid.NewGuid(),
+                    IndependentBankReviewerId = f.Actor,
+                    PaidAtUtc = new DateTime(2026,10,16,9,0,0,DateTimeKind.Utc),
+                    ReviewedAtUtc = new DateTime(2026,10,17,10,0,0,DateTimeKind.Utc),
+                    OwnerApprovedDestinationReference = "OWNER-APPROVED-TARGET-PAYMENT",
+                    BankStatementReference = "BANK-STATEMENT-ORIGINAL-2026",
+                    SignedBankReviewReference = "INDEPENDENT-REVIEW-SIGN-2026",
                     ExactAmountVnd = 1000000m,
                     TransactionReference = "BANK-2H-ORIGINAL-RECEIPT-001",
                     TargetContractId = f.Target
@@ -190,9 +280,11 @@ public sealed class RoomChangeMidMonthFinancialPostingPostgreSql_Tests
                       '{f.Contract:D}','{f.Room:D}','{f.Building:D}','{Hash}',3000000);
                     INSERT INTO "BuildingManagementMonthlyInvoiceAdjustments"
                      VALUES ('{f.Adjustment:D}','{f.Invoice:D}',
-                      '{f.Contract:D}','{f.Building:D}',-50000);
+                      '{f.Contract:D}','{f.Building:D}',-50000,
+                        '{Guid.NewGuid():D}','2026-10-20T10:00:00Z');
                     INSERT INTO "BuildingManagementMonthlyInvoiceAdjustmentDecisions"
-                     VALUES ('{f.Decision:D}','{f.Adjustment:D}',true,-50000);
+                     VALUES ('{f.Decision:D}','{f.Adjustment:D}',true,-50000,
+                       '{Guid.NewGuid():D}','2026-10-21T10:00:00Z');
                     INSERT INTO "BuildingManagementOfficialInvoiceReceiptReviews"
                      VALUES ('{Guid.NewGuid():D}','{f.Receivable:D}',true,200000);
                     INSERT INTO "BuildingManagementPayments" VALUES

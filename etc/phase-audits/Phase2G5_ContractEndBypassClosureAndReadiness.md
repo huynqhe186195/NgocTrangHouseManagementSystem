@@ -70,3 +70,60 @@ git status --short
 6. Continue to 2H room transfer **after** 2G final settlement and contract close-out invariants are tested.
 
 The local untracked `etc/phase-audits/Phase2G3A7_RevisionLedger_Generated_Review.sql` is untouched; it must never be staged, executed, deleted or overwritten by a batch.
+
+
+## 2026-11-03 — Phase 2G.5 archive-integrity hardening (new current work)
+
+**Current code status: COMMITTED; exact-SHA local PostgreSQL and HTTP verification PENDING.**
+The historical 2026-10-27 observations above describe the earlier readiness-only
+baseline. Subsequent Slice B staging work added atomic financial closeout,
+MoveOutRequest.Complete, Contract.End and immutable Room Available/Reserved/
+Maintenance disposition in a single serializable UoW. The approved OI-06
+disposition policy is: confirmed future reservation or signed contract retains
+Reserved; an otherwise clean room becomes Available; documented repairs become
+Maintenance; damage plus future booking or multiple future commitments must
+fail closed without silently cancelling a reservation. PendingPayment is not a
+confirmed commitment.
+
+### Identified database integrity gap
+
+The pre-existing `Phase2G5AtomicRoomRelease` PostgreSQL trigger validated
+contract/request/approval/room state and future commitments, but its archive
+table check only enforced the *format* of `DispositionSha256`. The domain
+factory checked the real SHA-256 and decoded archive fields, yet direct SQL
+INSERT could supply an unrelated or foreign `DispositionJson` with a
+syntactically correct SHA string. Such data could persist until an application
+read attempted verification. This violates the immutable-closeout evidence
+contract across the SQL-bypass trust boundary.
+
+### Additive remedy
+
+- Migration `20261103040000_Phase2G5RoomDispositionArchiveIntegrity` adds a
+  PostgreSQL INSERT trigger that checks the SHA-256 over the exact UTF-8 JSON
+  bytes, the full expected archive field set, and typed-column parity for all
+  contract/request/room/approval/actor/time/status/maintenance/future booking
+  and handover values. The original 2G.5 atomic release, immutability,
+  reservation and 2H transfer commit guards are **not** modified or weakened.
+- Down migration refuses to remove this evidence control while any signed
+  room disposition exists. Historical completed closeouts are never rewritten.
+- `Phase2G5RoomDispositionArchiveIntegrityPostgreSql_Tests` tests valid
+  Available, Reserved and Maintenance payloads plus mismatched hashes,
+  forged JSON with recalculated hash, missing handover proof, typed status
+  mismatch, rollback-only schemas and unsafe downgrade rejection.
+- The complete disposable PostgreSQL EF migration test now expects this
+  migration as the latest step and asserts the SQL proof trigger exists.
+- Run `etc/scripts/verify-phase-2g5-staging.ps1` from the development branch
+  with `BM_PG_TEST_CONNECTION` limited to local
+  `ngoctrang_integration_test`; this runs 2G.5 SQL, full fresh migration,
+  authenticated HTTP/PostgreSQL and full .NET regression together.
+
+### Acceptance limitations
+
+A matching SHA-256 proves archive **consistency**, not independently
+cryptographically authenticated human signatures or actual bank execution.
+Signed inspection and handover references remain staged evidence pointers.
+Do not mark Phase 2G.5 BUSINESS ACCEPTED until the exact final SHA has
+PASS evidence for this new SQL guard, the full migration chain, authenticated
+HTTP closeout/authorization and Full regression, with remaining checklist
+requirements mapped to the normative §7. No production activation, live
+migration or bank transfer is authorized.

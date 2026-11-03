@@ -44,6 +44,7 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
     public DbSet<RoomChangeBusinessPolicyRecord> RoomChangeBusinessPolicies { get; set; } = default!;
     public DbSet<RoomChangeBusinessPolicyReviewRecord> RoomChangePolicyReviews { get; set; } = default!;
     public DbSet<RoomChangeDayPricingRuleCandidate> RoomChangeDayPricingRuleCandidates { get; set; } = default!;
+    public DbSet<RoomChangeEvidenceArchiveRecord> RoomChangeEvidenceArchives { get; set; } = default!;
     public DbSet<RoomChangeHandoverEvidenceRecord> RoomChangeHandoverEvidence { get; set; } = default!;
     public DbSet<RoomChangeCompletionRecord> RoomChangeCompletions { get; set; } = default!;
     public DbSet<MoveOutRequest> MoveOutRequests { get; set; } = default!;
@@ -158,6 +159,8 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.RoomChangeBusinessPolicyReviewConfiguration());
         builder.ApplyConfiguration(
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.RoomChangeDayPricingRuleCandidateConfiguration());
+        builder.ApplyConfiguration(
+            new BuildingManagement.EntityFrameworkCore.EntityConfigurations.RoomChangeEvidenceArchiveRecordConfiguration());
         builder.ApplyConfiguration(
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.RoomChangeHandoverEvidenceConfiguration());
         builder.ApplyConfiguration(

@@ -61,11 +61,11 @@ public sealed class RoomChangeDayPricingOwnerSignoff
             SignedAtUtc = Normalize(signedAtUtc),
             SignedPricingApprovalReference = reference
         };
-        return signoff withHash();
+        return signoff.WithHash();
     }
 
     // A new immutable value is returned. No public "set approved" switch.
-    private RoomChangeDayPricingOwnerSignoff withHash()
+    private RoomChangeDayPricingOwnerSignoff WithHash()
         => new()
         {
             Id = Id, RequestId = RequestId,

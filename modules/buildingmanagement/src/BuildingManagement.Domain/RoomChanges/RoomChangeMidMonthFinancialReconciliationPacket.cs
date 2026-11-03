@@ -1,4 +1,7 @@
 using System;
+using System.Collections.Generic;
+using BuildingManagement.DepositSettlements;
+using BuildingManagement.Invoices;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
@@ -18,6 +21,61 @@ namespace BuildingManagement.RoomChanges;
 /// </summary>
 public static class RoomChangeMidMonthFinancialReconciliationPacketFactory
 {
+    /// <summary>
+    /// Preferred D03 entry point for a source MONTHLY invoice that has
+    /// actually been issued and separately posted. All evidence MUST come
+    /// from complete server-read, scoped historical ledgers. This method
+    /// refuses unclassified invoice adjustments or unresolved payments
+    /// before creating the same non-executing H2/H3/H4 packet.
+    /// </summary>
+    public static RoomChangeMidMonthFinancialReconciliationPacket
+        PrepareFromOfficialMonthlyEvidence(
+        Guid packetId,
+        RoomChangeRequest request,
+        Contract source,
+        Guid proposedTargetContractId,
+        RoomChangeTenantRosterSnapshotRecord roster,
+        RoomChangeBusinessPolicyRecord policy,
+        RoomChangeBusinessPolicyReviewRecord policyReview,
+        RoomChangeDailyRentQuote quote,
+        RoomChangeDepositDifferenceFacts depositFacts,
+        OfficialInvoiceReceivablePostingRecord posting,
+        MonthlyIssuedInvoiceRecord issued,
+        MonthlyInvoiceCandidateLedgerRecord frozen,
+        MonthlyInvoiceIndependentReviewRecord issuanceReview,
+        DateOnly asOfDate,
+        IReadOnlyCollection<OfficialInvoiceReceiptEvidence> receipts,
+        IReadOnlyCollection<OfficialInvoiceReceiptReviewRecord> bankReviews,
+        IReadOnlyCollection<OfficialMonthlyReceiptLineAllocationRecord> receiptLines,
+        IReadOnlyCollection<MonthlyInvoiceAdjustmentRecord> adjustments,
+        IReadOnlyCollection<MonthlyInvoiceAdjustmentDecisionRecord> adjustmentReviews,
+        Guid preparedBy,
+        DateTime preparedAtUtc)
+    {
+        var official = RoomChangeOfficialSourceRentEvidenceBridge.Assess(
+            quote, posting, issued, frozen, issuanceReview,
+            asOfDate, receipts, bankReviews, receiptLines,
+            adjustments, adjustmentReviews);
+        if (!official.CanPreview || official.Snapshot is null ||
+            official.Preview is null ||
+            source is null || frozen is null ||
+            source.Id != frozen.ContractId ||
+            source.RoomId != frozen.RoomId ||
+            posting is null || posting.ContractId != source.Id)
+            throw new InvalidOperationException(
+                "D03 requires exact official posted monthly rent and complete reviewed receipt evidence.");
+
+        var result = Prepare(
+            packetId, request, source, proposedTargetContractId,
+            roster, policy, policyReview, quote,
+            official.Snapshot, depositFacts, preparedBy, preparedAtUtc);
+        if (result.Rent != official.Preview ||
+            result.SourceRentLedger != official.Snapshot)
+            throw new InvalidOperationException(
+                "Official source invoice has drifted before preparation.");
+        return result;
+    }
+
     public static RoomChangeMidMonthFinancialReconciliationPacket Prepare(
         Guid packetId,
         RoomChangeRequest? request,

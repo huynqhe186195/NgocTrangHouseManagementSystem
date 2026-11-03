@@ -1,5 +1,7 @@
 using System;
 using System.IO;
+using System.Linq;
+using BuildingManagement.Utilities;
 using BuildingManagement.Contracts;
 using BuildingManagement.RoomChanges;
 using BuildingManagement.Rooms;
@@ -463,6 +465,108 @@ public sealed class RoomChangeMidMonthFinancialReconciliationPacket_Tests
         var topup = Prepare(Fixture(targetRent: 4_000_000m));
         Assert.Throws<InvalidOperationException>(() =>
             RefundReview(topup));
+    }
+
+    private static RoomChangeMidMonthDossierReadiness Dossier(
+        Evidence f, bool includePricingOwner = true,
+        bool includeThreeParties = true,
+        bool includeCashProof = true)
+    {
+        var packet = Prepare(f);
+        var dayRule = RoomChangeDayPricingRuleCandidate.Prepare(
+            Guid.NewGuid(), f.Request, f.Source, f.Roster,
+            f.Policy, f.Review, f.Quote, Guid.NewGuid(),
+            Created.AddMinutes(4));
+        var ownerSign = RoomChangeDayPricingOwnerSignoff.Sign(
+            Guid.NewGuid(), dayRule, f.Request, f.Source,
+            f.Roster, f.Policy, f.Review,
+            f.Review.ReviewedByUserId, Created.AddMinutes(6),
+            "OWNER-SIGNED-EXACT-DAY-AND-ROUNDING-2H-2026");
+        var em = new UtilityMeter(Guid.NewGuid(), f.Source.RoomId,
+            UtilityType.Electricity, "D06-PREFLIGHT-E-2026", 0m,
+            new DateTime(2026, 8, 1));
+        var wm = new UtilityMeter(Guid.NewGuid(), f.Source.RoomId,
+            UtilityType.Water, "D06-PREFLIGHT-W-2026", 0m,
+            new DateTime(2026, 8, 1));
+        var er = new MeterReading(Guid.NewGuid(), em.Id,
+            2026, 9, 0m, 20m, new DateTime(2026, 9, 15));
+        var wr = new MeterReading(Guid.NewGuid(), wm.Id,
+            2026, 9, 0m, 30m, new DateTime(2026, 9, 15));
+        var physical = RoomChangeHandoverEvidenceRecord.Attest(
+            Guid.NewGuid(), f.Request, em, er, wm, wr,
+            "SIGNED-D06-ASSET-AND-DEFECT-SNAPSHOT-2026",
+            "SIGNED-D06-PHYSICAL-METER-HANDOVER-2026",
+            Guid.NewGuid(), Created.AddMinutes(6));
+        var tenant = f.Roster.ReadVerifiedRoster().Single(
+            x => x.Role == ContractTenantRole.PrimaryTenant).TenantId;
+        var signatures = RoomChangeHandoverThreePartySignoff.Sign(
+            Guid.NewGuid(), f.Request, f.Roster, physical,
+            f.Review.ReviewedByUserId, physical.AttestedByUserId,
+            tenant,
+            "SIGNED-OWNER-D06-CHECKLIST-2026",
+            "SIGNED-STAFF-D06-CHECKLIST-2026",
+            "SIGNED-TENANT-D06-CHECKLIST-2026",
+            "SIGNED-D06-ASSET-DEFECT-REVIEW-2026",
+            Created.AddMinutes(9));
+        RoomChangeTransferDepositCashReview? cash = null;
+        Payment? payment = null;
+        if (includeCashProof && packet.Deposit.UnpaidTopUpRequirementVnd > 0m)
+        {
+            payment = CompletedTargetTopUp(packet);
+            cash = TopUpReview(packet, payment);
+        }
+        else if (includeCashProof &&
+                 packet.Deposit.UnpaidRefundCandidateVnd > 0m)
+            cash = RefundReview(packet);
+        return RoomChangeMidMonthDossierPreflight.Assess(
+            f.Request, f.Source, f.Roster, f.Policy, f.Review,
+            packet, includePricingOwner ? dayRule : null,
+            includePricingOwner ? ownerSign : null,
+            physical, em, er, wm, wr,
+            includeThreeParties ? signatures : null,
+            cash, payment);
+    }
+
+    [Fact]
+    public void TRF_DOSSIER01_Full_Checked_Documents_Are_Not_Financial_Posting()
+    {
+        var result = Dossier(Fixture(targetRent: 3_000_000m));
+        Assert.True(result.AllPresentedDocumentarySourcesMatch,
+            string.Join(",", result.Blockers));
+        Assert.Contains("D03OfficialPerLineAdjustmentPostingNotYetProven",
+            result.Blockers);
+        Assert.False(result.CanExecuteTransfer);
+        Assert.False(result.IsOfficialInvoiceCorrectionPosted);
+        Assert.False(result.IsDepositCashJournalPosted);
+    }
+
+    [Fact]
+    public void TRF_DOSSIER02_Topup_Proof_Cannot_Bypass_D03_Official_Posting()
+    {
+        var result = Dossier(Fixture(targetRent: 4_000_000m));
+        Assert.True(result.AllPresentedDocumentarySourcesMatch,
+            string.Join(",", result.Blockers));
+        Assert.False(result.CanExecuteTransfer);
+        Assert.Contains("D03OfficialPerLineAdjustmentPostingNotYetProven",
+            result.Blockers);
+        Assert.False(result.IsBankGatewayVerified);
+    }
+
+    [Fact]
+    public void TRF_DOSSIER03_Missing_Signatures_Or_Actual_Cash_Proof_Denied()
+    {
+        var f = Fixture(targetRent: 4_000_000m);
+        var noOwner = Dossier(f, includePricingOwner: false);
+        Assert.False(noOwner.AllPresentedDocumentarySourcesMatch);
+        Assert.Contains("D01D02OwnerSignedPricingRuleMissing", noOwner.Blockers);
+        var noSigners = Dossier(f, includeThreeParties: false);
+        Assert.False(noSigners.AllPresentedDocumentarySourcesMatch);
+        Assert.Contains("D06OriginalMeterAndThreePartySignatureMissing",
+            noSigners.Blockers);
+        var noCash = Dossier(f, includeCashProof: false);
+        Assert.False(noCash.AllPresentedDocumentarySourcesMatch);
+        Assert.Contains("D04MissingIndependentCashMovementEvidence",
+            noCash.Blockers);
     }
 
 }

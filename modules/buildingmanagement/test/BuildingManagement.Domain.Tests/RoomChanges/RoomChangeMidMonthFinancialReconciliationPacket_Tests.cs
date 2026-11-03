@@ -569,4 +569,29 @@ public sealed class RoomChangeMidMonthFinancialReconciliationPacket_Tests
             noCash.Blockers);
     }
 
+    [Fact]
+    public void TRF_ARCH06_D04_Topup_Archives_Exact_Reviewed_Target_Receipt()
+    {
+        var f = Fixture(targetRent: 4_000_000m);
+        var packet = Prepare(f);
+        var receipt = CompletedTargetTopUp(packet);
+        var proof = TopUpReview(packet, receipt);
+        var archived = RoomChangeEvidenceArchiveRecord.CaptureCashReview(
+            Guid.NewGuid(), f.Request, f.Source, f.Roster,
+            f.Policy, f.Review, packet, proof,
+            receipt, Created.AddMinutes(10));
+        archived.VerifyStoredSnapshot();
+        Assert.Equal(RoomChangeEvidenceArchiveKind.ReviewedTransferCash, archived.Kind);
+        Assert.Equal(proof.EvidenceSha256, archived.SourceEvidenceSha256);
+        Assert.Equal(packet.PacketId, archived.ParentEvidenceId);
+        Assert.Equal(packet.EvidenceSha256, archived.ParentEvidenceSha256);
+        Assert.False(archived.CanRefundDeposit);
+        Assert.False(archived.CanExecuteRoomChange);
+        Assert.Throws<InvalidDataException>(() =>
+            RoomChangeEvidenceArchiveRecord.CaptureCashReview(
+                Guid.NewGuid(), f.Request, f.Source, f.Roster,
+                f.Policy, f.Review, packet, proof,
+                CompletedTargetTopUp(packet), Created.AddMinutes(10)));
+    }
+
 }

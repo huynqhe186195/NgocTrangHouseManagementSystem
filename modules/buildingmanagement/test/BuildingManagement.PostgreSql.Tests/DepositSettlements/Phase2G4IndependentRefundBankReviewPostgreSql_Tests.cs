@@ -140,7 +140,6 @@ public sealed class Phase2G4IndependentRefundBankReviewPostgreSql_Tests
             await Run(db,tx,WallClockUp);
             await Run(db,tx,GlobalBankUp);
             await Run(db,tx,OpsUp);
-            if (withHolidaySla) await Run(db,tx,HolidayUp);
         });
     }
 
@@ -520,6 +519,8 @@ public sealed class Phase2G4IndependentRefundBankReviewPostgreSql_Tests
             await Run(db,tx,WallClockUp);
             await Run(db,tx,GlobalBankUp);
             await Run(db,tx,OpsUp);
+            if (withHolidaySla)
+                await Run(db,tx,HolidayUp);
             await Run(db,tx,$"""
                 INSERT INTO "BuildingManagementContracts" VALUES ('{contract:D}');
                 INSERT INTO "BuildingManagementMoveOutRequests" VALUES ('{request:D}');

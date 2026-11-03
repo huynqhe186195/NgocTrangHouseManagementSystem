@@ -156,8 +156,8 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.RoomChangeBusinessPolicyConfiguration());
         builder.ApplyConfiguration(
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.RoomChangeBusinessPolicyReviewConfiguration());
-    modelBuilder.ApplyConfiguration(
-      new BuildingManagement.EntityFrameworkCore.EntityConfigurations.RoomChangeDayPricingRuleCandidateConfiguration());
+        builder.ApplyConfiguration(
+            new BuildingManagement.EntityFrameworkCore.EntityConfigurations.RoomChangeDayPricingRuleCandidateConfiguration());
         builder.ApplyConfiguration(
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.RoomChangeHandoverEvidenceConfiguration());
         builder.ApplyConfiguration(

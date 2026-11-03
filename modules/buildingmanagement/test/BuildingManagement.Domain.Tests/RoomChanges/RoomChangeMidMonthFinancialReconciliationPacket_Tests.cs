@@ -3,6 +3,8 @@ using System.IO;
 using BuildingManagement.Contracts;
 using BuildingManagement.RoomChanges;
 using BuildingManagement.Rooms;
+using BuildingManagement.Payments;
+using BuildingManagement.Payments.BuildingManagement.Payments;
 using Xunit;
 
 namespace BuildingManagement.DomainTests.RoomChanges;
@@ -329,4 +331,138 @@ public sealed class RoomChangeMidMonthFinancialReconciliationPacket_Tests
         Assert.Throws<InvalidDataException>(() =>
             p.VerifyAgainst(f.Request, f.Source, f.Roster, f.Policy, f.Review));
     }
+    private static Payment CompletedTargetTopUp(
+        RoomChangeMidMonthFinancialReconciliationPacket packet,
+        decimal? amount = null, Guid? target = null,
+        PaymentPurpose purpose = PaymentPurpose.ContractDeposit,
+        bool complete = true)
+    {
+        var payment = new Payment(Guid.NewGuid(), "TRF-2H-TOPUP-001",
+            Guid.NewGuid(), purpose, PaymentMethod.BankTransfer,
+            PaymentChannel.Manual,
+            amount ?? packet.Deposit.UnpaidTopUpRequirementVnd,
+            contractId: target ?? packet.ProposedTargetContractId,
+            transactionReference: "BANK-2H-TOPUP-TRANSACTION-001",
+            notes: "BANK-PROOF: SIGNED-2H-TOPUP-RECEIPT-001");
+        if (complete)
+            payment.Complete(Created.AddMinutes(7),
+                "BANK-2H-TOPUP-TRANSACTION-001");
+        return payment;
+    }
+
+    private static RoomChangeTransferDepositCashReview TopUpReview(
+        RoomChangeMidMonthFinancialReconciliationPacket packet,
+        Payment payment, Guid? owner = null, Guid? reviewer = null,
+        DateTime? reviewed = null)
+        => RoomChangeTransferDepositCashReview.ReviewTopUp(
+            Guid.NewGuid(), packet, payment, owner ?? Guid.NewGuid(),
+            reviewer ?? Guid.NewGuid(), Created.AddMinutes(6),
+            reviewed ?? Created.AddMinutes(8),
+            "SIGNED-OWNER-TARGET-DEPOSIT-DIRECTION-001",
+            "SIGNED-BANK-STATEMENT-TOPUP-001",
+            "SIGNED-INDEPENDENT-BANK-REVIEW-TOPUP-001");
+
+    private static RoomChangeTransferDepositCashReview RefundReview(
+        RoomChangeMidMonthFinancialReconciliationPacket packet,
+        Guid? owner = null, Guid? reviewer = null)
+        => RoomChangeTransferDepositCashReview.ReviewManualRefund(
+            Guid.NewGuid(), packet, owner ?? Guid.NewGuid(),
+            reviewer ?? Guid.NewGuid(), Created.AddMinutes(6),
+            Created.AddMinutes(7), Created.AddMinutes(8),
+            "BANK-2H-REFUND-TRANSACTION-001",
+            "SIGNED-OWNER-REFUND-RECIPIENT-ACCOUNT-001",
+            "SIGNED-INDEPENDENT-BANK-STATEMENT-REFUND-001",
+            "SIGNED-INDEPENDENT-REFUND-REVIEW-001");
+
+    [Fact]
+    public void TRF_CASH01_Completed_Target_Contract_Deposit_Receipt_Is_D04_Preview_Only()
+    {
+        var packet = Prepare(Fixture(targetRent: 4_000_000m));
+        var payment = CompletedTargetTopUp(packet);
+        var proof = TopUpReview(packet, payment);
+        proof.Verify(packet, payment);
+        Assert.Equal(RoomChangeDepositCashLeg.VerifiedTopUp, proof.Leg);
+        Assert.Equal(1_000_000m, proof.ExactAmountVnd);
+        Assert.Equal(payment.Id, proof.OriginalPaymentId);
+        Assert.False(proof.IsBankGatewayVerified);
+        Assert.False(proof.IsCashLedgerPosted);
+        Assert.False(proof.CanExecuteTransfer);
+        Assert.False(proof.CanExecuteBankTransfer);
+    }
+
+    [Fact]
+    public void TRF_CASH02_Manual_Partial_Refund_Requires_Independent_Statement()
+    {
+        var packet = Prepare(Fixture(targetRent: 2_000_000m));
+        var proof = RefundReview(packet);
+        proof.Verify(packet);
+        Assert.Equal(RoomChangeDepositCashLeg.ManuallyReviewedRefund, proof.Leg);
+        Assert.Equal(1_000_000m, proof.ExactAmountVnd);
+        Assert.Null(proof.OriginalPaymentId);
+        Assert.False(proof.IsCashLedgerPosted);
+        Assert.False(proof.CanExecuteBankTransfer);
+    }
+
+    [Fact]
+    public void TRF_CASH03_No_Pending_Wrong_Purpose_Or_Wrong_Amount_Topup()
+    {
+        var packet = Prepare(Fixture(targetRent: 4_000_000m));
+        Assert.Throws<InvalidOperationException>(() =>
+            TopUpReview(packet, CompletedTargetTopUp(packet, complete: false)));
+        Assert.Throws<InvalidOperationException>(() =>
+            TopUpReview(packet, CompletedTargetTopUp(packet, amount: 999_999m)));
+        Assert.Throws<InvalidOperationException>(() =>
+            TopUpReview(packet, CompletedTargetTopUp(packet,
+                purpose: PaymentPurpose.InvoicePayment)));
+    }
+
+    [Fact]
+    public void TRF_CASH04_Cross_Contract_Topup_Cannot_Fund_Target()
+    {
+        var packet = Prepare(Fixture(targetRent: 4_000_000m));
+        Assert.Throws<InvalidOperationException>(() =>
+            TopUpReview(packet, CompletedTargetTopUp(packet,
+                target: Guid.NewGuid())));
+    }
+
+    [Fact]
+    public void TRF_CASH05_Independent_Bank_Reviewer_And_UTC_Order_Are_Mandatory()
+    {
+        var packet = Prepare(Fixture(targetRent: 4_000_000m));
+        var payment = CompletedTargetTopUp(packet);
+        var actor = Guid.NewGuid();
+        Assert.Throws<InvalidOperationException>(() =>
+            TopUpReview(packet, payment, owner: actor, reviewer: actor));
+        Assert.Throws<InvalidOperationException>(() =>
+            TopUpReview(packet, payment,
+                reviewed: Created.AddMinutes(6)));
+        var refund = Prepare(Fixture(targetRent: 2_000_000m));
+        Assert.Throws<InvalidOperationException>(() =>
+            RefundReview(refund, owner: actor, reviewer: actor));
+    }
+
+    [Fact]
+    public void TRF_CASH06_Foreign_Financial_Packet_And_Unloaded_Payment_Cannot_Reverify()
+    {
+        var packet = Prepare(Fixture(targetRent: 4_000_000m));
+        var payment = CompletedTargetTopUp(packet);
+        var review = TopUpReview(packet, payment);
+        Assert.Throws<InvalidDataException>(() => review.Verify(packet));
+        var other = Prepare(Fixture(targetRent: 4_000_000m));
+        Assert.Throws<InvalidDataException>(() => review.Verify(other, payment));
+    }
+
+    [Fact]
+    public void TRF_CASH07_No_Movement_Evidence_For_Full_Carry_Or_Wrong_Refund_Lane()
+    {
+        var packet = Prepare(Fixture(targetRent: 3_000_000m));
+        Assert.Throws<InvalidOperationException>(() =>
+            RefundReview(packet));
+        Assert.Throws<InvalidOperationException>(() =>
+            TopUpReview(packet, CompletedTargetTopUp(packet, amount: 1m)));
+        var topup = Prepare(Fixture(targetRent: 4_000_000m));
+        Assert.Throws<InvalidOperationException>(() =>
+            RefundReview(topup));
+    }
+
 }

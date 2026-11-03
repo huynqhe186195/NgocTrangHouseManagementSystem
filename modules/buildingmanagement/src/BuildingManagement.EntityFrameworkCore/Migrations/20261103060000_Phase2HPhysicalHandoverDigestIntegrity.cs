@@ -30,7 +30,7 @@ public sealed class Phase2HPhysicalHandoverDigestIntegrity : Migration
             h."SourceContractId"::text,
             h."SourceRoomId"::text,
             h."BuildingId"::text,
-            h."HandoverDate"::text,
+            to_char(h."HandoverDate"::timestamp, 'YYYY-MM-DD'),
             h."ElectricityMeterId"::text,
             h."ElectricityReadingId"::text,
             h."ElectricityFinalReading"::numeric(18,3)::text,

@@ -126,6 +126,26 @@ public sealed class SliceBStagingRoomChangesController : ControllerBase
         return _requests!.GetBusinessPolicyReviewAsync(contractId, requestId);
     }
 
+    // Root-reviewed OI-07 pricing candidate, NOT a financial writer.
+    [HttpPost("{requestId:guid}/day-pricing-rule-candidate")]
+    [UnitOfWork(true, IsolationLevel.Serializable)]
+    public Task<SliceBRoomChangeDayPricingRuleRead> ProposeDayPricingRuleAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid requestId,
+        [FromBody] SliceBRoomChangeDayPricingRuleInput input)
+    {
+        RequireIsolatedStaging();
+        return _requests!.ProposeDayPricingRuleAsync(contractId, requestId, input);
+    }
+
+    [HttpGet("{requestId:guid}/day-pricing-rule-candidate")]
+    [UnitOfWork(true, IsolationLevel.Serializable)]
+    public Task<SliceBRoomChangeDayPricingRuleRead> GetDayPricingRuleAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid requestId)
+    {
+        RequireIsolatedStaging();
+        return _requests!.GetDayPricingRuleAsync(contractId, requestId);
+    }
+
     [HttpPost("{requestId:guid}/physical-handover")]
     [UnitOfWork(true, IsolationLevel.Serializable)]
     public Task<SliceBRoomChangeHandoverRead> AttestHandoverAsync(

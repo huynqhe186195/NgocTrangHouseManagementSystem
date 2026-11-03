@@ -22,11 +22,13 @@ public sealed class Phase2HRoomChangeSecurityBoundary_Tests
 
         var methods = controller.GetMethods(BindingFlags.Public |
             BindingFlags.Instance | BindingFlags.DeclaredOnly);
-        Assert.Equal(17, methods.Length);
+        Assert.Equal(19, methods.Length);
         Assert.Contains(methods, m => m.Name == "CompleteRoomChangeAsync");
         Assert.Contains(methods, m => m.Name == "GetExecutionReadinessAsync");
         Assert.Contains(methods, m => m.Name == "AttestHandoverAsync");
         Assert.Contains(methods, m => m.Name == "GetHandoverAsync");
+        Assert.Contains(methods, m => m.Name == "ProposeDayPricingRuleAsync");
+        Assert.Contains(methods, m => m.Name == "GetDayPricingRuleAsync");
         Assert.Contains(methods, m => m.Name == "ReviewBusinessPolicyAsync");
         Assert.Contains(methods, m => m.Name == "GetBusinessPolicyReviewAsync");
         Assert.Contains(methods, m => m.Name == "ProposeBusinessPolicyAsync");
@@ -56,6 +58,8 @@ public sealed class Phase2HRoomChangeSecurityBoundary_Tests
             .GetMethods(BindingFlags.Public | BindingFlags.Instance |
                 BindingFlags.DeclaredOnly).Select(m => m.Name).ToArray();
         Assert.Contains(nameof(SliceBStagingRoomChangeRequests.SubmitAsync), methods);
+        Assert.Contains(nameof(SliceBStagingRoomChangeRequests.ProposeDayPricingRuleAsync), methods);
+        Assert.Contains(nameof(SliceBStagingRoomChangeRequests.GetDayPricingRuleAsync), methods);
         Assert.Contains(nameof(SliceBStagingRoomChangeRequests.HoldForPolicyAsync), methods);
         Assert.DoesNotContain(methods, x =>
             x.Contains("Approve", StringComparison.OrdinalIgnoreCase) ||

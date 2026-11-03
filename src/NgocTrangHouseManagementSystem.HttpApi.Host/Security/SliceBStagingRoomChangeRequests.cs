@@ -438,6 +438,142 @@ public sealed class SliceBStagingRoomChangeRequests
             IsTransferExecuted: false);
 
     /// <summary>
+    /// D01/D02: only a scoped, reviewed, immutable pricing candidate.
+    /// Does NOT post rent, adjust an invoice or complete a room transfer.
+    /// Client sends NO signed-reference, receipts, debt or authorization flags.
+    /// </summary>
+    public Task<SliceBRoomChangeDayPricingRuleRead> ProposeDayPricingRuleAsync(
+        Guid contractId, Guid requestId, SliceBRoomChangeDayPricingRuleInput input)
+        => ExecuteScopedAsync(contractId, async (db, actor, building, sourceRoom) =>
+        {
+            if (input is null || input.TargetMonthlyRentVnd <= 0m ||
+                decimal.Truncate(input.TargetMonthlyRentVnd) !=
+                    input.TargetMonthlyRentVnd)
+                throw Denied();
+
+            var request = await LockRequestAsync(
+                db, requestId, contractId, sourceRoom, building);
+            await _policy.EnsureResourceAsync(
+                BuildingBusinessResourceKind.Room, request.TargetRoomId,
+                BuildingBusinessCapability.ManageContract);
+            var destination = await LockRoomStatusAsync(db, request.TargetRoomId);
+            if (destination.Building != building ||
+                destination.Status != RoomStatus.Available)
+                throw Denied();
+
+            var source = await db.Contracts.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.Id == contractId &&
+                    !x.IsDeleted && x.Status == ContractStatus.Active)
+                ?? throw Denied();
+            var policy = await db.RoomChangeBusinessPolicies.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.RequestId == requestId &&
+                    x.SourceContractId == contractId && x.BuildingId == building)
+                ?? throw Denied();
+            var review = await db.RoomChangePolicyReviews.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.PolicyId == policy.Id &&
+                    x.RequestId == requestId && x.BuildingId == building &&
+                    x.Accepted) ?? throw Denied();
+            var roster = await db.RoomChangeRosterSnapshots.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.Id == policy.RosterSnapshotId &&
+                    x.RoomChangeRequestId == requestId &&
+                    x.SourceContractId == contractId &&
+                    x.SourceRoomId == sourceRoom &&
+                    x.BuildingId == building) ?? throw Denied();
+
+            await LockCurrentRosterAsync(db, contractId);
+            var parties = await ReadCurrentRosterAsync(db, contractId);
+            try
+            {
+                if (!roster.MatchesCurrentRoster(
+                    request.Id, contractId, sourceRoom, building, parties))
+                    throw Denied();
+
+                var existing = await db.RoomChangeDayPricingRuleCandidates
+                    .AsNoTracking().SingleOrDefaultAsync(x =>
+                        x.RequestId == requestId);
+                if (existing is not null)
+                {
+                    existing.Verify(request, source, roster, policy, review);
+                    if (existing.TargetMonthlyRentVnd != input.TargetMonthlyRentVnd ||
+                        existing.TransferDayOwner != input.TransferDayOwner ||
+                        existing.Rounding != input.Rounding)
+                        throw Denied();
+                    return AsDayPricingRuleRead(existing);
+                }
+
+                var quote = RoomChangeDailyRentQuoteCalculator.Calculate(
+                    request.RequestedDate, source.MonthlyRent,
+                    input.TargetMonthlyRentVnd, input.TransferDayOwner,
+                    input.Rounding, policy.PricingPolicyReference);
+                var candidate = RoomChangeDayPricingRuleCandidate.Prepare(
+                    Guid.NewGuid(), request, source, roster, policy, review,
+                    quote, actor, _clock.GetUtcNow().UtcDateTime);
+                db.RoomChangeDayPricingRuleCandidates.Add(candidate);
+                return AsDayPricingRuleRead(candidate);
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or
+                System.IO.InvalidDataException or ArgumentException or
+                OverflowException)
+            {
+                throw Denied();
+            }
+        });
+
+    public Task<SliceBRoomChangeDayPricingRuleRead> GetDayPricingRuleAsync(
+        Guid contractId, Guid requestId)
+        => ExecuteScopedAsync(contractId, async (db, _, building, sourceRoom) =>
+        {
+            var request = await LockRequestAsync(
+                db, requestId, contractId, sourceRoom, building);
+            var candidate = await db.RoomChangeDayPricingRuleCandidates
+                .AsNoTracking().SingleOrDefaultAsync(x =>
+                    x.RequestId == requestId &&
+                    x.SourceContractId == contractId &&
+                    x.SourceRoomId == sourceRoom &&
+                    x.BuildingId == building) ?? throw Denied();
+            var policy = await db.RoomChangeBusinessPolicies.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.Id == candidate.PolicyId &&
+                    x.RequestId == requestId &&
+                    x.SourceContractId == contractId) ?? throw Denied();
+            var review = await db.RoomChangePolicyReviews.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.Id == candidate.PolicyReviewId &&
+                    x.PolicyId == policy.Id) ?? throw Denied();
+            var roster = await db.RoomChangeRosterSnapshots.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.Id == candidate.RosterSnapshotId &&
+                    x.SourceContractId == contractId) ?? throw Denied();
+            var source = await db.Contracts.AsNoTracking()
+                .SingleOrDefaultAsync(x => x.Id == contractId &&
+                    !x.IsDeleted) ?? throw Denied();
+            await LockCurrentRosterAsync(db, contractId);
+            var parties = await ReadCurrentRosterAsync(db, contractId);
+            try
+            {
+                if (!roster.MatchesCurrentRoster(
+                    request.Id, contractId, sourceRoom, building, parties))
+                    throw Denied();
+                candidate.Verify(request, source, roster, policy, review);
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or
+                System.IO.InvalidDataException or ArgumentException or
+                OverflowException)
+            {
+                throw Denied();
+            }
+            return AsDayPricingRuleRead(candidate);
+        });
+
+    private static SliceBRoomChangeDayPricingRuleRead AsDayPricingRuleRead(
+        RoomChangeDayPricingRuleCandidate r)
+        => new(r.Id, r.RequestId, r.SourceContractId, r.SourceRoomId,
+            r.TargetRoomId, r.BuildingId, r.TransferDate, r.TransferDayOwner,
+            r.Rounding, r.CalendarDays, r.SourceChargeableDays,
+            r.TargetChargeableDays, r.SourceMonthlyRentVnd,
+            r.TargetMonthlyRentVnd, r.ProposedSourceRentVnd,
+            r.ProposedTargetRentVnd, r.SignedPricingRuleReference,
+            r.PreparedByUserId, r.PreparedAtUtc, r.EvidenceSha256,
+            IsOfficialInvoicePosting: false, CanExecuteRoomChange: false);
+
+    /// <summary>
     /// Physical evidence is materialized from CURRENT database readings,
     /// never from client values. A document reference is operator attestation,
     /// not an external cryptographic signature verification.
@@ -1415,6 +1551,25 @@ public sealed record SliceBRoomChangeBusinessPolicyReviewRead(
     string ProposalSha256, Guid ReviewedByUserId, DateTime ReviewedAtUtc,
     bool Accepted, string SignedReviewReference, string Reason,
     bool IsTransferExecuted);
+
+/// <summary>Explicit choices only; no default charge-day or rounding policy.</summary>
+public sealed record SliceBRoomChangeDayPricingRuleInput(
+    decimal TargetMonthlyRentVnd,
+    RoomChangeTransferDayChargeOwner TransferDayOwner,
+    RoomChangeRentRoundingRule Rounding);
+
+/// <summary>Reviewed policy-linked candidate only; never an issued charge.</summary>
+public sealed record SliceBRoomChangeDayPricingRuleRead(
+    Guid Id, Guid RequestId, Guid SourceContractId,
+    Guid SourceRoomId, Guid TargetRoomId, Guid BuildingId,
+    DateOnly TransferDate, RoomChangeTransferDayChargeOwner TransferDayOwner,
+    RoomChangeRentRoundingRule Rounding, int CalendarDays,
+    int SourceChargeableDays, int TargetChargeableDays,
+    decimal SourceMonthlyRentVnd, decimal TargetMonthlyRentVnd,
+    decimal ProposedSourceRentVnd, decimal ProposedTargetRentVnd,
+    string SignedPricingRuleReference, Guid PreparedByUserId,
+    DateTime PreparedAtUtc, string EvidenceSha256,
+    bool IsOfficialInvoicePosting, bool CanExecuteRoomChange);
 
 /// <summary>Only external document references; all meter values are server-read.</summary>
 public sealed record SliceBRoomChangeHandoverInput(

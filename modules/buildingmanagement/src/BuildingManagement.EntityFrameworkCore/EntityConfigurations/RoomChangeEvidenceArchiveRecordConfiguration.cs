@@ -35,6 +35,7 @@ public sealed class RoomChangeEvidenceArchiveRecordConfiguration
         b.HasIndex(x => new { x.Kind, x.EvidenceId })
             .HasDatabaseName("UX_BM_2HArchive_KindEvidence").IsUnique();
         b.HasIndex(x => new { x.RequestId, x.Kind, x.ParentEvidenceId })
-            .HasDatabaseName("UX_BM_2HArchive_RequestParent").IsUnique();
+            .HasDatabaseName("UX_BM_2HArchive_RequestParent")
+            .HasFilter("\"Kind\" IN (1,3,4)").IsUnique();
     }
 }

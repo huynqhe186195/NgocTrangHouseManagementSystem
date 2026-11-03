@@ -420,9 +420,9 @@ day-price, original monthly invoice or physical handover where
 already persisted; validates the JSON payload identity and both
 payload/envelope SHA-256 checksums; rejects reuse of a signed
 evidence ID or a second D01/D04/D06 archive for the same request.
-D03 can hold several independently classified corrections, but may
-not archive the SAME issued invoice parent twice within one request
-until a future per-correction parent key is introduced.
+D03 may archive multiple independently classified adjustment
+documents for the SAME originally issued monthly invoice, as long as
+each distinct adjustment proof ID has not been archived before.
 The migration refuses downgrade if any signed archive exists.
 
 **Important evidentiary boundary**: D04's parent financial packet

@@ -238,11 +238,15 @@ public sealed class RoomChangeEvidenceArchivePostgreSql_Tests
     {
         await Scratch(IsolationLevel.Serializable, async (db,tx,f) =>
         {
-            await Insert(db,tx,Make(f,2));
-            // One original invoice can have multiple independent approved
-            // correction records, so D03 has no per-kind single-row lock.
-            // RequestParent index still prevents duplicate archived parent.
-            await Denied(db,tx,()=>Insert(db,tx,Make(f,2)), "23505");
+            var first = Make(f,2);
+            var second = Make(f,2);
+            await Insert(db,tx,first);
+            // Multiple independently approved adjustments of the same
+            // original invoice must have distinct documentary evidence IDs.
+            await Insert(db,tx,second);
+            Assert.Equal("2",await Value(db,tx,
+                """SELECT count(*)::text FROM "BuildingManagementRoomChangeEvidenceArchives" WHERE "Kind"=2 """));
+            await Denied(db,tx,()=>Insert(db,tx,first), "23505");
         });
     }
 

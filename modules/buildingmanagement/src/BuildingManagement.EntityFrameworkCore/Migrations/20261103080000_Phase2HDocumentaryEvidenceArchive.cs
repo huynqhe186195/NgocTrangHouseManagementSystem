@@ -49,7 +49,8 @@ public sealed class Phase2HDocumentaryEvidenceArchive : Migration
         CREATE UNIQUE INDEX "UX_BM_2HArchive_KindEvidence"
           ON "BuildingManagementRoomChangeEvidenceArchives"("Kind","EvidenceId");
         CREATE UNIQUE INDEX "UX_BM_2HArchive_RequestParent"
-          ON "BuildingManagementRoomChangeEvidenceArchives"("RequestId","Kind","ParentEvidenceId");
+          ON "BuildingManagementRoomChangeEvidenceArchives"("RequestId","Kind","ParentEvidenceId")
+          WHERE "Kind" IN (1,3,4);
         CREATE UNIQUE INDEX "UX_BM_2HArchive_OneSignoffPerRequest"
           ON "BuildingManagementRoomChangeEvidenceArchives"("RequestId","Kind")
           WHERE "Kind" IN (1,3,4);

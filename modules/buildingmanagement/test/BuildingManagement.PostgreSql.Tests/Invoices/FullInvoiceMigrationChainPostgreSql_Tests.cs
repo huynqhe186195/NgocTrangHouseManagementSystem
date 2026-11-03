@@ -19,7 +19,7 @@ public sealed class FullInvoiceMigrationChainPostgreSql_Tests
     private const string OptInVariable = "BM_ALLOW_FULL_MIGRATION_REHEARSAL";
     private const string OptInValue = "CREATE_AND_DROP_FRESH_LOCAL_TEST_DATABASE";
     private const string ExpectedLatestMigration =
-        "20261103080000_Phase2HDocumentaryEvidenceArchive";
+        "20261103090000_Phase2HMidMonthFinancialJournal";
 
     [Fact]
     public async Task PGMIG01_Full_EF_Migrations_Succeed_In_Fresh_Disposable_Database()
@@ -277,6 +277,21 @@ public sealed class FullInvoiceMigrationChainPostgreSql_Tests
                 {
                     Assert.Equal(1L,
                         Convert.ToInt64(await archiveTrigger.ExecuteScalarAsync()));
+                }
+
+                // Financial posting remains strongly scoped and append-only
+                // even when accessed through raw SQL rather than EF/API.
+                await using (var journalTrigger = new NpgsqlCommand(
+                    """
+                    SELECT count(*) FROM pg_trigger
+                     WHERE NOT tgisinternal
+                       AND tgname = 'TR_BM_2HFin_ImmutablePosting'
+                       AND tgrelid =
+                         '"BuildingManagementRoomChangeMidMonthFinancialPostings"'::regclass
+                    """, verification))
+                {
+                    Assert.Equal(1L,
+                        Convert.ToInt64(await journalTrigger.ExecuteScalarAsync()));
                 }
 
                 await using (var extension = new NpgsqlCommand(

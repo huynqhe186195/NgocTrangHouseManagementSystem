@@ -449,3 +449,46 @@ decisions, official D03 per-line receivable posting, D04 cash-backed
 unique settlement/refund posting and D06 final human authority
 remain gated, followed by one commit-time protected mid-month atomic
 contract and bank/invoice writer. Production remains excluded.
+
+
+## 2026-11-03 — D03 official correction journal and D04 original top-up posting gates (NEW CODE / TEST PENDING)
+
+The previously verified `106 Domain / 44 PostgreSQL` archive and
+preview work did **not** create a financial posting. A new additive
+migration `20261103090000_Phase2HMidMonthFinancialJournal` introduces
+`BuildingManagementRoomChangeMidMonthFinancialPostings`, a separate,
+append-only, SERIALIZABLE journal with SQL validation against:
+
+- The locked open and mid-month room change request/contract/building;
+- The separately archived D01/D02 exact Owner pricing and D06
+  three-party source handover, belonging to the SAME request;
+- For **D03**: an archived independently classified monthly invoice
+  adjustment, the ORIGINAL posted official receivable and issued
+  invoice SHA, original adjustment proposal and accepted decision,
+  the signed category total and independently reviewed receipt
+  ceiling; multiple adjusted amounts cannot reduce the debt below
+  accepted receipts or erase the invoice;
+- For **D04 incoming top-up**: the original completed manual bank
+  Payment with correct target contract, amount, transaction reference,
+  still-unapplied deposit disposition, exact bank method/channel,
+  and independent D04 archival proof.
+
+The SQL rejects replay of the same document, payment or bank transaction,
+multiple cash legs for the same request, mutation, deletion and truncate,
+wrong data scope, missing signatures and insufficient transaction
+isolation. The D04 **outgoing refund leg is denied**; the manual
+statement evidence alone cannot authorize an outbound banking payout.
+No production migration or outward payment is executed. Importantly,
+a journal row is not a replacement for the full mid-month new-contract
+and cash disposition writer; the final atomic commit gate and the
+live, authenticated adapter are still not implemented.
+
+Four new `TRFPOSTPG01–04` isolated PostgreSQL safety tests are included;
+the one-shot verifier now requires **106 Domain + 48 PostgreSQL**,
+the full disposable migration chain with the new SQL trigger, HTTP
+and full regression. **Do not mark this SHA PASS until the user's
+local PostgreSQL and .NET test output is received.**
+
+The existing month-end completion writer remains unchanged.
+The Phase 2H financial rule and legal-signature business approvals
+and full bank payout/atomic mid-month writer are still HOLD.

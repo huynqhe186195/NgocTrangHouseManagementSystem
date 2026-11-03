@@ -182,9 +182,9 @@ public sealed class RoomChangeEvidenceArchivePostgreSql_Tests
         await Scratch(IsolationLevel.Serializable, async (db,tx,f) =>
         {
             var foreign = Make(f,1,request:Guid.NewGuid());
-            await Denied(db,tx,()=>Insert(db,tx,foreign), "23503");
+            await Denied(db,tx,()=>Insert(db,tx,foreign), "23514");
             var crossContract = Make(f,2,contract:Guid.NewGuid());
-            await Denied(db,tx,()=>Insert(db,tx,crossContract), "23503");
+            await Denied(db,tx,()=>Insert(db,tx,crossContract), "23514");
             var foreignParent = Make(f,1,parentSha:ShaB);
             await Denied(db,tx,()=>Insert(db,tx,foreignParent), "23514");
         });

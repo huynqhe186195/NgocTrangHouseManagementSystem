@@ -227,3 +227,71 @@ documented **candidate inputs**, not a project-wide D01/D02 rule,
 and the reviewed OI-07 reference is not itself documentary proof
 that the specific monetary parameters were signed by all parties.
 Test evidence is required at the new code SHA before acceptance.
+
+
+## 2026-11-03 — D03 official-source monthly rent reconciliation (code committed; test PENDING)
+
+**Scope delivered without financial posting:** A new
+`RoomChangeOfficialSourceRentEvidenceBridge.Assess` composes the
+*actual recorded, independently issued MONTHLY invoice*, original
+immutable financial snapshot, posted official receivable and **ALL**
+manually reviewed bank receipts with their complete signed
+rent/electricity/water/service allocations into a source **rent-only**
+`RoomChangeSourceRentSnapshot` and recalculated H3 rent preview.
+The monthly frozen `RentAmount` is used, never the whole issued
+invoice total; rent paid comes **only from reviewed RENT allocation
+lines**, not a client-entered paid amount, raw bank reference, deposit
+or a utility payment.
+
+It fails closed with no partial financial figures if any invoice/post
+scope differs, if tariff or billing month does not match the
+explicit transfer quote, if the quote is forged, if the original
+invoice/source fingerprint cannot be verified, if the posting is
+later than the evaluation date, if receipts/reviews/line splits are
+missing/duplicated/rejected/overallocated, if the true posted balance
+disagrees with the line-category totals, or if ANY monthly invoice
+adjustment proposal/decision exists.
+
+**Important financial classification gate:** The existing
+`MonthlyInvoiceAdjustmentRecord.SignedDeltaAmount` adjusts the
+**whole invoice**, not an independently verified rent line. Even
+a reviewed positive/negative delta cannot be silently applied to
+source rent. D03 therefore explicitly **HOLDS** all such history
+until a separately approved, append-only per-line correction
+method and independent classification are implemented. This is not
+approval to void/rewrite the issued invoice.
+
+`RoomChangeMidMonthFinancialReconciliationPacketFactory` additionally
+provides `PrepareFromOfficialMonthlyEvidence`, which invokes this
+D03 source bridge first and only then creates the existing
+cross-contract/roster/policy/deposit reconciliation packet.
+The earlier `Prepare` candidate factory and the existing safe
+end-of-month transfer writer are unchanged. This new method is a
+**Domain-only non-executing pathway**, not a new endpoint,
+bank gateway integration or persisted financial transaction.
+
+Seventeen `TRF_D03_01–17` Domain tests cover correct unpaid rent-only
+charge, a genuine manually reviewed bank receipt split into rent
+and utilities, a utilities-only payment which does not reduce rent,
+incomplete/duplicated/unreviewed/rejected receipts, foreign posting
+and source contract, mismatched month/rate, pending/approved-but-
+unclassified corrections, missing history, future invoice posting,
+forged receipt amount and a source-bound unified transfer packet.
+The one-command verifier now requires **75/75 focused Domain tests
+and 37/37 Phase 2H PostgreSQL cases**, plus full scratch migration,
+authenticated HTTP staging and Full .NET regression.
+
+The recorded 5/5 PASS for
+`fb754eae455aec7ec03c366bb7ecd16360024fd0`
+remains valid only for that earlier code SHA. **This D03 addition
+is PENDING full runtime execution at its new SHA**, and the complete
+history still has to be loaded by a future authenticated,
+scope-checked server adapter. Manual bank review does not mean
+the actual bank/gateway independently confirmed money movement.
+
+**BUSINESS HOLD still applies:** D01/D02 owner-approved global
+transfer day and residual allocation; D03 per-line append-only
+invoice correction, fee treatment and authority; D04 actual cash
+top-up/partial refund journal, bank evidence and replay control;
+D06 legally/contractually approved signatories; the complete
+mid-month contract/payment writer. Production remains unused.

@@ -56,7 +56,7 @@ public sealed class Phase2HDayProrationRuleCandidates : Migration
          ON "BuildingManagementRoomChangeDayPricingRuleCandidates"("RequestId");
         
         CREATE FUNCTION "BM_CalculateRoomChangeDayPricingRuleSha"(
-         row "BuildingManagementRoomChangeDayPricingRuleCandidates"
+         pricing "BuildingManagementRoomChangeDayPricingRuleCandidates"
         ) RETURNS text LANGUAGE sql AS $sha$
          SELECT encode(sha256(convert_to(concat_ws(E'\n',
           pricing."Id"::text, pricing."RequestId"::text,

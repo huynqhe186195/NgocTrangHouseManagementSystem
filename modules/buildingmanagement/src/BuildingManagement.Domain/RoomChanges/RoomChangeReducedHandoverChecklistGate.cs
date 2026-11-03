@@ -89,9 +89,9 @@ public static class RoomChangeReducedHandoverChecklistGate
             facts.SourceRoomDisposition is not
                 (RoomStatus.Available or RoomStatus.Reserved or RoomStatus.Maintenance) ||
             (facts.SourceRoomDisposition == RoomStatus.Reserved) !=
-                facts.HasConfirmedFutureSourceReservation ||
+                facts.HasConfirmedFutureSourceCommitment ||
             (facts.SourceRoomDisposition == RoomStatus.Maintenance &&
-                facts.HasConfirmedFutureSourceReservation) ||
+                facts.HasConfirmedFutureSourceCommitment) ||
             !Reference(facts.SourceDispositionEvidenceReference) ||
             !Reference(facts.CompletionReference) ||
             facts.CompletedByUserId == Guid.Empty ||
@@ -123,7 +123,7 @@ public sealed record RoomChangeReducedHandoverCompletionFacts(
     RoomChangeBusinessPolicyReviewRecord Review,
     RoomChangeHandoverEvidenceRecord Handover,
     RoomStatus SourceRoomDisposition,
-    bool HasConfirmedFutureSourceReservation,
+    bool HasConfirmedFutureSourceCommitment,
     string? SourceDispositionEvidenceReference,
     string? CompletionReference,
     Guid CompletedByUserId,

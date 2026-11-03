@@ -75,19 +75,19 @@ public sealed partial class RoomChangeCompletion_Tests
         var facts = ValidH6();
         Assert.Throws<InvalidOperationException>(() =>
             RoomChangeReducedHandoverChecklistGate.RequireForAtomicCompletion(
-                facts with { HasConfirmedFutureSourceReservation = true }));
+                facts with { HasConfirmedFutureSourceCommitment = true }));
         Assert.Throws<InvalidOperationException>(() =>
             RoomChangeReducedHandoverChecklistGate.RequireForAtomicCompletion(
                 facts with { SourceRoomDisposition = RoomStatus.Reserved }));
         Assert.Throws<InvalidOperationException>(() =>
             RoomChangeReducedHandoverChecklistGate.RequireForAtomicCompletion(
                 facts with {
-                    HasConfirmedFutureSourceReservation = true,
+                    HasConfirmedFutureSourceCommitment = true,
                     SourceRoomDisposition = RoomStatus.Maintenance
                 }));
         RoomChangeReducedHandoverChecklistGate.RequireForAtomicCompletion(
             facts with {
-                HasConfirmedFutureSourceReservation = true,
+                HasConfirmedFutureSourceCommitment = true,
                 SourceRoomDisposition = RoomStatus.Reserved
             });
     }

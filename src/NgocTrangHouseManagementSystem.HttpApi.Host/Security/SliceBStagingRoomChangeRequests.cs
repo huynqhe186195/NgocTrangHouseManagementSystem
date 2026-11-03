@@ -853,14 +853,24 @@ public sealed class SliceBStagingRoomChangeRequests
                 .ToArrayAsync();
             if (existingReservations.Any(x => x.RoomId == request.TargetRoomId))
                 throw Denied();
-            var sourceReserved = existingReservations.Any(x =>
+            // Confirmed source commitments include BOTH Reserved bookings
+            // and independently signed future contracts. Previous code
+            // observed reservations only; database now proves both at COMMIT.
+            var sourceReservedCount = existingReservations.Count(x =>
                 x.RoomId == sourceRoom && x.Status == RoomReservationStatus.Reserved);
             var sourcePending = existingReservations.Any(x =>
                 x.RoomId == sourceRoom && x.Status == RoomReservationStatus.PendingPayment);
-            if (sourcePending ||
-                (sourceReserved && input.SourceRoomDisposition != RoomStatus.Reserved) ||
-                (!sourceReserved && input.SourceRoomDisposition == RoomStatus.Reserved) ||
-                (sourceReserved && input.SourceRoomDisposition == RoomStatus.Maintenance) ||
+            var sourceSignedCount = await db.Contracts.AsNoTracking().CountAsync(x =>
+                x.Id != contractId && x.RoomId == sourceRoom &&
+                !x.IsDeleted && x.Status == ContractStatus.Signed);
+            var sourceOtherActive = await db.Contracts.AsNoTracking().AnyAsync(x =>
+                x.Id != contractId && x.RoomId == sourceRoom &&
+                !x.IsDeleted && x.Status == ContractStatus.Active);
+            var sourceFutureCommitments = sourceReservedCount + sourceSignedCount;
+            var sourceCommitted = sourceFutureCommitments == 1;
+            if (sourcePending || sourceOtherActive || sourceFutureCommitments > 1 ||
+                (sourceCommitted && input.SourceRoomDisposition != RoomStatus.Reserved) ||
+                (!sourceCommitted && input.SourceRoomDisposition == RoomStatus.Reserved) ||
                 await db.Contracts.AsNoTracking().AnyAsync(x =>
                     x.RoomId == request.TargetRoomId && !x.IsDeleted &&
                     (x.Status == ContractStatus.Active ||
@@ -937,7 +947,7 @@ public sealed class SliceBStagingRoomChangeRequests
                 RoomChangeReducedHandoverChecklistGate.RequireForAtomicCompletion(
                     new RoomChangeReducedHandoverCompletionFacts(
                         request, roster, policy, review, handover,
-                        input.SourceRoomDisposition, sourceReserved,
+                        input.SourceRoomDisposition, sourceCommitted,
                         input.DispositionEvidenceReference,
                         input.CompletionReference, actor, utc,
                         ServerVerifiedOriginalElectricityWaterReadings: true,

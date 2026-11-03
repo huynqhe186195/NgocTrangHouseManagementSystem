@@ -44,3 +44,44 @@ This is **user-provided local test evidence**, not an independently retrieved Gi
 | Final execution | Authenticated non-safe-lane HTTP writer, PostgreSQL deferred commit checks for both rooms/contracts and cash disposition, race/rollback/security test evidence. |
 
 No further Phase 2H financial mutation, default proration policy, production migration or tenant-facing access should be inferred from the five PASS groups. Phase 2G.4 and 2G.5 accepted code baselines remain unchanged by this documentation.
+
+
+## Additive PostgreSQL hardening — 2026-11-03 (new commit, test PENDING)
+
+Source review found a SQL-bypass gap in the 2H month-end completion:
+`BM_VerifyRoomChangeCommit` validates the completion SHA, source Room
+state and money, but did not itself validate whether a source `Available`
+disposition contradicts an existing next-tenant `Reserved` booking or
+`Signed` future contract. The authenticated writer originally checked
+only reserved booking facts and could miss a signed future source contract.
+
+The new `20261103050000_Phase2HSourceRoomDispositionCommitGuard` migration
+adds a *separate, deferred, SERIALIZABLE* constraint trigger to the existing
+completion table. It checks the actual source room state and current
+reservation/contract facts at constraint/commit time. A sole confirmed
+future commitment requires `Reserved`; no commitment permits `Available`
+or `Maintenance`; PendingPayment is HOLD; multiple confirmed commitments
+or another active source contract fail closed. `Maintenance` must never
+silently supersede a confirmed next occupant. All existing 2H money/roster
+checksum and 2G.5 proof triggers are untouched.
+
+`SliceBStagingRoomChangeRequests.CompleteRoomChangeAsync` now derives
+confirmed future source occupancy from **both** reserved reservations and
+signed future contracts, rejecting multiple/active/awaiting-payment source
+facts. The server-only H6 gate takes this combined commitment fact; its
+signed checklist semantics remain unchanged.
+
+Seven direct SQL PostgreSQL cases `TRFPG18–24` cover Available/Reserved,
+signed next contract, PendingPayment, multiple next occupants, second active
+tenancy, unsafe downgrade, and late competing reservation before deferred
+commit. They use isolated transaction-rolled-back schemas. The full fresh
+migration chain requires the new latest migration and checks the deferrable
+trigger, and the one-command 2H verifier now expects **24/24** Phase 2H
+PostgreSQL cases in addition to the previously passing 32 Domain goldens,
+migration rehearsal, authenticated HTTP and Full regression.
+
+**Evidence boundary:** the previous 5/5 PASS is only for
+`d047734a120a3efcf256f1a94e973854d84d8d1b`. New code/migration
+must pass at its **new** commit SHA before staging verification. The
+mid-month pricing/receipt/refund writer remains HOLD, no default day policy
+is chosen, no production migration or banking action is authorized.

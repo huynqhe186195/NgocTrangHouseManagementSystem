@@ -1,5 +1,5 @@
 param()
-# Phase 2H H2/H3/H4: isolated, one-command local acceptance bundle.
+# Phase 2H H2/H3/H4/H6: isolated, one-command local acceptance bundle.
 # No production, no user-database migration, no real money movement.
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -38,10 +38,10 @@ try {
     }
 
     Write-Host '== 2/5: Phase 2H PostgreSQL concurrency and atomic transfer =='
-    & dotnet test $pg --filter 'FullyQualifiedName~RoomChangeRequestsPostgreSql_Tests|FullyQualifiedName~RoomChangeTenantRosterPostgreSql_Tests' --logger 'console;verbosity=normal' *>&1 | Tee-Object -FilePath (Join-Path $logs '16-2h-postgresql.log')
+    & dotnet test $pg --filter 'FullyQualifiedName~RoomChangeRequestsPostgreSql_Tests|FullyQualifiedName~RoomChangeTenantRosterPostgreSql_Tests|FullyQualifiedName~RoomChangeSourceDispositionPostgreSql_Tests' --logger 'console;verbosity=normal' *>&1 | Tee-Object -FilePath (Join-Path $logs '16-2h-postgresql.log')
     if ($LASTEXITCODE -ne 0) { throw '2H PostgreSQL suite FAILED.' }
-    if (-not (Select-String -Path (Join-Path $logs '16-2h-postgresql.log') -Pattern 'Total tests:\s*17\b' -Quiet) -or -not (Select-String -Path (Join-Path $logs '16-2h-postgresql.log') -Pattern 'Passed:\s*17\b' -Quiet)) {
-        throw 'Expected exactly 17/17 PostgreSQL transfer cases.'
+    if (-not (Select-String -Path (Join-Path $logs '16-2h-postgresql.log') -Pattern 'Total tests:\s*24\b' -Quiet) -or -not (Select-String -Path (Join-Path $logs '16-2h-postgresql.log') -Pattern 'Passed:\s*24\b' -Quiet)) {
+        throw 'Expected exactly 24/24 PostgreSQL transfer cases.'
     }
 
     Write-Host '== 3/5: Fresh disposable PostgreSQL migration chain =='

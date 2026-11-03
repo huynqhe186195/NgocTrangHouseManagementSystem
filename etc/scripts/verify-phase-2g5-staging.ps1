@@ -26,7 +26,9 @@ try {
     # Database=ngoctrang_integration_test, localhost/127.0.0.1, port 5432.
     # Do not reimplement the Npgsql parser with generic PowerShell string
     # parsing: it can misclassify otherwise valid PostgreSQL connection strings.
-    # Neither migration nor HTTP fixtures bypass the canonical test DB guard.
+    # The migration and Phase 2G.5 cases use that canonical C# guard.
+    # The authenticated HTTP fixture independently applies the same
+    # Npgsql host/port/database allowlist before creating any scratch DB.
 
     $sha = (& git rev-parse HEAD | Out-String).Trim()
     if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($sha)) {

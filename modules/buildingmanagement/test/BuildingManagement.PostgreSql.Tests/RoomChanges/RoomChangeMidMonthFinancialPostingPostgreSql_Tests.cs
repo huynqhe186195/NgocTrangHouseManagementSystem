@@ -56,7 +56,9 @@ public sealed class RoomChangeMidMonthFinancialPostingPostgreSql_Tests
           "Method" integer,"Channel" integer,
           "DepositDisposition" integer,"Amount" numeric(18,0),
           "ContractId" uuid,"TransactionReference" varchar(128),
-          "IsDeleted" boolean
+          "IsDeleted" boolean,"InvoiceId" uuid,
+          "RoomReservationId" uuid,"PaidAt" timestamptz,
+          "Notes" text
         );
         """;
 
@@ -174,7 +176,8 @@ public sealed class RoomChangeMidMonthFinancialPostingPostgreSql_Tests
                      VALUES ('{Guid.NewGuid():D}','{f.Receivable:D}',true,200000);
                     INSERT INTO "BuildingManagementPayments" VALUES
                      ('{f.Payment:D}',2,2,2,1,1,1000000,'{f.Target:D}',
-                       'BANK-2H-ORIGINAL-RECEIPT-001',false);
+                       'BANK-2H-ORIGINAL-RECEIPT-001',false,NULL,NULL,
+                       '2026-10-16T09:00:00Z','BANK-PROOF: SIGNED-INDEPENDENT-STMT-2026');
                     INSERT INTO "BuildingManagementRoomChangeEvidenceArchives" VALUES
                      ('{f.D01:D}','{f.Request:D}','{f.Contract:D}','{f.Building:D}',
                       1,'2026-11-01T09:00:00Z','{f.Actor:D}','{{}}',

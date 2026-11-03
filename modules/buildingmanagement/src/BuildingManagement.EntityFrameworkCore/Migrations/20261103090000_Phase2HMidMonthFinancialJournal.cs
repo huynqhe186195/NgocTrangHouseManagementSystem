@@ -200,6 +200,13 @@ public sealed class Phase2HMidMonthFinancialJournal : Migration
              OR payment."Method"<>2 OR payment."Channel"<>1
              OR payment."DepositDisposition"<>1
              OR payment."Amount" IS DISTINCT FROM NEW."SignedAmountVnd"
+             OR payment."InvoiceId" IS NOT NULL
+             OR payment."RoomReservationId" IS NOT NULL
+             OR payment."PaidAt" IS NULL
+             OR payment."PaidAt" > NEW."RecordedAtUtc"
+             OR payment."Notes" IS NULL
+             OR payment."Notes" NOT LIKE 'BANK-PROOF: %'
+             OR (packet_json->>'TargetContractId')::uuid = req."SourceContractId"
              OR payment."ContractId" IS DISTINCT FROM (packet_json->>'TargetContractId')::uuid
              OR payment."TransactionReference" IS DISTINCT FROM NEW."BankTransactionReference"
              OR payment."IsDeleted" IS DISTINCT FROM FALSE

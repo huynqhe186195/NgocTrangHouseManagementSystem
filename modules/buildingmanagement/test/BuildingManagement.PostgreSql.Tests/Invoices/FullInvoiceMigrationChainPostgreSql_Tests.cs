@@ -19,7 +19,7 @@ public sealed class FullInvoiceMigrationChainPostgreSql_Tests
     private const string OptInVariable = "BM_ALLOW_FULL_MIGRATION_REHEARSAL";
     private const string OptInValue = "CREATE_AND_DROP_FRESH_LOCAL_TEST_DATABASE";
     private const string ExpectedLatestMigration =
-        "20261102024000_Phase2G4RefundHolidaySnapshotAndSlaAnchor";
+        "20261103040000_Phase2G5RoomDispositionArchiveIntegrity";
 
     [Fact]
     public async Task PGMIG01_Full_EF_Migrations_Succeed_In_Fresh_Disposable_Database()
@@ -200,6 +200,21 @@ public sealed class FullInvoiceMigrationChainPostgreSql_Tests
                 {
                     Assert.Equal(1L,
                         Convert.ToInt64(await refundSlaTrigger.ExecuteScalarAsync()));
+                }
+
+                // Phase 2G.5 archive parity must be a real SQL trigger in
+                // a newly migrated database, not only a domain-level check.
+                await using (var roomArchiveProof = new NpgsqlCommand(
+                    """
+                    SELECT COUNT(*) FROM pg_trigger
+                    WHERE NOT tgisinternal
+                      AND tgname = 'TR_BM_VerifyMoveOutDispositionArchive'
+                      AND tgrelid =
+                        '"BuildingManagementMoveOutRoomDispositions"'::regclass
+                    """, verification))
+                {
+                    Assert.Equal(1L,
+                        Convert.ToInt64(await roomArchiveProof.ExecuteScalarAsync()));
                 }
 
                 await using (var extension = new NpgsqlCommand(

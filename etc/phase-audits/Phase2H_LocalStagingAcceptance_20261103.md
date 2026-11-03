@@ -347,3 +347,61 @@ is unchanged and must stay out of this acceptance commit.
 
 This is a documentation-only acceptance update; no re-run is necessary
 solely due to this commit.
+
+
+## 2026-11-03 — Combined D01–D04/D06 documentary dossier: 5/5 LOCAL PASS
+
+**Operator-tested exact code SHA:** `5c28eb3fc2ef55f4cf3c481fed4c575f7fbe74d6` on `wip/phase-2g2`.
+
+Terminal output supplied by the operator:
+
+```text
+=== PHASE 2H FINANCIAL FOUNDATIONS: ALL FIVE GROUPS PASSED ===
+COMMIT=5c28eb3fc2ef55f4cf3c481fed4c575f7fbe74d6
+Full mid-month contract/cash writer remains HOLD; production not used.
+```
+
+At this SHA, the one-shot `etc/scripts/verify-phase-2h-financial-foundations.ps1`
+hard stops require all of the following to pass:
+
+1. **100/100 focused Domain**: pre-existing 75 plus 25 new cases
+   covering exact pricing owner signoff, three-party handover,
+   independently categorized invoice correction candidates, deposit
+   cash bank-review candidates and cross-document dossier preflight.
+2. **37/37 focused PostgreSQL** transfer, archived handover integrity
+   and per-request immutable day pricing tests.
+3. Full disposable PostgreSQL migration rehearsal.
+4. Authenticated isolated PostgreSQL HTTP suite.
+5. Full isolated .NET regression.
+
+The earlier Domain compile failure came from five uses of
+`InvalidDataException` without `using System.IO;` in
+`RoomChangeOfficialSourceRentEvidenceBridge_Tests.cs`. That import
+was corrected at the exact tested SHA above, which subsequently passed
+the complete five-group suite.
+
+**LOCAL/STAGING TECHNICAL ACCEPTANCE only.** The new evidence
+classes are hash-bound *candidates*, not independently authenticated
+human signatures, bank-gateway confirmations, durable posted adjustment
+or cash journals, or a transactional mid-month contract execution.
+The dossier preflight deliberately returns
+`CanExecuteTransfer=false` and does not authorize money movement.
+No new production DB migration or deployment was performed.
+
+**BUSINESS HOLD remains:**
+- D01/D02 final owner-authorized charge-day, rounding/residual policy
+  and exception precedence.
+- D03 official signed per-category, append-only invoice correction
+  **posting**, including recognized receipts and overcollection.
+- D04 unique, cash-backed transfer/refund settlement journal with
+  real bank evidence, idempotency, concurrency and replay protection.
+- D06 final legally agreed human signatory and tenant-consent matrix
+  with identity authenticity.
+- Scoped, SERIALIZABLE, commit-time reverified full mid-month atomic
+  contract + invoice + cash + room-state writer, with authenticated
+  PG/HTTP end-to-end race tests.
+
+The prior safe month-end transfer path and production hold are
+unchanged. This is operator-reported local test output, not a GitHub
+Actions CI citation. This documentation-only acceptance commit
+does not require rerunning the passing code SHA.

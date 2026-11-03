@@ -593,4 +593,46 @@ public sealed class RoomChangeOfficialSourceRentEvidenceBridge_Tests
                 new[] { p }, new[] { d }, new[] { classification }));
     }
 
+    [Fact]
+    public void TRF_ARCH04_Classified_D03_Correction_Archives_Original_Issuance()
+    {
+        var f = Fixture();
+        var (proposal, decision) = Correction(f, -20_000m);
+        var correction = Categorize(f, proposal, decision,
+            LineCorrection(ContractDepositOffsetCategory.UnpaidRent, -20_000m));
+        var transfer = Transfer(f);
+        var archive = RoomChangeEvidenceArchiveRecord.CaptureClassifiedCorrection(
+            Guid.NewGuid(), transfer.Request,
+            f.Issued, f.Frozen, f.InvoiceReview,
+            proposal, decision, correction, Now.AddHours(11));
+        archive.VerifyStoredSnapshot();
+        Assert.Equal(RoomChangeEvidenceArchiveKind.ClassifiedInvoiceCorrection, archive.Kind);
+        Assert.Equal(correction.Id, archive.EvidenceId);
+        Assert.Equal(f.Issued.Id, archive.ParentEvidenceId);
+        Assert.Equal(f.Issued.CandidateSha256, archive.ParentEvidenceSha256);
+        Assert.False(archive.CanPostReceivable);
+    }
+
+    [Fact]
+    public void TRF_ARCH05_Archive_Payload_Or_Source_Hash_Tampering_Detected()
+    {
+        var f = Fixture();
+        var (proposal, decision) = Correction(f, -20_000m);
+        var proof = Categorize(f, proposal, decision,
+            LineCorrection(ContractDepositOffsetCategory.UnpaidRent, -20_000m));
+        var transfer = Transfer(f);
+        var archive = RoomChangeEvidenceArchiveRecord.CaptureClassifiedCorrection(
+            Guid.NewGuid(), transfer.Request,
+            f.Issued, f.Frozen, f.InvoiceReview,
+            proposal, decision, proof, Now.AddHours(11));
+        var field = typeof(RoomChangeEvidenceArchiveRecord).GetField(
+            "<EvidenceJson>k__BackingField",
+            System.Reflection.BindingFlags.NonPublic |
+            System.Reflection.BindingFlags.Instance);
+        Assert.NotNull(field);
+        field!.SetValue(archive, archive.EvidenceJson.Replace(
+            "SIGNED-OWNER-CLASSIFIED-CORRECTION-OCT2026", "FORGED-CORRECTION-REF"));
+        Assert.Throws<InvalidDataException>(() => archive.VerifyStoredSnapshot());
+    }
+
 }

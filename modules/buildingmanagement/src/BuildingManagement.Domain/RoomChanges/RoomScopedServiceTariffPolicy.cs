@@ -71,10 +71,13 @@ public sealed record RoomScopedServiceTariffVersion(
             throw new InvalidOperationException(
                 "Room service tariff requires an identified room, explicit billing basis, effective dates and approved rate.");
 
+        // PostgreSQL timestamptz persists microseconds. Hash the EXACT
+        // persisted instant to avoid false fingerprint drift on a round trip.
+        var stableUtc = approvedAtUtc.AddTicks(-(approvedAtUtc.Ticks % 10L));
         var row = new RoomScopedServiceTariffVersion(
             id, roomId, serviceId, version, unitPriceVnd,
             billingUnit, chargingRule, effectiveFrom, effectiveThrough,
-            approvedByUserId, approvedAtUtc, signedPolicyReference.Trim(),
+            approvedByUserId, stableUtc, signedPolicyReference.Trim(),
             EvidenceSha256: string.Empty);
         return row with { EvidenceSha256 = row.CalculateFingerprint() };
     }

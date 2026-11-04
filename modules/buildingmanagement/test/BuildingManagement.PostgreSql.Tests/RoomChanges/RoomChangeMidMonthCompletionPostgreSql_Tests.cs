@@ -295,6 +295,24 @@ public sealed class RoomChangeMidMonthCompletionPostgreSql_Tests
         });
     }
 
+    [Fact]
+    public async Task TRFMIDPG14_Cannot_Edit_Frozen_FirstMonth_Rent_To_Full_Month()
+    {
+        await Scratch(IsolationLevel.Serializable,async(db,tx,f)=>{
+            await Run(db,tx,Completion(f));
+            var id=Guid.NewGuid();
+            await Run(db,tx,$"""
+                INSERT INTO "BuildingManagementMonthlyInvoiceCandidates"
+                    ("Id","ContractId","BillingYear","BillingMonth","RentAmount")
+                VALUES ('{id:D}','{f.Target:D}',2026,10,1500000);
+                """);
+            await Denied(db,tx,$"""
+                UPDATE "BuildingManagementMonthlyInvoiceCandidates"
+                   SET "RentAmount"=3000000 WHERE "Id"='{id:D}';
+                ""","23514");
+        });
+    }
+
     private static async Task Scratch(IsolationLevel isolation,
         Func<NpgsqlConnection,NpgsqlTransaction,F,Task> work)
     {

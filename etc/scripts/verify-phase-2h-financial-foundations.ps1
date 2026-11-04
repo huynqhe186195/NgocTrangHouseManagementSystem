@@ -52,8 +52,8 @@ try {
     Write-Host '== 2/5: Phase 2H PostgreSQL concurrency and atomic transfer =='
     & dotnet test $pg --filter 'FullyQualifiedName~RoomChangeRequestsPostgreSql_Tests|FullyQualifiedName~RoomChangeTenantRosterPostgreSql_Tests|FullyQualifiedName~RoomChangeSourceDispositionPostgreSql_Tests|FullyQualifiedName~RoomChangeHandoverDigestPostgreSql_Tests|FullyQualifiedName~RoomChangeDayPricingRulePostgreSql_Tests|FullyQualifiedName~RoomChangeEvidenceArchivePostgreSql_Tests|FullyQualifiedName~RoomChangeMidMonthFinancialPostingPostgreSql_Tests|FullyQualifiedName~RoomChangeMidMonthCompletionPostgreSql_Tests' --logger 'console;verbosity=normal' *>&1 | Tee-Object -FilePath (Join-Path $logs '16-2h-postgresql.log')
     if ($LASTEXITCODE -ne 0) { Throw-WithTestLog '2H PostgreSQL suite FAILED.' '16-2h-postgresql.log' }
-    if (-not (Select-String -Path (Join-Path $logs '16-2h-postgresql.log') -Pattern 'Total tests:\s*60\b' -Quiet) -or -not (Select-String -Path (Join-Path $logs '16-2h-postgresql.log') -Pattern 'Passed:\s*60\b' -Quiet)) {
-        Throw-WithTestLog 'Expected exactly 60/60 PostgreSQL transfer cases.' '16-2h-postgresql.log'
+    if (-not (Select-String -Path (Join-Path $logs '16-2h-postgresql.log') -Pattern 'Total tests:\s*63\b' -Quiet) -or -not (Select-String -Path (Join-Path $logs '16-2h-postgresql.log') -Pattern 'Passed:\s*63\b' -Quiet)) {
+        Throw-WithTestLog 'Expected exactly 63/63 PostgreSQL transfer cases.' '16-2h-postgresql.log'
     }
 
     Write-Host '== 3/5: Fresh disposable PostgreSQL migration chain =='
@@ -76,7 +76,7 @@ try {
 
     Write-Host '=== PHASE 2H FINANCIAL FOUNDATIONS: ALL FIVE GROUPS PASSED ==='
     Write-Host "COMMIT=$sha"
-    Write-Host 'Full mid-month contract/cash writer remains HOLD; production not used.'
+    Write-Host 'Restricted same-rent/same-deposit mid-month lane requires positive authenticated execution acceptance; H4 top-up/refund and production remain HOLD.'
 }
 finally {
     Remove-Item Env:\BM_ALLOW_FULL_MIGRATION_REHEARSAL -ErrorAction SilentlyContinue

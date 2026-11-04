@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -104,6 +106,47 @@ public sealed record RoomScopedServiceTariffVersion(
             candidate.EffectiveFrom <= oldEnd)
             throw new InvalidOperationException(
                 "One room/service cannot have two overlapping active tariff versions.");
+    }
+
+    /// <summary>
+    /// Resolve an invoice's correct ROOM-SPECIFIC original service price.
+    /// An open-ended older version stops applying when a strictly newer
+    /// effective version begins; no historical approved row is overwritten.
+    /// A caller MUST obtain complete versions from a scoped database reader
+    /// and freeze the selected Id/SHA in the new invoice snapshot.
+    /// </summary>
+    public static RoomScopedServiceTariffVersion SelectEffectiveForDate(
+        IEnumerable<RoomScopedServiceTariffVersion> versions,
+        Guid roomId, Guid serviceId, DateOnly onVietnam)
+    {
+        ArgumentNullException.ThrowIfNull(versions);
+        if (roomId == Guid.Empty || serviceId == Guid.Empty ||
+            onVietnam == default)
+            throw new InvalidOperationException(
+                "Room, service and Vietnam effective date are mandatory.");
+
+        var matching = versions
+            .Where(x => x.RoomId == roomId && x.ServiceId == serviceId)
+            .ToArray();
+        foreach (var item in matching) item.VerifyFingerprint();
+
+        var eligible = matching.Where(x =>
+                x.EffectiveFrom <= onVietnam &&
+                (!x.EffectiveThrough.HasValue ||
+                 onVietnam <= x.EffectiveThrough.Value))
+            .OrderByDescending(x => x.EffectiveFrom)
+            .ThenByDescending(x => x.Version)
+            .ToArray();
+        if (eligible.Length == 0)
+            throw new InvalidOperationException(
+                "No approved effective room/service price covers this date.");
+
+        if (eligible.Length > 1 &&
+            (eligible[0].EffectiveFrom == eligible[1].EffectiveFrom ||
+             eligible[0].Version <= eligible[1].Version))
+            throw new InvalidOperationException(
+                "Conflicting room-service versions cannot authorize a charge.");
+        return eligible[0];
     }
 
     public RoomScopedServiceChargePreview PreviewCharge(

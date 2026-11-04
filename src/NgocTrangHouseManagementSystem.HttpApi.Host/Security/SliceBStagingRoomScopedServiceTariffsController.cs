@@ -38,23 +38,41 @@ public sealed class SliceBStagingRoomScopedServiceTariffsController
 
     [HttpGet]
     [UnitOfWork(true, IsolationLevel.Serializable)]
-    public Task<SliceBRoomScopedServiceTariffRead[]> GetListAsync(
+    public async Task<IActionResult> GetListAsync(
         [FromRoute] Guid roomId, [FromQuery] Guid serviceId,
         [FromQuery] int skipCount = 0, [FromQuery] int maxResultCount = 50)
     {
-        RequireIsolatedStaging();
-        return _tariffs!.GetListAsync(
-            roomId, serviceId, skipCount, maxResultCount);
+        try
+        {
+            RequireIsolatedStaging();
+            var prices = await (_tariffs ?? throw Denied()).GetListAsync(
+                roomId, serviceId, skipCount, maxResultCount);
+            return Ok(prices);
+        }
+        catch (AbpAuthorizationException)
+        {
+            // No Owner/Rooms.Manage grant or wrong Building membership:
+            // preserve fail-closed SQL/Identity guards, return HTTP 403.
+            return Forbid();
+        }
     }
 
     [HttpPost]
     [UnitOfWork(true, IsolationLevel.Serializable)]
-    public Task<SliceBRoomScopedServiceTariffRead> AppendAsync(
+    public async Task<IActionResult> AppendAsync(
         [FromRoute] Guid roomId,
         [FromBody] SliceBRoomScopedServiceTariffInput input)
     {
-        RequireIsolatedStaging();
-        return _tariffs!.AppendAsync(roomId, input);
+        try
+        {
+            RequireIsolatedStaging();
+            var price = await (_tariffs ?? throw Denied()).AppendAsync(roomId, input);
+            return Ok(price);
+        }
+        catch (AbpAuthorizationException)
+        {
+            return Forbid();
+        }
     }
 
     private void RequireIsolatedStaging()

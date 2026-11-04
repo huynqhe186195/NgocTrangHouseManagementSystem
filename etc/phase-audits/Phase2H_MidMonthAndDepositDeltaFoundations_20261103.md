@@ -611,3 +611,47 @@ HOLD. The one-command verifier now checks **106 Domain,
 and Full regression** at the new exact code SHA. The previous five-group
 PASS on `687bcc068f6451e5c45c55f05f2c49d29ea20632`
 does not certify these new changes.
+
+
+## 2026-11-04 — Post-completion INSERT fences (NEW, TEST PENDING)
+
+The signed same-rent/same-held-deposit mid-month lane from
+`13b20d0f9ac66e7f89cc45c02e0477094c0b8bd4` remains **not
+business-accepted** until authenticated positive execution and the
+full local verification bundle pass at the exact new SHA. Code review
+found a post-commit integrity gap: the existing triggers froze tenant
+roster and original cash on UPDATE/DELETE, but not on INSERT. New
+records could otherwise silently change a completed financial/tenant
+disposition after its original deferred commit check.
+
+The additive migration
+`20261104120000_Phase2HMidMonthPostCommitAppendFences` adds two
+`DEFERRABLE INITIALLY DEFERRED` PostgreSQL fences:
+
+- A new live tenant in either the source or target contract of a
+  completed mid-month transfer must preserve the originally captured
+  roster count on **both** sides at commit. This allows legitimate
+  initial transfer INSERTs in the same atomic transaction but denies
+  later silent roster expansion. The existing UPDATE/DELETE freeze
+  still applies.
+- A new deposit settlement may not spend the completed source again,
+  nor add a new incoming source-deposit settlement after the source
+  has been closed. The original carry is identified solely by its
+  immutable `CarryForwardSettlementId` and remains permitted within
+  the original atomic transaction.
+
+`TRFMIDPG09–11` check target/source live-tenant and source cash
+append attempts, including a fabricated extra source deposit. The
+one-shot script now requires **106 Domain + 63 targeted PostgreSQL**
+tests, full disposable migration chain, authenticated HTTP and full
+regression. The migration's Down refuses removal after **any**
+completed mid-month financial/occupancy history. Changes are
+**source-only**: neither this environment nor a user application DB
+was migrated. These new tests have not been run or marked PASS here.
+
+**Remaining HOLD**: positive authenticated same-deposit mid-month
+execution over real PostgreSQL, genuine three-party identity proof
+rather than documentary references, H4 independent top-up and
+outgoing bank refund settlement/compensation, disputed/overpaid
+source rent disposition, and end-to-end cross-building concurrency
+under the actual host. Production explicitly excluded.

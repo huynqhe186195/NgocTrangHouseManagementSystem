@@ -1025,3 +1025,61 @@ actual invoice line binder, H4 top-up/deferred deposit posting,
 H4 rent credit/outbound refund writer, or Owner exported new-contract
 file. These are future code gates before complete Phase 2H
 BUSINESS ACCEPTED. Production remains entirely excluded.
+
+
+## 2026-11-04 — Scoped BootstrapOwner room-service tariff staging API (NEW, GATE PENDING)
+
+This change follows the OWNER-VERIFIED **141 Domain / 76 PostgreSQL
+five-group PASS** at exact code SHA
+`68e0bd1b42b0ac16c3814a90ce0262d7b2166b85`.
+The gate is *not* proof for subsequent code commits.
+
+New code:
+- `SliceBStagingRoomScopedServiceTariffsController` exposes an
+  authenticated isolated-staging-only
+  `GET /api/slice-b-staging/rooms/{roomId}/service-tariffs?serviceId=...`
+  and `POST /api/slice-b-staging/rooms/{roomId}/service-tariffs`.
+- The adapter resolves the building **from the real server-side Room
+  resource**, not a submitted BuildingId; verifies Rooms.Manage
+  through the current scoped business resource policy, the **persisted
+  active ABP Rooms.Manage grant**, and a **separate persisted active
+  BootstrapOwner grant**. All are held through the Building UnitOfWork
+  by the existing Identity lease and SQL membership row fence;
+  the original Room/Floor/Building chain is checked under a row lock.
+- **BootstrapOwner is intentionally narrower than all per-building
+  Owners.** The project does not yet have a separately proven,
+  per-building Owner authorization predicate distinct from generic
+  staff management roles. The endpoint must not silently equate
+  Rooms.Manage with the Owner role. No arbitrary Staff tariff edit
+  has been opened.
+- The client submits only ServiceId, rate, unit, charge mode,
+  effective dates and a signed-document reference. Version,
+  approval user/time and SHA digest are **generated on the server**.
+  The scoped writer reads the last tariff version inside the locked
+  transaction, appends the next one and refuses retroactive effective
+  dates. No UPDATE/DELETE API exists, and the existing SQL immutable
+  triggers continue to reject direct rewriting.
+- Domain `RequireNonOverlapping` now matches the already-approved
+  SQL append policy: an **open-ended** historical version may be
+  superseded by a strictly later version without editing that row.
+  Explicit finite periods cannot overlap. `TRF_SVC15` regression
+  covers the original-version preservation.
+- `TRFSVCHTTP01..02` assert the real ASP.NET Core controller is
+  authenticated, exposes only GET/POST with transactional UnitOfWork
+  and has server-owned actor/version/digest fields. These are
+  reflection-level assertions, **not yet authenticated cross-building
+  request tests**.
+- Exact one-command focused targets after this batch:
+  **142 Domain / 76 PostgreSQL**; the broad isolated HTTP suite
+  gains two additional route/contract tests. The full regression
+  runner has no fixed HTTP count.
+
+**Implementation limits:** The original migration/source tariff
+schema has passed at the earlier SHA, but this new API has not yet
+been compiled or run locally. The external attachment/reference
+is an attestation pointer, not a verified legal digital signature.
+Room/service catalog FK, genuine per-building Owner authorization,
+actual issued invoice integration, full H4 deferred cash writer,
+next-month rent credit/refund, Owner contract document export,
+real authenticated multi-building HTTP/revocation/race acceptance
+and production all remain separate HOLD gates. No production use.

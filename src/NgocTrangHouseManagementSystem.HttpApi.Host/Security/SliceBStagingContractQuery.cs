@@ -87,6 +87,78 @@ public sealed class SliceBStagingContractQuery
     }
 
     /// <summary>
+    /// Root Owner document export only. Resolve the original contract
+    /// through current live building membership, and pin the exact
+    /// Contract/Room/Floor/Building/membership graph FOR SHARE until
+    /// document bytes have been created. The parallel Identity root
+    /// lease is held for the whole UnitOfWork; never export a foreign
+    /// tenant's records through a client-supplied BuildingId.
+    /// </summary>
+    public async Task<byte[]> ExportOwnerDocumentDocxAsync(Guid contractId)
+    {
+        if (contractId == Guid.Empty)
+            throw Denied();
+        var actor=RequireActor();
+        await _identityLease.AcquireBootstrapAsync(actor);
+        var scoped=await GetAsync(contractId);
+        var db=await _provider.GetDbContextAsync();
+        await LockInvoicePreviewScopeAsync(db,scoped,actor);
+
+        var original=await (
+            from contract in db.Contracts.AsNoTracking()
+            join room in db.Rooms.AsNoTracking()
+                on contract.RoomId equals room.Id
+            join floor in db.Floors.AsNoTracking()
+                on room.FloorId equals floor.Id
+            join building in db.Buildings.AsNoTracking()
+                on floor.BuildingId equals building.Id
+            where contract.Id==contractId &&
+                !contract.IsDeleted && !room.IsDeleted &&
+                !floor.IsDeleted && !building.IsDeleted
+            select new {
+                contract.Id, contract.RoomId,
+                BuildingId=building.Id, building.Name,
+                building.Address, room.RoomNumber,
+                contract.ContractNumber, contract.Status,
+                contract.StartDate, contract.EndDate,
+                contract.MonthlyRent, contract.DepositAmount,
+                contract.RenewedFromContractId
+            }).SingleOrDefaultAsync();
+
+        if (original is null || original.Id!=scoped.Id ||
+            original.RoomId!=scoped.RoomId ||
+            original.BuildingId!=scoped.BuildingId ||
+            original.MonthlyRent!=scoped.MonthlyRent ||
+            original.ContractNumber!=scoped.ContractNumber ||
+            original.DepositAmount<=0m)
+            throw Denied();
+
+        // ContractTenant relation is ALWAYS filtered to the already scoped
+        // and row-locked original contract; never enumerate global tenants.
+        // Only the human name is required for this unsigned printout;
+        // do not export citizen ID, bank details, phones or full profile.
+        var tenants=await (
+            from link in db.ContractTenants.AsNoTracking()
+            join tenant in db.Tenants.AsNoTracking()
+                on link.TenantId equals tenant.Id
+            where link.ContractId==contractId &&
+                !link.IsDeleted && !tenant.IsDeleted
+            orderby link.TenantId
+            select tenant.FullName
+        ).Take(101).ToListAsync();
+        if (tenants.Count>100)
+            throw Denied();
+
+        var export=new SliceBContractDocumentData(
+            original.Id,original.BuildingId,original.ContractNumber,
+            original.Name,original.Address,original.RoomNumber,
+            original.Status.ToString(),original.StartDate,original.EndDate,
+            original.MonthlyRent,original.DepositAmount,
+            original.RenewedFromContractId,tenants);
+        return SliceBStagingContractDocumentDocx.Export(export);
+    }
+
+    /// <summary>
     /// Live scoped ContractDeposit receipts only, without private evidence.
     /// The payment and the membership must join to the SAME contract graph.
     /// </summary>

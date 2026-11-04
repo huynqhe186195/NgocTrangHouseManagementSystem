@@ -69,17 +69,29 @@ public sealed class SliceBStagingContractsController : ControllerBase
     [UnitOfWork(true, System.Data.IsolationLevel.RepeatableRead)]
     public async Task<IActionResult> ExportOwnerDocumentAsync([FromRoute] Guid id)
     {
-        RequireIsolatedStaging();
-        var file=await (_query ?? throw Denied())
-            .ExportOwnerDocumentDocxAsync(id);
-        // Contract names and financial terms are private. Never let a
-        // browser/shared proxy cache this cross-account document.
-        Response.Headers["Cache-Control"] = "no-store, private";
-        Response.Headers["Pragma"] = "no-cache";
-        Response.Headers["X-Content-Type-Options"] = "nosniff";
-        return File(file,
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            $"hop-dong-{id:N}.docx");
+        try
+        {
+            RequireIsolatedStaging();
+            var file=await (_query ?? throw Denied())
+                .ExportOwnerDocumentDocxAsync(id);
+            // Contract names and financial terms are private. Never let a
+            // browser/shared proxy cache this cross-account document.
+            Response.Headers["Cache-Control"] = "no-store, private";
+            Response.Headers["Pragma"] = "no-cache";
+            Response.Headers["X-Content-Type-Options"] = "nosniff";
+            return File(file,
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                $"hop-dong-{id:N}.docx");
+        }
+        catch (AbpAuthorizationException)
+        {
+            // The isolated TestServer propagates exceptions thrown from this
+            // explicit ControllerBase IActionResult path. Authorization MUST
+            // fail closed as an HTTP 403 (not an unhandled 500), while the
+            // persisted BootstrapOwner/Contracts.Read leases stay mandatory.
+            Response.Headers["Cache-Control"] = "no-store, private";
+            return Forbid();
+        }
     }
 
     [HttpPost]

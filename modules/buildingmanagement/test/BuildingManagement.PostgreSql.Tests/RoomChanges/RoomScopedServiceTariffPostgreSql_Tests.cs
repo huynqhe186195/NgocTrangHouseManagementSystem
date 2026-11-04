@@ -142,8 +142,10 @@ public sealed class RoomScopedServiceTariffPostgreSql_Tests
                 "23514");
             await Run(db,tx,Insert(room,Guid.NewGuid(),1,"2026-11-01"));
             await Denied(db,tx,
-                """UPDATE "BuildingManagementRoomScopedServiceTariffVersions"
-                    SET "UnitPriceVnd"=1""","23514");
+                """
+                UPDATE "BuildingManagementRoomScopedServiceTariffVersions"
+                   SET "UnitPriceVnd"=1
+                ""","23514");
             await Denied(db,tx,
                 """DELETE FROM "BuildingManagementRoomScopedServiceTariffVersions" """,
                 "23514");
@@ -191,12 +193,18 @@ public sealed class RoomScopedServiceTariffPostgreSql_Tests
         {
             await Run(db,tx,Down);
             Assert.Equal(0L,await Scalar(db,tx,
-                """SELECT count(*) FROM pg_class WHERE relname='BuildingManagementRoomScopedServiceTariffVersions'
-                   AND relnamespace=current_schema()::regnamespace"""));
+                """
+                SELECT count(*) FROM pg_class
+                 WHERE relname='BuildingManagementRoomScopedServiceTariffVersions'
+                   AND relnamespace=current_schema()::regnamespace
+                """));
             await Run(db,tx,Up);
             Assert.Equal(1L,await Scalar(db,tx,
-                """SELECT count(*) FROM pg_class WHERE relname='BuildingManagementRoomScopedServiceTariffVersions'
-                   AND relnamespace=current_schema()::regnamespace"""));
+                """
+                SELECT count(*) FROM pg_class
+                 WHERE relname='BuildingManagementRoomScopedServiceTariffVersions'
+                   AND relnamespace=current_schema()::regnamespace
+                """));
         });
     }
 

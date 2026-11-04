@@ -208,6 +208,64 @@ public sealed class RoomScopedServiceTariffPostgreSql_Tests
         });
     }
 
+    [Fact]
+    public async Task TRFSVCPG09_Concurrent_Owner_Price_Writers_Have_Only_One_Winner()
+    {
+        var cs=new NpgsqlConnectionStringBuilder(
+            BuildingManagementPostgreSqlTestModule.RequireSafeConnectionString())
+            { Pooling=false,CommandTimeout=30 }.ConnectionString;
+        var schema="bm_roomsvc_race_"+Guid.NewGuid().ToString("N");
+        var room=Guid.NewGuid();
+        var service=Guid.NewGuid();
+        await using var seed=new NpgsqlConnection(cs);
+        await seed.OpenAsync();
+        Assert.Equal(BuildingManagementPostgreSqlTestModule.DatabaseName,
+            seed.Database);
+        try
+        {
+            await Run(seed,null,$"""CREATE SCHEMA "{schema}" """);
+            await Run(seed,null,$"""SET search_path TO "{schema}" """);
+            await Run(seed,null,Stub);
+            await Run(seed,null,Up);
+            await Run(seed,null,$"""
+                INSERT INTO "BuildingManagementRooms"("Id")
+                 VALUES('{room:D}')
+                """);
+
+            await using var first=new NpgsqlConnection(cs);
+            await using var second=new NpgsqlConnection(cs);
+            await first.OpenAsync();
+            await second.OpenAsync();
+            await Run(first,null,$"""SET search_path TO "{schema}" """);
+            await Run(second,null,$"""SET search_path TO "{schema}" """);
+
+            await using var tx1=await first.BeginTransactionAsync();
+            await using var tx2=await second.BeginTransactionAsync();
+            await Run(first,tx1,Insert(room,service,1,"2026-11-01"));
+            var pending=Run(second,tx2,Insert(room,service,1,"2026-11-01"));
+            await Task.Delay(150);
+            Assert.False(pending.IsCompleted,
+                "Second competing room tariff writer must wait on the original room lock.");
+            await tx1.CommitAsync();
+            var error=await Assert.ThrowsAsync<PostgresException>(()=>pending);
+            Assert.Equal("23514",error.SqlState);
+            await tx2.RollbackAsync();
+            Assert.Equal(1L,await Scalar(seed,null,
+                """
+                SELECT count(*)
+                  FROM "BuildingManagementRoomScopedServiceTariffVersions"
+                """));
+        }
+        finally
+        {
+            await Run(seed,null,"RESET search_path");
+            await Run(seed,null,$"""DROP SCHEMA IF EXISTS "{schema}" CASCADE""");
+        }
+        Assert.Equal(0L,await Scalar(seed,null,$"""
+            SELECT count(*) FROM pg_namespace WHERE nspname='{schema}'
+            """));
+    }
+
     private static async Task Scratch(
         Func<NpgsqlConnection,NpgsqlTransaction,Guid,Task> work)
     {

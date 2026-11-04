@@ -151,4 +151,17 @@ public sealed class RoomChangeDeferredDepositDisposition_Tests
         Assert.Throws<InvalidOperationException>(() =>
             Plan(facts, choice: (RoomChangeDepositSurplusChoice)999));
     }
+    [Fact]
+    public void TRF_H4DEF13_MonthEnd_Due_Clamps_Across_April_And_December()
+    {
+        var facts = Facts(required: 4_000_000m);
+        var april = Plan(facts, on: new DateOnly(2026, 4, 30));
+        Assert.Equal(new DateOnly(2026, 5, 30),
+            april.OutstandingTopUpDueDateVietnam!.Value);
+
+        var december = Plan(facts, on: new DateOnly(2026, 12, 31));
+        Assert.Equal(new DateOnly(2027, 1, 31),
+            december.OutstandingTopUpDueDateVietnam!.Value);
+    }
+
 }

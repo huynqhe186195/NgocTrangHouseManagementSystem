@@ -809,3 +809,35 @@ evidence/financial posting, **not** by removing security constraints.
 No new migration or API writer was deployed by the above Owner
 decision. Historical foundation verification remains valid for its
 earlier code SHA, not for this newly authorized scope.
+
+
+### 2026-11-04 — D01 transfer-day owner CONFIRMED by project Owner
+
+**The unresolved question of who pays for the handover civil day
+is CLOSED.** The original source room is chargeable through the
+**previous Vietnam calendar day**; the destination/target room
+is chargeable **on and after the confirmed transfer day**. The
+Vietnam business day is derived in `Asia/Ho_Chi_Minh`, separately
+from immutable UTC audit timestamps. This is the binding rule for
+future executed Phase 2H transfers, not an optional client-supplied
+alternative.
+
+For a full-month billing context with `N` calendar days and
+target starting on day `k`: old days `k−1`, new days
+`N−k+1`; never count day `k` twice. The approved D02
+whole-VND rounding rule remains unchanged.
+
+The previously designed day-rule candidate and archive allowed
+an explicit `TransferDayOwner` choice; **implementation of the
+new business rule is not yet complete**. Completion preflight,
+Owner pricing signoff, SQL commit guard and authenticated
+PostgreSQL tests must be updated to refuse source-day candidates
+for new transfers while retaining immutable prior evidence.
+Do not bypass or alter the SQL approval checks merely to accept
+an outdated signed record.
+
+The room-specific service prices, one-calendar-month deferred
+top-up, exclusive next-rent-credit vs refund, three-party
+handover and Owner contract export remain approved as recorded
+in the companion 2026-11-04 decision register. They are
+separate implementation gates. No production work was performed.

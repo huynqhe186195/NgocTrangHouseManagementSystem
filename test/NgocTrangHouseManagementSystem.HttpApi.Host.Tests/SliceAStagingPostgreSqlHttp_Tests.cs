@@ -5952,7 +5952,7 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     h4DepositPayment,
                     "TRF-H4-DEPOSIT-" + h4DepositPayment.ToString("N"),
                     tenantB, BuildingManagement.Payments.PaymentPurpose.ContractDeposit,
-                    BuildingManagement.Payments.PaymentMethod.BankTransfer,
+                    BuildingManagement.Payments.BuildingManagement.Payments.PaymentMethod.BankTransfer,
                     BuildingManagement.Payments.PaymentChannel.Manual,
                     3_000_000m, contractId: h4SourceContract,
                     transactionReference: "TRF-H4-ACCOUNTED-" +
@@ -6025,7 +6025,9 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 clientB, h4IntentUrl, h4IntentInput);
             Assert.Equal(HttpStatusCode.Forbidden, deniedStaffH4.Status);
             var deniedCrossH4 = await PostFinalAsync(
-                clientA, h4IntentUrl, h4IntentInput);
+                clientB, ChangeRoute(contractA) + "/" +
+                    h4Request.ToString("D") + "/h4-disposition-intent",
+                h4IntentInput);
             Assert.Equal(HttpStatusCode.Forbidden, deniedCrossH4.Status);
             var deniedLateH4 = await PostFinalAsync(
                 clientRoot, h4IntentUrl, invalidH4Input);

@@ -98,6 +98,11 @@ public sealed class RoomChangeMidMonthCompletionRecord : Entity<Guid>
             rule.TransferDate, rule.SourceMonthlyRentVnd,
             rule.TargetMonthlyRentVnd, rule.TransferDayOwner,
             rule.Rounding, rule.SignedPricingRuleReference);
+        // Historical signed source-day/truncation candidates remain archived,
+        // but cannot authorize a NEW transfer under the binding D01/D02 rule.
+        RoomChangeApprovedH2H3ExecutionPolicy.RequireExecutableQuote(canonical);
+        RoomChangeApprovedH2H3ExecutionPolicy.RequireExecutableRule(
+            rule, request.RequestedDate);
         exactPricing.VerifyStoredSnapshot();
         signedHandover.VerifyStoredSnapshot();
 

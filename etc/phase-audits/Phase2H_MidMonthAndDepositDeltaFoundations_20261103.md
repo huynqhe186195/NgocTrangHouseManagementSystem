@@ -1250,3 +1250,69 @@ POSTGRESQL TEST (COMPILE ONLY)` line refers to the embedded general
 regression phase, not to the separately run PG test and migration
 phases of this five-group script. The user's untracked
 `Phase2G3A7_RevisionLedger_Generated_Review.sql` stays untouched.
+
+
+## 2026-11-04 — H4 immutable disposition-intent source batch (CODE COMMITTED; TEST PENDING)
+
+After the Owner's 5/5 quality gate PASS at exact
+`6b792dbd6d34b7b23b5820a7537da89db993c1cf`,
+the next batch introduces a NON-POSTING evidence layer for the
+approved H4 unequal-deposit move. This does **not** retroactively
+change the 6b792db technical acceptance.
+
+- `RoomChangeDepositDispositionIntentRecord.Capture` requires
+  an existing open Phase 2H request, same source contract, original
+  cash/policy references, the verified deterministic
+  `RoomChangeDeferredDepositDispositionPlanner` values and the
+  Owner's documented exclusive choice; it freezes an original
+  SHA-256 witness. A SHA or reference **does not prove actual
+  source held money, a genuine signature, or an external transfer**.
+- It differentiates **proposed carried target deposit**,
+  **uncollected top-up due within one Vietnam calendar month**,
+  next-month rent **credit liability proposal**, and
+  **manual refund liability proposal**. Double allocation is
+  blocked at Domain and database level. No automatic receipt,
+  refund, rent credit, lease completion, or occupancy change.
+- `20261104160000_Phase2HDepositDispositionIntentEvidence`
+  adds a linked immutable H4 intent table and SQL constraints:
+  source held cash accounting conservation, target deposit
+  requirement, exclusive credit vs refund choice, due-date
+  clamping, named Owner/reference assertions and one request
+  → one original intent. A SERIALIZABLE original-request
+  guard denies foreign source/building, closed requests, and
+  already completed prior midmonth moves. UPDATE, DELETE,
+  TRUNCATE and populated downgrade are blocked.
+- The target contract is intentionally a **non-FK planned ID**
+  before the new contract is created. The eventual *actual*
+  H4 completion writer must establish an immutable, independent
+  FK and verify real tenancy and cash sources in its own
+  atomic transaction; the intent alone cannot establish that.
+- New tests `TRF_H4INT01..08` cover policy construction,
+  one-month unpaid amount, exclusive choice, tampering and
+  source/request mismatch. Scratch PostgreSQL
+  `TRFH4PG01..06` cover actual SQL insert, both surplus
+  alternatives, bad due date/accounting, foreign building/
+  contract, closed request/replay/immutability and empty
+  migration rollback. The full migration rehearsal now
+  requires the 20261104160000 schema and its three fences.
+- **Required exact-SHA one-command targets:** 160 focused Domain
+  + 92 focused PostgreSQL plus the existing full disposable
+  migration chain, authenticated two-DB HTTP fixture and full
+  regression. No .NET/PG execution of this newest code has
+  taken place here. Do not label the new code PASS.
+
+### Remaining H4 BUSINESS ACCEPTANCE
+
+This is a **source-only preparation**, not the actual H4 writer.
+The true accepted mid-month execution must atomically validate
+all original cash-backed deposit sources, signed three-party
+handover, distinct old/new contracts, per-room service snapshots,
+final source/target receivables, actual balance held, the
+outstanding deposit-top-up **real receivable** and its later
+independently verified partial collections; or the retained
+tenant-credit liability allocated once against the NEXT
+genuine rent, or a reviewed bank-proof-backed manual refund.
+Cross-building Owner/Staff/tenant role and revocation races
+must pass positive authenticated HTTP/PostgreSQL tests.
+Owner-linked new contract document export is still HOLD.
+No production or real-money write has been enabled.

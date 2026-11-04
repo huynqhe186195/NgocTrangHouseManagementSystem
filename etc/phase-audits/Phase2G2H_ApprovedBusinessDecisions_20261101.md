@@ -159,7 +159,7 @@ ACCEPTED until implemented and tested on the resulting exact code SHA.
 
 | Decision | Owner-approved outcome | Non-negotiable implementation / evidence |
 |---|---|---|
-| **D01 / VN civil dates** | All room-transfer business dates and cutoffs use **Vietnam local time** (Asia/Ho_Chi_Minh); UTC instants remain stored for audit. | The Owner reply explicitly confirms the time zone; it did **not independently specify** whether the handover civil day belongs to source or target. The previous per-request explicitly Owner-signed `TransferDayOwner` selection remains required. No silent system-wide default or inferred universal day owner. |
+| **D01 / VN civil dates** | All room-transfer business dates and cutoffs use **Vietnam local time** (Asia/Ho_Chi_Minh); UTC instants remain stored for audit. | The Owner subsequently **confirmed on 2026-11-04**: the source room is charged through the day **before** handover; the **target room owns the handover civil date** and all subsequent days. This is now the global D01 transfer policy for newly executed Phase 2H moves. Any legacy per-request source-day `TransferDayOwner` candidate is non-executable under the new policy unless re-reviewed/re-signed for the target-day choice. Preserve historical signed candidate records; no silent document rewriting. |
 | **D02 / rent rounding** | The Owner accepts actual calendar-days denominator and rounding to whole VND at **0.5 VND upward** for nonnegative charges. | Keep 28/29/30/31-day denominator, separately materialize the old/new room charge period and exact line rounding. No double billed day, no retroactive mutation of an issued invoice. Signed effective choice must still match canonical DayRule audit and its SQL parity. |
 | **D03 / services scoped by room** | **Each room may have a different editable price for each service** (e.g. service 150,000 VND / person / month in room 301, with another price in room 302). | RoomId + ServiceId + billing unit + VND price + effective date/version + authorized editor, with an immutable invoice/contract snapshot. Changes are prospective and independently audited, not retroactive rewriting of issued bills. Per-person count uses the contract's verified occupants during the relevant room period. Electricity/water usage uses real handover readings and that room's effective tariffs. Each non-metered service's full-month vs day-prorated charging rule must be explicit per service; do not invent a universal proration policy just because service prices are per-room. |
 | **D04 / higher new-room deposit** | **Allow completion of the room transfer despite an unpaid positive top-up.** The remaining top-up becomes an explicit receivable with a payment deadline **not later than one calendar month after the effective transfer date**. | One-month limit is a calendar-month rule in local dates, not automatically 30 days. As a deterministic maximum due-date candidate use `transferDate.AddMonths(1)` in the Vietnam civil calendar, with month-end clamping; forbid a later due date. On transfer, distinguish `RequiredDeposit`, `ActualCashBackedHeldDeposit`, and `OutstandingDepositTopUp`. Never manufacture a bank receipt or mark the missing amount as held. Unpaid/overdue top-up is tracked independently of rent and services, with later independently reviewed collection and idempotent posting. Never silently revert an already completed tenant/contract transfer when a due date passes. |
@@ -220,3 +220,42 @@ passed at `e24894f3b830a5640c2e7a5ba1857c0911579c2d`. That PASS is
 historical evidence for the prior restricted implementation, **not
 proof that the newly approved behaviors above are implemented**.
 Production and bank integration remain excluded.
+
+
+## 2026-11-04 — Final Owner confirmation: D01 day ownership is TARGET
+
+**Owner explicitly confirmed** the outstanding proposal: charge
+the source room **through the day before** the signed transfer date;
+charge the new/target room **beginning on the transfer date**.
+
+- The handover date is a **Vietnam civil date** in
+  `Asia/Ho_Chi_Minh`; record real actors/handovers as UTC instants,
+  but do not compare UTC dates to decide which room gets the day.
+- For transfer date **D**, a month with **N** calendar days:
+  source chargeable dates: first of month through **D−1**,
+  `sourceDays = day(D)−1`;
+  target dates: **D** through last day of month,
+  `targetDays = N−sourceDays`.
+  `sourceDays + targetDays = N`; the effective source/target
+  contract start boundaries must not overlap.
+- D02, approved separately, rounds each independently computed
+  nonnegative VND charge using the approved midpoint-up whole-VND
+  rule; do not charge both contracts on D or forge first-month
+  full-rent invoices.
+- Example with 30-day month, transfer on the 15th:
+  source **14 days**, target **16 days**.
+  On 31-day month: source **14**, target **17**.
+  Transfer on day 1: source **0**, target **N**;
+  transfer on last day: source **N−1**, target **1**.
+- The existing `RoomChangeDayPricingRuleCandidate` and its SQL
+  archive may retain past history with a source-day owner as
+  immutable audit evidence. **New completion must reject**
+  a stale/source-day choice and require the previously signed
+  target-day pricing evidence, without silently changing
+  or falsely signing original documents.
+- This is a finalized **business decision**, not proof of code
+  implementation. Update server preflight, authenticated write,
+  SQL deferred commit guard and golden tests together; do not
+  touch production.
+
+**No additional D01 question remains open.**

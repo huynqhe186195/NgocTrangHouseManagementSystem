@@ -19,7 +19,7 @@ public sealed class FullInvoiceMigrationChainPostgreSql_Tests
     private const string OptInVariable = "BM_ALLOW_FULL_MIGRATION_REHEARSAL";
     private const string OptInValue = "CREATE_AND_DROP_FRESH_LOCAL_TEST_DATABASE";
     private const string ExpectedLatestMigration =
-        "20261104210000_Phase2HD03RootPostingAfterIndependentReviews";
+        "20261104220000_Phase2HTypedH4DeferredCommitIntent";
 
     [Fact]
     public async Task PGMIG01_Full_EF_Migrations_Succeed_In_Fresh_Disposable_Database()
@@ -409,6 +409,24 @@ public sealed class FullInvoiceMigrationChainPostgreSql_Tests
                 {
                     Assert.Equal(2L,
                         Convert.ToInt64(await h4LedgerTriggers.ExecuteScalarAsync()));
+                }
+
+                // H4 positive commit must be type-correct at the deferred
+                // PostgreSQL constraint, not only during controller action.
+                await using (var typedH4CommitGuard = new NpgsqlCommand(
+                    """
+                    SELECT pg_get_functiondef(
+                       '"BM_Verify2HMidMonthCommit"()'::regprocedure)
+                    """, verification))
+                {
+                    var definition=(string?)await typedH4CommitGuard.ExecuteScalarAsync();
+                    Assert.NotNull(definition);
+                    Assert.Contains(
+                        "intent \"BuildingManagementRoomChangeDepositDispositionIntents\"%ROWTYPE",
+                        definition!, StringComparison.Ordinal);
+                    Assert.Contains(
+                        "\"BM_2HH4IntentMatchesSignedPolicy\"(intent)",
+                        definition!, StringComparison.Ordinal);
                 }
 
                 // The H4 liability must remain untruncatable even when

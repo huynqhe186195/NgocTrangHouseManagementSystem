@@ -141,6 +141,7 @@ public sealed class RoomChangeMidMonthCompletionPostgreSql_Tests
               """TRUNCATE "BuildingManagementRoomChangeMidMonthCompletions" """,
               "23514");
             await Denied(db,tx,Down,"23514");
+            await Denied(db,tx,AppendFencesDown,"23514");
         });
     }
 
@@ -254,6 +255,43 @@ public sealed class RoomChangeMidMonthCompletionPostgreSql_Tests
                 VALUES ('{Guid.NewGuid():D}',NULL,'{f.Source:D}');
                 SET CONSTRAINTS "TR_BM_2HMid_CashAppend" IMMEDIATE;
                 ""","23514");
+        });
+    }
+
+    [Fact]
+    public async Task TRFMIDPG12_Original_Atomic_Tenant_Roster_Append_Remains_Permitted()
+    {
+        await Scratch(IsolationLevel.Serializable,async(db,tx,f)=>{
+            await Run(db,tx,$"""
+                UPDATE "BuildingManagementRoomChangeTenantRosterSnapshots"
+                   SET "RosterCount"=1 WHERE "Id"='{f.Roster:D}';
+                INSERT INTO "BuildingManagementContractTenants"
+                    ("Id","ContractId","IsDeleted")
+                VALUES ('{Guid.NewGuid():D}','{f.Source:D}',FALSE);
+                """);
+            await Run(db,tx,Completion(f));
+            await Run(db,tx,$"""
+                INSERT INTO "BuildingManagementContractTenants"
+                    ("Id","ContractId","IsDeleted")
+                VALUES ('{Guid.NewGuid():D}','{f.Target:D}',FALSE);
+                SET CONSTRAINTS "TR_BM_2HMid_RosterAppend" IMMEDIATE;
+                """);
+        });
+    }
+
+    [Fact]
+    public async Task TRFMIDPG13_Original_Atomic_Carry_Append_Remains_Permitted()
+    {
+        await Scratch(IsolationLevel.Serializable,async(db,tx,f)=>{
+            var fresh=f with {Carry=Guid.NewGuid()};
+            await Run(db,tx,$"""
+                INSERT INTO "BuildingManagementDepositSettlements"
+                    ("Id","SourceContractId","TargetContractId")
+                VALUES ('{fresh.Carry:D}','{f.Source:D}','{f.Target:D}');
+                """);
+            await Run(db,tx,Completion(fresh));
+            await Run(db,tx,
+                """SET CONSTRAINTS "TR_BM_2HMid_CashAppend" IMMEDIATE""");
         });
     }
 

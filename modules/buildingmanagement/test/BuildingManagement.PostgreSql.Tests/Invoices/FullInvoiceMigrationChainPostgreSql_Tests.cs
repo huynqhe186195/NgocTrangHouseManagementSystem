@@ -411,6 +411,24 @@ public sealed class FullInvoiceMigrationChainPostgreSql_Tests
                         Convert.ToInt64(await h4LedgerTriggers.ExecuteScalarAsync()));
                 }
 
+                // The H4 liability must remain untruncatable even when
+                // there are zero rows. Verify the *executing* PostgreSQL
+                // trigger, not merely its pg_trigger metadata.
+                await using (var h4NoTruncateTx = await verification
+                    .BeginTransactionAsync(System.Data.IsolationLevel.Serializable))
+                {
+                    await using (var sql = new NpgsqlCommand(
+                        """
+                        TRUNCATE "BuildingManagementRoomChangeH4Obligations"
+                        """, verification, h4NoTruncateTx))
+                    {
+                        var denied = await Assert.ThrowsAsync<PostgresException>(
+                            async () => await sql.ExecuteNonQueryAsync());
+                        Assert.Equal("23514", denied.SqlState);
+                    }
+                    await h4NoTruncateTx.RollbackAsync();
+                }
+
                 // A frozen monthly invoice fee must be bound to its ORIGINAL
                 // room/service rate under database enforcement, not a
                 // mutable general pricing reference from a DTO.

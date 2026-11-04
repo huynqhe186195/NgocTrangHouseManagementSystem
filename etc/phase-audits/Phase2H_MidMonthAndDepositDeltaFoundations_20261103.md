@@ -659,3 +659,19 @@ rather than documentary references, H4 independent top-up and
 outgoing bank refund settlement/compensation, disputed/overpaid
 source rent disposition, and end-to-end cross-building concurrency
 under the actual host. Production explicitly excluded.
+
+
+### 2026-11-04 — Deferred-trigger PG fixture correction (TEST PENDING)
+
+The positive `TRFMIDPG13` original-carry case now preserves the unique
+source-to-target carry row initially inserted by the scratch transaction
+instead of deleting it and inserting another. PostgreSQL deferred INSERT
+events can remain queued for the earlier row after a same-transaction
+DELETE, so the previous test fixture could trigger a legitimate
+`23514` from its own stale extra-carry event. The updated positive case
+forces the actual `TR_BM_2HMid_CashAppend` constraint to IMMEDIATE
+after the completion row is present and checks the legitimate original
+cash carry. Test count remains unchanged at **66 focused PostgreSQL**.
+This is a test-fixture correction, not a production SQL gate bypass.
+The test has not been run locally in this environment. It does not
+replace collecting the user's original failing PostgreSQL log.

@@ -6371,6 +6371,14 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 }))
                 Assert.False(categoryArchive.RootElement.GetProperty(
                     "canExecuteTransfer").GetBoolean());
+            // D03 posting is foreign-keyed to the official source
+            // receivable. Post that immutable original receivable first,
+            // then D03; both precede independent bank receipt review.
+            Guid h4Receivable;
+            using (var posted = await Positive2HPostAsync(clientRoot,
+                h4Finance + "/monthly-issued/" + h4Issued.ToString("D") +
+                "/post-receivable", new { }))
+                h4Receivable = posted.RootElement.GetProperty("postingId").GetGuid();
             using (var postedCorrection = await Positive2HPostAsync(
                 clientRoot, h4At + "/post-d03-adjustment",
                 new { adjustmentId = h4Adjustment }))
@@ -6396,11 +6404,6 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 }))
                 h4ReceiptAllocation = money.RootElement.GetProperty(
                     "allocationJournalId").GetGuid();
-            Guid h4Receivable;
-            using (var posted = await Positive2HPostAsync(clientRoot,
-                h4Finance + "/monthly-issued/" + h4Issued.ToString("D") +
-                "/post-receivable", new { }))
-                h4Receivable = posted.RootElement.GetProperty("postingId").GetGuid();
             using (var verifiedReceipt = await Positive2HPostAsync(
                 clientB, h4Finance + "/receivables/" +
                     h4Receivable.ToString("D") + "/allocations/" +

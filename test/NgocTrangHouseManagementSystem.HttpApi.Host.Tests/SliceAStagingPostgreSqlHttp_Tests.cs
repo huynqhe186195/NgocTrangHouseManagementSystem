@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Concurrent;
+using System.IO;
+using System.IO.Compression;
+using System.Xml.Linq;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -1689,6 +1692,91 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 await db.SaveChangesAsync();
                 await uow.CompleteAsync();
             }
+
+            // PHASE 2H OWNER DOCUMENT: genuinely authenticated HTTP against
+            // the same two temporary databases and two independently scoped
+            // buildings. No real tenant PII or external documents are used.
+            string ContractExport(Guid id) =>
+                scopedContracts + "/" + id.ToString("D") + "/export.docx";
+            using (var otherBuilding = await clientB.GetAsync(ContractExport(contractA)))
+                Assert.Equal(HttpStatusCode.Forbidden,otherBuilding.StatusCode);
+            // An operator with active Contracts.Read in Building B is NOT
+            // BootstrapOwner. Even their OWN building export must be denied.
+            using (var staffOnly = await clientB.GetAsync(ContractExport(contractB)))
+                Assert.Equal(HttpStatusCode.Forbidden,staffOnly.StatusCode);
+            using (var unauthenticated = app.GetTestClient())
+            using (var anonymousExport = await unauthenticated.GetAsync(
+                ContractExport(contractA)))
+                Assert.Equal(HttpStatusCode.Unauthorized,anonymousExport.StatusCode);
+
+            async Task VerifyOriginalOwnerDocxAsync(
+                Guid originalContract, string expectedTenant, string excludedTenant,
+                string expectedRoom)
+            {
+                using var response = await clientRoot.GetAsync(ContractExport(originalContract));
+                var statusBody = response.StatusCode is HttpStatusCode.OK
+                    ? string.Empty : await response.Content.ReadAsStringAsync();
+                Assert.True(response.StatusCode == HttpStatusCode.OK,
+                    $"Original scoped Owner DOCX: {response.StatusCode} {statusBody}. "+
+                    $"Test-server diagnostics: {serverErrors.Describe()}");
+                Assert.Equal(
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    response.Content.Headers.ContentType?.MediaType);
+                Assert.True(response.Headers.TryGetValues("Cache-Control",out var cache) &&
+                    cache.Any(x=>x.Contains("no-store",StringComparison.OrdinalIgnoreCase)));
+                Assert.True(response.Headers.TryGetValues("X-Content-Type-Options",
+                    out var sniff) && sniff.Contains("nosniff"));
+                var bytes = await response.Content.ReadAsByteArrayAsync();
+                Assert.True(bytes.Length > 100 && bytes[0] == 'P' && bytes[1] == 'K');
+                using var archive = new ZipArchive(new MemoryStream(bytes),ZipArchiveMode.Read);
+                var docEntry = Assert.Single(archive.Entries,
+                    entry=>entry.FullName=="word/document.xml");
+                using var docReader=new StreamReader(docEntry.Open());
+                var xml = XDocument.Parse(await docReader.ReadToEndAsync());
+                XNamespace ns =
+                    "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+                var body = string.Join(" ",
+                    xml.Descendants(ns+"t").Select(element=>element.Value));
+                Assert.Contains(expectedTenant,body);
+                Assert.Contains(expectedRoom,body);
+                Assert.DoesNotContain(excludedTenant,body);
+                Assert.Contains("CHƯA PHẢI HỢP ĐỒNG ĐÃ KÝ",body);
+                Assert.DoesNotContain("CID-A-",body);
+                Assert.DoesNotContain("CID-B-",body);
+            }
+
+            await VerifyOriginalOwnerDocxAsync(contractA,
+                "Tenant A scratch","Tenant B scratch","101");
+            await VerifyOriginalOwnerDocxAsync(contractB,
+                "Tenant B scratch","Tenant A scratch","101");
+
+            // LIVE BootstrapOwner revocation must block even the root's
+            // earlier authorized read. The app must not trust role claims
+            // or a cached root response/document for a changed grant.
+            using (var revokeScope = app.Services.CreateScope())
+            {
+                using var revokeUow = revokeScope.ServiceProvider
+                    .GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew:true,isTransactional:true);
+                await revokeScope.ServiceProvider.GetRequiredService<IPermissionManager>()
+                    .SetForUserAsync(root,
+                        BuildingManagementPermissions.Buildings.BootstrapOwner,false);
+                await revokeUow.CompleteAsync();
+            }
+            using (var revokedRoot = await clientRoot.GetAsync(ContractExport(contractA)))
+                Assert.Equal(HttpStatusCode.Forbidden,revokedRoot.StatusCode);
+            using (var restoreScope = app.Services.CreateScope())
+            {
+                using var restoreUow = restoreScope.ServiceProvider
+                    .GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew:true,isTransactional:true);
+                await restoreScope.ServiceProvider.GetRequiredService<IPermissionManager>()
+                    .SetForUserAsync(root,
+                        BuildingManagementPermissions.Buildings.BootstrapOwner,true);
+                await restoreUow.CompleteAsync();
+            }
+            await VerifyOriginalOwnerDocxAsync(contractA,
+                "Tenant A scratch","Tenant B scratch","101");
 
             // COMPLETE STAGING FINANCIAL HTTP FLOW:
             // scoped month-end draft -> prepared immutable evidence ->

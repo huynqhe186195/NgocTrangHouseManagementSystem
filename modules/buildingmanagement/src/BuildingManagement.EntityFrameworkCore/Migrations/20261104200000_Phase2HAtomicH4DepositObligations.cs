@@ -199,7 +199,7 @@ public sealed class Phase2HAtomicH4DepositObligations : Migration
           ,'UTF8')),'hex');
         $sha$;
 
-CREATE OR REPLACE FUNCTION "BM_Verify2HMidMonthCommit"()
+        CREATE OR REPLACE FUNCTION "BM_Verify2HMidMonthCommit"()
         RETURNS trigger LANGUAGE plpgsql AS $mid$
         DECLARE req record; intent record; obligation record; p record; rv record; roster record; handover record;
                 source record; target record; carry record; day_rule record;
@@ -653,7 +653,7 @@ CREATE OR REPLACE FUNCTION "BM_Verify2HMidMonthCommit"()
         DROP FUNCTION "BM_2HGuardH4Obligation"();
         DROP FUNCTION "BM_2HNoTruncateH4Obligation"();
 
-CREATE OR REPLACE FUNCTION "BM_Verify2HMidMonthCommit"()
+        CREATE OR REPLACE FUNCTION "BM_Verify2HMidMonthCommit"()
         RETURNS trigger LANGUAGE plpgsql AS $mid$
         DECLARE req record; p record; rv record; roster record; handover record;
                 source record; target record; carry record; day_rule record;

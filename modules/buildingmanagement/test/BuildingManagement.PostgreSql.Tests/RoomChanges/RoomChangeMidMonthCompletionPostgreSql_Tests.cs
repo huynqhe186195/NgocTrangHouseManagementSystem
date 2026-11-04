@@ -29,6 +29,12 @@ public sealed class RoomChangeMidMonthCompletionPostgreSql_Tests
     private static readonly string AppendFencesDown=Assert.Single(
         new Phase2HMidMonthPostCommitAppendFences().DownOperations
             .OfType<SqlOperation>()).Sql;
+    private static readonly string ApprovedDayUp=Assert.Single(
+        new Phase2HApprovedTargetDayCommitFence().UpOperations
+            .OfType<SqlOperation>()).Sql;
+    private static readonly string ApprovedDayDown=Assert.Single(
+        new Phase2HApprovedTargetDayCommitFence().DownOperations
+            .OfType<SqlOperation>()).Sql;
     private const string Sha=
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
@@ -54,7 +60,12 @@ public sealed class RoomChangeMidMonthCompletionPostgreSql_Tests
         CREATE TABLE "BuildingManagementRoomChangeEvidenceArchives"(
           "Id" uuid PRIMARY KEY);
         CREATE TABLE "BuildingManagementRoomChangeDayPricingRuleCandidates"(
-          "Id" uuid PRIMARY KEY);
+          "Id" uuid PRIMARY KEY,
+          "RequestId" uuid,"TransferDate" date,
+          "TransferDayOwner" integer,"Rounding" integer,
+          "CalendarDays" integer,"SourceChargeableDays" integer,
+          "TargetChargeableDays" integer,
+          "ProposedTargetRentVnd" numeric(18,0));
         CREATE TABLE "BuildingManagementMonthlyIssuedInvoiceLedger"(
           "Id" uuid PRIMARY KEY);
         CREATE TABLE "BuildingManagementOfficialInvoiceReceivables"(
@@ -148,6 +159,7 @@ public sealed class RoomChangeMidMonthCompletionPostgreSql_Tests
               "23514");
             await Denied(db,tx,Down,"23514");
             await Denied(db,tx,AppendFencesDown,"23514");
+            await Denied(db,tx,ApprovedDayDown,"23514");
         });
     }
 
@@ -194,6 +206,7 @@ public sealed class RoomChangeMidMonthCompletionPostgreSql_Tests
     public async Task TRFMIDPG07_Empty_Migration_Rollback_Is_Safe()
     {
         await Scratch(IsolationLevel.Serializable,async(db,tx,f)=>{
+            await Run(db,tx,ApprovedDayDown);
             await Run(db,tx,AppendFencesDown);
             await Run(db,tx,Down);
         });
@@ -316,6 +329,45 @@ public sealed class RoomChangeMidMonthCompletionPostgreSql_Tests
         });
     }
 
+    [Fact]
+    public async Task TRFMIDPG15_Commit_Fence_Rejects_SourceDay_But_Accepts_TargetDay()
+    {
+        async Task Verify(int dayOwner,int sourceDays,int targetDays,
+            bool shouldDeny)
+        {
+            await Scratch(IsolationLevel.Serializable,async(db,tx,f)=>
+            {
+                // These minimal stubs isolate the ADDITIVE D01 fence.
+                // Every older financial completion gate remains deferred;
+                // no positive money/contract transfer is claimed here.
+                await Run(db,tx,$"""
+                    UPDATE "BuildingManagementRoomChangeDayPricingRuleCandidates"
+                       SET "RequestId"='{f.Req:D}',
+                           "TransferDate"='2026-10-15',
+                           "TransferDayOwner"={dayOwner},
+                           "Rounding"=1,
+                           "CalendarDays"=31,
+                           "SourceChargeableDays"={sourceDays},
+                           "TargetChargeableDays"={targetDays},
+                           "ProposedTargetRentVnd"=1500000
+                     WHERE "Id"='{f.Rule:D}';
+                    """);
+                await Run(db,tx,Completion(f));
+                const string flush =
+                    """SET CONSTRAINTS "TR_BM_2H_ApprovedTargetDay_Commit" IMMEDIATE""";
+                if (shouldDeny)
+                    await Denied(db,tx,flush,"23514");
+                else
+                    await Run(db,tx,flush);
+            });
+        }
+
+        await Verify(dayOwner:1,sourceDays:15,targetDays:16,
+            shouldDeny:true);
+        await Verify(dayOwner:2,sourceDays:14,targetDays:17,
+            shouldDeny:false);
+    }
+
     private static async Task Scratch(IsolationLevel isolation,
         Func<NpgsqlConnection,NpgsqlTransaction,F,Task> work)
     {
@@ -334,6 +386,7 @@ public sealed class RoomChangeMidMonthCompletionPostgreSql_Tests
                 await Run(db,tx,Stub);
                 await Run(db,tx,Up);
                 await Run(db,tx,AppendFencesUp);
+                await Run(db,tx,ApprovedDayUp);
                 var f=new F(Guid.NewGuid(),Guid.NewGuid(),Guid.NewGuid(),
                     Guid.NewGuid(),Guid.NewGuid(),Guid.NewGuid(),
                     Guid.NewGuid(),Guid.NewGuid(),Guid.NewGuid(),

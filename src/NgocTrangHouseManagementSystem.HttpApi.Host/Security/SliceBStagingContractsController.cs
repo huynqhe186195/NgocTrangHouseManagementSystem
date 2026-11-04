@@ -72,6 +72,11 @@ public sealed class SliceBStagingContractsController : ControllerBase
         RequireIsolatedStaging();
         var file=await (_query ?? throw Denied())
             .ExportOwnerDocumentDocxAsync(id);
+        // Contract names and financial terms are private. Never let a
+        // browser/shared proxy cache this cross-account document.
+        Response.Headers.CacheControl = "no-store, private";
+        Response.Headers.Pragma = "no-cache";
+        Response.Headers["X-Content-Type-Options"] = "nosniff";
         return File(file,
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             $"hop-dong-{id:N}.docx");

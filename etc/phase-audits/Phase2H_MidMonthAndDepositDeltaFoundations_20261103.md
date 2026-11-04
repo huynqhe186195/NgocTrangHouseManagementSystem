@@ -969,3 +969,59 @@ bank-completed external refunds, versioned room-service persistence,
 Owner-facing contract export, cross-building end-to-end revocation
 and race behavior, or full Phase 2H BUSINESS ACCEPTED. No production
 deployment or migration on the application DB.
+
+
+## 2026-11-04 — Persistent room-specific service tariff version foundation (NEW CODE, RUNTIME PENDING)
+
+After the OWNER-VERIFIED five-group PASS at exact earlier code SHA
+`01fcd141f7a7c268ec90d855130adf098f5c79e4`,
+the next source batch adds **actual EF mapping and append-only
+PostgreSQL persistence** for the previously Domain-only
+`RoomScopedServiceTariffVersion`.
+
+- `BuildingManagementDbContext.RoomScopedServiceTariffVersions` and
+  `RoomScopedServiceTariffVersionConfiguration` map an independent
+  RoomId × ServiceId versioned tariff, dates, unit, charging rule,
+  Owner actor/time reference and snapshot fingerprint.
+- New **additive** EF migration
+  `20261104140000_Phase2HRoomScopedServiceTariffVersions`
+  creates a room-FK-protected table with unique
+  (RoomId,ServiceId,Version), unique effective-start key, approved
+  VND/unit constraints and three triggers. The INSERT trigger
+  locks the original live room row to serialize competing writers,
+  enforces strictly successive versions and future-only effective
+  dates, and prevents overlapping explicitly bounded periods.
+  UPDATE/DELETE/TRUNCATE of historical pricing is forbidden;
+  downgrade is denied after any actual approved tariff row exists.
+- An unlimited historical version can be superseded by an appended
+  strictly newer version; the old row is NOT rewritten.
+  `SelectEffectiveForDate` picks the latest effective source
+  price within the specific RoomId × ServiceId and fails closed for
+  missing/tampered or ambiguously duplicated history. The future
+  invoice writer must snapshot the exact selected tariff ID/price/SHA
+  and authoritative occupancy/meter evidence; this behavior
+  **is not yet integrated into actual issued invoices**.
+- Tariff document timestamps are normalized to PostgreSQL
+  microseconds **before** fingerprint calculation.
+- New focused cases `TRF_SVC11..14` cover supersession, room
+  scope, tamper/missing rate and microsecond SHA.
+  Real-PG scratch-schema cases `TRFSVCPG01..09` exercise
+  independent room prices, append-only edits, duplicate/missing/
+  retroactive/invalid writes, retention on downgrade, and
+  simultaneous writer locking. Full migration rehearsal now
+  requires the new EF migration as latest.
+- The one-shot Phase 2H verifier checks **141 focused Domain** and
+  **76 targeted PostgreSQL** cases plus the unchanged
+  disposable fresh migration, authenticated PostgreSQL HTTP and full
+  regression bundles.
+
+**Verification boundary:** Source files have been statically
+reviewed for imports, namespaces, braces, raw C# SQL literals
+and test filter/count wiring. **No .NET compilation or PostgreSQL
+execution of these new code commits has happened here.** The
+exact earlier 5/5 PASS does NOT cover the newly added persistence.
+There is still **no authorized Owner service-price edit endpoint**,
+actual invoice line binder, H4 top-up/deferred deposit posting,
+H4 rent credit/outbound refund writer, or Owner exported new-contract
+file. These are future code gates before complete Phase 2H
+BUSINESS ACCEPTED. Production remains entirely excluded.

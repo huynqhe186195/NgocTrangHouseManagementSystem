@@ -254,6 +254,23 @@ public sealed class Phase2HRoomServiceInvoiceSourceBindings : Migration
           IF review_kind=1 THEN
              RETURN required_count=0 AND bound_count=0 AND source."AuxiliaryAmount"=0;
           END IF;
+          -- A later Owner edit can supersede the tariff AFTER the original
+          -- binding was frozen. Reject stale/overlapping source versions at
+          -- issuance readiness too, not only at the binding INSERT.
+          IF EXISTS (
+             SELECT 1
+               FROM "BuildingManagementRoomServiceInvoiceSourceBindings" binding
+               JOIN "BuildingManagementRoomScopedServiceTariffVersions" tariff
+                 ON tariff."Id"=binding."OriginalTariffVersionId"
+              WHERE binding."MonthlyCandidateId"=p_candidate
+                AND EXISTS (
+                 SELECT 1 FROM "BuildingManagementRoomScopedServiceTariffVersions" newer
+                  WHERE newer."RoomId"=tariff."RoomId"
+                    AND newer."ServiceId"=tariff."ServiceId"
+                    AND newer."Version">tariff."Version"
+                    AND newer."EffectiveFrom"<=binding."ServiceThroughVietnam"
+                )
+          ) THEN RETURN FALSE; END IF;
           RETURN review_kind=2 AND required_count>0
              AND required_count=bound_count
              AND bound_total=source."AuxiliaryAmount";

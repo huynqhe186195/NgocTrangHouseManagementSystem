@@ -6428,6 +6428,31 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                         "SIGNED-H4-WRONG-RENT-REPLAY-2026"
                 }));
             Assert.Equal(HttpStatusCode.Forbidden, wrongH4Amount.Status);
+            // Fail-closed rollback must preserve original deposit, contract
+            // and room state even after all approved source receipts exist.
+            using (var deniedScope = app.Services.CreateScope())
+            {
+                using var deniedUow = deniedScope.ServiceProvider
+                    .GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var deniedDb = await deniedScope.ServiceProvider
+                    .GetRequiredService<IDbContextProvider<BuildingManagementDbContext>>()
+                    .GetDbContextAsync();
+                Assert.Equal(BuildingManagement.Contracts.ContractStatus.Active,
+                    (await deniedDb.Contracts.SingleAsync(x =>
+                        x.Id == h4SourceContract)).Status);
+                Assert.Equal(BuildingManagement.Rooms.RoomStatus.Occupied,
+                    (await deniedDb.Rooms.SingleAsync(x =>
+                        x.Id == h4SourceRoom)).Status);
+                Assert.Equal(BuildingManagement.Rooms.RoomStatus.Available,
+                    (await deniedDb.Rooms.SingleAsync(x =>
+                        x.Id == h4TargetRoom)).Status);
+                Assert.Equal(0, await deniedDb.RoomChangeMidMonthCompletions
+                    .CountAsync(x => x.RequestId == h4Request));
+                Assert.Equal(0, await deniedDb.DepositSettlements
+                    .CountAsync(x => x.SourceContractId == h4SourceContract));
+                await deniedUow.CompleteAsync();
+            }
 
             // Serializable competition: exactly one H4 contract/obligation
             // transaction can win; the other must fail closed.
@@ -6520,6 +6545,12 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 Assert.Equal(h4SignedDelta, complete.SourceSignedAdjustmentVnd);
                 Assert.Equal(h4FinalDue, complete.SourceReviewedReceiptsVnd);
                 Assert.Equal(1_000_000m, complete.H4UnpaidTopUpVnd);
+                // The H4 top-up is a DEBT, not a completed source/target
+                // deposit receipt. Never auto-mint a bank transaction.
+                Assert.Equal(0, await db.Payments.AsNoTracking()
+                    .CountAsync(x => x.ContractId == h4TargetContract &&
+                        x.Purpose == BuildingManagement.Payments.PaymentPurpose.ContractDeposit &&
+                        x.Status == BuildingManagement.Payments.PaymentStatus.Completed));
                 Assert.Equal(0m, complete.H4NextMonthRentCreditVnd);
                 Assert.Equal(0m, complete.H4ManualRefundLiabilityVnd);
                 Assert.Equal(BuildingManagement.Rooms.RoomStatus.Available,

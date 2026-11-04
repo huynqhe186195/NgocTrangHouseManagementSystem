@@ -1397,3 +1397,53 @@ mid-month completion, and issued-invoice source gates. No production.
 
 This document is a *Word data extract*, not a juridically complete
 or signed rental contract, nor a verified exported PDF.
+
+ 
+## 2026-11-04 — Investigate genuine authenticated PG HTTP failure at Owner dispute resolution
+
+The operator ran the five-group gate after introducing the Owner
+DOCX export and submitted the actual `18-2h-auth-http.log`.
+The first three groups (160 focused Domain, 92 real PostgreSQL,
+fresh full migration rehearsal) reached the next stage; the
+**one real authenticated two-database HTTP fixture failed**:
+`STAGEPGHTTP01_Root_Bootstrap_Real_Permissions_And_Two_Building_Revocation`
+at `SliceAStagingPostgreSqlHttp_Tests.cs:3540`,
+specifically the Root Owner's
+`/deposit-settlement/debt-disputes/{disputeId}/resolve`
+endpoint. HTTP returned generic **500 InternalServerError** after
+staff resolution had correctly been blocked. The output contained
+no underlying SQLSTATE or application exception; it is **not proof**
+that the recent DOCX endpoint caused the failure. There was no
+compile failure and subsequent full regression did not run.
+
+**Reviewed plausible, source-grounded defect:** original
+`ResolveDepositDebtDisputeAsync` and
+`OpenDepositDebtDisputeAsync` submitted
+`DateTime.UtcNow` from the Windows .NET host as the signed event
+timestamp, while the existing immutable PostgreSQL trigger
+`BM_GuardSignedDebtDisputes` rejects an event when that value is
+greater than PostgreSQL `clock_timestamp()`. Docker/host clock
+skew can therefore cause a valid independent Owner resolution
+to return a database error (later wrapped to HTTP 500). The
+generic user log **does not confirm** this specific SQL error.
+
+**Targeted correction, no security relaxation:** both opening
+and resolving signed dispute events now use the literal
+PostgreSQL `clock_timestamp()` in their INSERT, not an
+application-supplied `@at`; every existing owner permission,
+original contract and move-out lock, SERIALIZABLE UoW, unique
+dispute resolution and immutable audit trigger remain intact.
+The existing authenticated PG fixture includes a positive
+post-commit assertion that resolved timestamps originate from
+the same DB time basis and are later than the original opening.
+
+**Improved diagnostics:** the fixture alone installs a transient
+error-collector `ILoggerProvider`. On the exact Owner resolution
+assertion failure it reports at most eight recent log error types
+and PostgreSQL SQLSTATE / constraint names, without altering
+the ABP public error response or production. No test was removed,
+skipped, downgraded or permitted to change real money.
+
+**Status:** these fixes are **source-committed but runtime NOT
+REVERIFIED**; the new exact SHA must pass all five groups locally
+before technical acceptance. There is still no production.

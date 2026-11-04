@@ -116,7 +116,7 @@ try {
     Write-Host '== 2/5: Phase 2H PostgreSQL concurrency and atomic transfer =='
     $pgExit = Invoke-DotNetTestLogged $pg 'FullyQualifiedName~RoomChangeRequestsPostgreSql_Tests|FullyQualifiedName~RoomChangeTenantRosterPostgreSql_Tests|FullyQualifiedName~RoomChangeSourceDispositionPostgreSql_Tests|FullyQualifiedName~RoomChangeHandoverDigestPostgreSql_Tests|FullyQualifiedName~RoomChangeDayPricingRulePostgreSql_Tests|FullyQualifiedName~RoomChangeEvidenceArchivePostgreSql_Tests|FullyQualifiedName~RoomChangeMidMonthFinancialPostingPostgreSql_Tests|FullyQualifiedName~RoomChangeMidMonthCompletionPostgreSql_Tests|FullyQualifiedName~RoomScopedServiceTariffPostgreSql_Tests|FullyQualifiedName~RoomServiceInvoiceSourceBindingsPostgreSql_Tests|FullyQualifiedName~RoomChangeDepositDispositionIntentPostgreSql_Tests' 'console;verbosity=normal' '16-2h-postgresql.log'
     if ($pgExit -ne 0) { Throw-WithTestLog '2H PostgreSQL suite FAILED.' '16-2h-postgresql.log' }
-    Assert-LoggedTestCount '16-2h-postgresql.log' 96
+    Assert-LoggedTestCount '16-2h-postgresql.log' 98
 
     Write-Host '== 3/5: Fresh disposable PostgreSQL migration chain =='
     $env:BM_ALLOW_FULL_MIGRATION_REHEARSAL = 'CREATE_AND_DROP_FRESH_LOCAL_TEST_DATABASE'

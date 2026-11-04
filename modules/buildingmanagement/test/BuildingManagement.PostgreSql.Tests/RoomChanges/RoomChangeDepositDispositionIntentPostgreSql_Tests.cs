@@ -31,6 +31,12 @@ public sealed class RoomChangeDepositDispositionIntentPostgreSql_Tests
     private static readonly string DigestDown = Assert.Single(
         new Phase2HDepositDispositionIntentDigestIntegrity().DownOperations
             .OfType<SqlOperation>()).Sql;
+    private static readonly string ExclusiveUp = Assert.Single(
+        new Phase2HDepositDispositionSourceExclusivity().UpOperations
+            .OfType<SqlOperation>()).Sql;
+    private static readonly string ExclusiveDown = Assert.Single(
+        new Phase2HDepositDispositionSourceExclusivity().DownOperations
+            .OfType<SqlOperation>()).Sql;
     private const string Stubs = """
         CREATE TABLE "BuildingManagementContracts" ("Id" uuid PRIMARY KEY);
         CREATE TABLE "BuildingManagementRoomChangeRequests" (
@@ -330,6 +336,66 @@ public sealed class RoomChangeDepositDispositionIntentPostgreSql_Tests
             var f=await Seed(db,tx);
             await Run(db,tx,OriginalIntentSql(f,CanonicalIntent(f)));
             await Denied(db,tx,DigestDown,"23514");
+        });
+    }
+
+    [Fact]
+    public async Task TRFH4PG11_One_Source_Cannot_Be_Signed_Again_For_Another_Request()
+    {
+        await Scratch(async(db,tx)=>
+        {
+            await Run(db,tx,DigestUp);
+            await Run(db,tx,ExclusiveUp);
+            var first=await Seed(db,tx);
+            await Run(db,tx,OriginalIntentSql(first,CanonicalIntent(first)));
+
+            // Independent request IDs, exactly the SAME deposit source.
+            // This must fail even though the first request GUID differs.
+            var replay=new Fixture(Guid.NewGuid(),first.Source,
+                Guid.NewGuid(),first.Building);
+            await Run(db,tx,$"""
+                INSERT INTO "BuildingManagementRoomChangeRequests"
+                 ("Id","SourceContractId","BuildingId","RequestedDate","Status")
+                VALUES('{replay.Request:D}','{replay.Source:D}',
+                       '{replay.Building:D}','2026-11-15',0)
+                """);
+            await Denied(db,tx,
+                OriginalIntentSql(replay,CanonicalIntent(replay)),"23505");
+            Assert.Equal(1L,await Scalar(db,tx,
+                """
+                SELECT count(*) FROM "BuildingManagementRoomChangeDepositDispositionIntents"
+                """));
+        });
+    }
+
+    [Fact]
+    public async Task TRFH4PG12_Duplicated_History_And_Retained_Original_Block_Unsafe_Migration()
+    {
+        await Scratch(async(db,tx)=>
+        {
+            var first=await Seed(db,tx);
+            var duplicate=new Fixture(Guid.NewGuid(),first.Source,
+                Guid.NewGuid(),first.Building);
+            await Run(db,tx,$"""
+                INSERT INTO "BuildingManagementRoomChangeRequests"
+                 ("Id","SourceContractId","BuildingId","RequestedDate","Status")
+                VALUES('{duplicate.Request:D}','{first.Source:D}',
+                       '{first.Building:D}','2026-11-15',0)
+                """);
+            // Pre-digest legacy history: old schema admitted this.
+            await Run(db,tx,Intent(first));
+            await Run(db,tx,Intent(duplicate));
+            await Denied(db,tx,ExclusiveUp,"23514");
+        });
+        await Scratch(async(db,tx)=>
+        {
+            await Run(db,tx,DigestUp);
+            await Run(db,tx,ExclusiveUp);
+            await Run(db,tx,ExclusiveDown);
+            await Run(db,tx,ExclusiveUp);
+            var first=await Seed(db,tx);
+            await Run(db,tx,OriginalIntentSql(first,CanonicalIntent(first)));
+            await Denied(db,tx,ExclusiveDown,"23514");
         });
     }
 

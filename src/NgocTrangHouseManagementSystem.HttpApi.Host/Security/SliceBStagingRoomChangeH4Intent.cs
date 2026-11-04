@@ -65,6 +65,8 @@ public sealed partial class SliceBStagingRoomChangeRequests
                 request.RequestedDate.Day >= DateTime.DaysInMonth(
                     request.RequestedDate.Year, request.RequestedDate.Month) ||
                 await db.RoomChangeDepositDispositionIntents.AsNoTracking()
+                    .AnyAsync(x => x.SourceContractId == contractId) ||
+                await db.RoomChangeDepositDispositionIntents.AsNoTracking()
                     .AnyAsync(x => x.RequestId == request.Id) ||
                 await db.RoomChangeCompletions.AsNoTracking()
                     .AnyAsync(x => x.RequestId == request.Id) ||

@@ -19,7 +19,7 @@ public sealed class FullInvoiceMigrationChainPostgreSql_Tests
     private const string OptInVariable = "BM_ALLOW_FULL_MIGRATION_REHEARSAL";
     private const string OptInValue = "CREATE_AND_DROP_FRESH_LOCAL_TEST_DATABASE";
     private const string ExpectedLatestMigration =
-        "20261104170000_Phase2HDepositDispositionIntentDigestIntegrity";
+        "20261104180000_Phase2HDepositDispositionSourceExclusivity";
 
     [Fact]
     public async Task PGMIG01_Full_EF_Migrations_Succeed_In_Fresh_Disposable_Database()
@@ -353,6 +353,20 @@ public sealed class FullInvoiceMigrationChainPostgreSql_Tests
                 {
                     Assert.Equal(1L,
                         Convert.ToInt64(await h4CanonicalDigest.ExecuteScalarAsync()));
+                }
+
+                // H4 must not permit multiple signed deposit intents for the
+                // same source cash under distinct room-change request IDs.
+                await using (var h4SourceExclusivity = new NpgsqlCommand(
+                    """
+                    SELECT count(*) FROM pg_indexes
+                     WHERE schemaname = current_schema()
+                       AND tablename = 'BuildingManagementRoomChangeDepositDispositionIntents'
+                       AND indexname = 'UX_BM_H4Intent_SourceContract'
+                    """, verification))
+                {
+                    Assert.Equal(1L,
+                        Convert.ToInt64(await h4SourceExclusivity.ExecuteScalarAsync()));
                 }
 
                 // A frozen monthly invoice fee must be bound to its ORIGINAL

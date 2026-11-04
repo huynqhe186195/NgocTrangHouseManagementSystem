@@ -35,7 +35,7 @@ public sealed class Phase2HRoomServiceInvoiceSourceBindings : Migration
           "ServiceFromVietnam" date NOT NULL,
           "ServiceThroughVietnam" date NOT NULL,
           "VerifiedOccupantCount" integer NOT NULL,
-          "VerifiedMeterQuantity" numeric NOT NULL DEFAULT 0,
+          "VerifiedMeterQuantity" numeric NULL,
           "VerifiedChargeSourceReference" varchar(500) NOT NULL,
           "FrozenAuxiliaryLineAmountVnd" numeric(18,0) NOT NULL,
           "OriginalMonthlyCandidateSha256" varchar(64) NOT NULL,

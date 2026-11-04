@@ -933,3 +933,39 @@ historical foundation evidence only.
   cross-building/revocation/race test on real disposable PG,
   genuine D06 signed-attachment origin review and Owner-scoped
   exported new-contract file. No production.
+
+
+## 2026-11-04 — OWNER-VERIFIED five-group local gate for D01/H4/service *foundation*
+
+The operator furnished the following terminal output for exact code SHA
+`01fcd141f7a7c268ec90d855130adf098f5c79e4`:
+
+```text
+Passed! - Failed: 0, Passed: 68, Skipped: 0, Total: 68
+=== QUALITY GATE PASS: ALL REQUESTED TEST RUNS SUCCEEDED ===
+NO DATABASE MIGRATION, NO POSTGRESQL TEST (COMPILE ONLY), NO LIVE APPLICATION STARTED.
+Source-only checks are NOT proof of authenticated cross-building CRUD security.
+=== PHASE 2H FINANCIAL FOUNDATIONS: ALL FIVE GROUPS PASSED ===
+COMMIT=01fcd141f7a7c268ec90d855130adf098f5c79e4
+Restricted same-rent/same-deposit mid-month lane requires positive authenticated execution acceptance; H4 top-up/refund and production remain HOLD.
+```
+
+As defined by the exact code SHA's verifier: **137 focused Domain**,
+**67 focused real PostgreSQL**, **disposable fresh complete migration chain**,
+**isolated authenticated PostgreSQL HTTP fixture** and **full regression** passed.
+The final HTTP host test assembly reported 68/68. The full subordinate
+raw logs were not supplied here for independent inspection; the verified
+top-level five-group gate is operator-reported. The quoted
+`NO DATABASE MIGRATION...` line belongs to the nested full-regression
+quality gate and **does not negate** the separate PostgreSQL and scratch
+migration steps in the Phase 2H wrapper. The untracked audit SQL file
+`etc/phase-audits/Phase2G3A7_RevisionLedger_Generated_Review.sql`
+was left untouched.
+
+**Acceptance:** Phase 2H Financial Foundations as of the exact code
+SHA above: **LOCAL TECHNICAL GATE PASS**. This does NOT establish
+positive authenticated execution of the broader H4 mid-month variants,
+bank-completed external refunds, versioned room-service persistence,
+Owner-facing contract export, cross-building end-to-end revocation
+and race behavior, or full Phase 2H BUSINESS ACCEPTED. No production
+deployment or migration on the application DB.

@@ -270,8 +270,10 @@ public sealed class RoomChangeDepositDispositionIntentPostgreSql_Tests
             await Run(db,tx,OriginalIntentSql(f,original));
             Assert.Equal(original.EvidenceSha256,
                 await TextScalar(db,tx,
-                    """SELECT "BM_CalculateRoomChangeDepositDispositionSha"(i)
-                       FROM "BuildingManagementRoomChangeDepositDispositionIntents" i"""));
+                    """
+                    SELECT "BM_CalculateRoomChangeDepositDispositionSha"(i)
+                      FROM "BuildingManagementRoomChangeDepositDispositionIntents" i
+                    """));
         });
     }
 

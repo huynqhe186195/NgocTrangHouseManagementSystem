@@ -74,7 +74,7 @@ public sealed class RoomServiceInvoiceSourceBindingsPostgreSql_Tests
         };
         var json = JsonSerializer.Serialize(new {
             AuxiliaryFeeDecision=feeDecision,
-            AuxiliaryCharges=feeDecision==2 ? new[] {fee} : Array.Empty<object>()
+            AuxiliaryCharges=feeDecision==2 ? new object[] {fee} : Array.Empty<object>()
         }).Replace("'", "''", StringComparison.Ordinal);
         await Run(db,tx,$"""
             INSERT INTO "BuildingManagementMonthlyInvoiceCandidates"
@@ -273,6 +273,28 @@ public sealed class RoomServiceInvoiceSourceBindingsPostgreSql_Tests
                  WHERE relname='BuildingManagementRoomServiceInvoiceSourceBindings'
                    AND relnamespace=current_schema()::regnamespace
                 """));
+        });
+    }
+
+    [Fact]
+    public async Task TRFBINDPG10_Successful_Binding_Becomes_Unready_If_Price_Superseded()
+    {
+        await Scratch(async (db,tx) =>
+        {
+            var f=await Seed(db,tx);
+            await Run(db,tx,Bind(f));
+            Assert.True(await Ready(db,tx,f.Candidate));
+            await Run(db,tx,$"""
+                INSERT INTO "BuildingManagementRoomScopedServiceTariffVersions"
+                 ("Id","RoomId","ServiceId","Version","EvidenceSha256",
+                  "UnitPriceVnd","BillingUnit","ChargingRule",
+                  "EffectiveFrom","EffectiveThrough","ApprovedAtUtc",
+                  "SignedPolicyReference")
+                VALUES('{Guid.NewGuid():D}','{f.Room:D}','{f.Service:D}',2,
+                  '{TariffHash}',200000,1,2,'2026-11-15',NULL,
+                  '2026-11-04T08:00:00Z','{SignedReference}')
+                """);
+            Assert.False(await Ready(db,tx,f.Candidate));
         });
     }
 

@@ -283,19 +283,10 @@ public sealed class RoomChangeMidMonthCompletionPostgreSql_Tests
     public async Task TRFMIDPG13_Original_Atomic_Carry_Append_Remains_Permitted()
     {
         await Scratch(IsolationLevel.Serializable,async(db,tx,f)=>{
-            var fresh=f with {Carry=Guid.NewGuid()};
-            // Replace the original stub carry so exactly ONE original leg
-            // exists when the deferred append fence is explicitly checked.
-            await Run(db,tx,$"""
-                DELETE FROM "BuildingManagementDepositSettlements"
-                 WHERE "Id"='{f.Carry:D}';
-                """);
-            await Run(db,tx,$"""
-                INSERT INTO "BuildingManagementDepositSettlements"
-                    ("Id","SourceContractId","TargetContractId")
-                VALUES ('{fresh.Carry:D}','{f.Source:D}','{f.Target:D}');
-                """);
-            await Run(db,tx,Completion(fresh));
+            // Scratch inserted exactly one original carry earlier in this
+            // transaction. Preserve it: deleting and replacing it here would
+            // leave an earlier deferred INSERT trigger event in the queue.
+            await Run(db,tx,Completion(f));
             await Run(db,tx,
                 """SET CONSTRAINTS "TR_BM_2HMid_CashAppend" IMMEDIATE""");
         });

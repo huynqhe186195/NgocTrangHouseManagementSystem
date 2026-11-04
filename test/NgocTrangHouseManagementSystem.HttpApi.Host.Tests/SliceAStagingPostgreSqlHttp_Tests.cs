@@ -6499,16 +6499,34 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
 
             // Serializable competition: exactly one H4 contract/obligation
             // transaction can win; the other must fail closed.
+            async Task<(HttpStatusCode Status,string Body,bool SerialRejected)>
+                AttemptH4OnceAsync()
+            {
+                try
+                {
+                    var result = await PostFinalAsync(clientRoot,
+                        h4CompletionRoute,
+                        JsonSerializer.Serialize(h4CompletePayload));
+                    return (result.Status, result.Body, false);
+                }
+                catch (PostgresException ex) when (ex.SqlState ==
+                    PostgresErrorCodes.SerializationFailure)
+                {
+                    // TestServer may propagate the SERIALIZABLE loser
+                    // directly from the ABP UOW COMMIT filter rather than
+                    // translating it into an HTTP 409. Only SQLSTATE 40001
+                    // is an expected rejected contender; every other SQL
+                    // exception remains a failing test.
+                    return (HttpStatusCode.Conflict, string.Empty, true);
+                }
+            }
             var h4Attempts = await Task.WhenAll(
-                PostFinalAsync(clientRoot, h4CompletionRoute,
-                    JsonSerializer.Serialize(h4CompletePayload)),
-                PostFinalAsync(clientRoot, h4CompletionRoute,
-                    JsonSerializer.Serialize(h4CompletePayload)));
+                AttemptH4OnceAsync(), AttemptH4OnceAsync());
             var h4Winners = h4Attempts.Where(x =>
                 x.Status is HttpStatusCode.OK or HttpStatusCode.Created).ToArray();
             Assert.Single(h4Winners);
-            Assert.Single(h4Attempts.Where(x =>
-                x.Status is not (HttpStatusCode.OK or HttpStatusCode.Created)));
+            Assert.Single(h4Attempts, x =>
+                x.Status == HttpStatusCode.Forbidden || x.SerialRejected);
             Guid h4TargetContract;
             using (var completed = JsonDocument.Parse(h4Winners[0].Body))
             {

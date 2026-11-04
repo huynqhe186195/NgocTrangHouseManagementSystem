@@ -19,7 +19,7 @@ public sealed class FullInvoiceMigrationChainPostgreSql_Tests
     private const string OptInVariable = "BM_ALLOW_FULL_MIGRATION_REHEARSAL";
     private const string OptInValue = "CREATE_AND_DROP_FRESH_LOCAL_TEST_DATABASE";
     private const string ExpectedLatestMigration =
-        "20261104200000_Phase2HAtomicH4DepositObligations";
+        "20261104210000_Phase2HD03RootPostingAfterIndependentReviews";
 
     [Fact]
     public async Task PGMIG01_Full_EF_Migrations_Succeed_In_Fresh_Disposable_Database()
@@ -427,6 +427,28 @@ public sealed class FullInvoiceMigrationChainPostgreSql_Tests
                         Assert.Equal("23514", denied.SqlState);
                     }
                     await h4NoTruncateTx.RollbackAsync();
+                }
+
+                // Verify the NEW forward migration actually corrected
+                // the SQL root/staff/classifier authorization deadlock while
+                // keeping three distinct original financial roles.
+                await using (var d03RootFunction = new NpgsqlCommand(
+                    """
+                    SELECT pg_get_functiondef(
+                      '"BM_GuardRoomChangeMidMonthOriginalClaims"()'::regprocedure)
+                    """, verification))
+                {
+                    var definition = (string?)await d03RootFunction.ExecuteScalarAsync();
+                    Assert.NotNull(definition);
+                    Assert.Contains(
+                        "NEW.\"RecordedByUserId\" IS DISTINCT FROM proposal.\"ProposedByUserId\"",
+                        definition!, StringComparison.Ordinal);
+                    Assert.Contains(
+                        "NEW.\"RecordedByUserId\"=decision.\"ReviewedByUserId\"",
+                        definition!, StringComparison.Ordinal);
+                    Assert.Contains(
+                        "NEW.\"RecordedByUserId\"=archive.\"ArchivedByUserId\"",
+                        definition!, StringComparison.Ordinal);
                 }
 
                 // A frozen monthly invoice fee must be bound to its ORIGINAL

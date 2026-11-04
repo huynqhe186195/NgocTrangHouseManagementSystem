@@ -284,6 +284,12 @@ public sealed class RoomChangeMidMonthCompletionPostgreSql_Tests
     {
         await Scratch(IsolationLevel.Serializable,async(db,tx,f)=>{
             var fresh=f with {Carry=Guid.NewGuid()};
+            // Replace the original stub carry so exactly ONE original leg
+            // exists when the deferred append fence is explicitly checked.
+            await Run(db,tx,$"""
+                DELETE FROM "BuildingManagementDepositSettlements"
+                 WHERE "Id"='{f.Carry:D}';
+                """);
             await Run(db,tx,$"""
                 INSERT INTO "BuildingManagementDepositSettlements"
                     ("Id","SourceContractId","TargetContractId")

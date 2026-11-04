@@ -22,7 +22,7 @@ public sealed class Phase2HRoomChangeSecurityBoundary_Tests
 
         var methods = controller.GetMethods(BindingFlags.Public |
             BindingFlags.Instance | BindingFlags.DeclaredOnly);
-        Assert.Equal(25, methods.Length);
+        Assert.Equal(27, methods.Length);
         Assert.Contains(methods, m => m.Name == "CompleteRoomChangeAsync");
         foreach (var name in new[] {
             "ArchiveExactPricingAsync",
@@ -40,6 +40,20 @@ public sealed class Phase2HRoomChangeSecurityBoundary_Tests
         Assert.NotNull(mid.GetCustomAttribute<HttpPostAttribute>());
         Assert.Equal("{requestId:guid}/complete-mid-month-room-change",
             mid.GetCustomAttribute<HttpPostAttribute>()?.Template);
+        foreach (var (name, verb) in new[] {
+            ("CaptureH4DispositionIntentAsync", "POST"),
+            ("GetH4DispositionIntentAsync", "GET")
+        })
+        {
+            var method = Assert.Single(methods.Where(m => m.Name == name));
+            var uow = method.GetCustomAttribute<UnitOfWorkAttribute>();
+            Assert.NotNull(uow);
+            var routeAttribute = method.GetCustomAttributes()
+                .OfType<Microsoft.AspNetCore.Mvc.Routing.HttpMethodAttribute>()
+                .Single();
+            Assert.Equal(verb, Assert.Single(routeAttribute.HttpMethods));
+            Assert.Equal("{requestId:guid}/h4-disposition-intent", routeAttribute.Template);
+        }
         Assert.Contains(methods, m => m.Name == "GetExecutionReadinessAsync");
         var journal = Assert.Single(methods.Where(
             m => m.Name == "GetMidMonthFinancialJournalAsync"));
@@ -104,6 +118,8 @@ public sealed class Phase2HRoomChangeSecurityBoundary_Tests
         Assert.Contains(nameof(SliceBStagingRoomChangeRequests.SubmitAsync), methods);
         Assert.Contains(nameof(SliceBStagingRoomChangeRequests.ProposeDayPricingRuleAsync), methods);
         Assert.Contains(nameof(SliceBStagingRoomChangeRequests.GetDayPricingRuleAsync), methods);
+        Assert.Contains(nameof(SliceBStagingRoomChangeRequests.CaptureH4DispositionIntentAsync), methods);
+        Assert.Contains(nameof(SliceBStagingRoomChangeRequests.GetH4DispositionIntentAsync), methods);
         Assert.Contains(nameof(SliceBStagingRoomChangeRequests.HoldForPolicyAsync), methods);
         Assert.DoesNotContain(methods, x =>
             x.Contains("Approve", StringComparison.OrdinalIgnoreCase) ||

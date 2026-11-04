@@ -226,6 +226,37 @@ public sealed class SliceBStagingRoomChangesController : ControllerBase
             contractId,requestId,input?.AdjustmentId ?? Guid.Empty);
     }
 
+    // Root-only H4 PROPOSAL: completed internal deposit allocations are
+    // checked, but NO top-up is collected and NO refund/credit is posted.
+    [HttpPost("{requestId:guid}/h4-disposition-intent")]
+    [UnitOfWork(true, IsolationLevel.Serializable)]
+    public async Task<IActionResult> CaptureH4DispositionIntentAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid requestId,
+        [FromBody] SliceBRoomChangeH4IntentInput input)
+    {
+        try
+        {
+            RequireIsolatedStaging();
+            return Ok(await _requests!.CaptureH4DispositionIntentAsync(
+                contractId, requestId, input));
+        }
+        catch (AbpAuthorizationException) { return Forbid(); }
+    }
+
+    [HttpGet("{requestId:guid}/h4-disposition-intent")]
+    [UnitOfWork(true, IsolationLevel.Serializable)]
+    public async Task<IActionResult> GetH4DispositionIntentAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid requestId)
+    {
+        try
+        {
+            RequireIsolatedStaging();
+            return Ok(await _requests!.GetH4DispositionIntentAsync(
+                contractId, requestId));
+        }
+        catch (AbpAuthorizationException) { return Forbid(); }
+    }
+
     [HttpPost("{requestId:guid}/complete-mid-month-room-change")]
     [UnitOfWork(true, IsolationLevel.Serializable)]
     public Task<SliceBRoomChangeCompletionRead> CompleteMidMonthRoomChangeAsync(

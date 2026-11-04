@@ -28,7 +28,7 @@ namespace NgocTrangHouseManagementSystem.Security;
 /// requires current ABP Contracts.Manage + active Identity permission lease
 /// and live Building membership locked through the same PostgreSQL UoW.
 /// </summary>
-public sealed class SliceBStagingRoomChangeRequests
+public sealed partial class SliceBStagingRoomChangeRequests
 {
     private readonly IDbContextProvider<BuildingManagementDbContext> _provider;
     private readonly IBuildingCrudAccessPolicy _policy;

@@ -3549,6 +3549,26 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 HttpStatusCode.Created,
                 $"Owner dispute resolution: {ownerRelease.Status} {ownerRelease.Body}. " +
                 $"Test-server diagnostics (isolated DB only): {serverErrors.Describe()}");
+            // Positive cross-clock regression: the immutable Owner event
+            // must be timestamped from the SAME PostgreSQL clock as its
+            // signed dispute trigger, never the host OS wall clock.
+            await using (var clockDb = new NpgsqlConnection(buildingCs))
+            {
+                await clockDb.OpenAsync();
+                await using var check = new NpgsqlCommand(
+                    """
+                    SELECT r."ResolvedAtUtc" >= d."OpenedAtUtc"
+                       AND r."ResolvedAtUtc" <= clock_timestamp()
+                       AND r."DebtAccepted"=TRUE
+                      FROM "BuildingManagementContractDepositDebtDisputeResolutions" r
+                      JOIN "BuildingManagementContractDepositDebtDisputes" d
+                        ON d."Id"=r."DisputeId"
+                     WHERE r."DisputeId"=@dispute
+                    """, clockDb);
+                check.Parameters.AddWithValue("dispute",disputeId);
+                Assert.True(await check.ExecuteScalarAsync() is true,
+                    "Owner resolution must be persistently signed and based on database clock.");
+            }
             var decisionResponse = await PostFinalAsync(
                 clientRoot, depositApproveRoute, depositPlanBody);
             Assert.True(decisionResponse.Status is HttpStatusCode.OK or

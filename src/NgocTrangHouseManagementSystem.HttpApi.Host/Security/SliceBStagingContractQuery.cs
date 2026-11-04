@@ -133,6 +133,8 @@ public sealed class SliceBStagingContractQuery
             original.DepositAmount<=0m)
             throw Denied();
 
+        await LockOriginalTenantRosterAsync(db, contractId);
+
         // ContractTenant relation is ALWAYS filtered to the already scoped
         // and row-locked original contract; never enumerate global tenants.
         // Only the human name is required for this unsigned printout;
@@ -156,6 +158,40 @@ public sealed class SliceBStagingContractQuery
             original.MonthlyRent,original.DepositAmount,
             original.RenewedFromContractId,tenants);
         return SliceBStagingContractDocumentDocx.Export(export);
+    }
+
+    /// <summary>
+    /// Keep linked tenant names stable while the Owner's document is
+    /// materialized. Locks only the authorized contract's existing links
+    /// and existing tenant rows, not the global tenant catalog.
+    /// The surrounding REPEATABLE READ transaction supplies a consistent
+    /// snapshot even if new links are created in parallel.
+    /// </summary>
+    private static async Task LockOriginalTenantRosterAsync(
+        BuildingManagementDbContext db, Guid contractId)
+    {
+        if (!db.Database.IsNpgsql())
+            throw Denied();
+        var tx=db.Database.CurrentTransaction?.GetDbTransaction()
+            ?? throw Denied();
+        await using var command=db.Database.GetDbConnection().CreateCommand();
+        command.Transaction=tx;
+        command.CommandText = """
+            SELECT tenant."Id"
+            FROM "BuildingManagementContractTenants" link
+            JOIN "BuildingManagementTenants" tenant
+              ON tenant."Id"=link."TenantId"
+            WHERE link."ContractId"=@contract
+              AND link."IsDeleted"=FALSE
+              AND tenant."IsDeleted"=FALSE
+            FOR SHARE OF link, tenant
+            """;
+        var param=command.CreateParameter();
+        param.ParameterName="contract";
+        param.Value=contractId;
+        command.Parameters.Add(param);
+        await using var reader=await command.ExecuteReaderAsync();
+        while(await reader.ReadAsync()) { }
     }
 
     /// <summary>

@@ -163,7 +163,7 @@ public sealed class RoomServiceInvoiceSourceBindingsPostgreSql_Tests
             var f=await Seed(db,tx);
             await Denied(db,tx,Bind(f,amount:300001m),"23514");
             await Denied(db,tx,Bind(f,
-                candidateHash=new string('d',64)),"23514");
+                candidateHash: new string('d',64)),"23514");
             Assert.Equal(0L,await Scalar(db,tx,
                 """SELECT count(*) FROM "BuildingManagementRoomServiceInvoiceSourceBindings" """));
         });

@@ -322,6 +322,40 @@ public sealed class FullInvoiceMigrationChainPostgreSql_Tests
                         Convert.ToInt64(await midmonthGate.ExecuteScalarAsync()));
                 }
 
+                // The newest D03 room-service tariff persistence must be
+                // present as a real FK-backed table with three SQL fences.
+                await using (var serviceTariffGuards = new NpgsqlCommand(
+                    """
+                    SELECT count(*) FROM pg_trigger
+                     WHERE NOT tgisinternal
+                       AND tgname IN (
+                         'TR_BM_2H_RoomServiceTariff_Append',
+                         'TR_BM_2H_RoomServiceTariff_Immutable',
+                         'TR_BM_2H_RoomServiceTariff_NoTruncate')
+                       AND tgrelid =
+                         '"BuildingManagementRoomScopedServiceTariffVersions"'::regclass
+                    """, verification))
+                {
+                    Assert.Equal(3L,
+                        Convert.ToInt64(await serviceTariffGuards.ExecuteScalarAsync()));
+                }
+
+                // New D01 day-ownership rule must remain a separate
+                // DEFERRABLE trigger after all historical migrations.
+                await using (var approvedTargetDay = new NpgsqlCommand(
+                    """
+                    SELECT count(*) FROM pg_trigger
+                     WHERE NOT tgisinternal
+                       AND tgname = 'TR_BM_2H_ApprovedTargetDay_Commit'
+                       AND tgrelid =
+                         '"BuildingManagementRoomChangeMidMonthCompletions"'::regclass
+                       AND tgdeferrable AND tginitdeferred
+                    """, verification))
+                {
+                    Assert.Equal(1L,
+                        Convert.ToInt64(await approvedTargetDay.ExecuteScalarAsync()));
+                }
+
                 await using (var extension = new NpgsqlCommand(
                     "SELECT COUNT(*) FROM pg_extension WHERE extname = 'btree_gist'",
                     verification))

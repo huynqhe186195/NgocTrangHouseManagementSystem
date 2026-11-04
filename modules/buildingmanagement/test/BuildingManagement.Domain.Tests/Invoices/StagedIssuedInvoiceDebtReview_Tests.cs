@@ -12,6 +12,9 @@ public sealed class StagedIssuedInvoiceDebtReview_Tests
     private static readonly DateOnly Due = new(2026, 11, 5);
     private static readonly DateOnly BeforeDue = new(2026, 11, 4);
     private static readonly DateOnly AfterDue = new(2026, 11, 6);
+    // Stable fixture: as-of balance must not change with the runner's wall clock.
+    private static readonly DateTime FixturePaidAtUtc =
+        new(2026, 11, 4, 4, 0, 0, DateTimeKind.Utc);
 
     [Fact]
     public void STAGEDEBT01_Only_Journaled_Completed_Payments_Produce_Partial_Preview()
@@ -55,7 +58,7 @@ public sealed class StagedIssuedInvoiceDebtReview_Tests
     {
         var (invoice, contract) = (Guid.NewGuid(), Guid.NewGuid());
         var payment = Receipt(invoice, contract, 1_000_000m);
-        payment.Complete(DateTime.UtcNow);
+        payment.Complete(FixturePaidAtUtc);
         var result = Assess(invoice, contract,
             Array.Empty<InvoicePaymentAllocationJournalEntry>(),
             new[] { payment }, AfterDue);
@@ -69,7 +72,7 @@ public sealed class StagedIssuedInvoiceDebtReview_Tests
         var (invoice, contract) = (Guid.NewGuid(), Guid.NewGuid());
         var other = Guid.NewGuid();
         var payment = Receipt(other, contract, 300_000m);
-        payment.Complete(DateTime.UtcNow);
+        payment.Complete(FixturePaidAtUtc);
         var result = Assess(invoice, contract, new[] { Entry(payment, other) },
             new[] { payment }, AfterDue);
         Assert.True(result.HasCompleteStagedEvidence);
@@ -85,7 +88,7 @@ public sealed class StagedIssuedInvoiceDebtReview_Tests
         var (invoice, contract) = (Guid.NewGuid(), Guid.NewGuid());
         var foreign = Guid.NewGuid();
         var payment = Receipt(invoice, foreign, 100_000m);
-        payment.Complete(DateTime.UtcNow);
+        payment.Complete(FixturePaidAtUtc);
         var result = Assess(invoice, contract, new[] { Entry(payment, invoice) },
             new[] { payment }, Due);
         Assert.Contains("CrossContractAllocationInLedger", result.Blockers);
@@ -136,7 +139,7 @@ public sealed class StagedIssuedInvoiceDebtReview_Tests
     {
         var (invoice, contract) = (Guid.NewGuid(), Guid.NewGuid());
         var payment = Receipt(invoice, contract, 100_000m);
-        payment.Complete(DateTime.UtcNow);
+        payment.Complete(FixturePaidAtUtc);
         var journal = Entry(payment, invoice);
         var second = Entry(payment, invoice);
         var result = Assess(invoice, contract, new[] { journal, second },
@@ -161,5 +164,5 @@ public sealed class StagedIssuedInvoiceDebtReview_Tests
     private static InvoicePaymentAllocationJournalEntry Entry(Payment payment, Guid invoice)
         => InvoicePaymentAllocationJournalEntry.StageForValidation(
             Guid.NewGuid(), payment, invoice,
-            Guid.NewGuid(), DateTime.UtcNow);
+            Guid.NewGuid(), payment.PaidAt!.Value.AddMinutes(1));
 }

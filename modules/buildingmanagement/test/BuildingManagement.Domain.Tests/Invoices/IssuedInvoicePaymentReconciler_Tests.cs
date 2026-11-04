@@ -11,6 +11,9 @@ public sealed class IssuedInvoicePaymentReconciler_Tests
     private static readonly DateOnly Due = new(2026, 11, 5);
     private static readonly DateOnly BeforeDue = new(2026, 11, 4);
     private static readonly DateOnly AfterDue = new(2026, 11, 6);
+    // Stable fixture: as-of balance must not change with the runner's wall clock.
+    private static readonly DateTime FixturePaidAtUtc =
+        new(2026, 11, 4, 4, 0, 0, DateTimeKind.Utc);
 
     [Fact]
     public void INVDEBT01_No_Payment_Is_Unpaid()
@@ -30,7 +33,7 @@ public sealed class IssuedInvoicePaymentReconciler_Tests
     {
         var (invoiceId, contractId) = Ids();
         var payment = Create(invoiceId, contractId, 250_000m);
-        payment.Complete(DateTime.UtcNow);
+        payment.Complete(FixturePaidAtUtc);
         var result = Assess(invoiceId, contractId, 1_000_000m,
             BeforeDue, new[] { payment });
 
@@ -46,8 +49,8 @@ public sealed class IssuedInvoicePaymentReconciler_Tests
         var (invoiceId, contractId) = Ids();
         var first = Create(invoiceId, contractId, 300_000m);
         var second = Create(invoiceId, contractId, 700_000m);
-        first.Complete(DateTime.UtcNow, "FIRST");
-        second.Complete(DateTime.UtcNow, "SECOND");
+        first.Complete(FixturePaidAtUtc, "FIRST");
+        second.Complete(FixturePaidAtUtc, "SECOND");
 
         var result = Assess(invoiceId, contractId, 1_000_000m,
             AfterDue, new[] { first, second });
@@ -63,7 +66,7 @@ public sealed class IssuedInvoicePaymentReconciler_Tests
     {
         var (invoiceId, contractId) = Ids();
         var payment = Create(invoiceId, contractId, 10_000m);
-        payment.Complete(DateTime.UtcNow);
+        payment.Complete(FixturePaidAtUtc);
 
         var result = Assess(invoiceId, contractId, 1_000_000m,
             AfterDue, new[] { payment });
@@ -94,7 +97,7 @@ public sealed class IssuedInvoicePaymentReconciler_Tests
     {
         var (invoiceId, contractId) = Ids();
         var payment = Create(invoiceId, contractId, 500_000m);
-        payment.Complete(DateTime.UtcNow);
+        payment.Complete(FixturePaidAtUtc);
         Assert.Throws<InvalidOperationException>(() =>
             Assess(invoiceId, contractId, 1_000_000m,
                 BeforeDue, new[] { payment, payment }));
@@ -106,8 +109,8 @@ public sealed class IssuedInvoicePaymentReconciler_Tests
         var (invoiceId, contractId) = Ids();
         var first = Create(invoiceId, contractId, 100_000m);
         var second = Create(invoiceId, contractId, 100_000m);
-        first.Complete(DateTime.UtcNow, "TRACE-123");
-        second.Complete(DateTime.UtcNow, "trace-123");
+        first.Complete(FixturePaidAtUtc, "TRACE-123");
+        second.Complete(FixturePaidAtUtc, "trace-123");
 
         Assert.Throws<InvalidOperationException>(() =>
             Assess(invoiceId, contractId, 1_000_000m,
@@ -120,7 +123,7 @@ public sealed class IssuedInvoicePaymentReconciler_Tests
         var (invoiceId, contractId) = Ids();
         var deposit = Create(invoiceId, contractId, 1_000_000m,
             PaymentPurpose.ContractDeposit);
-        deposit.Complete(DateTime.UtcNow);
+        deposit.Complete(FixturePaidAtUtc);
 
         Assert.Throws<InvalidOperationException>(() =>
             Assess(invoiceId, contractId, 1_000_000m,
@@ -133,8 +136,8 @@ public sealed class IssuedInvoicePaymentReconciler_Tests
         var (invoiceId, contractId) = Ids();
         var otherInvoice = Create(Guid.NewGuid(), contractId, 100_000m);
         var otherContract = Create(invoiceId, Guid.NewGuid(), 100_000m);
-        otherInvoice.Complete(DateTime.UtcNow);
-        otherContract.Complete(DateTime.UtcNow);
+        otherInvoice.Complete(FixturePaidAtUtc);
+        otherContract.Complete(FixturePaidAtUtc);
         Assert.Throws<InvalidOperationException>(() =>
             Assess(invoiceId, contractId, 1_000_000m,
                 BeforeDue, new[] { otherInvoice }));
@@ -148,7 +151,7 @@ public sealed class IssuedInvoicePaymentReconciler_Tests
     {
         var (invoiceId, contractId) = Ids();
         var payment = Create(invoiceId, contractId, 1_100_000m);
-        payment.Complete(DateTime.UtcNow);
+        payment.Complete(FixturePaidAtUtc);
 
         var result = Assess(invoiceId, contractId, 1_000_000m,
             BeforeDue, new[] { payment });

@@ -92,4 +92,19 @@ public sealed class RoomChangeApprovedH2H3ExecutionPolicy_Tests
             RoomChangeApprovedH2H3ExecutionPolicy.RequireExecutableQuote(
                 q with { TargetFirstChargeableDate = new DateOnly(2026, 11, 16) }));
     }
+    [Fact]
+    public void TRF_D01_08_Exactly_Half_Vnd_Rounds_Up_On_Both_Rooms()
+    {
+        var q = RoomChangeDailyRentQuoteCalculator.Calculate(
+            new DateOnly(2026, 11, 16), 45m, 45m,
+            RoomChangeTransferDayChargeOwner.TargetRoom,
+            RoomChangeRentRoundingRule.NearestVndAwayFromZero,
+            "OWNER-SIGNED-ROUNDING-EXACT-HALF-20261104");
+        RoomChangeApprovedH2H3ExecutionPolicy.RequireExecutableQuote(q);
+        Assert.Equal(15, q.SourceChargeableDays);
+        Assert.Equal(15, q.TargetChargeableDays);
+        Assert.Equal(23m, q.ProposedSourceRentVnd);
+        Assert.Equal(23m, q.ProposedTargetRentVnd);
+    }
+
 }

@@ -33,11 +33,15 @@ try {
         $remoteExit = $LASTEXITCODE
     }
     finally { $ErrorActionPreference = $previousPreference }
-    if ($remoteExit -ne 0 -or
-        $remoteLine -notmatch '^([0-9a-fA-F]{40})\s+refs/heads/wip/phase-2g2$') {
-        throw 'Safety stop: cannot verify latest origin/wip/phase-2g2. Check origin/network and retry; no tests were started.'
+    if ($remoteExit -ne 0) {
+        throw 'Safety stop: cannot contact origin/wip/phase-2g2. Check origin/network and retry; no tests were started.'
     }
-    $remoteSha = $Matches[1]
+    if ($remoteLine -match '^([0-9a-fA-F]{40})\s+refs/heads/wip/phase-2g2$') {
+        $remoteSha = $Matches[1]
+    }
+    else {
+        throw 'Safety stop: cannot parse origin/wip/phase-2g2 commit. No tests were started.'
+    }
     if ($sha -ne $remoteSha) {
         throw "Safety stop: local HEAD=$sha differs from origin/wip/phase-2g2=$remoteSha. Review 'git status --short', then use 'git pull --ff-only origin wip/phase-2g2' when safe. No tests were started."
     }

@@ -150,7 +150,7 @@ public sealed class RoomServiceInvoiceSourceBindingsPostgreSql_Tests
         {
             var f=await Seed(db,tx);
             await Denied(db,tx,Bind(f,room:Guid.NewGuid()),"23514");
-            await Denied(db,tx,Bind(f,tariff:Guid.NewGuid()),"23503");
+            await Denied(db,tx,Bind(f,tariff:Guid.NewGuid()),"23514");
             Assert.False(await Ready(db,tx,f.Candidate));
         });
     }

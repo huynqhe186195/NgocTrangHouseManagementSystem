@@ -216,10 +216,12 @@ Phase 2H Financial Foundations are not reopened.
 
 ### Open precision — safe implementation decisions without blocking drafts
 
-1. Owner's reply to D01 expressly specifies **Vietnam timezone**,
-   not who is charged for the handover date. Existing signed per
-   request `TransferDayOwner` remains mandatory and no implicit
-   default will be invented.
+1. **RESOLVED on 2026-11-04:** Owner confirmed the **TARGET room**
+   owns the handover civil date in Vietnam. Source room ends billing
+   the previous calendar day. New D01 signing and posting must enforce
+   this global rule. Stale signed `TransferDayOwner=Source` records
+   remain immutable history but must be rejected by the new completion
+   flow, not retroactively overwritten.
 2. Room-specific service rate is approved; **per-service billing
    proration/fixed-fee mode** must be configured explicitly before
    using it to alter amounts.
@@ -230,3 +232,27 @@ Phase 2H Financial Foundations are not reopened.
 The 2026-11-04 five-group foundation PASS applies ONLY to
 `e24894f3b830a5640c2e7a5ba1857c0911579c2d`.
 Future implementation commits require their own full run.
+
+
+### D01 FINAL acceptance matrix — Owner confirmed target-day policy (2026-11-04)
+
+| Month/transfer date (Vietnam civil day) | Old-room days | New-room days | Required behavior |
+|---|---:|---:|---|
+| 30-day month, day 15 | 14 | 16 | Day 15 belongs only to target |
+| 31-day month, day 15 | 14 | 17 | Day 15 belongs only to target |
+| Leap February, day 29 | 28 | 1 | Correct leap-day denominator |
+| February non-leap, day 1 | 0 | 28 | Target begins at first of month |
+| 31-day month, day 31 | 30 | 1 | Last-day transfer target charged once |
+
+**Required code verification:** the existing quote calculator and
+versioned pricing candidate must compute these values; new staging
+execution must require `TransferDayOwner=Target` and the matching
+exact Owner signoff. SQL deferred completion gate must independently
+verify this field and the target contract effective date rather than
+trust a client's choice; confirm no double rent on issued target
+invoice. Previous source-day candidates are archived but fail new
+execution. Run negative tests for source-day override, UTC midnight
+boundary, leap-year edge and double billing; run authenticated
+PostgreSQL positive execution and full regression at final code SHA.
+This table changes business policy only until the code/SQL/test gates
+have been implemented and passed.

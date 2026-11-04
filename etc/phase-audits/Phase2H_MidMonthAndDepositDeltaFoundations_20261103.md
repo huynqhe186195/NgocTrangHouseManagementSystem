@@ -1496,3 +1496,42 @@ Remaining H4 cash-backed deferred receivable, once-only future
 rent credit, reviewed manual bank refund, legal signed contract
 evidence and complete per-building Owner role acceptance remain
 separate HOLD. Do not deploy production.
+
+
+### Phase 2H actual authenticated room-specific service tariff acceptance (NEW; runtime PENDING)
+
+In the same disposable two-database PostgreSQL HTTP fixture, stage
+`SliceBStagingRoomScopedServiceTariffs` alongside the production
+Host's already-registered staging adapter. The extended fixture now
+checks the real API route, real ABP Identity grants, real live
+building membership and migrated PostgreSQL tariff table/triggers:
+- B-only staff must not read a foreign A tariff or even manage their
+  own B room's **Owner-restricted** service price. The API deliberately
+  does not infer Owner privileges from generic Rooms.Manage.
+- Root Owner appends the same ServiceId at **different prices in
+  A101 and B101**; each price is read from the original room with
+  independent version 1 and unique evidence SHA.
+- A101's future rate can be appended as version 2, preserving
+  version 1 and all original invoice references, while a
+  duplicate-effective-date replay is forbidden. The B101 history
+  stays an independent single version.
+- JSON responses explicitly remain non-invoices and non-bank
+  receipts. This tests the genuine HTTP/EF/PostgreSQL write, not
+  only reflection or direct SQL.
+- The approved effective dates are calculated prospectively
+  relative to the host's UTC date, to avoid hard-coded dates
+  becoming retroactive on later quality-gate runs.
+
+The previously documented `384a9cc1fba10afe2c1c5e26e71a88d8f14152bd`
+**5/5 technical PASS remains valid for that SHA only**.
+The new authenticated document+tariff test additions have not been
+run locally in this environment. The one-command gate counts
+remain 160 Domain, 92 PG and 76 Host static-regression cases;
+the single authenticated PG HTTP test now exercises both new
+routes and must itself PASS at the new SHA.
+
+The existing positive **month-boundary** RoomChange HTTP/PG
+completion in this fixture should not be confused with positive
+full **mid-month** (15th, unequal fee/deposit) execution. The
+latter, H4 actual money allocation, genuine signed attachments
+and production continue HOLD.

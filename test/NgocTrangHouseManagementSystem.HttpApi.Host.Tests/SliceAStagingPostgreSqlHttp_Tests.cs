@@ -6317,9 +6317,9 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 Assert.True(checkedInvoice.RootElement.GetProperty(
                     "accepted").GetBoolean());
             Guid h4Issued;
-            using (var issued = await Positive2HPostAsync(clientRoot,
-                h4CandidateRoute + "/issue", new { }))
-                h4Issued = issued.RootElement.GetProperty(
+            using (var h4IssuedResponse = await Positive2HPostAsync(
+                clientRoot, h4CandidateRoute + "/issue", new { }))
+                h4Issued = h4IssuedResponse.RootElement.GetProperty(
                     "issuedInvoiceId").GetGuid();
 
             // D01/D02 binding: the transfer day is charged to the TARGET;

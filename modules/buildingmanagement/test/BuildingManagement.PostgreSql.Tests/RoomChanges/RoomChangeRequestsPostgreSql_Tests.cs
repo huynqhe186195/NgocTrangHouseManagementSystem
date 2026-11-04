@@ -192,8 +192,32 @@ public sealed class RoomChangeRequestsPostgreSql_Tests
                    AND t.tgname='TR_BM_RoomChangeRequest_Guard'
                    AND n.nspname=current_schema()
                 """;
+            // Make the original failure deterministic: a second schema
+            // intentionally owns an unrelated trigger with the same name.
+            // Its presence MUST NOT affect the current schema's rollback.
+            var otherSchema = "bm_trfpg03_other_" + Guid.NewGuid().ToString("N");
+            await Run(db, tx, $"""
+                CREATE SCHEMA "{otherSchema}";
+                CREATE TABLE "{otherSchema}"."UnrelatedHistory" ("Id" uuid);
+                CREATE FUNCTION "{otherSchema}"."IgnoreUnrelatedTrigger"()
+                RETURNS trigger LANGUAGE plpgsql AS $probe$
+                BEGIN RETURN NEW; END;
+                $probe$;
+                CREATE TRIGGER "TR_BM_RoomChangeRequest_Guard"
+                BEFORE INSERT ON "{otherSchema}"."UnrelatedHistory"
+                FOR EACH ROW EXECUTE FUNCTION "{otherSchema}"."IgnoreUnrelatedTrigger"();
+                """);
             await Run(db, tx, DownSql);
             Assert.Equal(0L, await Scalar(db, tx, ownSchemaTriggerCount));
+            Assert.Equal(1L, await Scalar(db, tx, $"""
+                SELECT count(*)
+                  FROM pg_trigger t
+                  JOIN pg_class c ON c.oid = t.tgrelid
+                  JOIN pg_namespace n ON n.oid = c.relnamespace
+                 WHERE NOT t.tgisinternal
+                   AND t.tgname='TR_BM_RoomChangeRequest_Guard'
+                   AND n.nspname='{otherSchema}'
+                """));
             await Run(db, tx, UpSql);
             Assert.Equal(1L, await Scalar(db, tx, ownSchemaTriggerCount));
         });

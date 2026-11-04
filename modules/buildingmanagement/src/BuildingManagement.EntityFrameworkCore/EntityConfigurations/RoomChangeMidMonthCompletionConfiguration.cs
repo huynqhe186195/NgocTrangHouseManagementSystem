@@ -17,6 +17,16 @@ public sealed class RoomChangeMidMonthCompletionConfiguration
         b.Property(x => x.SourceReviewedReceiptsVnd).HasPrecision(18,0);
         b.Property(x => x.TargetFirstMonthRentVnd).HasPrecision(18,0);
         b.Property(x => x.CarriedDepositVnd).HasPrecision(18,0);
+        b.Property(x => x.H4IntentSha256).HasMaxLength(64);
+        b.Property(x => x.H4OriginalHeldDepositVnd).HasPrecision(18,0);
+        b.Property(x => x.H4TargetRequiredDepositVnd).HasPrecision(18,0);
+        b.Property(x => x.H4UnpaidTopUpVnd).HasPrecision(18,0);
+        b.Property(x => x.H4TopUpDueDateVietnam).HasColumnType("date");
+        b.Property(x => x.H4NextMonthRentCreditVnd).HasPrecision(18,0);
+        b.Property(x => x.H4ManualRefundLiabilityVnd).HasPrecision(18,0);
+        b.HasIndex(x => x.H4DispositionIntentId)
+            .IsUnique().HasFilter("\"H4DispositionIntentId\" IS NOT NULL")
+            .HasDatabaseName("UX_BM_2HMidComplete_H4Intent");
         b.Property(x => x.DispositionEvidenceReference).HasMaxLength(500).IsRequired();
         b.Property(x => x.CompletionReference).HasMaxLength(500).IsRequired();
         b.Property(x => x.EvidenceSha256).HasMaxLength(64).IsRequired();

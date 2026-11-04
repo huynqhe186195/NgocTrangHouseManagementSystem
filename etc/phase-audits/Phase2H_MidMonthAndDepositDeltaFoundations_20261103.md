@@ -641,8 +641,10 @@ The additive migration
   the original atomic transaction.
 
 `TRFMIDPG09–11` check target/source live-tenant and source cash
-append attempts, including a fabricated extra source deposit. The
-one-shot script now requires **106 Domain + 63 targeted PostgreSQL**
+append attempts, including a fabricated extra source deposit.
+`TRFMIDPG12–13` confirm that the original in-transaction target
+roster and unique cash carry are still allowed by the deferred fences. The
+one-shot script now requires **106 Domain + 65 targeted PostgreSQL**
 tests, full disposable migration chain, authenticated HTTP and full
 regression. The migration's Down refuses removal after **any**
 completed mid-month financial/occupancy history. Changes are

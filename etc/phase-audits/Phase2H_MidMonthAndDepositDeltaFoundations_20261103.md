@@ -1115,3 +1115,55 @@ H4 deposit receivable and surplus credit/refund real financial writers,
 linked new contract document export, positive authenticated execution
 of full midmonth transfer, and cross-building/revocation concurrency
 attacks. Never apply migrations to production.
+
+
+## 2026-11-04 — Phase 2H room-service to frozen invoice candidate SOURCE BINDING (NEW CODE, RUN PENDING)
+
+The latest operator-verified five-group PASS was at
+`309fcf0ee2b146d766909386b26ed3273b1bbc2b`, with 142 focused
+Domain, 76 real PG, disposable migration, authenticated HTTP, and
+70 host HTTP regression tests. That PASS cannot be applied to source
+commits after it.
+
+New `RoomScopedServiceInvoiceSourceBinding` is a **read-only,
+non-posting** freeze of a monthly candidate's already approved
+auxiliary service line linked to the exact RoomId / ServiceId /
+`RoomScopedServiceTariffVersion.Id`, immutable original price SHA,
+service date interval, actual verified occupancy / meter quantity,
+signed room-service price reference, frozen monthly candidate SHA and
+verified source reference. It verifies the original
+`MonthlyInvoiceCandidateLedgerRecord.VerifyStoredEvidence()` and
+recomputes the tariff's charge from the genuine original rate and
+billed days. Rejects foreign-room price, unknown service code,
+incorrect month, mismatched amount, modified candidate, modified
+price, missing occupancy provenance and foreign/future tariff
+approval. Its independent SHA-256 detects later modification of
+the binding itself. The original candidate and issued invoice are
+NEVER rewritten; there is no bank receipt or issue permission.
+
+Existing monthly itemized fee schema permits a **totalized
+line price** for a prorated amount, not always a repeated full-month
+unit price. The binding therefore checks the original candidate
+line's **actual frozen total**, original signed tariff reference and
+canonical independently recomputed charge; it preserves the true
+unprorated source tariff separately in the evidence rather than
+silently treating an invoice line's billed unit price as a newly
+approved tariff.
+
+Ten new Domain tests
+`TRF_BILLSVC01..10` have been added to the five-group verifier.
+**New focused expected counts: 152 Domain, 76 PostgreSQL**, with
+the earlier complete migration and authenticated HTTP bundles
+unchanged. No test has been executed against this exact new SHA here.
+
+**Acceptance limit:** This source-binder is NOT yet an independently
+audited persisted invoice source journal, automatic fee calculation
+in the actual issuer, cross-building authenticated billing endpoint,
+or proof that the combined auxiliary service lines equal an issued
+invoice. The subsequent billing adapter must resolve authoritative
+service-code → ServiceId mapping, freeze every line in a durable
+ledger, independently verify all originals and enforce sum totals
+and unique consumption before any official posting. Full H4 cash
+posting, new-contract export, Owner-per-building role, authorized
+positive mid-month completion and authenticated attack E2E remain
+HOLD. Do not deploy production.

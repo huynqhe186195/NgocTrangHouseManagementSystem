@@ -531,6 +531,46 @@ public sealed class RoomChangeDepositDispositionIntentPostgreSql_Tests
         });
     }
 
+    [Fact]
+    public async Task TRFH4PG16_Both_Exclusive_Surplus_Choices_Match_Reviewed_Target_Price()
+    {
+        await Scratch(async(db,tx)=>
+        {
+            await Run(db,tx,DigestUp);
+            await Run(db,tx,ExclusiveUp);
+            await Run(db,tx,PolicyUp);
+            var a=await Seed(db,tx);
+            var credit=CanonicalIntent(a,required:2_000_000m,
+                choice:RoomChangeDepositSurplusChoice.CreditNextMonthRent);
+            await SignedPolicy(db,tx,a,credit,
+                treatment:3,targetMonthlyRent:2_000_000m);
+            await Run(db,tx,OriginalIntentSql(a,credit));
+            var b=await Seed(db,tx);
+            var refund=CanonicalIntent(b,required:2_000_000m,
+                choice:RoomChangeDepositSurplusChoice.ReviewedManualRefund);
+            await SignedPolicy(db,tx,b,refund,
+                treatment:3,targetMonthlyRent:2_000_000m);
+            await Run(db,tx,OriginalIntentSql(b,refund));
+            Assert.Equal(2L,await Scalar(db,tx,
+                """SELECT count(*) FROM "BuildingManagementRoomChangeDepositDispositionIntents" """));
+        });
+    }
+
+    [Fact]
+    public async Task TRFH4PG17_Unapproved_Source_Review_Cannot_Bind_H4_Cash()
+    {
+        await Scratch(async(db,tx)=>
+        {
+            await Run(db,tx,DigestUp);
+            await Run(db,tx,ExclusiveUp);
+            await Run(db,tx,PolicyUp);
+            var f=await Seed(db,tx);
+            var intent=CanonicalIntent(f);
+            await SignedPolicy(db,tx,f,intent,accepted:false);
+            await Denied(db,tx,OriginalIntentSql(f,intent),"23514");
+        });
+    }
+
     private static async Task<string> TextScalar(
         NpgsqlConnection db,NpgsqlTransaction tx,string sql)
     {

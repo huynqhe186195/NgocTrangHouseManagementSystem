@@ -307,14 +307,14 @@ jobs:
           grep -Eq 'Total tests:[[:space:]]*160\b' phase-2h-domain-ci.log
           grep -Eq 'Passed:[[:space:]]*160\b' phase-2h-domain-ci.log
 
-      - name: Phase 2H all 101 PostgreSQL transfer, financial and H4 canonical digest cases
+      - name: Phase 2H all 103 PostgreSQL transfer, financial and H4 canonical digest cases
         run: |
           set -euo pipefail
           dotnet test modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/BuildingManagement.PostgreSql.Tests.csproj \
             --filter "FullyQualifiedName~RoomChangeRequestsPostgreSql_Tests|FullyQualifiedName~RoomChangeTenantRosterPostgreSql_Tests|FullyQualifiedName~RoomChangeSourceDispositionPostgreSql_Tests|FullyQualifiedName~RoomChangeHandoverDigestPostgreSql_Tests|FullyQualifiedName~RoomChangeDayPricingRulePostgreSql_Tests|FullyQualifiedName~RoomChangeEvidenceArchivePostgreSql_Tests|FullyQualifiedName~RoomChangeMidMonthFinancialPostingPostgreSql_Tests|FullyQualifiedName~RoomChangeMidMonthCompletionPostgreSql_Tests|FullyQualifiedName~RoomScopedServiceTariffPostgreSql_Tests|FullyQualifiedName~RoomServiceInvoiceSourceBindingsPostgreSql_Tests|FullyQualifiedName~RoomChangeDepositDispositionIntentPostgreSql_Tests" --logger "console;verbosity=normal" \
             2>&1 | tee phase-2h-postgres-ci.log
-          grep -Eq 'Total tests:[[:space:]]*101\b' phase-2h-postgres-ci.log
-          grep -Eq 'Passed:[[:space:]]*101\b' phase-2h-postgres-ci.log
+          grep -Eq 'Total tests:[[:space:]]*103\b' phase-2h-postgres-ci.log
+          grep -Eq 'Passed:[[:space:]]*103\b' phase-2h-postgres-ci.log
 
       - name: Phase 2H full EF migration chain on a unique disposable database
         env:

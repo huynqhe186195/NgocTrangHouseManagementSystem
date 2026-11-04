@@ -61,6 +61,22 @@ public sealed class SliceBStagingContractsController : ControllerBase
         return _query!.GetAsync(id);
     }
 
+    // Root Owner-only document export. The same explicit isolated-staging
+    // fence applies to read and download. Returns a genuine Office DOCX
+    // with VERIFIED original scope; never an invented signed PDF or
+    // a declaration that deposit money was received.
+    [HttpGet("{id:guid}/export.docx")]
+    [UnitOfWork(true, System.Data.IsolationLevel.RepeatableRead)]
+    public async Task<IActionResult> ExportOwnerDocumentAsync([FromRoute] Guid id)
+    {
+        RequireIsolatedStaging();
+        var file=await (_query ?? throw Denied())
+            .ExportOwnerDocumentDocxAsync(id);
+        return File(file,
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            $"hop-dong-{id:N}.docx");
+    }
+
     [HttpPost]
     [UnitOfWork(true)]
     public Task<ContractDto> CreateAsync([FromBody] CreateContractDto input)

@@ -1447,3 +1447,52 @@ skipped, downgraded or permitted to change real money.
 **Status:** these fixes are **source-committed but runtime NOT
 REVERIFIED**; the new exact SHA must pass all five groups locally
 before technical acceptance. There is still no production.
+
+
+## 2026-11-04 — Five-group PASS at 384a9cc + real authenticated Owner DOCX execution acceptance pending
+
+The user-provided local quality gate at exact Git SHA
+`384a9cc1fba10afe2c1c5e26e71a88d8f14152bd` shows
+`=== PHASE 2H FINANCIAL FOUNDATIONS: ALL FIVE GROUPS PASSED ===`.
+The gate requires 160 focused Domain, 92 real PostgreSQL, full
+disposable migration rehearsal, a real authenticated isolated two-PG
+HTTP fixture, and full regression; the host regression completed
+76/76 with no failures. This also confirms the previous dispute
+Owner-resolution 500 was no longer present at that exact SHA.
+No production data or database was touched.
+
+### Additional authenticated DOCX security probe, not yet run
+
+Extends the existing **one real authenticated PostgreSQL HTTP test**
+`STAGEPGHTTP01`, not a route reflection-only test. It uses the
+existing two randomly named disposable Identity/Building databases,
+real ABP Identity and active operator grants, two buildings with
+the same room number and two independently linked mock tenants.
+New assertions check:
+- Root Owner can fetch the actual `.docx` payload for contracts
+  in both authorized buildings; it is a ZIP/OOXML payload with
+  the correct `word/document.xml`, MIME type and no-cache controls.
+- Each building's generated DOCX contains only that contract's
+  linked tenant name; other building's tenant and Citizen ID
+  are not disclosed.
+- B-only staff cannot export the foreign A contract and cannot
+  export their *own* B contract without BootstrapOwner; unauthenticated
+  request fails.
+- The Owner's previously authorized download becomes forbidden
+  after live **persisted BootstrapOwner revocation**, without relying
+  on token claims/cached document. The grant is restored in the
+  disposable fixture so subsequent financial scenarios run normally.
+- DOCX remains marked **unsigned**; no new contract is activated,
+  no cash/deposit/refund/credit is posted, and no tenancy is
+  mutated by export.
+
+The test runs within the pre-existing staging fixture already
+selected in the 4/5 gate. Expected test **counts do not change**:
+160 Domain, 92 PG, 76 Host full regression, and 1 integrated
+authenticated PG HTTP fixture (now with more assertions).
+**The code at the new SHA is pending runtime confirmation.**
+
+Remaining H4 cash-backed deferred receivable, once-only future
+rent credit, reviewed manual bank refund, legal signed contract
+evidence and complete per-building Owner role acceptance remain
+separate HOLD. Do not deploy production.

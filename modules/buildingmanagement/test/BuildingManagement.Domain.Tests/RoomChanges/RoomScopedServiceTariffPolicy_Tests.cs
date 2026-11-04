@@ -208,4 +208,19 @@ public sealed class RoomScopedServiceTariffPolicy_Tests
                 new DateOnly(2025, 12, 31)));
     }
 
+    [Fact]
+    public void TRF_SVC14_PostgreSql_Microsecond_Roundtrip_Preserves_SHA()
+    {
+        var at = new DateTime(2026, 11, 4, 8, 0, 0, DateTimeKind.Utc)
+            .AddTicks(1234567);
+        var row = RoomScopedServiceTariffVersion.Create(
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), 1,
+            150_000m, RoomScopedServiceBillingUnit.PerPerson,
+            RoomScopedServiceChargingRule.CalendarDayProration,
+            new DateOnly(2026, 11, 5), null,
+            Guid.NewGuid(), at, "SIGNED-ROOM-PRICE-MICROSECOND-REVIEW-2026");
+        Assert.Equal(0L, row.ApprovedAtUtc.Ticks % 10L);
+        row.VerifyFingerprint();
+    }
+
 }

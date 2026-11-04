@@ -36,13 +36,49 @@ jobs:
         run: |
           $tokens = $null
           $parseErrors = $null
-          $runner = (Resolve-Path '.\\etc\\scripts\\verify-phase-2h-financial-foundations.ps1').Path
-          [void][System.Management.Automation.Language.Parser]::ParseFile(
-            $runner, [ref]$tokens, [ref]$parseErrors)
-          if ($parseErrors.Count -gt 0) {
-            foreach ($parseError in $parseErrors) { Write-Host $parseError }
-            throw "Phase 2H PowerShell runner has $($parseErrors.Count) syntax error(s)."
+          foreach ($scriptPath in @(
+            '.\etc\scripts\verify-phase-2h-financial-foundations.ps1',
+            '.\etc\scripts\Assert-Phase2HTrx.ps1'
+          )) {
+            $tokens = $null
+            $parseErrors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $scriptPath).Path, [ref]$tokens, [ref]$parseErrors)
+            if ($parseErrors.Count -gt 0) {
+              foreach ($parseError in $parseErrors) { Write-Host $parseError }
+              throw "Phase 2H PowerShell syntax invalid in $scriptPath."
+            }
           }
+
+      - name: Probe Phase 2H TRX acceptance counter and fail-closed behavior
+        shell: pwsh
+        run: |
+          $parser = (Resolve-Path '.\etc\scripts\Assert-Phase2HTrx.ps1').Path
+          $fixture = Join-Path $env:RUNNER_TEMP 'phase2h-trx-acceptance-fixture.trx'
+          function Write-Trx([int]$total, [int]$passed, [int]$failed, [int]$notExecuted) {
+            $executed = $total - $notExecuted
+            $xml = '<TestRun xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010"><ResultSummary outcome="Completed"><Counters total="{0}" executed="{1}" passed="{2}" failed="{3}" notExecuted="{4}" /></ResultSummary></TestRun>' -f $total,$executed,$passed,$failed,$notExecuted
+            Set-Content -LiteralPath $fixture -Value $xml -Encoding UTF8
+          }
+          function Expect-Rejected([int]$expected) {
+            $rejected = $false
+            try { & $parser -Path $fixture -ExpectedTests $expected | Out-Null }
+            catch { $rejected = $true }
+            if (-not $rejected) { throw "TRX guard accepted invalid fixture for $expected cases." }
+          }
+          Write-Trx 160 160 0 0
+          & $parser -Path $fixture -ExpectedTests 160
+          Expect-Rejected 96
+          Write-Trx 160 159 1 0
+          Expect-Rejected 160
+          Write-Trx 160 159 0 1
+          Expect-Rejected 160
+          Write-Trx 96 96 0 0
+          & $parser -Path $fixture -ExpectedTests 96
+          Set-Content -LiteralPath $fixture -Value '<bad-trx' -Encoding UTF8
+          Expect-Rejected 96
+          Remove-Item -LiteralPath $fixture -Force
+          Expect-Rejected 96
 
       - name: Install .NET SDK 10
         uses: actions/setup-dotnet@v4

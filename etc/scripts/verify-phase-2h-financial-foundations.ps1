@@ -71,6 +71,20 @@ try {
     # to NativeCommandError. With ErrorActionPreference=Stop this aborted the
     # runner at the first xUnit "[FAIL]" line and hid the actual exception.
     # Allow the native process to finish; preserve its exit code and full log.
+    # VSTest console output varies by Windows SDK / logger. Use TRX counters
+    # as machine-readable acceptance evidence instead of matching prose.
+    function Assert-LoggedTestCount([string]$logName, [int]$expectedCount) {
+        $trxName = [System.IO.Path]::ChangeExtension($logName, '.trx')
+        $trxPath = Join-Path $logs $trxName
+        try {
+            $verified = & (Join-Path $PSScriptRoot 'Assert-Phase2HTrx.ps1') -Path $trxPath -ExpectedTests $expectedCount
+            Write-Host $verified -ForegroundColor Green
+        }
+        catch {
+            Throw-WithTestLog "TRX result validation FAILED for $logName (expected $expectedCount passed): $($_.Exception.Message)" $logName
+        }
+    }
+
     function Invoke-DotNetTestLogged(
         [string]$project, [string]$testFilter,
         [string]$verbosity, [string]$logName) {
@@ -79,8 +93,12 @@ try {
             $ErrorActionPreference = 'Continue'
             # Mark all logs with the exact source revision to avoid stale-fail confusion.
             $testLogPath = Join-Path $logs $logName
+            $trxName = [System.IO.Path]::ChangeExtension($logName, '.trx')
+            $trxPath = Join-Path $logs $trxName
+            # Never accept a TRX artifact from any earlier test invocation.
+            Remove-Item -LiteralPath $trxPath -Force -ErrorAction SilentlyContinue
             Set-Content -LiteralPath $testLogPath -Value "PHASE2H_COMMIT=$sha" -Encoding UTF8
-            & dotnet test $project --filter $testFilter --logger $verbosity *>&1 |
+            & dotnet test $project --filter $testFilter --logger $verbosity --logger "trx;LogFileName=$trxName" --results-directory $logs *>&1 |
                 ForEach-Object { $_.ToString() } |
                 Tee-Object -FilePath $testLogPath -Append |
                 Out-Host
@@ -93,16 +111,12 @@ try {
     Write-Host '== 1/5: H2-H6 D01-D04/D06 160 dossier and archival source cases =='
     $domainExit = Invoke-DotNetTestLogged $domain 'FullyQualifiedName~RoomChangeMidMonthRentReconciliation_Tests|FullyQualifiedName~RoomChangeDepositDifferencePreview_Tests|FullyQualifiedName~TRF_HAND|FullyQualifiedName~RoomChangeMidMonthFinancialReconciliationPacket_Tests|FullyQualifiedName~RoomChangeDayPricingRuleCandidate_Tests|FullyQualifiedName~RoomChangeOfficialSourceRentEvidenceBridge_Tests|FullyQualifiedName~RoomChangeFinalIndependentSignoffs_Tests|FullyQualifiedName~RoomChangeApprovedH2H3ExecutionPolicy_Tests|FullyQualifiedName~RoomChangeDeferredDepositDisposition_Tests|FullyQualifiedName~RoomScopedServiceTariffPolicy_Tests|FullyQualifiedName~RoomScopedServiceInvoiceSourceBinding_Tests|FullyQualifiedName~RoomChangeDepositDispositionIntent_Tests' 'console;verbosity=normal' '15-2h-financial-domain.log'
     if ($domainExit -ne 0) { Throw-WithTestLog '2H rent/deposit domain tests FAILED.' '15-2h-financial-domain.log' }
-    if (-not (Select-String -Path (Join-Path $logs '15-2h-financial-domain.log') -Pattern 'Total tests:\s*160\b' -Quiet) -or -not (Select-String -Path (Join-Path $logs '15-2h-financial-domain.log') -Pattern 'Passed:\s*160\b' -Quiet)) {
-        Throw-WithTestLog 'Expected exactly 160/160 H2/H3/H4/H6/D01/D02/D03/D04/D06 dossier and archive cases.' '15-2h-financial-domain.log'
-    }
+    Assert-LoggedTestCount '15-2h-financial-domain.log' 160
 
     Write-Host '== 2/5: Phase 2H PostgreSQL concurrency and atomic transfer =='
     $pgExit = Invoke-DotNetTestLogged $pg 'FullyQualifiedName~RoomChangeRequestsPostgreSql_Tests|FullyQualifiedName~RoomChangeTenantRosterPostgreSql_Tests|FullyQualifiedName~RoomChangeSourceDispositionPostgreSql_Tests|FullyQualifiedName~RoomChangeHandoverDigestPostgreSql_Tests|FullyQualifiedName~RoomChangeDayPricingRulePostgreSql_Tests|FullyQualifiedName~RoomChangeEvidenceArchivePostgreSql_Tests|FullyQualifiedName~RoomChangeMidMonthFinancialPostingPostgreSql_Tests|FullyQualifiedName~RoomChangeMidMonthCompletionPostgreSql_Tests|FullyQualifiedName~RoomScopedServiceTariffPostgreSql_Tests|FullyQualifiedName~RoomServiceInvoiceSourceBindingsPostgreSql_Tests|FullyQualifiedName~RoomChangeDepositDispositionIntentPostgreSql_Tests' 'console;verbosity=normal' '16-2h-postgresql.log'
     if ($pgExit -ne 0) { Throw-WithTestLog '2H PostgreSQL suite FAILED.' '16-2h-postgresql.log' }
-    if (-not (Select-String -Path (Join-Path $logs '16-2h-postgresql.log') -Pattern 'Total tests:\s*96\b' -Quiet) -or -not (Select-String -Path (Join-Path $logs '16-2h-postgresql.log') -Pattern 'Passed:\s*96\b' -Quiet)) {
-        Throw-WithTestLog 'Expected exactly 96/96 PostgreSQL transfer and H4 digest cases.' '16-2h-postgresql.log'
-    }
+    Assert-LoggedTestCount '16-2h-postgresql.log' 96
 
     Write-Host '== 3/5: Fresh disposable PostgreSQL migration chain =='
     $env:BM_ALLOW_FULL_MIGRATION_REHEARSAL = 'CREATE_AND_DROP_FRESH_LOCAL_TEST_DATABASE'

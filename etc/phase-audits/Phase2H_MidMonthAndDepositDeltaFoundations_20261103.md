@@ -1227,3 +1227,26 @@ The previous PASS must not be represented as a PASS for the
 20261104150000 migration or ten new PostgreSQL probes.
 H4 deposit writer, rent credit/refund and full midmonth
 completion remain HOLD. No production or real-money writes.
+
+
+## 2026-11-04 — Exact SHA 6b792dbd accepted quality gate after binding-test fix
+
+Owner supplied the local script output at
+`6b792dbd6d34b7b23b5820a7537da89db993c1cf`:
+`=== PHASE 2H FINANCIAL FOUNDATIONS: ALL FIVE GROUPS PASSED ===`
+with the final isolated HTTP Host regression `70/70`, no failures.
+At that exact SHA the script requires **152/152 focused Domain**
+and **86/86 focused PostgreSQL**, the full disposable migration
+rehearsal, authenticated PG HTTP staging fixture and full
+regression. The preceding named-argument `CS0103` compiler
+failure was corrected in the failing PG test, without skipping it.
+No database migrated on production or application DB.
+
+This is a **foundation technical gate only**. The H4 deferred
+top-up/next-month-rent-credit/manual-refund transactional writer,
+contract export and positive authenticated full mid-month transfer
+are still HOLD. The output's `NO DATABASE MIGRATION, NO
+POSTGRESQL TEST (COMPILE ONLY)` line refers to the embedded general
+regression phase, not to the separately run PG test and migration
+phases of this five-group script. The user's untracked
+`Phase2G3A7_RevisionLedger_Generated_Review.sql` stays untouched.

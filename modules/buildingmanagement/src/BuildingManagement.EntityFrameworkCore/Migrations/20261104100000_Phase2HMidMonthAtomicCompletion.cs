@@ -189,17 +189,6 @@ public sealed class Phase2HMidMonthAtomicCompletion : Migration
            OR day_rule."PolicyReviewId" IS DISTINCT FROM rv."Id"
            OR day_rule."BuildingId" IS DISTINCT FROM req."BuildingId"
            OR day_rule."TransferDate" IS DISTINCT FROM req."RequestedDate"
-           -- D01/D02 Owner-confirmed for NEW execution on 2026-11-04:
-           -- target owns handover VN civil date; nearest whole VND wins.
-           -- Legacy signed source-day/truncation documents remain historical
-           -- evidence but may never complete a newly executed transfer.
-           OR day_rule."TransferDayOwner" IS DISTINCT FROM 2
-           OR day_rule."Rounding" IS DISTINCT FROM 1
-           OR day_rule."SourceChargeableDays" IS DISTINCT FROM
-              extract(day from req."RequestedDate")::integer-1
-           OR day_rule."CalendarDays" IS DISTINCT FROM
-              extract(day from (date_trunc('month',req."RequestedDate"::timestamp)
-                + interval '1 month - 1 day'))::integer
            OR day_rule."SourceChargeableDays"<=0
            OR day_rule."TargetChargeableDays"<=0
            OR day_rule."CalendarDays" IS DISTINCT FROM

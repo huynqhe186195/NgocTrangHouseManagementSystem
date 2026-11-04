@@ -6003,6 +6003,11 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     new BuildingManagement.Utilities.MeterReading(
                         Guid.NewGuid(), h4AfterHandoverMeterW, 2026, 10,
                         0m, 0m, new DateTime(2026, 10, 31)));
+                // The historic Oct 16 exchange retired both old meters;
+                // the partial UNIQUE index allows only the replacements
+                // to remain active in this original room.
+                db.UtilityMeters.Local.Single(x => x.Id == h4MeterE).Deactivate();
+                db.UtilityMeters.Local.Single(x => x.Id == h4MeterW).Deactivate();
                 db.MeterReplacements.AddRange(
                     new BuildingManagement.Utilities.MeterReplacement(
                         Guid.NewGuid(), h4MeterE, h4AfterHandoverMeterE,

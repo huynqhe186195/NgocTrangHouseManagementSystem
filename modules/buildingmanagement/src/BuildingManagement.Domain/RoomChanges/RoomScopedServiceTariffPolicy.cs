@@ -102,13 +102,21 @@ public sealed record RoomScopedServiceTariffVersion(
             existing.ServiceId != candidate.ServiceId)
             return;
 
-        var oldEnd = existing.EffectiveThrough ?? DateOnly.MaxValue;
-        var newEnd = candidate.EffectiveThrough ?? DateOnly.MaxValue;
-        if (existing.Version == candidate.Version ||
-            existing.EffectiveFrom <= newEnd &&
-            candidate.EffectiveFrom <= oldEnd)
+        // An open-ended old price is superseded by an appended LATER
+        // effective version. Retain the original row and its original
+        // invoice snapshots; date resolution selects the latest version.
+        // Explicit finite periods, in contrast, must not overlap.
+        if (existing.Version == candidate.Version)
             throw new InvalidOperationException(
-                "One room/service cannot have two overlapping active tariff versions.");
+                "One room/service tariff version cannot be duplicated.");
+        var earlier = existing.EffectiveFrom < candidate.EffectiveFrom
+            ? existing : candidate;
+        var later = ReferenceEquals(earlier, existing) ? candidate : existing;
+        if (earlier.Version >= later.Version ||
+            (earlier.EffectiveThrough.HasValue &&
+             later.EffectiveFrom <= earlier.EffectiveThrough.Value))
+            throw new InvalidOperationException(
+                "Room-specific service price versions must increase prospectively and cannot overlap finite periods.");
     }
 
     /// <summary>

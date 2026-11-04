@@ -1167,3 +1167,63 @@ and unique consumption before any official posting. Full H4 cash
 posting, new-contract export, Owner-per-building role, authorized
 positive mid-month completion and authenticated attack E2E remain
 HOLD. Do not deploy production.
+
+
+## 2026-11-04 — Owner-confirmed five-group PASS at exact SHA ebcf7f3 (before new migration)
+
+The operator's console transcript at
+`ebcf7f3bd310e6c6cf67464d70124a13e4889cf9` states
+`=== PHASE 2H FINANCIAL FOUNDATIONS: ALL FIVE GROUPS PASSED ===`,
+a nested full-regression 70/70 HTTP test PASS, no live production
+application, and no production database migration. The test runner
+at that exact SHA required 152 focused Domain tests, 76 focused
+PostgreSQL transfer cases, a disposable full migration rehearsal,
+the authenticated isolated PostgreSQL HTTP fixture and full isolated
+regression. This confirms the prior **original service-fee rate source
+binding Domain model**, not the subsequent persistence below.
+
+### New additive original-invoice-source persistence, acceptance PENDING
+
+- EF now maps `RoomScopedServiceInvoiceSourceBinding` as original
+  immutable evidence with composite (MonthlyCandidateId,ServiceId)
+  PK, candidate FK, original RoomId/ServiceId tariff-version FK,
+  original monthly SHA, source service code, billed Vietnam date
+  range, verified quantity/source reference, price version/amount
+  and frozen evidence digest. It is strictly non-payment/non-issue.
+- New **additive** migration
+  `20261104150000_Phase2HRoomServiceInvoiceSourceBindings` with
+  independent PostgreSQL immutable triggers: before-INSERT parity
+  against original candidate header/JSON service fee, original
+  tariff version/SHA, room, target contract, effective date,
+  calendar month, recorded amount and canonical VND rounding;
+  update/delete/truncate denied; unique per-candidate/service
+  and case-insensitive candidate/service-code consumption; no
+  late retroactive binding after a monthly invoice was issued.
+  Full migration rehearsal requires this as the latest migration.
+- Stale tariff source is rejected both at **binding append time**
+  and again by the separate read-only SQL
+  `BM_2HRoomServiceInvoiceBindingsReady(candidateId)` calculation,
+  because an Owner can append a later effective tariff *after*
+  a candidate's original source freeze. Thus a stale old-monthly
+  service price cannot be silently called ready.
+- Real-PG scratch-schema tests `TRFBINDPG01..10` verify positive
+  source binding, missing/foreign-room tariff, invented amount,
+  missing occupancy or foreign month, unapproved fee, immutability,
+  replay, refusal to discard populated history, a later tariff
+  supersession, issuance-before-binding refusal, empty rollback and
+  re-upgrade. **New one-shot targets: 152 Domain / 86 PG**, plus
+  original disposable migration/authenticated HTTP/full regression.
+- Source terms still depend on **independent actual
+  roster/meter/actor evidence**, authenticated Owner/issuer
+  authorization and bank evidence; a user-supplied free-text
+  source reference or SHA by itself does not prove those.
+  This source table is **not an automatically enforced official
+  monthly issuance gate** until actual secure issuer integration
+  and authenticated cross-building/positive tests are completed.
+  Existing signed monthly invoice rows are not rewritten.
+
+**Status: NEW CODE COMMITTED, NOT RUNTIME TESTED.**
+The previous PASS must not be represented as a PASS for the
+20261104150000 migration or ten new PostgreSQL probes.
+H4 deposit writer, rent credit/refund and full midmonth
+completion remain HOLD. No production or real-money writes.

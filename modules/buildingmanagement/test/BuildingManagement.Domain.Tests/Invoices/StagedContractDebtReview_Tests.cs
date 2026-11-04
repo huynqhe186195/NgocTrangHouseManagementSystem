@@ -11,6 +11,9 @@ public sealed class StagedContractDebtReview_Tests
 {
     private static readonly DateOnly BeforeDue = new(2026, 11, 4);
     private static readonly DateOnly AfterDue = new(2026, 11, 9);
+    // Stable fixture: as-of balance must not change with the runner's wall clock.
+    private static readonly DateTime FixturePaidAtUtc =
+        new(2026, 11, 4, 4, 0, 0, DateTimeKind.Utc);
 
     [Fact]
     public void STAGEDCONTRACT01_Multiple_Invoices_Have_Independent_Balances()
@@ -75,7 +78,7 @@ public sealed class StagedContractDebtReview_Tests
         var contract = Guid.NewGuid();
         var invoice = Invoice(contract, 500_000m, new DateOnly(2026, 11, 5));
         var payment = Receipt(contract, invoice.InvoiceId, 100_000m);
-        payment.Complete(DateTime.UtcNow);
+        payment.Complete(FixturePaidAtUtc);
         var result = Assess(contract, BeforeDue, new[] { invoice },
             Array.Empty<InvoicePaymentAllocationJournalEntry>(), new[] { payment });
 
@@ -91,7 +94,7 @@ public sealed class StagedContractDebtReview_Tests
         var invoice = Invoice(contract, 500_000m, new DateOnly(2026, 11, 5));
         var other = Guid.NewGuid();
         var payment = Receipt(contract, other, 100_000m);
-        payment.Complete(DateTime.UtcNow);
+        payment.Complete(FixturePaidAtUtc);
         var result = Assess(contract, BeforeDue, new[] { invoice },
             new[] { Entry(payment, other) }, new[] { payment });
 
@@ -244,7 +247,7 @@ public sealed class StagedContractDebtReview_Tests
     private static InvoicePaymentAllocationJournalEntry Entry(
         Payment payment, Guid invoice)
         => InvoicePaymentAllocationJournalEntry.StageForValidation(
-            Guid.NewGuid(), payment, invoice, Guid.NewGuid(), DateTime.UtcNow);
+            Guid.NewGuid(), payment, invoice, Guid.NewGuid(), payment.PaidAt!.Value.AddMinutes(1));
 
     private static StagedContractDebtReview Assess(
         Guid contract, DateOnly asOf,

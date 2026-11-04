@@ -1535,3 +1535,53 @@ completion in this fixture should not be confused with positive
 full **mid-month** (15th, unequal fee/deposit) execution. The
 latter, H4 actual money allocation, genuine signed attachments
 and production continue HOLD.
+
+
+## 2026-11-04 — Root-cause fix for 73f8cd1 authenticated HTTP test failure
+
+The Owner provided the actual full `18-2h-auth-http.log`, whose
+first error is NOT a database migration, runtime-DB permission,
+EF compilation or DOCX XML error. At exact
+`73f8cd1af3bd0de98aaebe76b085c6a5b6d59c56` the isolated
+fixture stops at
+`SliceAStagingPostgreSqlHttp_Tests.cs:1701`:
+B-only staff attempts `GET /api/slice-b-staging/contracts/{A}/export.docx`.
+This intentionally lacks BootstrapOwner. The server's persisted
+Identity permission reader `AcquirePermissionAsync` reaches
+**line 302**, where no direct or permitted ABP role grant exists,
+and correctly raises `AbpAuthorizationException`. The line-302
+throw proves the Identity verification had run; its generic
+message does NOT prove that a UnitOfWork was missing (the
+earlier explanation about the missing UoW was incorrect).
+The TestHost action propagated the expected authentication
+exception instead of producing the asserted **HTTP 403**.
+
+**Code correction (no permission bypass):**
+- `SliceBStagingContractsController.ExportOwnerDocumentAsync`
+  catches only `AbpAuthorizationException` from its awaited,
+  staging-gated, Root+Contracts.Read+building-scoped query and
+  returns MVC `Forbid()` (real HTTP 403); its original Identity
+  leases, row locks, actor check and private DOCX output remain.
+  Unauthenticated requests continue to be handled by `[Authorize]`
+  challenge. Unexpected DB errors still fail, not get mapped to 403.
+- `SliceBStagingRoomScopedServiceTariffsController` now uses
+  awaited `IActionResult` for both GET/POST, converting only
+  ABP authorization denial to `Forbid()`, preserving all
+  BootstrapOwner + Rooms.Manage + same-building grants and
+  SERIALIZABLE UoW/fence. For success, `Ok(data)` maintains the
+  200 and JSON object/array contract, while signed invalid
+  proposals remain denied by the underlying domain/SQL guards.
+  This preemptively covers the staff-denial paths AFTER the DOCX
+  portion of the same authenticated fixture, which had NOT been
+  reached in the reported failing run.
+- The existing `STAGEPGHTTP01` exercises staff A/B cross-building,
+  own-building non-Owner, no authentication, root signed DOCX,
+  persisted BootstrapOwner revocation/restore, cross-room fee
+  history and duplicate rejects. No negative-case assertion
+  was skipped or relaxed.
+
+**Technical status:** source fix committed; source/static review
+only here. It is not an authenticated-HTTP PASS until exact-SHA
+five-group local or ephemeral CI execution. Previous 5/5 PASS at
+384a9cc remains the last fully verified baseline. No production
+deployment or direct user database mutation.

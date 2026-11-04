@@ -675,3 +675,29 @@ cash carry. Test count remains unchanged at **66 focused PostgreSQL**.
 This is a test-fixture correction, not a production SQL gate bypass.
 The test has not been run locally in this environment. It does not
 replace collecting the user's original failing PostgreSQL log.
+
+
+### 2026-11-04 — Actual local Phase 2H gate feedback (not yet accepted)
+
+User's Windows PowerShell log for commit `b3c49968ee1c92293a70bcad3f91e46c287b8c03`
+proves **106/106 focused Domain cases PASS**. PostgreSQL credentials were
+corrected (the formerly failing `TRFMIDPG01` now PASSED); the
+PostgreSQL run subsequently reported a failure in
+`TRFMIDPG03_Once_Inserted_Cannot_Update_Delete_Or_Truncate`.
+The wrapper stopped at xUnit's first stderr `[FAIL]` line, so this
+log does *not* contain the actual exception or establish that no other
+PostgreSQL cases failed.
+
+Follow-up test fixture fix: verify the explicit no-TRUNCATE trigger
+*before* inserting a mid-month completion into the scratch transaction.
+After insertion, the unfinished deferred PostgreSQL trigger events can
+cause an earlier PostgreSQL pending-trigger error (`55006`), which does
+not verify the intended user trigger's `23514` rule. The separate
+post-insert UPDATE, DELETE, and migration downgrade denial tests remain.
+The test runner now captures the entire xUnit process and error output
+under Windows PowerShell 5.1, then checks the native exit status rather
+than aborting on an individual stderr record.
+
+**Post-fix local execution is pending**; no acceptance claim for the
+66 PostgreSQL cases, migration rehearsal, authenticated HTTP, or full
+regression has been made. No production use.

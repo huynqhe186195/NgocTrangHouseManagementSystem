@@ -180,16 +180,22 @@ public sealed class RoomChangeRequestsPostgreSql_Tests
     {
         await ScratchAsync(async (db, tx) =>
         {
+            // Every parallel test runs its own random scratch schema.
+            // Filtering pg_trigger by name alone can count a live trigger
+            // from another test and incorrectly report rollback failure.
+            const string ownSchemaTriggerCount = """
+                SELECT count(*)
+                  FROM pg_trigger t
+                  JOIN pg_class c ON c.oid = t.tgrelid
+                  JOIN pg_namespace n ON n.oid = c.relnamespace
+                 WHERE NOT t.tgisinternal
+                   AND t.tgname='TR_BM_RoomChangeRequest_Guard'
+                   AND n.nspname=current_schema()
+                """;
             await Run(db, tx, DownSql);
-            Assert.Equal(0L, await Scalar(db, tx, """
-                SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal
-                 AND tgname='TR_BM_RoomChangeRequest_Guard'
-                """));
+            Assert.Equal(0L, await Scalar(db, tx, ownSchemaTriggerCount));
             await Run(db, tx, UpSql);
-            Assert.Equal(1L, await Scalar(db, tx, """
-                SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal
-                 AND tgname='TR_BM_RoomChangeRequest_Guard'
-                """));
+            Assert.Equal(1L, await Scalar(db, tx, ownSchemaTriggerCount));
         });
     }
 

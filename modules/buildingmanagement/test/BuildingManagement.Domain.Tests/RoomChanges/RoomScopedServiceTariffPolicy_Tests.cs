@@ -209,6 +209,22 @@ public sealed class RoomScopedServiceTariffPolicy_Tests
     }
 
     [Fact]
+    public void TRF_SVC15_Append_Newer_Price_Supersedes_Original_Open_Ended_History()
+    {
+        var room = Guid.NewGuid();
+        var service = Guid.NewGuid();
+        var original = Tariff(room, service, from: new DateOnly(2026, 1, 1));
+        var successor = Tariff(room, service, version: 2, price: 200_000m,
+            from: new DateOnly(2026, 12, 1));
+        RoomScopedServiceTariffVersion.RequireNonOverlapping(original, successor);
+        var selected = RoomScopedServiceTariffVersion.SelectEffectiveForDate(
+            new[] { original, successor }, room, service, new DateOnly(2027, 1, 1));
+        Assert.Equal(successor.Id, selected.Id);
+        Assert.Equal(150_000m, original.UnitPriceVnd);
+        original.VerifyFingerprint();
+    }
+
+    [Fact]
     public void TRF_SVC14_PostgreSql_Microsecond_Roundtrip_Preserves_SHA()
     {
         var at = new DateTime(2026, 11, 4, 8, 0, 0, DateTimeKind.Utc)

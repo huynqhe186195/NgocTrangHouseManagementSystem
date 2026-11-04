@@ -22,8 +22,13 @@ public sealed class Phase2HRoomChangeSecurityBoundary_Tests
 
         var methods = controller.GetMethods(BindingFlags.Public |
             BindingFlags.Instance | BindingFlags.DeclaredOnly);
-        Assert.Equal(28, methods.Length);
+        Assert.Equal(29, methods.Length);
         Assert.Contains(methods, m => m.Name == "CompleteRoomChangeAsync");
+        var h4ObligationRead = Assert.Single(methods.Where(m =>
+            m.Name == "GetH4OutstandingObligationAsync"));
+        Assert.Equal("{requestId:guid}/h4-outstanding-obligation",
+            h4ObligationRead.GetCustomAttribute<HttpGetAttribute>()?.Template);
+        Assert.NotNull(h4ObligationRead.GetCustomAttribute<UnitOfWorkAttribute>());
         var h4Writer=Assert.Single(methods.Where(m =>
             m.Name=="CompleteH4MidMonthRoomChangeAsync"));
         Assert.Equal("{requestId:guid}/complete-h4-mid-month-room-change",
@@ -126,6 +131,7 @@ public sealed class Phase2HRoomChangeSecurityBoundary_Tests
         Assert.Contains(nameof(SliceBStagingRoomChangeRequests.GetDayPricingRuleAsync), methods);
         Assert.Contains(nameof(SliceBStagingRoomChangeRequests.CaptureH4DispositionIntentAsync), methods);
         Assert.Contains(nameof(SliceBStagingRoomChangeRequests.GetH4DispositionIntentAsync), methods);
+        Assert.Contains(nameof(SliceBStagingRoomChangeRequests.GetH4OutstandingObligationAsync), methods);
         Assert.Contains(nameof(SliceBStagingRoomChangeRequests.HoldForPolicyAsync), methods);
         Assert.DoesNotContain(methods, x =>
             x.Contains("Approve", StringComparison.OrdinalIgnoreCase) ||

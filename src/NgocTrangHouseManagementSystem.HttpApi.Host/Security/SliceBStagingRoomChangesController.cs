@@ -257,6 +257,21 @@ public sealed class SliceBStagingRoomChangesController : ControllerBase
         catch (AbpAuthorizationException) { return Forbid(); }
     }
 
+    // Original deferred H4 obligation read; root only, no bank-settled claim.
+    [HttpGet("{requestId:guid}/h4-outstanding-obligation")]
+    [UnitOfWork(true, IsolationLevel.Serializable)]
+    public async Task<IActionResult> GetH4OutstandingObligationAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid requestId)
+    {
+        try
+        {
+            RequireIsolatedStaging();
+            return Ok(await _requests!.GetH4OutstandingObligationAsync(
+                contractId, requestId));
+        }
+        catch (AbpAuthorizationException) { return Forbid(); }
+    }
+
     // Isolated staging only: H4 moves the complete roster and creates ONE
     // original signed outstanding financial obligation, never bank cash.
     [HttpPost("{requestId:guid}/complete-h4-mid-month-room-change")]

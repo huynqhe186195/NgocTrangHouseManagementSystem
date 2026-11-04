@@ -6071,6 +6071,38 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 Assert.Equal(64, existing.RootElement.GetProperty(
                     "evidenceSha256").GetString()!.Length);
             }
+            // No H4 liability exists until one fully authorized mid-month
+            // completion has atomically committed. Root, staff, and
+            // cross-building probes must never invent an obligation.
+            var h4ObligationUrl = h4At + "/h4-outstanding-obligation";
+            using (var staffObligation = await clientB.GetAsync(h4ObligationUrl))
+                Assert.Equal(HttpStatusCode.Forbidden, staffObligation.StatusCode);
+            using (var rootBeforeCompletion = await clientRoot.GetAsync(h4ObligationUrl))
+                Assert.Equal(HttpStatusCode.Forbidden, rootBeforeCompletion.StatusCode);
+            using (var crossObligation = await clientRoot.GetAsync(
+                ChangeRoute(contractA) + "/" + h4Request.ToString("D") +
+                "/h4-outstanding-obligation"))
+                Assert.Equal(HttpStatusCode.Forbidden, crossObligation.StatusCode);
+
+            // The writer must deny premature execution and preserve every
+            // existing source cash allocation and pending signed H4 intent.
+            transferClock.SetUtc(new DateTimeOffset(
+                2027, 6, 14, 12, 0, 0, TimeSpan.Zero));
+            try
+            {
+                var early = await PostFinalAsync(clientRoot,
+                    h4At + "/complete-h4-mid-month-room-change",
+                    JsonSerializer.Serialize(new {
+                        targetMonthlyRent = 4_000_000m,
+                        sourceRoomDisposition = 1,
+                        dispositionEvidenceReference =
+                            "ROOT-SIGNED-H4-SOURCE-ROOM-CLEARANCE-001",
+                        completionReference =
+                            "ROOT-SIGNED-H4-ATOMIC-TRANSFER-001"
+                    }));
+                Assert.Equal(HttpStatusCode.Forbidden, early.Status);
+            }
+            finally { transferClock.Reset(); }
             var h4Duplicate = await PostFinalAsync(
                 clientRoot, h4IntentUrl, h4IntentInput);
             Assert.Equal(HttpStatusCode.Forbidden, h4Duplicate.Status);
@@ -6090,6 +6122,17 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     .Where(x => x.RequestId == h4Request).ToArrayAsync());
                 Assert.Empty(await db.DepositSettlements.AsNoTracking()
                     .Where(x => x.SourceContractId == h4SourceContract).ToArrayAsync());
+                // No H4 completion = no forged obligation or new contract.
+                await using (var checkH4 = new NpgsqlCommand(
+                    """SELECT count(*) FROM "BuildingManagementRoomChangeH4Obligations"
+                       WHERE "RequestId"=@request""",
+                    (NpgsqlConnection)db.Database.GetDbConnection(),
+                    (NpgsqlTransaction)db.Database.CurrentTransaction!.GetDbTransaction()))
+                {
+                    checkH4.Parameters.AddWithValue("request", h4Request);
+                    Assert.Equal(0L, Convert.ToInt64(
+                        await checkH4.ExecuteScalarAsync()));
+                }
                 await uow.CompleteAsync();
             }
 

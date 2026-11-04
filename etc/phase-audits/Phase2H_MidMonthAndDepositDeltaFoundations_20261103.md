@@ -701,3 +701,25 @@ than aborting on an individual stderr record.
 **Post-fix local execution is pending**; no acceptance claim for the
 66 PostgreSQL cases, migration rehearsal, authenticated HTTP, or full
 regression has been made. No production use.
+
+
+### 2026-11-04 — 65/66 PostgreSQL feedback; cross-schema catalog isolation fix (TEST PENDING)
+
+Local PostgreSQL run of the previous commit reported **65 passed, 1 failed**.
+The sole failure was
+`TRFPG03_EmptyHistory_Allows_Rollback_And_Reupgrade` at the
+`pg_trigger` count assertion: **expected 0, actual 1**. Its historical
+SQL counted a trigger name across every schema in the shared isolated
+test database while other xUnit tests executed in parallel. This can
+incorrectly count a matching trigger in another scratch schema.
+
+The test now joins `pg_trigger`, `pg_class`, and `pg_namespace` and
+filters on `n.nspname=current_schema()`, checking only the test's own
+migration artifacts. It creates a second random schema with a same-name
+unrelated trigger within its rollback-only transaction to reproduce the
+previous false positive deterministically. It continues to assert **0
+own-schema triggers after Down** and **1 own-schema trigger after Up**.
+No migration, application business logic, or production database was
+altered by this correction; no additional C# imports are required.
+The post-change full PostgreSQL and five-group gate have NOT yet been
+run locally.

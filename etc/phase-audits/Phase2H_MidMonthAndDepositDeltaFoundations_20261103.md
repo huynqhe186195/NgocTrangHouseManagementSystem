@@ -1374,3 +1374,26 @@ BootstrapOwner only), positive authenticated export and cross-building
 denial/race tests, truly atomic H4 receivable/credit/manual refund
 writer and payment reconciliation, real positive same-deposit
 mid-month completion, and issued-invoice source gates. No production.
+
+
+### Contract DOCX export security hardening before Owner's next test
+
+- The document endpoint sets `Cache-Control: no-store, private`,
+  `Pragma: no-cache` and `X-Content-Type-Options: nosniff`
+  to avoid persisting the private Word download in shared caches.
+- The server also holds source `ContractTenant` and `Tenant`
+  rows `FOR SHARE` while generating Word bytes, in addition
+  to the original locked Contract/Room/Floor/Building/membership
+  authorization graph and the persisted BootstrapOwner/Contracts.Read
+  Identity leases. No user-supplied tenant list, pricing, signature
+  or deposit payment claims are accepted.
+- Only the **six Word/HTTP structural tests** were added; the
+  existing one-command verifier remains at **160 Domain / 92 PG**.
+  Final isolated Host regression should now cover **76 host unit
+  tests** if all six are discovered. Neither these six nor
+  real authenticated Owner export across two buildings have
+  been executed in this connector session. Exact new SHA
+  remains unaccepted until the Owner runs the full quality gate.
+
+This document is a *Word data extract*, not a juridically complete
+or signed rental contract, nor a verified exported PDF.

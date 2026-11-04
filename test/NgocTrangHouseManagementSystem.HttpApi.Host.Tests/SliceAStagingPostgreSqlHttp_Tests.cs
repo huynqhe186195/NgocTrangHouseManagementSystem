@@ -6032,6 +6032,17 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             var deniedLateH4 = await PostFinalAsync(
                 clientRoot, h4IntentUrl, invalidH4Input);
             Assert.Equal(HttpStatusCode.Forbidden, deniedLateH4.Status);
+            // A signed 4M target rent cannot sustain an invented 5M
+            // target deposit: this must fail without reserving source money.
+            var wrongTargetDeposit = await PostFinalAsync(
+                clientRoot, h4IntentUrl, JsonSerializer.Serialize(new {
+                    targetRequiredDepositVnd = 5_000_000m,
+                    proposedTopUpDueDateVietnam = "2027-07-15",
+                    surplusChoice = 0,
+                    ownerSignedDispositionReference =
+                        "ROOT-SIGNED-H4-IMPOSSIBLE-TARGET-DEPOSIT"
+                }));
+            Assert.Equal(HttpStatusCode.Forbidden, wrongTargetDeposit.Status);
             var rootH4Intent = await PostFinalAsync(
                 clientRoot, h4IntentUrl, h4IntentInput);
             Assert.Equal(HttpStatusCode.OK, rootH4Intent.Status);

@@ -19,7 +19,7 @@ public sealed class FullInvoiceMigrationChainPostgreSql_Tests
     private const string OptInVariable = "BM_ALLOW_FULL_MIGRATION_REHEARSAL";
     private const string OptInValue = "CREATE_AND_DROP_FRESH_LOCAL_TEST_DATABASE";
     private const string ExpectedLatestMigration =
-        "20261104180000_Phase2HDepositDispositionSourceExclusivity";
+        "20261104190000_Phase2HH4SignedPolicyAndTargetDepositBinding";
 
     [Fact]
     public async Task PGMIG01_Full_EF_Migrations_Succeed_In_Fresh_Disposable_Database()
@@ -367,6 +367,21 @@ public sealed class FullInvoiceMigrationChainPostgreSql_Tests
                 {
                     Assert.Equal(1L,
                         Convert.ToInt64(await h4SourceExclusivity.ExecuteScalarAsync()));
+                }
+
+                // New signed H4 intent must match its original accepted
+                // policy, Owner reviewer and target-day rent amount.
+                await using (var h4PolicyGuard = new NpgsqlCommand(
+                    """
+                    SELECT count(*) FROM pg_trigger
+                     WHERE NOT tgisinternal
+                       AND tgname='TR_BM_2H_H4Intent_SignedPolicy'
+                       AND tgrelid=
+                        '"BuildingManagementRoomChangeDepositDispositionIntents"'::regclass
+                    """,verification))
+                {
+                    Assert.Equal(1L,
+                        Convert.ToInt64(await h4PolicyGuard.ExecuteScalarAsync()));
                 }
 
                 // A frozen monthly invoice fee must be bound to its ORIGINAL

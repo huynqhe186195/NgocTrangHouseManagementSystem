@@ -37,6 +37,12 @@ public sealed class RoomChangeDepositDispositionIntentPostgreSql_Tests
     private static readonly string ExclusiveDown = Assert.Single(
         new Phase2HDepositDispositionSourceExclusivity().DownOperations
             .OfType<SqlOperation>()).Sql;
+    private static readonly string PolicyUp = Assert.Single(
+        new Phase2HH4SignedPolicyAndTargetDepositBinding().UpOperations
+            .OfType<SqlOperation>()).Sql;
+    private static readonly string PolicyDown = Assert.Single(
+        new Phase2HH4SignedPolicyAndTargetDepositBinding().DownOperations
+            .OfType<SqlOperation>()).Sql;
     private const string Stubs = """
         CREATE TABLE "BuildingManagementContracts" ("Id" uuid PRIMARY KEY);
         CREATE TABLE "BuildingManagementRoomChangeRequests" (
@@ -44,6 +50,23 @@ public sealed class RoomChangeDepositDispositionIntentPostgreSql_Tests
           "BuildingId" uuid, "RequestedDate" date, "Status" integer);
         CREATE TABLE "BuildingManagementRoomChangeMidMonthCompletions" (
           "RequestId" uuid);
+        CREATE TABLE "BuildingManagementRoomChangeBusinessPolicies" (
+          "Id" uuid PRIMARY KEY, "RequestId" uuid,
+          "SourceContractId" uuid, "BuildingId" uuid,
+          "ContractTreatment" integer,"PricingTreatment" integer,
+          "DepositTreatment" integer,"TenantTreatment" integer,
+          "DepositPolicyReference" text,"PricingPolicyReference" text,
+          "EvidenceSha256" text,"ProposedByUserId" uuid);
+        CREATE TABLE "BuildingManagementRoomChangeBusinessPolicyReviews" (
+          "Id" uuid PRIMARY KEY,"PolicyId" uuid,"RequestId" uuid,
+          "BuildingId" uuid,"Accepted" boolean,"ProposalSha256" text,
+          "ReviewedByUserId" uuid,"ReviewedAtUtc" timestamptz);
+        CREATE TABLE "BuildingManagementRoomChangeDayPricingRuleCandidates" (
+          "Id" uuid PRIMARY KEY,"RequestId" uuid,"SourceContractId" uuid,
+          "BuildingId" uuid,"PolicyId" uuid,"PolicyReviewId" uuid,
+          "TransferDate" date,"TransferDayOwner" integer,"Rounding" integer,
+          "SignedPricingRuleReference" text,"TargetMonthlyRentVnd" numeric,
+          "PreparedAtUtc" timestamptz);
         """;
     private const string Hash =
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -396,6 +419,115 @@ public sealed class RoomChangeDepositDispositionIntentPostgreSql_Tests
             var first=await Seed(db,tx);
             await Run(db,tx,OriginalIntentSql(first,CanonicalIntent(first)));
             await Denied(db,tx,ExclusiveDown,"23514");
+        });
+    }
+
+    private static async Task SignedPolicy(
+        NpgsqlConnection db,NpgsqlTransaction tx,Fixture f,
+        RoomChangeDepositDispositionIntentRecord row,
+        int treatment=2,decimal targetMonthlyRent=4_000_000m,
+        bool accepted=true,bool ownerMatches=true)
+    {
+        var p=Guid.NewGuid();
+        var rv=Guid.NewGuid();
+        var staff=Guid.NewGuid();
+        var owner=ownerMatches?row.ProposedByOwnerId:Guid.NewGuid();
+        await Run(db,tx,$"""
+            INSERT INTO "BuildingManagementRoomChangeBusinessPolicies"
+            ("Id","RequestId","SourceContractId","BuildingId",
+             "ContractTreatment","PricingTreatment","DepositTreatment",
+             "TenantTreatment","DepositPolicyReference",
+             "PricingPolicyReference","EvidenceSha256","ProposedByUserId")
+            VALUES('{p:D}','{f.Request:D}','{f.Source:D}',
+              '{f.Building:D}',1,2,{treatment},1,
+              '{row.TargetDepositPolicyReference}',
+              'SIGNED-PRICING-POLICY-SOURCE-FIXTURE-2026',
+              '{Hash}','{staff:D}');
+            INSERT INTO "BuildingManagementRoomChangeBusinessPolicyReviews"
+            ("Id","PolicyId","RequestId","BuildingId","Accepted",
+             "ProposalSha256","ReviewedByUserId","ReviewedAtUtc")
+            VALUES('{rv:D}','{p:D}','{f.Request:D}','{f.Building:D}',
+             {accepted.ToString().ToLowerInvariant()},'{Hash}',
+             '{owner:D}','2026-11-03T00:00:00Z');
+            INSERT INTO "BuildingManagementRoomChangeDayPricingRuleCandidates"
+            ("Id","RequestId","SourceContractId","BuildingId",
+             "PolicyId","PolicyReviewId","TransferDate",
+             "TransferDayOwner","Rounding","SignedPricingRuleReference",
+             "TargetMonthlyRentVnd","PreparedAtUtc")
+            VALUES('{Guid.NewGuid():D}','{f.Request:D}','{f.Source:D}',
+              '{f.Building:D}','{p:D}','{rv:D}','2026-11-15',
+              2,1,'SIGNED-PRICING-POLICY-SOURCE-FIXTURE-2026',
+              {targetMonthlyRent},'2026-11-03T00:00:00Z');
+            """);
+    }
+
+    [Fact]
+    public async Task TRFH4PG13_Signed_H4_Matches_Independent_Review_And_Target_Rent()
+    {
+        await Scratch(async(db,tx)=>
+        {
+            await Run(db,tx,DigestUp);
+            await Run(db,tx,ExclusiveUp);
+            var f=await Seed(db,tx);
+            var row=CanonicalIntent(f);
+            await SignedPolicy(db,tx,f,row);
+            await Run(db,tx,PolicyUp);
+            await Run(db,tx,OriginalIntentSql(f,row));
+            Assert.Equal(1L,await Scalar(db,tx,
+                """SELECT count(*) FROM "BuildingManagementRoomChangeDepositDispositionIntents" """));
+        });
+    }
+
+    [Fact]
+    public async Task TRFH4PG14_Mismatched_Target_Rent_Or_Owner_Is_Denied_By_SQL()
+    {
+        await Scratch(async(db,tx)=>
+        {
+            await Run(db,tx,DigestUp);
+            await Run(db,tx,ExclusiveUp);
+            await Run(db,tx,PolicyUp);
+            var f=await Seed(db,tx);
+            var row=CanonicalIntent(f);
+            await SignedPolicy(db,tx,f,row,targetMonthlyRent:4_500_000m);
+            await Denied(db,tx,OriginalIntentSql(f,row),"23514");
+        });
+        await Scratch(async(db,tx)=>
+        {
+            await Run(db,tx,DigestUp);
+            await Run(db,tx,ExclusiveUp);
+            await Run(db,tx,PolicyUp);
+            var f=await Seed(db,tx);
+            var row=CanonicalIntent(f);
+            await SignedPolicy(db,tx,f,row,ownerMatches:false);
+            await Denied(db,tx,OriginalIntentSql(f,row),"23514");
+        });
+    }
+
+    [Fact]
+    public async Task TRFH4PG15_Contradicted_History_And_Downgrade_With_Intent_Refused()
+    {
+        await Scratch(async(db,tx)=>
+        {
+            await Run(db,tx,DigestUp);
+            await Run(db,tx,ExclusiveUp);
+            var f=await Seed(db,tx);
+            var row=CanonicalIntent(f);
+            await SignedPolicy(db,tx,f,row,treatment:3);
+            await Run(db,tx,OriginalIntentSql(f,row));
+            await Denied(db,tx,PolicyUp,"23514");
+        });
+        await Scratch(async(db,tx)=>
+        {
+            await Run(db,tx,DigestUp);
+            await Run(db,tx,ExclusiveUp);
+            var f=await Seed(db,tx);
+            var row=CanonicalIntent(f);
+            await SignedPolicy(db,tx,f,row);
+            await Run(db,tx,PolicyUp);
+            await Run(db,tx,PolicyDown);
+            await Run(db,tx,PolicyUp);
+            await Run(db,tx,OriginalIntentSql(f,row));
+            await Denied(db,tx,PolicyDown,"23514");
         });
     }
 

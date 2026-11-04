@@ -19,7 +19,7 @@ public sealed class FullInvoiceMigrationChainPostgreSql_Tests
     private const string OptInVariable = "BM_ALLOW_FULL_MIGRATION_REHEARSAL";
     private const string OptInValue = "CREATE_AND_DROP_FRESH_LOCAL_TEST_DATABASE";
     private const string ExpectedLatestMigration =
-        "20261104140000_Phase2HRoomScopedServiceTariffVersions";
+        "20261104150000_Phase2HRoomServiceInvoiceSourceBindings";
 
     [Fact]
     public async Task PGMIG01_Full_EF_Migrations_Succeed_In_Fresh_Disposable_Database()
@@ -320,6 +320,36 @@ public sealed class FullInvoiceMigrationChainPostgreSql_Tests
                 {
                     Assert.Equal(1L,
                         Convert.ToInt64(await midmonthGate.ExecuteScalarAsync()));
+                }
+
+                // A frozen monthly invoice fee must be bound to its ORIGINAL
+                // room/service rate under database enforcement, not a
+                // mutable general pricing reference from a DTO.
+                await using (var sourceBindingGuards = new NpgsqlCommand(
+                    """
+                    SELECT count(*) FROM pg_trigger
+                     WHERE NOT tgisinternal
+                       AND tgname IN (
+                         'TR_BM_2H_RoomServiceInvoiceBinding_Source',
+                         'TR_BM_2H_RoomServiceInvoiceBinding_Immutable',
+                         'TR_BM_2H_RoomServiceInvoiceBinding_NoTruncate')
+                       AND tgrelid =
+                         '"BuildingManagementRoomServiceInvoiceSourceBindings"'::regclass
+                    """, verification))
+                {
+                    Assert.Equal(3L,
+                        Convert.ToInt64(await sourceBindingGuards.ExecuteScalarAsync()));
+                }
+
+                await using (var feeBindingReadiness = new NpgsqlCommand(
+                    """
+                    SELECT count(*) FROM pg_proc
+                     WHERE pronamespace='public'::regnamespace
+                       AND proname='BM_2HRoomServiceInvoiceBindingsReady'
+                    """, verification))
+                {
+                    Assert.Equal(1L,
+                        Convert.ToInt64(await feeBindingReadiness.ExecuteScalarAsync()));
                 }
 
                 // The newest D03 room-service tariff persistence must be

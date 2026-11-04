@@ -81,7 +81,7 @@ try {
     if ($migrationExit -ne 0) { Throw-WithTestLog 'PostgreSQL migration chain FAILED.' '17-2h-full-migration.log' }
     Remove-Item Env:\BM_ALLOW_FULL_MIGRATION_REHEARSAL -ErrorAction SilentlyContinue
 
-    Write-Host '== 4/5: Authenticated HTTP / two disposable PostgreSQL DBs =='
+    Write-Host '== 4/5: Authenticated two-PG HTTP / Owner DOCX, per-room tariffs, finance and revocation =='
     $env:BM_PG_SLICE_A_HTTP_OPT_IN = 'I_ACCEPT_DISPOSABLE_PG_STAGING_HTTP'
     $httpExit = Invoke-DotNetTestLogged $http 'FullyQualifiedName~SliceAStagingPostgreSqlHttp_Tests' 'console;verbosity=minimal' '18-2h-auth-http.log'
     if ($httpExit -ne 0) { Throw-WithTestLog 'Authenticated PostgreSQL HTTP test FAILED.' '18-2h-auth-http.log' }

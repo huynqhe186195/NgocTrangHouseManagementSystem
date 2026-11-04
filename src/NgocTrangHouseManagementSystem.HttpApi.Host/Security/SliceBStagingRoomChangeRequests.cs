@@ -448,7 +448,11 @@ public sealed class SliceBStagingRoomChangeRequests
         {
             if (input is null || input.TargetMonthlyRentVnd <= 0m ||
                 decimal.Truncate(input.TargetMonthlyRentVnd) !=
-                    input.TargetMonthlyRentVnd)
+                    input.TargetMonthlyRentVnd ||
+                input.TransferDayOwner !=
+                    RoomChangeTransferDayChargeOwner.TargetRoom ||
+                input.Rounding !=
+                    RoomChangeRentRoundingRule.NearestVndAwayFromZero)
                 throw Denied();
 
             var request = await LockRequestAsync(
@@ -505,6 +509,7 @@ public sealed class SliceBStagingRoomChangeRequests
                     request.RequestedDate, source.MonthlyRent,
                     input.TargetMonthlyRentVnd, input.TransferDayOwner,
                     input.Rounding, policy.PricingPolicyReference);
+                RoomChangeApprovedH2H3ExecutionPolicy.RequireExecutableQuote(quote);
                 var candidate = RoomChangeDayPricingRuleCandidate.Prepare(
                     Guid.NewGuid(), request, source, roster, policy, review,
                     quote, actor, _clock.GetUtcNow().UtcDateTime);
@@ -1438,6 +1443,8 @@ public sealed class SliceBStagingRoomChangeRequests
             {
                 review.Verify(policy,request,roster);
                 rule.Verify(request,source,roster,policy,review);
+                RoomChangeApprovedH2H3ExecutionPolicy.RequireExecutableRule(
+                    rule, request.RequestedDate);
                 handover.Verify(request,originals.E,originals.Er,
                     originals.W,originals.Wr);
                 pricingProof.VerifyStoredSnapshot();

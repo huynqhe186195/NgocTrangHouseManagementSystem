@@ -5933,6 +5933,10 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     status = (int)BuildingManagement.Rooms.RoomStatus.Available });
             var h4SourceContract = Guid.NewGuid();
             var h4DepositPayment = Guid.NewGuid();
+            var h4MeterE = Guid.NewGuid();
+            var h4MeterW = Guid.NewGuid();
+            var h4EndE = Guid.NewGuid();
+            var h4EndW = Guid.NewGuid();
             using (var h4Scope = app.Services.CreateScope())
             {
                 var sp = h4Scope.ServiceProvider;
@@ -5949,6 +5953,33 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 db.ContractTenants.Add(new BuildingManagement.Contracts.ContractTenant(
                     Guid.NewGuid(), h4SourceContract, tenantB,
                     BuildingManagement.Contracts.ContractTenantRole.PrimaryTenant));
+                // Original source readings have actual mid-month dates:
+                // handover evidence, frozen invoice and E/W must refer to
+                // these exact immutable original measurements.
+                db.UtilityMeters.AddRange(
+                    new BuildingManagement.Utilities.UtilityMeter(
+                        h4MeterE, h4SourceRoom,
+                        BuildingManagement.Utilities.UtilityType.Electricity,
+                        "H4-E-" + h4MeterE.ToString("N"), 0m,
+                        new DateTime(2026, 9, 1)),
+                    new BuildingManagement.Utilities.UtilityMeter(
+                        h4MeterW, h4SourceRoom,
+                        BuildingManagement.Utilities.UtilityType.Water,
+                        "H4-W-" + h4MeterW.ToString("N"), 0m,
+                        new DateTime(2026, 9, 1)));
+                db.MeterReadings.AddRange(
+                    new BuildingManagement.Utilities.MeterReading(
+                        Guid.NewGuid(), h4MeterE, 2026, 9, 0m, 10m,
+                        new DateTime(2026, 9, 30)),
+                    new BuildingManagement.Utilities.MeterReading(
+                        Guid.NewGuid(), h4MeterW, 2026, 9, 0m, 15m,
+                        new DateTime(2026, 9, 30)),
+                    new BuildingManagement.Utilities.MeterReading(
+                        h4EndE, h4MeterE, 2026, 10, 10m, 20m,
+                        new DateTime(2026, 10, 15)),
+                    new BuildingManagement.Utilities.MeterReading(
+                        h4EndW, h4MeterW, 2026, 10, 15m, 19m,
+                        new DateTime(2026, 10, 15)));
                 var payment = new BuildingManagement.Payments.Payment(
                     h4DepositPayment,
                     "TRF-H4-DEPOSIT-" + h4DepositPayment.ToString("N"),
@@ -5976,11 +6007,19 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             }
             var h4Route = ChangeRoute(h4SourceContract);
             Guid h4Request;
-            using (var request = await Positive2HPostAsync(clientB, h4Route,
-                new { targetRoomId = h4TargetRoom,
-                    requestedDate = "2027-06-15",
-                    reason = "Independently signed deposit delta proposal" }))
+            // Backdate only this disposable HTTP test clock for submission.
+            // The real PostgreSQL commit clock is never changed.
+            transferClock.SetUtc(new DateTimeOffset(
+                2026, 10, 15, 4, 0, 0, TimeSpan.Zero));
+            try
+            {
+                using var request = await Positive2HPostAsync(clientB, h4Route,
+                    new { targetRoomId = h4TargetRoom,
+                        requestedDate = "2026-10-15",
+                        reason = "Independently signed deposit delta proposal" });
                 h4Request = request.RootElement.GetProperty("id").GetGuid();
+            }
+            finally { transferClock.Reset(); }
             var h4At = h4Route + "/" + h4Request.ToString("D");
             using (var roster = await Positive2HPostAsync(clientB,
                 h4At + "/tenant-roster", new { }))
@@ -6012,13 +6051,13 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             var h4IntentUrl = h4At + "/h4-disposition-intent";
             var h4IntentInput = JsonSerializer.Serialize(new {
                 targetRequiredDepositVnd = 4_000_000m,
-                proposedTopUpDueDateVietnam = "2027-07-15",
+                proposedTopUpDueDateVietnam = "2026-11-15",
                 surplusChoice = 0,
                 ownerSignedDispositionReference = "ROOT-SIGNED-H4-DEFERRED-TOPUP-2027"
             });
             var invalidH4Input = JsonSerializer.Serialize(new {
                 targetRequiredDepositVnd = 4_000_000m,
-                proposedTopUpDueDateVietnam = "2027-07-16",
+                proposedTopUpDueDateVietnam = "2026-11-16",
                 surplusChoice = 0,
                 ownerSignedDispositionReference = "ROOT-SIGNED-H4-INVALID-DUE-2027"
             });
@@ -6038,7 +6077,7 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             var wrongTargetDeposit = await PostFinalAsync(
                 clientRoot, h4IntentUrl, JsonSerializer.Serialize(new {
                     targetRequiredDepositVnd = 5_000_000m,
-                    proposedTopUpDueDateVietnam = "2027-07-15",
+                    proposedTopUpDueDateVietnam = "2026-11-15",
                     surplusChoice = 0,
                     ownerSignedDispositionReference =
                         "ROOT-SIGNED-H4-IMPOSSIBLE-TARGET-DEPOSIT"
@@ -6088,7 +6127,7 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             // The writer must deny premature execution and preserve every
             // existing source cash allocation and pending signed H4 intent.
             transferClock.SetUtc(new DateTimeOffset(
-                2027, 6, 14, 12, 0, 0, TimeSpan.Zero));
+                2026, 10, 14, 12, 0, 0, TimeSpan.Zero));
             try
             {
                 var early = await PostFinalAsync(clientRoot,

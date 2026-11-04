@@ -130,6 +130,13 @@ public sealed class RoomChangeMidMonthCompletionPostgreSql_Tests
     public async Task TRFMIDPG03_Once_Inserted_Cannot_Update_Delete_Or_Truncate()
     {
         await Scratch(IsolationLevel.Serializable,async(db,tx,f)=>{
+            // Prove the explicit no-TRUNCATE gate with an empty ledger.
+            // Once a completion is inserted, PostgreSQL can reject
+            // TRUNCATE with 55006 (pending deferred trigger events)
+            // before our intended 23514 guard has a chance to run.
+            await Denied(db,tx,
+              """TRUNCATE "BuildingManagementRoomChangeMidMonthCompletions" """,
+              "23514");
             await Run(db,tx,Completion(f));
             await Denied(db,tx,
               """
@@ -138,9 +145,6 @@ public sealed class RoomChangeMidMonthCompletionPostgreSql_Tests
               ""","23514");
             await Denied(db,tx,
               """DELETE FROM "BuildingManagementRoomChangeMidMonthCompletions" """,
-              "23514");
-            await Denied(db,tx,
-              """TRUNCATE "BuildingManagementRoomChangeMidMonthCompletions" """,
               "23514");
             await Denied(db,tx,Down,"23514");
             await Denied(db,tx,AppendFencesDown,"23514");

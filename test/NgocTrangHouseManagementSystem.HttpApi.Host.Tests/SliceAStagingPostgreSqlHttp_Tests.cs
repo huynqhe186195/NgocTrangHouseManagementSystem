@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -144,10 +145,16 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     ["BuildingManagement:SliceAStaging:Activation"] =
                         "I_ACCEPT_ISOLATED_SLICE_A_STAGING_WRITES"
                 }).Build();
+            // Capture test-server exceptions only in the isolated fixture.
+            // ABP intentionally returns generic 500 bodies; preserve this
+            // confidentiality at the HTTP boundary while making failures
+            // diagnosable from the local xUnit assertion output.
+            var serverErrors = new StagingServerErrorCollector();
             var builder = WebApplication.CreateBuilder(new WebApplicationOptions
             {
                 EnvironmentName = Environments.Staging
             });
+            builder.Logging.AddProvider(serverErrors);
             builder.WebHost.UseTestServer();
             builder.Host.UseAutofac();
             builder.Configuration.AddConfiguration(config);
@@ -3535,11 +3542,13 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             var staffRelease = await PostFinalAsync(
                 clientB, resolutionRoute, resolutionBody);
             Assert.Equal(HttpStatusCode.Forbidden, staffRelease.Status);
+            serverErrors.Clear();
             var ownerRelease = await PostFinalAsync(
                 clientRoot, resolutionRoute, resolutionBody);
             Assert.True(ownerRelease.Status is HttpStatusCode.OK or
                 HttpStatusCode.Created,
-                $"Owner dispute resolution: {ownerRelease.Status} {ownerRelease.Body}");
+                $"Owner dispute resolution: {ownerRelease.Status} {ownerRelease.Body}. " +
+                $"Test-server diagnostics (isolated DB only): {serverErrors.Describe()}");
             var decisionResponse = await PostFinalAsync(
                 clientRoot, depositApproveRoute, depositPlanBody);
             Assert.True(decisionResponse.Status is HttpStatusCode.OK or
@@ -7052,6 +7061,67 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     $"""REVOKE ALL ON SCHEMA public FROM "{login}" """);
                 await ExecuteAsync(admin, $"""DROP ROLE "{login}" """);
             }
+        }
+    }
+
+    /// <summary>
+    /// Test-only server exception capture. Stores only exception type,
+    /// PostgreSQL SQLSTATE and first short diagnostic message. This never
+    /// changes API error responses or weakens Owner authorization.
+    /// </summary>
+    private sealed class StagingServerErrorCollector : ILoggerProvider
+    {
+        private readonly ConcurrentQueue<string> _errors = new();
+
+        public ILogger CreateLogger(string categoryName)
+            => new Observer(this, categoryName);
+        public void Dispose() { }
+
+        public void Clear()
+        {
+            while (_errors.TryDequeue(out _)) { }
+        }
+
+        public string Describe()
+            => _errors.IsEmpty
+                ? "No server-side error captured by ILogger."
+                : string.Join(" | ", _errors.TakeLast(8));
+
+        private sealed class Observer : ILogger
+        {
+            private readonly StagingServerErrorCollector _collector;
+            private readonly string _category;
+            public Observer(StagingServerErrorCollector collector, string category)
+            {
+                _collector = collector;
+                _category = category;
+            }
+            public IDisposable BeginScope<TState>(TState state)
+                where TState : notnull => NoopScope.Instance;
+            public bool IsEnabled(LogLevel level) => level >= LogLevel.Error;
+
+            public void Log<TState>(
+                LogLevel level, EventId eventId, TState state,
+                Exception? exception, Func<TState, Exception?, string> formatter)
+            {
+                if (level < LogLevel.Error) return;
+                var postgres = exception;
+                while (postgres is not null && postgres is not PostgresException)
+                    postgres = postgres.InnerException;
+                var pg = postgres as PostgresException;
+                var message = exception?.Message ?? "No exception supplied";
+                if (message.Length > 240) message = message[..240];
+                _collector._errors.Enqueue(
+                    $"{_category} {exception?.GetType().Name ?? "Error"}" +
+                    (pg is null ? "" : $" PG={pg.SqlState} Constraint={pg.ConstraintName}") +
+                    $" {message}");
+            }
+        }
+
+        private sealed class NoopScope : IDisposable
+        {
+            public static readonly NoopScope Instance = new();
+            public void Dispose() { }
         }
     }
 

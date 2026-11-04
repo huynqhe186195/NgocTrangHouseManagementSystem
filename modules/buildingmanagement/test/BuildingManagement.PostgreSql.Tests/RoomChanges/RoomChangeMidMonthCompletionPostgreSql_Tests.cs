@@ -23,6 +23,12 @@ public sealed class RoomChangeMidMonthCompletionPostgreSql_Tests
     private static readonly string Down=Assert.Single(
         new Phase2HMidMonthAtomicCompletion().DownOperations
             .OfType<SqlOperation>()).Sql;
+    private static readonly string AppendFencesUp=Assert.Single(
+        new Phase2HMidMonthPostCommitAppendFences().UpOperations
+            .OfType<SqlOperation>()).Sql;
+    private static readonly string AppendFencesDown=Assert.Single(
+        new Phase2HMidMonthPostCommitAppendFences().DownOperations
+            .OfType<SqlOperation>()).Sql;
     private const string Sha=
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
@@ -42,7 +48,7 @@ public sealed class RoomChangeMidMonthCompletionPostgreSql_Tests
         CREATE TABLE "BuildingManagementRoomChangeBusinessPolicyReviews"(
           "Id" uuid PRIMARY KEY);
         CREATE TABLE "BuildingManagementRoomChangeTenantRosterSnapshots"(
-          "Id" uuid PRIMARY KEY);
+          "Id" uuid PRIMARY KEY,"RosterCount" integer NOT NULL DEFAULT 0);
         CREATE TABLE "BuildingManagementRoomChangeHandoverEvidence"(
           "Id" uuid PRIMARY KEY);
         CREATE TABLE "BuildingManagementRoomChangeEvidenceArchives"(
@@ -60,7 +66,8 @@ public sealed class RoomChangeMidMonthCompletionPostgreSql_Tests
           "Id" uuid PRIMARY KEY,"RequestId" uuid,
           "SourceContractId" uuid,"TargetContractId" uuid);
         CREATE TABLE "BuildingManagementContractTenants" (
-          "Id" uuid PRIMARY KEY,"ContractId" uuid);
+          "Id" uuid PRIMARY KEY,"ContractId" uuid,
+          "IsDeleted" boolean NOT NULL DEFAULT FALSE);
         CREATE TABLE "BuildingManagementMonthlyInvoiceCandidates" (
           "Id" uuid PRIMARY KEY,"ContractId" uuid,
           "BillingYear" integer,"BillingMonth" integer,
@@ -180,6 +187,7 @@ public sealed class RoomChangeMidMonthCompletionPostgreSql_Tests
     public async Task TRFMIDPG07_Empty_Migration_Rollback_Is_Safe()
     {
         await Scratch(IsolationLevel.Serializable,async(db,tx,f)=>{
+            await Run(db,tx,AppendFencesDown);
             await Run(db,tx,Down);
         });
     }
@@ -201,6 +209,54 @@ public sealed class RoomChangeMidMonthCompletionPostgreSql_Tests
         });
     }
 
+    [Fact]
+    public async Task TRFMIDPG09_PostCompletion_Target_Tenant_Append_Denied()
+    {
+        await Scratch(IsolationLevel.Serializable,async(db,tx,f)=>{
+            await Run(db,tx,Completion(f));
+            await Denied(db,tx,$"""
+                INSERT INTO "BuildingManagementContractTenants"
+                    ("Id","ContractId","IsDeleted")
+                VALUES ('{Guid.NewGuid():D}','{f.Target:D}',FALSE);
+                SET CONSTRAINTS "TR_BM_2HMid_RosterAppend" IMMEDIATE;
+                ""","23514");
+        });
+    }
+
+    [Fact]
+    public async Task TRFMIDPG10_PostCompletion_Source_Tenant_Append_Denied()
+    {
+        await Scratch(IsolationLevel.Serializable,async(db,tx,f)=>{
+            await Run(db,tx,Completion(f));
+            await Denied(db,tx,$"""
+                INSERT INTO "BuildingManagementContractTenants"
+                    ("Id","ContractId","IsDeleted")
+                VALUES ('{Guid.NewGuid():D}','{f.Source:D}',FALSE);
+                SET CONSTRAINTS "TR_BM_2HMid_RosterAppend" IMMEDIATE;
+                ""","23514");
+        });
+    }
+
+    [Fact]
+    public async Task TRFMIDPG11_PostCompletion_Source_Cash_Append_Denied()
+    {
+        await Scratch(IsolationLevel.Serializable,async(db,tx,f)=>{
+            await Run(db,tx,Completion(f));
+            await Denied(db,tx,$"""
+                INSERT INTO "BuildingManagementDepositSettlements"
+                    ("Id","SourceContractId","TargetContractId")
+                VALUES ('{Guid.NewGuid():D}','{f.Source:D}',NULL);
+                SET CONSTRAINTS "TR_BM_2HMid_CashAppend" IMMEDIATE;
+                ""","23514");
+            await Denied(db,tx,$"""
+                INSERT INTO "BuildingManagementDepositSettlements"
+                    ("Id","SourceContractId","TargetContractId")
+                VALUES ('{Guid.NewGuid():D}',NULL,'{f.Source:D}');
+                SET CONSTRAINTS "TR_BM_2HMid_CashAppend" IMMEDIATE;
+                ""","23514");
+        });
+    }
+
     private static async Task Scratch(IsolationLevel isolation,
         Func<NpgsqlConnection,NpgsqlTransaction,F,Task> work)
     {
@@ -218,6 +274,7 @@ public sealed class RoomChangeMidMonthCompletionPostgreSql_Tests
                 await Run(db,tx,$"""SET LOCAL search_path TO "{schema}" """);
                 await Run(db,tx,Stub);
                 await Run(db,tx,Up);
+                await Run(db,tx,AppendFencesUp);
                 var f=new F(Guid.NewGuid(),Guid.NewGuid(),Guid.NewGuid(),
                     Guid.NewGuid(),Guid.NewGuid(),Guid.NewGuid(),
                     Guid.NewGuid(),Guid.NewGuid(),Guid.NewGuid(),

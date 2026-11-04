@@ -1,6 +1,6 @@
 # Phase 2H H2/H3/H4 — financial foundations, 2026-11-03
 
-Branch: wip/phase-2g2. Status: **new code committed, exact-SHA runtime test evidence pending**. Production and real money operations excluded.
+Branch: wip/phase-2g2. Status: **FINANCIAL FOUNDATIONS — FIVE-GROUP LOCAL QUALITY GATE PASSED at exact code commit e24894f3b830a5640c2e7a5ba1857c0911579c2d (2026-11-04).** Full Phase 2H business acceptance is still HOLD; production and real money operations excluded.
 
 Source: Ngọc Trang Phase 2G–2H Business Process Specification v1.0, section 8; owner-approved H1–H6 in Phase2G2H_ApprovedBusinessDecisions_20261101.md. The existing executable single safe lane remains month-end, linked new contract, all tenants, same rent/deposit and one actual verified carry-forward. It is not modified.
 
@@ -723,3 +723,40 @@ No migration, application business logic, or production database was
 altered by this correction; no additional C# imports are required.
 The post-change full PostgreSQL and five-group gate have NOT yet been
 run locally.
+
+
+## 2026-11-04 — Local five-group foundation gate accepted at exact code SHA
+
+The operator supplied console evidence for
+`etc/scripts/verify-phase-2h-financial-foundations.ps1` executed
+locally on `wip/phase-2g2` at exact code commit
+`e24894f3b830a5640c2e7a5ba1857c0911579c2d`:
+
+```text
+Passed! - Failed: 0, Passed: 68, Skipped: 0, Total: 68
+=== QUALITY GATE PASS: ALL REQUESTED TEST RUNS SUCCEEDED ===
+=== PHASE 2H FINANCIAL FOUNDATIONS: ALL FIVE GROUPS PASSED ===
+COMMIT=e24894f3b830a5640c2e7a5ba1857c0911579c2d
+```
+
+The verifier's five required steps are: (1) 106 focused Domain
+financial/documentary cases, (2) 66 targeted PostgreSQL transfer
+cases, (3) full migration rehearsal on disposable local PostgreSQL,
+(4) authenticated HTTP test fixture on disposable local PostgreSQL,
+and (5) full isolated regression, including the reported 68 HTTP
+tests. The reported five-group PASS is operator-provided evidence
+for this **exact code commit**, not evidence of production readiness.
+The subordinate full raw test logs were not independently inspected
+in this environment. Prior PASS/HOLD comments above are historical
+checkpoints; this final note supersedes their pending-test status
+for the specific five-group bundle at this SHA.
+
+**Business acceptance remains HOLD** on positive authenticated
+mid-month completion of real staged contracts and money, H4 unequal
+deposit top-up/outgoing bank-refund writer with independently verified
+cash and replay prevention, legal/independently authenticated D06
+signature evidence, and cross-building/Identity concurrency E2E
+attack acceptance on the actual authenticated endpoint. The routine
+itself states that its source-only security checks are *not proof*
+of authenticated cross-building CRUD isolation. Do not label the
+entire Phase 2H BUSINESS ACCEPTED and do not deploy production.

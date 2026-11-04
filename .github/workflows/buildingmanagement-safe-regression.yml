@@ -85,6 +85,15 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
+      - name: Validate actual .NET 10 Windows 160-domain TRX emission
+        shell: pwsh
+        run: |
+          $trxFile = Join-Path $env:RUNNER_TEMP 'phase2h-windows-160-domain.trx'
+          Remove-Item -LiteralPath $trxFile -Force -ErrorAction SilentlyContinue
+          & dotnet test .\modules\buildingmanagement\test\BuildingManagement.Domain.Tests\BuildingManagement.Domain.Tests.csproj --filter 'FullyQualifiedName~RoomChangeMidMonthRentReconciliation_Tests|FullyQualifiedName~RoomChangeDepositDifferencePreview_Tests|FullyQualifiedName~TRF_HAND|FullyQualifiedName~RoomChangeMidMonthFinancialReconciliationPacket_Tests|FullyQualifiedName~RoomChangeDayPricingRuleCandidate_Tests|FullyQualifiedName~RoomChangeOfficialSourceRentEvidenceBridge_Tests|FullyQualifiedName~RoomChangeFinalIndependentSignoffs_Tests|FullyQualifiedName~RoomChangeApprovedH2H3ExecutionPolicy_Tests|FullyQualifiedName~RoomChangeDeferredDepositDisposition_Tests|FullyQualifiedName~RoomScopedServiceTariffPolicy_Tests|FullyQualifiedName~RoomScopedServiceInvoiceSourceBinding_Tests|FullyQualifiedName~RoomChangeDepositDispositionIntent_Tests' --logger 'console;verbosity=normal' --logger 'trx;LogFileName=phase2h-windows-160-domain.trx' --results-directory $env:RUNNER_TEMP
+          if ($LASTEXITCODE -ne 0) { throw 'Real Phase 2H Domain Windows tests failed.' }
+          & .\etc\scripts\Assert-Phase2HTrx.ps1 -Path $trxFile -ExpectedTests 160
+
       - name: Security regression batch
         shell: pwsh
         run: |

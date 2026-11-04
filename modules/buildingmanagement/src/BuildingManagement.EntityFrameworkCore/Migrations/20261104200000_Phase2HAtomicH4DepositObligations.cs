@@ -102,10 +102,43 @@ public sealed class Phase2HAtomicH4DepositObligations : Migration
 
         CREATE FUNCTION "BM_2HGuardH4Obligation"()
         RETURNS trigger LANGUAGE plpgsql AS $guard$
+        DECLARE c record; original record;
         BEGIN
           IF TG_OP <> 'INSERT' OR
              current_setting('transaction_isolation')<>'serializable' THEN
             RAISE EXCEPTION 'H4 obligations immutable and require SERIALIZABLE'
+              USING ERRCODE='23514';
+          END IF;
+          SELECT * INTO c
+            FROM "BuildingManagementRoomChangeMidMonthCompletions"
+           WHERE "Id"=NEW."CompletionId" FOR SHARE;
+          SELECT * INTO original
+            FROM "BuildingManagementRoomChangeDepositDispositionIntents"
+           WHERE "Id"=NEW."IntentId" FOR SHARE;
+          IF c."Id" IS NULL OR original."Id" IS NULL
+             OR c."H4DispositionIntentId" IS DISTINCT FROM original."Id"
+             OR c."RequestId" IS DISTINCT FROM NEW."RequestId"
+             OR c."SourceContractId" IS DISTINCT FROM NEW."SourceContractId"
+             OR c."TargetContractId" IS DISTINCT FROM NEW."TargetContractId"
+             OR c."CompletedByUserId" IS DISTINCT FROM NEW."RecordedByOwnerId"
+             OR c."CompletedAtUtc" IS DISTINCT FROM NEW."RecordedAtUtc"
+             OR original."RequestId" IS DISTINCT FROM NEW."RequestId"
+             OR original."TargetContractId" IS DISTINCT FROM NEW."TargetContractId"
+             OR original."SourceContractId" IS DISTINCT FROM NEW."SourceContractId"
+             OR NEW."SignedReference" IS DISTINCT FROM
+                 original."OwnerSignedDispositionReference"
+             OR NEW."Kind" IS DISTINCT FROM
+               (CASE WHEN c."H4UnpaidTopUpVnd">0 THEN 1
+                     WHEN c."H4NextMonthRentCreditVnd">0 THEN 2
+                     ELSE 3 END)
+             OR NEW."AmountVnd" IS DISTINCT FROM
+               (CASE WHEN c."H4UnpaidTopUpVnd">0 THEN c."H4UnpaidTopUpVnd"
+                     WHEN c."H4NextMonthRentCreditVnd">0
+                       THEN c."H4NextMonthRentCreditVnd"
+                     ELSE c."H4ManualRefundLiabilityVnd" END)
+             OR NEW."DueDateVietnam" IS DISTINCT FROM c."H4TopUpDueDateVietnam"
+          THEN
+            RAISE EXCEPTION 'H4 obligation must match original signed atomic completion'
               USING ERRCODE='23514';
           END IF;
           RETURN NEW;

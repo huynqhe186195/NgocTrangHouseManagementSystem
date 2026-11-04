@@ -643,8 +643,10 @@ The additive migration
 `TRFMIDPG09–11` check target/source live-tenant and source cash
 append attempts, including a fabricated extra source deposit.
 `TRFMIDPG12–13` confirm that the original in-transaction target
-roster and unique cash carry are still allowed by the deferred fences. The
-one-shot script now requires **106 Domain + 65 targeted PostgreSQL**
+roster and unique cash carry are still allowed by the deferred fences.
+`TRFMIDPG14` denies later mutation of the frozen target first-month
+prorated invoice candidate back to a full-month rent charge. The
+one-shot script now requires **106 Domain + 66 targeted PostgreSQL**
 tests, full disposable migration chain, authenticated HTTP and full
 regression. The migration's Down refuses removal after **any**
 completed mid-month financial/occupancy history. Changes are

@@ -27,6 +27,7 @@ using Microsoft.AspNetCore.Mvc.Controllers;
 using Microsoft.AspNetCore.Mvc.Infrastructure;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -6124,8 +6125,10 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     .Where(x => x.SourceContractId == h4SourceContract).ToArrayAsync());
                 // No H4 completion = no forged obligation or new contract.
                 await using (var checkH4 = new NpgsqlCommand(
-                    """SELECT count(*) FROM "BuildingManagementRoomChangeH4Obligations"
-                       WHERE "RequestId"=@request""",
+                    """
+                    SELECT count(*) FROM "BuildingManagementRoomChangeH4Obligations"
+                     WHERE "RequestId"=@request
+                    """,
                     (NpgsqlConnection)db.Database.GetDbConnection(),
                     (NpgsqlTransaction)db.Database.CurrentTransaction!.GetDbTransaction()))
                 {

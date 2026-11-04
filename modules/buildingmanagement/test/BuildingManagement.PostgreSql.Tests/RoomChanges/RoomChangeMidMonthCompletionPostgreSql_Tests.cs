@@ -132,8 +132,10 @@ public sealed class RoomChangeMidMonthCompletionPostgreSql_Tests
         await Scratch(IsolationLevel.Serializable,async(db,tx,f)=>{
             await Run(db,tx,Completion(f));
             await Denied(db,tx,
-              """UPDATE "BuildingManagementRoomChangeMidMonthCompletions"
-                 SET "SourceSignedAdjustmentVnd"=0""","23514");
+              """
+              UPDATE "BuildingManagementRoomChangeMidMonthCompletions"
+                 SET "SourceSignedAdjustmentVnd"=0
+              ""","23514");
             await Denied(db,tx,
               """DELETE FROM "BuildingManagementRoomChangeMidMonthCompletions" """,
               "23514");

@@ -183,6 +183,60 @@ public sealed class SliceBStagingRoomChangesController : ControllerBase
         return _requests!.GetMidMonthFinancialJournalAsync(contractId, requestId);
     }
 
+
+    [HttpPost("{requestId:guid}/signed-pricing-archive")]
+    [UnitOfWork(true, IsolationLevel.Serializable)]
+    public Task<SliceBRoomChangeArchiveRead> ArchiveExactPricingAsync(
+        [FromRoute] Guid contractId,[FromRoute] Guid requestId,
+        [FromBody] SliceBRoomChangeSignedPricingArchiveInput input)
+    {
+        RequireIsolatedStaging();
+        return _requests!.ArchiveExactPricingAsync(
+            contractId,requestId,input?.SignedApprovalReference);
+    }
+
+    [HttpPost("{requestId:guid}/three-party-handover-archive")]
+    [UnitOfWork(true, IsolationLevel.Serializable)]
+    public Task<SliceBRoomChangeArchiveRead> ArchiveThreePartyHandoverAsync(
+        [FromRoute] Guid contractId,[FromRoute] Guid requestId,
+        [FromBody] SliceBRoomChangeThreePartyArchiveInput input)
+    {
+        RequireIsolatedStaging();
+        return _requests!.ArchiveThreePartyHandoverAsync(contractId,requestId,input);
+    }
+
+    [HttpPost("{requestId:guid}/classified-d03-archive")]
+    [UnitOfWork(true, IsolationLevel.Serializable)]
+    public Task<SliceBRoomChangeArchiveRead> ArchiveClassifiedD03Async(
+        [FromRoute] Guid contractId,[FromRoute] Guid requestId,
+        [FromBody] SliceBRoomChangeD03ClassificationInput input)
+    {
+        RequireIsolatedStaging();
+        return _requests!.ArchiveClassifiedD03Async(contractId,requestId,input);
+    }
+
+    [HttpPost("{requestId:guid}/post-d03-adjustment")]
+    [UnitOfWork(true, IsolationLevel.Serializable)]
+    public Task<SliceBRoomChangeD03PostingRead> PostClassifiedD03Async(
+        [FromRoute] Guid contractId,[FromRoute] Guid requestId,
+        [FromBody] SliceBRoomChangeD03PostingInput input)
+    {
+        RequireIsolatedStaging();
+        return _requests!.PostClassifiedD03Async(
+            contractId,requestId,input?.AdjustmentId ?? Guid.Empty);
+    }
+
+    [HttpPost("{requestId:guid}/complete-mid-month-room-change")]
+    [UnitOfWork(true, IsolationLevel.Serializable)]
+    public Task<SliceBRoomChangeCompletionRead> CompleteMidMonthRoomChangeAsync(
+        [FromRoute] Guid contractId,[FromRoute] Guid requestId,
+        [FromBody] SliceBRoomChangeCompletionInput input)
+    {
+        RequireIsolatedStaging();
+        return _requests!.CompleteMidMonthRoomChangeAsync(
+            contractId,requestId,input);
+    }
+
     [HttpPost("{requestId:guid}/complete-room-change")]
     [UnitOfWork(true, IsolationLevel.Serializable)]
     public Task<SliceBRoomChangeCompletionRead> CompleteRoomChangeAsync(
@@ -247,3 +301,8 @@ public sealed class SliceBStagingRoomChangesController : ControllerBase
     private static AbpAuthorizationException Denied()
         => new("Room-change requests require two isolated staging databases.");
 }
+
+public sealed record SliceBRoomChangeSignedPricingArchiveInput(
+    string? SignedApprovalReference);
+
+public sealed record SliceBRoomChangeD03PostingInput(Guid AdjustmentId);

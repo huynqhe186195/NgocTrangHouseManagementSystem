@@ -22,8 +22,24 @@ public sealed class Phase2HRoomChangeSecurityBoundary_Tests
 
         var methods = controller.GetMethods(BindingFlags.Public |
             BindingFlags.Instance | BindingFlags.DeclaredOnly);
-        Assert.Equal(20, methods.Length);
+        Assert.Equal(25, methods.Length);
         Assert.Contains(methods, m => m.Name == "CompleteRoomChangeAsync");
+        foreach (var name in new[] {
+            "ArchiveExactPricingAsync",
+            "ArchiveThreePartyHandoverAsync",
+            "ArchiveClassifiedD03Async",
+            "PostClassifiedD03Async"
+        })
+        {
+            var money = Assert.Single(methods.Where(m => m.Name == name));
+            Assert.NotNull(money.GetCustomAttribute<HttpPostAttribute>());
+            Assert.NotNull(money.GetCustomAttribute<UnitOfWorkAttribute>());
+        }
+        var mid = Assert.Single(methods.Where(m =>
+            m.Name == "CompleteMidMonthRoomChangeAsync"));
+        Assert.NotNull(mid.GetCustomAttribute<HttpPostAttribute>());
+        Assert.Equal("{requestId:guid}/complete-mid-month-room-change",
+            mid.GetCustomAttribute<HttpPostAttribute>()?.Template);
         Assert.Contains(methods, m => m.Name == "GetExecutionReadinessAsync");
         var journal = Assert.Single(methods.Where(
             m => m.Name == "GetMidMonthFinancialJournalAsync"));
@@ -45,7 +61,8 @@ public sealed class Phase2HRoomChangeSecurityBoundary_Tests
         Assert.DoesNotContain(methods, m =>
             m.Name.Contains("Approve", StringComparison.OrdinalIgnoreCase) ||
             (m.Name.Contains("Complete", StringComparison.OrdinalIgnoreCase) &&
-             m.Name != "CompleteRoomChangeAsync") ||
+             m.Name != "CompleteRoomChangeAsync" &&
+             m.Name != "CompleteMidMonthRoomChangeAsync") ||
             m.Name.Contains("Transfer", StringComparison.OrdinalIgnoreCase) ||
             m.Name.Contains("Refund", StringComparison.OrdinalIgnoreCase) ||
             m.Name.Contains("CarryForward", StringComparison.OrdinalIgnoreCase));
@@ -92,6 +109,7 @@ public sealed class Phase2HRoomChangeSecurityBoundary_Tests
             x.Contains("Approve", StringComparison.OrdinalIgnoreCase) ||
             x.Contains("Transfer", StringComparison.OrdinalIgnoreCase) ||
             (x.Contains("Complete", StringComparison.OrdinalIgnoreCase) &&
-             x != "CompleteRoomChangeAsync"));
+             x != "CompleteRoomChangeAsync" &&
+             x != "CompleteMidMonthRoomChangeAsync"));
     }
 }

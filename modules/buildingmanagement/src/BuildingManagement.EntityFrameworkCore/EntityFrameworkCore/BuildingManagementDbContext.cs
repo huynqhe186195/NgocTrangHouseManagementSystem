@@ -47,6 +47,7 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
     public DbSet<RoomChangeEvidenceArchiveRecord> RoomChangeEvidenceArchives { get; set; } = default!;
     public DbSet<RoomChangeHandoverEvidenceRecord> RoomChangeHandoverEvidence { get; set; } = default!;
     public DbSet<RoomChangeCompletionRecord> RoomChangeCompletions { get; set; } = default!;
+    public DbSet<RoomChangeMidMonthCompletionRecord> RoomChangeMidMonthCompletions { get; set; } = default!;
     public DbSet<MoveOutRequest> MoveOutRequests { get; set; } = default!;
     public DbSet<MoveOutChecklistTask> MoveOutChecklistTasks { get; set; } = default!;
     public DbSet<MoveOutRoomDispositionRecord> MoveOutRoomDispositions { get; set; } = default!;
@@ -165,6 +166,8 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.RoomChangeHandoverEvidenceConfiguration());
         builder.ApplyConfiguration(
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.RoomChangeCompletionConfiguration());
+            builder.ApplyConfiguration(
+                new BuildingManagement.EntityFrameworkCore.EntityConfigurations.RoomChangeMidMonthCompletionConfiguration());
         builder.ApplyConfiguration(
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.ContractDepositCloseoutApprovalRecordConfiguration());
         builder.ApplyConfiguration(

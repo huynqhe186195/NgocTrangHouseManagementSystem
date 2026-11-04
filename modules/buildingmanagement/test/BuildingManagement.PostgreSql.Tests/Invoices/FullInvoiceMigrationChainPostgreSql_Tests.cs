@@ -19,7 +19,7 @@ public sealed class FullInvoiceMigrationChainPostgreSql_Tests
     private const string OptInVariable = "BM_ALLOW_FULL_MIGRATION_REHEARSAL";
     private const string OptInValue = "CREATE_AND_DROP_FRESH_LOCAL_TEST_DATABASE";
     private const string ExpectedLatestMigration =
-        "20261103100000_Phase2HFinancialOriginalClaims";
+        "20261104100000_Phase2HMidMonthAtomicCompletion";
 
     [Fact]
     public async Task PGMIG01_Full_EF_Migrations_Succeed_In_Fresh_Disposable_Database()
@@ -305,6 +305,21 @@ public sealed class FullInvoiceMigrationChainPostgreSql_Tests
                 {
                     Assert.Equal(1L,
                         Convert.ToInt64(await originalClaims.ExecuteScalarAsync()));
+                }
+
+                // New dedicated midmonth ledger must retain an independent
+                // deferred SQL commit guard on the exact installed schema.
+                await using (var midmonthGate = new NpgsqlCommand(
+                    """
+                    SELECT count(*) FROM pg_trigger
+                     WHERE NOT tgisinternal
+                       AND tgname = 'TR_BM_2HMidComplete_CommitGate'
+                       AND tgrelid =
+                         '"BuildingManagementRoomChangeMidMonthCompletions"'::regclass
+                    """,verification))
+                {
+                    Assert.Equal(1L,
+                        Convert.ToInt64(await midmonthGate.ExecuteScalarAsync()));
                 }
 
                 await using (var extension = new NpgsqlCommand(

@@ -553,3 +553,61 @@ This does not substitute for a live authenticated HTTP cross-building
 attack test against the actual PostgreSQL adapter; code metadata
 checks alone do not establish this. NEW code remains unverified at
 runtime until the exact-SHA combined verification completes.
+
+
+## 2026-11-04 — Separate mid-month **same-rent/same-cash** atomic staging lane (NEW, TEST PENDING)
+
+The source month-end H1/H5 writer is preserved and untouched. An
+independent versioned `RoomChangeMidMonthCompletionRecord` and additive
+`20261104100000_Phase2HMidMonthAtomicCompletion` introduce the
+H2/H3 **same monthly rent / same held deposit** narrow lane, with
+a real staging `CompleteMidMonthRoomChangeAsync` command and the
+following supporting HTTP operations:
+
+- Owner-sign and archive a per-request original D01/D02 day ownership
+  and VND rounding decision;
+- Owner document the original D06 three-party source E/W and asset
+  handover; no claim of cryptographic signature verification;
+- Independently classify a previously approved D03 original monthly
+  invoice correction by category, archive it, and post its original
+  adjustment to the official receivable once;
+- Execute the confirmed whole-roster transfer at **SERIALIZABLE**
+  into a fresh linked active contract, end the source `RoomChanged`,
+  update both rooms, move every tenant, complete one original
+  cash-backed full deposit carry and seal source/target first month
+  rent claims.
+
+The application verifies original current-month issued invoice,
+frozen electricity/water readings and verified/manual-reviewed
+receipt journal; the D03 corrections must exactly equal the
+difference between original source rent and the signed prorated
+source rent. Corrected original invoice must be fully collected;
+no overcollection or other unpaid source receivables is allowed.
+The new target's first-month rent is frozen in a unique
+append-only completion; a PostgreSQL trigger forbids the later
+monthly invoice candidate from charging the full month again.
+A deferred SQL commit guard rechecks request, independent
+policy/review, day-rule/Owner proof, signed physical/tenant proof,
+corrected source invoice, deposits and both contracts. Existing
+`Contract.End(RoomChanged)` and terminal request gates now
+accept **either** the old month-end completed record **or** the
+separately verified new midmonth record. The two histories cannot
+re-use the same source/target.
+
+The H4 price/deposit **top-up/refund** variants are **still HOLD**
+and denied by this deliberately restricted executable path.
+A real bank refund is not inferred from an operator statement.
+The D01/D02 per-request attestation and D06 three-party references
+remain documentary, not cryptographically authenticated.
+Production execution is excluded.
+
+Eight new isolated PostgreSQL adversarial tests
+`TRFMIDPG01–08` probe foreign-parent rejection, isolation, immutable
+history, target full-month rebilling, old/new double completion and
+empty downgrade. They are **not** positive authenticated financial
+execution tests, and the complete 2H Business Accepted label remains
+HOLD. The one-command verifier now checks **106 Domain,
+60 PostgreSQL, scratch full migration, authenticated PostgreSQL HTTP
+and Full regression** at the new exact code SHA. The previous five-group
+PASS on `687bcc068f6451e5c45c55f05f2c49d29ea20632`
+does not certify these new changes.

@@ -6002,7 +6002,7 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 }))
                 Assert.True(approved.RootElement.GetProperty("accepted").GetBoolean());
             using (var day = await Positive2HPostAsync(clientB,
-                h4At + "/day-pricing-rule", new {
+                h4At + "/day-pricing-rule-candidate", new {
                     targetMonthlyRentVnd = 4_000_000m,
                     transferDayOwner = 2, rounding = 1
                 }))

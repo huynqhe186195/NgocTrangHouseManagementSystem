@@ -19,7 +19,7 @@ public sealed class FullInvoiceMigrationChainPostgreSql_Tests
     private const string OptInVariable = "BM_ALLOW_FULL_MIGRATION_REHEARSAL";
     private const string OptInValue = "CREATE_AND_DROP_FRESH_LOCAL_TEST_DATABASE";
     private const string ExpectedLatestMigration =
-        "20261104190000_Phase2HH4SignedPolicyAndTargetDepositBinding";
+        "20261104200000_Phase2HAtomicH4DepositObligations";
 
     [Fact]
     public async Task PGMIG01_Full_EF_Migrations_Succeed_In_Fresh_Disposable_Database()
@@ -382,6 +382,33 @@ public sealed class FullInvoiceMigrationChainPostgreSql_Tests
                 {
                     Assert.Equal(1L,
                         Convert.ToInt64(await h4PolicyGuard.ExecuteScalarAsync()));
+                }
+
+                // H4 posting is a distinct, immutable future obligation.
+                // It cannot be passed off as a received top-up, paid refund
+                // or existing next-month rent receipt.
+                await using (var h4Obligations = new NpgsqlCommand(
+                    """
+                    SELECT count(*) FROM information_schema.tables
+                     WHERE table_schema=current_schema()
+                       AND table_name='BuildingManagementRoomChangeH4Obligations'
+                    """,verification))
+                {
+                    Assert.Equal(1L,
+                        Convert.ToInt64(await h4Obligations.ExecuteScalarAsync()));
+                }
+                await using (var h4LedgerTriggers = new NpgsqlCommand(
+                    """
+                    SELECT count(*) FROM pg_trigger
+                     WHERE NOT tgisinternal
+                       AND tgname IN ('TR_BM_2H_H4Obligation_Immutable',
+                                      'TR_BM_2H_H4Obligation_NoTruncate')
+                       AND tgrelid =
+                        '"BuildingManagementRoomChangeH4Obligations"'::regclass
+                    """,verification))
+                {
+                    Assert.Equal(2L,
+                        Convert.ToInt64(await h4LedgerTriggers.ExecuteScalarAsync()));
                 }
 
                 // A frozen monthly invoice fee must be bound to its ORIGINAL

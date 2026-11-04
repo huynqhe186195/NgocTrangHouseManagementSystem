@@ -104,3 +104,129 @@ These are **test case requirements, not selected money formulas** until D01–D0
 - The existing OI-04 reader reconstructs actual \`OfficialInvoiceReceiptEvidence\` from original Payment + immutable monthly journal, requires all original receipt reviews to match the known monthly postings and uses signed line amounts to classify the remaining unpaid categories. Missing, rejected, future-dated, duplicated or incomplete splits fail the **whole contract** closed.
 - \`DEP_LINE01–07\` and \`OI04SQL01–04\` cover accepted partial payment, double-use, archived charge limits, independent review, SQL tampering, deferred completeness and safe rollback.
 - **DO NOT interpret as a financial writer:** receipt verification is human-attested, signed references are audit pointers rather than cryptographic signature verification, and this code has no authorized debt-offset/refund API. Current 2G.5 closeout still requires all debts fully paid. Remaining work: authorized dispute status, documented bank evidence validation, Owner-committed priority/partial-tier policy, atomic real offset posting with same-transaction debt decrease and held-cash decrease, refund proof and concurrent replay tests.
+
+
+## 2026-11-04 — Revised implementation and acceptance scope (binding Owner feedback)
+
+This section **supersedes conflicting future-scope proposals** earlier
+in this plan; already accepted H1–H6/OI-01–OI-06 and passed historical
+Phase 2H Financial Foundations are not reopened.
+
+### One cohesive delivery instead of disconnected feature flags
+
+**2H-DELTA-A — Room-specific service tariff and contract snapshot**
+- Introduce versioned RoomId × ServiceId tariff records, authorized
+  editor, unit (per person / per room / metered / other approved basis),
+  whole-VND price, validity window and immutable audit/EF change
+  history. Different rooms are allowed different prices for the
+  same service.
+- Validate nonoverlapping active versions for each room/service,
+  current room/building membership, and required metered readings.
+- An issued invoice binds the exact room-specific service version,
+  number of people if applicable and price snapshot; changing a room
+  price later cannot rewrite a historical charge. Versioned effective
+  dates and future contracts are explicit.
+- Upon transfer, source and target service lines use their own
+  respective room tariffs/verified headcounts for their actual
+  periods; do not charge two rooms for one day of a service when the
+  approved service-charge proration applies. The room price is
+  editable; the charging algorithm is **not** implicitly always
+  prorated. Add per-service billing mode/effective policy.
+
+**2H-DELTA-B — H4 deposit receivable and exclusive surplus outcome**
+- Change the prior proposed "no transfer until top-up paid"
+  precondition. Permit the signed H4 room-transfer transaction to
+  finish when the target deposit requirement is larger than actual
+  source cash; carry only the verified amount and atomically create
+  a **separate original outstanding deposit receivable**.
+- Local `DateOnly` maximum due date is one calendar month after
+  transfer, with month-end clipping. Do not infer that the uncollected
+  difference is cash-backed. Record pending, partial, collected,
+  overdue and independent receipt verification. On overdue, keep
+  the debt visible and follow an authorized collection workflow;
+  never silently undo or erase the completed move.
+- When target required deposit is lower, carry exactly the target
+  requirement; the remainder is a tenant liability to discharge
+  by one immutable, Owner-approved **alternative**:
+  **NextRentCredit** or **ManualRefund**. No automatic choice.
+  - `NextRentCredit`: credit the **following month's genuine rent
+    receivable**, creating an immutable allocation and preventing
+    second cash refund or application against a different tenant.
+    Remaining credit not yet applicable to issued rent remains
+    unspent tenant credit; never fabricate a payment.
+  - `ManualRefund`: use authorized recipient, bank statement,
+    signed Owner approval, independent reviewer and distinct
+    external settlement reference. Track request, pending/failed,
+    retry and paid separately; no payout without real external
+    proof. Apply the accepted seven-business-day refund target
+    from approved reconciliation with a signed VN holiday calendar.
+- Invariants: source actual held = carried target deposit + remaining
+  tenant-credit/refund liability + any **previously posted approved**
+  deductions; target required = actually carried + outstanding
+  top-up; each monetary unit can be consumed only once. Original
+  issued invoices never rewritten.
+- New SQL/EF journals must have source and target contract FK,
+  request idempotency, unique cash/bank references, immutable
+  audit, serializable commit-time assertions and same-transaction
+  authorization/membership checks. Distinguish authorizing a transfer
+  from authorizing a later cash posting.
+
+**2H-DELTA-C — Owner contract document export and D06**
+- An authorized Owner may export the *new finalized contract* from
+  canonical persisted contract/tenant/room/rent/service/deposit
+  evidence and the original old→new contract link. No client
+  financial fields are trusted for PDF generation.
+- Capture a signed/attested three-party handover from Owner,
+  authorized Staff, and primary tenant or documented representative.
+  Handwritten signed document attachment is acceptable; persist
+  digest/version, actor and UTC upload evidence; verify current
+  authorization and all roster/meter/asset evidence. Never represent
+  a text SHA as cryptographic legal e-signature.
+- Scope contract download by building and role, protect tenant
+  personal data, audit every document export, deny foreign building,
+  revoked Owner permission and pre-finalized versions.
+
+**2H-DELTA-D — Exact tests before BUSINESS ACCEPTED**
+- D02 whole-VND 0.5-up rounding for 28/29/30/31-day cases;
+  `Asia/Ho_Chi_Minh` day boundary and DST-independent fixed +07
+  effective date. Continue explicit signed per-request day owner:
+  owner's latest answer establishes timezone but did not explicitly
+  replace per-request day ownership with a universal rule.
+- `TRF-SVC01..08`: same service different prices in room 301/302,
+  editable version, per-person roster, no retroactive issued amount,
+  unauthorized foreign-building edit, boundary overlap rejection,
+  real meter reading, different service billing modes.
+- `TRF-DEP-DEFER01..12`: approved transfer with pending top-up,
+  local one-calendar-month due date edges, partial/late/duplicate
+  payment, no fictional held cash; exclusive next-month rent credit
+  vs refund, no double-use, source/target financial reconciliation,
+  rollback and request races.
+- `TRF-CONTRACT-DOC01..06`: Owner authenticated export of finalized
+  linked contract, correct specific room tariff snapshots, required
+  signatory evidence, no pending/unfinalized export, role revocation,
+  cross-building data confidentiality.
+- Positive **authenticated** mid-month transfer against real
+  disposable PostgreSQL, multiple valid contracts; SQL trigger
+  adversarial writes, retries and actor revocation at commit; full
+  migrations, Domain/Application/EF/HTTP and regression at **same
+  final code SHA**.
+- Never replace test PASS with a source-only grep or deliberately
+  weakened negative fixture. All migrations in disposable local DB
+  only; production remains out of scope.
+
+### Open precision — safe implementation decisions without blocking drafts
+
+1. Owner's reply to D01 expressly specifies **Vietnam timezone**,
+   not who is charged for the handover date. Existing signed per
+   request `TransferDayOwner` remains mandatory and no implicit
+   default will be invented.
+2. Room-specific service rate is approved; **per-service billing
+   proration/fixed-fee mode** must be configured explicitly before
+   using it to alter amounts.
+3. Template/content of the generated new-contract document remains
+   a versioned owner-configurable template. Until implemented,
+   no mock document may be presented as a signed executed contract.
+
+The 2026-11-04 five-group foundation PASS applies ONLY to
+`e24894f3b830a5640c2e7a5ba1857c0911579c2d`.
+Future implementation commits require their own full run.

@@ -1311,13 +1311,14 @@ public sealed class SliceBStagingFinalInvoiceMutation
                        "OfficialPostingId","OpenedByUserId","OpenedAtUtc",
                        "Reason","EvidenceReference")
                     VALUES (@id,@contract,@request,@building,@posting,
-                            @actor,@at,@reason,@evidence)
+                            @actor,clock_timestamp(),@reason,@evidence)
                     RETURNING "Id"
                     """);
                 AddValue(cmd,"id",id); AddValue(cmd,"contract",contractId);
                 AddValue(cmd,"request",requestId); AddValue(cmd,"building",building);
                 AddValue(cmd,"posting",input.PostingId); AddValue(cmd,"actor",actor);
-                AddValue(cmd,"at",DateTime.UtcNow);
+                // PostgreSQL owns the signed audit instant: trigger checks
+                // against clock_timestamp(); avoid .NET/PG clock skew.
                 AddValue(cmd,"reason",input.Reason.Trim());
                 AddValue(cmd,"evidence",input.EvidenceReference.Trim());
                 return await cmd.ExecuteScalarAsync() is Guid created
@@ -1358,12 +1359,13 @@ public sealed class SliceBStagingFinalInvoiceMutation
                     INSERT INTO "BuildingManagementContractDepositDebtDisputeResolutions"
                       ("Id","DisputeId","ContractId","OwnerId","ResolvedAtUtc",
                        "DebtAccepted","SignedOwnerResolutionReference")
-                    VALUES (@id,@dispute,@contract,@owner,@at,@accepted,@evidence)
+                    VALUES (@id,@dispute,@contract,@owner,clock_timestamp(),@accepted,@evidence)
                     RETURNING "Id"
                     """);
                 AddValue(cmd,"id",id); AddValue(cmd,"dispute",disputeId);
                 AddValue(cmd,"contract",contractId); AddValue(cmd,"owner",actor);
-                AddValue(cmd,"at",DateTime.UtcNow);
+                // PostgreSQL owns the signed audit instant: trigger checks
+                // against clock_timestamp(); avoid .NET/PG clock skew.
                 AddValue(cmd,"accepted",input.DebtAccepted);
                 AddValue(cmd,"evidence",input.SignedOwnerResolutionReference.Trim());
                 return await cmd.ExecuteScalarAsync() is Guid created

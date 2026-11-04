@@ -156,4 +156,56 @@ public sealed class RoomScopedServiceTariffPolicy_Tests
             v.PreviewCharge(new DateOnly(2026, 11, 1),
                 new DateOnly(2026, 11, 16), 2));
     }
+    [Fact]
+    public void TRF_SVC11_Prospective_Append_Supersedes_OpenEnded_Old_Rate()
+    {
+        var room = Guid.NewGuid();
+        var service = Guid.NewGuid();
+        var original = Tariff(room, service, price: 150_000m,
+            from: new DateOnly(2026, 1, 1));
+        var edited = Tariff(room, service, version: 2, price: 200_000m,
+            from: new DateOnly(2026, 12, 1));
+
+        var november = RoomScopedServiceTariffVersion.SelectEffectiveForDate(
+            new[] { original, edited }, room, service, new DateOnly(2026, 11, 15));
+        var december = RoomScopedServiceTariffVersion.SelectEffectiveForDate(
+            new[] { original, edited }, room, service, new DateOnly(2026, 12, 15));
+
+        Assert.Equal(original.Id, november.Id);
+        Assert.Equal(edited.Id, december.Id);
+        Assert.Equal(150_000m, original.UnitPriceVnd);
+        Assert.Equal(200_000m, edited.UnitPriceVnd);
+        original.VerifyFingerprint();
+    }
+
+    [Fact]
+    public void TRF_SVC12_EffectiveRate_Does_Not_Cross_Room_Boundaries()
+    {
+        var room301 = Guid.NewGuid();
+        var room302 = Guid.NewGuid();
+        var service = Guid.NewGuid();
+        var a = Tariff(room301, service, price: 150_000m);
+        var b = Tariff(room302, service, price: 200_000m);
+        var selected = RoomScopedServiceTariffVersion.SelectEffectiveForDate(
+            new[] { a, b }, room301, service, new DateOnly(2026, 11, 1));
+        Assert.Equal(a.Id, selected.Id);
+        Assert.Throws<InvalidOperationException>(() =>
+            RoomScopedServiceTariffVersion.SelectEffectiveForDate(
+                new[] { a }, room302, service, new DateOnly(2026, 11, 1)));
+    }
+
+    [Fact]
+    public void TRF_SVC13_Missing_Or_Tampered_Tariff_Is_Fail_Closed()
+    {
+        var a = Tariff();
+        Assert.Throws<InvalidOperationException>(() =>
+            RoomScopedServiceTariffVersion.SelectEffectiveForDate(
+                new[] { a with { UnitPriceVnd = 999m } },
+                a.RoomId, a.ServiceId, new DateOnly(2026, 11, 1)));
+        Assert.Throws<InvalidOperationException>(() =>
+            RoomScopedServiceTariffVersion.SelectEffectiveForDate(
+                new[] { a }, a.RoomId, a.ServiceId,
+                new DateOnly(2025, 12, 31)));
+    }
+
 }

@@ -153,6 +153,10 @@ public sealed partial class SliceBStagingRoomChangeRequests
                     policy.DepositPolicyReference, null,
                     HasUnresolvedDispute: false,
                     HasEarlierRefundOrCarryForward: false);
+                // Contract currently sets DepositAmount from MonthlyRent.
+                // Reject an Owner proposal that no target contract can fulfill.
+                if (input.TargetRequiredDepositVnd != rule.TargetMonthlyRentVnd)
+                    throw Denied();
                 var preview = RoomChangeDepositDifferencePreviewCalculator.Calculate(facts);
                 if (preview.ProposedPolicyLane != policy.DepositTreatment ||
                     preview.ProposedPolicyLane == RoomChangeDepositTreatment.CarryAllWithNoDifference)

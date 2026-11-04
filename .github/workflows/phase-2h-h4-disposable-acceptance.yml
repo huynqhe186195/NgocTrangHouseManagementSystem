@@ -54,7 +54,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git rev-parse HEAD
+          git rev-parse HEAD | tee h4-commit.sha
           test "$BM_PG_SLICE_A_HTTP_OPT_IN" = "I_ACCEPT_DISPOSABLE_PG_STAGING_HTTP"
           case "$BM_PG_TEST_CONNECTION" in
             *"Host=127.0.0.1;Port=5432;Database=ngoctrang_integration_test;"*) ;;
@@ -90,6 +90,12 @@ jobs:
             --logger "trx;LogFileName=h4-migration.trx" \
             --results-directory . \
             2>&1 | tee h4-migration.log
+          python3 - <<'PY'
+          from xml.etree import ElementTree as ET
+          c = ET.parse('h4-migration.trx').getroot().find('.//{*}Counters')
+          assert c is not None and int(c.attrib['total']) >= 1 and int(c.attrib['passed']) == int(c.attrib['total']) and int(c.attrib['failed']) == 0 and int(c.attrib['notExecuted']) == 0, c.attrib if c is not None else None
+          print('Disposable full H4 migration chain: ALL PASS')
+          PY
 
       - name: Existing 103 H2-H6 PostgreSQL integrity cases
         shell: bash
@@ -116,6 +122,7 @@ jobs:
           path: |
             h4-*.log
             h4-*.trx
+            h4-*.sha
           if-no-files-found: warn
           retention-days: 14
 

@@ -1778,6 +1778,95 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             await VerifyOriginalOwnerDocxAsync(contractA,
                 "Tenant A scratch","Tenant B scratch","101");
 
+            // D03: REAL authenticated HTTP append and read of per-room
+            // immutable tariff versions, with actual EF and PostgreSQL
+            // triggers. Staff cannot read or set even their own room's
+            // Owner-controlled price, and the same service has independent
+            // price histories in A101 and B101.
+            var serviceId=Guid.NewGuid();
+            var initialEffective=DateOnly.FromDateTime(DateTime.UtcNow.AddDays(60));
+            var nextEffective=initialEffective.AddDays(35);
+            string Tariffs(Guid id) =>
+                "/api/slice-b-staging/rooms/"+id.ToString("D")+"/service-tariffs";
+            string TariffJson(decimal price,DateOnly effective) =>
+                JsonSerializer.Serialize(new {
+                    serviceId,unitPriceVnd=price,billingUnit=1,chargingRule=1,
+                    effectiveFrom=effective.ToString("yyyy-MM-dd"),
+                    signedPolicyReference="OWNER-APPROVED-ROOM-PRICE-D03-001"
+                });
+            async Task<(HttpStatusCode Status,string Body)> PostTariffAsync(
+                HttpClient sender,Guid room,decimal price,DateOnly effective)
+            {
+                using var body=new StringContent(TariffJson(price,effective),
+                    Encoding.UTF8,"application/json");
+                using var reply=await sender.PostAsync(Tariffs(room),body);
+                return (reply.StatusCode,await reply.Content.ReadAsStringAsync());
+            }
+
+            var deniedStaffTariff = await PostTariffAsync(
+                clientB,roomB,200_000m,initialEffective);
+            Assert.Equal(HttpStatusCode.Forbidden,deniedStaffTariff.Status);
+            using (var deniedForeignRead=await clientB.GetAsync(
+                Tariffs(roomA)+"?serviceId="+serviceId.ToString("D")))
+                Assert.Equal(HttpStatusCode.Forbidden,deniedForeignRead.StatusCode);
+            using (var deniedOwnRead=await clientB.GetAsync(
+                Tariffs(roomB)+"?serviceId="+serviceId.ToString("D")))
+                Assert.Equal(HttpStatusCode.Forbidden,deniedOwnRead.StatusCode);
+
+            var priceA=await PostTariffAsync(
+                clientRoot,roomA,150_000m,initialEffective);
+            Assert.True(priceA.Status is HttpStatusCode.OK or HttpStatusCode.Created,
+                $"Owner Room A initial tariff: {priceA.Status} {priceA.Body}. "+
+                $"Test server errors: {serverErrors.Describe()}");
+            using (var json=JsonDocument.Parse(priceA.Body))
+            {
+                Assert.Equal(roomA,json.RootElement.GetProperty("roomId").GetGuid());
+                Assert.Equal(150_000m,
+                    json.RootElement.GetProperty("unitPriceVnd").GetDecimal());
+                Assert.Equal(1,json.RootElement.GetProperty("version").GetInt32());
+                Assert.False(json.RootElement.GetProperty("isPostedInvoice").GetBoolean());
+            }
+            var priceB=await PostTariffAsync(
+                clientRoot,roomB,200_000m,initialEffective);
+            Assert.True(priceB.Status is HttpStatusCode.OK or HttpStatusCode.Created,
+                $"Owner Room B independent tariff: {priceB.Status} {priceB.Body}. "+
+                $"Test server errors: {serverErrors.Describe()}");
+            var advancedA=await PostTariffAsync(
+                clientRoot,roomA,180_000m,nextEffective);
+            Assert.True(advancedA.Status is HttpStatusCode.OK or HttpStatusCode.Created,
+                $"Owner room A version two: {advancedA.Status} {advancedA.Body}");
+            // Earlier price is immutable. An attempted same-date replay
+            // fails rather than overwriting the original invoice source.
+            var replayA=await PostTariffAsync(
+                clientRoot,roomA,999_000m,nextEffective);
+            Assert.Equal(HttpStatusCode.Forbidden,replayA.Status);
+
+            using (var listA=await clientRoot.GetAsync(
+                Tariffs(roomA)+"?serviceId="+serviceId.ToString("D")))
+            {
+                Assert.Equal(HttpStatusCode.OK,listA.StatusCode);
+                using var json=JsonDocument.Parse(
+                    await listA.Content.ReadAsStringAsync());
+                var versions=json.RootElement.EnumerateArray().ToArray();
+                Assert.Equal(2,versions.Length);
+                Assert.Equal(150_000m,versions[0].GetProperty("unitPriceVnd").GetDecimal());
+                Assert.Equal(180_000m,versions[1].GetProperty("unitPriceVnd").GetDecimal());
+                Assert.NotEqual(
+                    versions[0].GetProperty("evidenceSha256").GetString(),
+                    versions[1].GetProperty("evidenceSha256").GetString());
+            }
+            using (var listB=await clientRoot.GetAsync(
+                Tariffs(roomB)+"?serviceId="+serviceId.ToString("D")))
+            {
+                Assert.Equal(HttpStatusCode.OK,listB.StatusCode);
+                using var json=JsonDocument.Parse(
+                    await listB.Content.ReadAsStringAsync());
+                var version=Assert.Single(json.RootElement.EnumerateArray());
+                Assert.Equal(200_000m,
+                    version.GetProperty("unitPriceVnd").GetDecimal());
+                Assert.Equal(1,version.GetProperty("version").GetInt32());
+            }
+
             // COMPLETE STAGING FINANCIAL HTTP FLOW:
             // scoped month-end draft -> prepared immutable evidence ->
             // independent reviewer -> root-issued ledger -> completed bank
@@ -7316,6 +7405,7 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             // the real Host wires ONLY on two isolated staging databases.
             context.Services.AddTransient<SliceBStagingFinalInvoiceMutation>();
             context.Services.AddTransient<SliceBStagingRoomChangeRequests>();
+            context.Services.AddTransient<SliceBStagingRoomScopedServiceTariffs>();
             context.Services.AddTransient<SliceCStagingUtilityRates>();
             context.Services.AddTransient<SliceCStagingMeterReadings>();
             context.Services.AddTransient<SliceCStagingUtilityMeters>();

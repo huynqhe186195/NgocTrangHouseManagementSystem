@@ -1316,3 +1316,61 @@ Cross-building Owner/Staff/tenant role and revocation races
 must pass positive authenticated HTTP/PostgreSQL tests.
 Owner-linked new contract document export is still HOLD.
 No production or real-money write has been enabled.
+
+
+## 2026-11-04 — Owner-verified five-group H4-intent gate PASS at e406b1c
+
+At exact code SHA `e406b1cfba41d3c7b0ae3b3f6785a8a05ea83df7`,
+the Owner furnished the local terminal:
+`=== PHASE 2H FINANCIAL FOUNDATIONS: ALL FIVE GROUPS PASSED ===`
+and the final host HTTP regression 70/70. The one-command verifier
+at that SHA checked **160 Domain**, **92 PostgreSQL**, complete scratch
+migration chain, authenticated two-DB HTTP fixture and full isolated
+regression. This marks ONLY the documentary-intent H4 foundation
+technical quality gate PASS; no bank transfers, Owner-specific tenant
+refunds or outstanding top-up receipts were actually posted.
+
+### 2026-11-04 — Owner contract DOCX export (NEW CODE / RUNTIME PENDING)
+
+- Add `GET /api/slice-b-staging/contracts/{id}/export.docx`.
+  It returns a real Office OpenXML **DOCX** download with printable
+  Vietnamese summary of the **server-stored original contract**,
+  building name/address, room number, contractual rent/deposit,
+  start/end dates and scoped linked tenant names.
+- The action inherits existing staging-only `[Authorize]` and
+  both distinct named disposable PostgreSQL database activation
+  checks. The adapter also demands the persisted **BootstrapOwner**
+  root grant, current active Contracts.Read permission and same
+  building membership; reuses the existing source query
+  `LockInvoicePreviewScopeAsync` to hold Contract, Room, Floor,
+  Building and active membership `FOR SHARE` while producing
+  bytes in one `REPEATABLE READ` UnitOfWork.
+  No route parameter can select a different BuildingId.
+- DOCX uses native .NET `ZipArchive` and `XmlWriter`,
+  so no third-party PDF/package runtime dependency or dynamic
+  unsigned text template assembly. All displayed values are
+  XML-encoded; no JavaScript, links or externally embedded media.
+  The output **explicitly warns** that it is an unsigned
+  documentary extract, NOT an executed/legally signed agreement,
+  acknowledgement of paid deposit or invented legal clauses.
+  It deliberately excludes government identity numbers,
+  phone numbers and bank account details.
+- Six new `TRFDOC01..06` host unit tests verify real ZIP/OOXML
+  parts, Vietnamese labels/charges, XML escaping against
+  `<script>` or XML injection, document-source fail-closed
+  behavior, route authentication, and exclusion of embedded PII.
+  These are artifact/route tests, NOT positive authenticated
+  multi-building Owner/Staff/revocation tests.
+- Old focused Domain **160** and PG **92** one-shot counts stay
+  unchanged, while full isolated HTTP regression is expected to
+  include **6 new host tests**. Since no .NET runtime is
+  accessible from this connector session, **this new code has
+  NOT been compiled or run** at this latest commit.
+
+**Remaining for Phase 2H BUSINESS ACCEPTED:** actual signed three-party
+document attachment and audit review, per-building Owner role
+authorization (this first export is intentionally restricted to
+BootstrapOwner only), positive authenticated export and cross-building
+denial/race tests, truly atomic H4 receivable/credit/manual refund
+writer and payment reconciliation, real positive same-deposit
+mid-month completion, and issued-invoice source gates. No production.

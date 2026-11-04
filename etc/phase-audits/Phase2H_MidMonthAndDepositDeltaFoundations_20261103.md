@@ -760,3 +760,52 @@ attack acceptance on the actual authenticated endpoint. The routine
 itself states that its source-only security checks are *not proof*
 of authenticated cross-building CRUD isolation. Do not label the
 entire Phase 2H BUSINESS ACCEPTED and do not deploy production.
+
+
+## 2026-11-04 — H4/D03/D06 Owner change authorization; code acceptance still HOLD
+
+The Owner approved a revised **financial execution policy** after
+the prior 5/5 focused foundation PASS:
+- The exact handover business date/time must be interpreted in
+  `Asia/Ho_Chi_Minh`. The source/target **owner of the transfer
+  calendar day** still comes from an explicit, individually Owner
+  signed pricing candidate; the latest reply does not prescribe a
+  universal source/target selection.
+- The owner accepted the original whole-VND midpoint-up rounding
+  recommendation for calendar-day proration.
+- Services are **not priced identically per building**: price and
+  units are independently editable per *Room × Service*, e.g.
+  room 301 service 150,000 VND per occupant per month. Source and
+  target contract billing history must freeze their different
+  rate versions. Existing `Room` entity does not yet map this
+  historical per-room service tariff schedule.
+- A higher target security deposit **does not prohibit the room
+  move while the additional amount is unpaid**. Authorize the
+  transfer with a separate due deposit receivable and deadline
+  at most one Vietnam **calendar month** from transfer.
+  Outstanding/overdue is not cash backed. Existing H4
+  deposit-preview arithmetic remains useful but its prior
+  "must collect before transfer" assumption is superseded.
+- Lower new-room deposit: explicitly and exclusively choose to
+  credit the surplus against **next month's rent** or refund
+  the tenant after reconciliation, with distinct real evidence
+  and bank checks. Retained tenant credit is not a deposit balance
+  nor a new cash receipt.
+- Three-party physical handover signers (Owner/Staff/primary tenant)
+  and attached handwritten signature evidence are approved.
+  Owner must be able to export the new linked contract as a file.
+
+Authoritative details and acceptance IDs are in
+`Phase2G2H_ApprovedBusinessDecisions_20261101.md` (2026-11-04
+addendum) and
+`Phase2G2H_PostDecisionImplementationScope_20261101.md`.
+
+**Important:** The existing restricted `CompleteMidMonthRoomChangeAsync`
+checks same source/target rent, nominal same deposit and zero unposted
+difference; these checks are still in code and safely **deny the new
+H4 situations**. They must only be replaced by a separately designed,
+versioned and transactionally protected H4 execution lane with
+evidence/financial posting, **not** by removing security constraints.
+No new migration or API writer was deployed by the above Owner
+decision. Historical foundation verification remains valid for its
+earlier code SHA, not for this newly authorized scope.

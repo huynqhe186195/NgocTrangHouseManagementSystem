@@ -1083,3 +1083,35 @@ actual issued invoice integration, full H4 deferred cash writer,
 next-month rent credit/refund, Owner contract document export,
 real authenticated multi-building HTTP/revocation/race acceptance
 and production all remain separate HOLD gates. No production use.
+
+
+## 2026-11-04 — Exact-SHA Owner-confirmed complete foundations PASS (room tariff staging API)
+
+Operator console output for commit
+`309fcf0ee2b146d766909386b26ed3273b1bbc2b`:
+
+```text
+Passed! - Failed: 0, Passed: 70, Skipped: 0, Total: 70
+=== QUALITY GATE PASS: ALL REQUESTED TEST RUNS SUCCEEDED ===
+=== PHASE 2H FINANCIAL FOUNDATIONS: ALL FIVE GROUPS PASSED ===
+COMMIT=309fcf0ee2b146d766909386b26ed3273b1bbc2b
+Restricted same-rent/same-deposit mid-month lane requires positive authenticated execution acceptance; H4 top-up/refund and production remain HOLD.
+```
+
+At that SHA the one-shot gate requires 142 focused Domain tests,
+76 focused PostgreSQL tests, isolated full migration rehearsal, the
+authenticated PG HTTP fixture and full regression. Its final host HTTP
+regression reported 70/70 PASS. This is operator-reported gate evidence;
+individual raw logs were not separately collected in this session.
+The source-only regression stage does not itself establish real
+cross-building authenticated CRUD enforcement.
+
+**Accepted:** financial foundations + staging BootstrapOwner-scoped
+service-tariff GET/append API implementation at the exact SHA above.
+
+**Still HOLD:** issued invoice snapshots bound to room/version specific
+fees, true Owner-per-building authorization beyond the bootstrap root,
+H4 deposit receivable and surplus credit/refund real financial writers,
+linked new contract document export, positive authenticated execution
+of full midmonth transfer, and cross-building/revocation concurrency
+attacks. Never apply migrations to production.

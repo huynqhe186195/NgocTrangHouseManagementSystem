@@ -5937,6 +5937,8 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             var h4MeterW = Guid.NewGuid();
             var h4EndE = Guid.NewGuid();
             var h4EndW = Guid.NewGuid();
+            var h4AfterHandoverMeterE = Guid.NewGuid();
+            var h4AfterHandoverMeterW = Guid.NewGuid();
             using (var h4Scope = app.Services.CreateScope())
             {
                 var sp = h4Scope.ServiceProvider;
@@ -5966,7 +5968,22 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                         h4MeterW, h4SourceRoom,
                         BuildingManagement.Utilities.UtilityType.Water,
                         "H4-W-" + h4MeterW.ToString("N"), 0m,
-                        new DateTime(2026, 9, 1)));
+                        new DateTime(2026, 9, 1)),
+                    // The room is vacant after its Oct 15 handover. A
+                    // documented Oct 16 physical meter replacement plus
+                    // Oct 31 ZERO-usage reading independently establishes
+                    // the remainder of month, without billing imaginary
+                    // source consumption or weakening period-end checks.
+                    new BuildingManagement.Utilities.UtilityMeter(
+                        h4AfterHandoverMeterE, h4SourceRoom,
+                        BuildingManagement.Utilities.UtilityType.Electricity,
+                        "H4-POST-E-" + h4AfterHandoverMeterE.ToString("N"),
+                        0m, new DateTime(2026, 10, 16)),
+                    new BuildingManagement.Utilities.UtilityMeter(
+                        h4AfterHandoverMeterW, h4SourceRoom,
+                        BuildingManagement.Utilities.UtilityType.Water,
+                        "H4-POST-W-" + h4AfterHandoverMeterW.ToString("N"),
+                        0m, new DateTime(2026, 10, 16)));
                 db.MeterReadings.AddRange(
                     new BuildingManagement.Utilities.MeterReading(
                         Guid.NewGuid(), h4MeterE, 2026, 9, 0m, 10m,
@@ -5979,7 +5996,25 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                         new DateTime(2026, 10, 15)),
                     new BuildingManagement.Utilities.MeterReading(
                         h4EndW, h4MeterW, 2026, 10, 15m, 19m,
-                        new DateTime(2026, 10, 15)));
+                        new DateTime(2026, 10, 15)),
+                    new BuildingManagement.Utilities.MeterReading(
+                        Guid.NewGuid(), h4AfterHandoverMeterE, 2026, 10,
+                        0m, 0m, new DateTime(2026, 10, 31)),
+                    new BuildingManagement.Utilities.MeterReading(
+                        Guid.NewGuid(), h4AfterHandoverMeterW, 2026, 10,
+                        0m, 0m, new DateTime(2026, 10, 31)));
+                db.MeterReplacements.AddRange(
+                    new BuildingManagement.Utilities.MeterReplacement(
+                        Guid.NewGuid(), h4MeterE, h4AfterHandoverMeterE,
+                        h4SourceRoom,
+                        BuildingManagement.Utilities.UtilityType.Electricity,
+                        new DateTime(2026, 10, 16), 20m, 20m, 0m,
+                        "Independently signed H4 vacated-room meter exchange"),
+                    new BuildingManagement.Utilities.MeterReplacement(
+                        Guid.NewGuid(), h4MeterW, h4AfterHandoverMeterW,
+                        h4SourceRoom, BuildingManagement.Utilities.UtilityType.Water,
+                        new DateTime(2026, 10, 16), 19m, 19m, 0m,
+                        "Independently signed H4 vacated-room meter exchange"));
                 var payment = new BuildingManagement.Payments.Payment(
                     h4DepositPayment,
                     "TRF-H4-DEPOSIT-" + h4DepositPayment.ToString("N"),

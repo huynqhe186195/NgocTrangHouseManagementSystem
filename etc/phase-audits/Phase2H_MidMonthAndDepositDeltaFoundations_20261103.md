@@ -841,3 +841,95 @@ top-up, exclusive next-rent-credit vs refund, three-party
 handover and Owner contract export remain approved as recorded
 in the companion 2026-11-04 decision register. They are
 separate implementation gates. No production work was performed.
+
+
+## 2026-11-04 — First implementation batch after Owner final D01/H4/service decisions (CODE COMMITTED, RUNTIME TEST PENDING)
+
+**Do not mark this commit business accepted until the exact new SHA
+passes the full local gates.** The prior
+`e24894f3b830a5640c2e7a5ba1857c0911579c2d` 5/5 PASS remains
+historical foundation evidence only.
+
+### Implemented code
+
+1. **Binding D01/D02 execution rule:** New
+   `RoomChangeApprovedH2H3ExecutionPolicy` validates that new
+   transfers allocate the Vietnamese local handover civil day to the
+   **target**, partition the month without overlap, and use whole-VND
+   midpoint-up rounding. Historical SourceRoom/truncation candidates
+   can still be verified/read as immutable evidence but can no
+   longer be proposed through the authenticated staging intake or
+   executed through `CompleteMidMonthRoomChangeAsync`.
+   `RoomChangeMidMonthCompletionRecord.Complete` independently
+   refuses noncanonical/legacy signed rule values.
+2. **Additive PostgreSQL commit-time gate:** New EF migration
+   `20261104130000_Phase2HApprovedTargetDayCommitFence`
+   creates a deferred `TR_BM_2H_ApprovedTargetDay_Commit` trigger,
+   verifying original transfer date, rule ownership, rounding,
+   actual calendar days and target first-month rent.
+   This is intentionally a **new migration**, not an edit to a
+   historical migration that may already have been applied. Down
+   refuses to erase existing mid-month completion history.
+   `TRFMIDPG15` exercises source-day denial and valid target-day
+   allowance in an isolated PostgreSQL scratch schema; it is
+   deliberately not a positive real-bank financial transaction.
+3. **H4 deferred deposit policy (domain-only):**
+   `RoomChangeDeferredDepositDispositionPlanner` recomputes the
+   established cash-backed source preview and distinguishes
+   `CarriedTargetDepositVnd`, original **unpaid top-up
+   receivable** due within one local calendar month, and the
+   mutually exclusive **next-month-rent-credit** vs
+   **reviewed manual refund** liability. It will not treat
+   uncollected money as held cash or mark a payout/credit posted.
+   The new policy deliberately does not switch on the old
+   same-rent/same-deposit mid-month writer.
+4. **Room-specific service pricing (domain-only):**
+   `RoomScopedServiceTariffVersion` and
+   `RoomScopedServiceChargePreview` represent independent
+   RoomId × ServiceId tariff versions, effective dates, per-person,
+   per-room and metered price units, explicit whole-month vs
+   calendar-day charging and a source SHA-256 digest. Every
+   quote is non-posting. An invoice must later bind the original
+   tariff version and authoritative verified tenant count/meter
+   sources; later edits cannot silently change issued charges.
+   This code does **not yet** persist tariff records in EF or
+   expose Owner edit APIs, and it does not claim to do so.
+
+### Quality gates added
+
+- Existing focused Domain: **106**.
+- New binding D01/D02 tests `TRF_D01_01..08`: **8**.
+- New H4 deferred top-up and surplus-choice tests
+  `TRF_H4DEF01..13`: **13**.
+- New room-specific service tariff tests
+  `TRF_SVC01..10`: **10**.
+- **Focused Domain expected: 137**; targeted PostgreSQL expected:
+  **67**, including new `TRFMIDPG15`; full migration chain
+  now requires the 20261104130000 migration last.
+- Run existing five-group
+  `etc/scripts/verify-phase-2h-financial-foundations.ps1`
+  against the dedicated local test DB. Full regression and
+  authenticated HTTP remain included; never run against the
+  application/production database.
+- The connected coding environment has no `dotnet`, Docker or
+  local PostgreSQL test runtime. All newly authored changes are
+  **code review only, not runtime PASS** until the Owner supplies
+  exact-SHA full logs. Any compiler/SQL issues must be fixed at
+  their source, not by deleting assertions or bypassing guards.
+
+### Still required for complete Phase 2H BUSINESS ACCEPTED
+
+- Persist new RoomId × ServiceId tariff versions and immutable
+  invoice/contract billing snapshots; authenticated Owner edit/
+  access policies and overlapping version concurrency safety.
+- H4 **actual atomic writer**: linked contract with different
+  target rent/deposit, original held cash carry, independently
+  verified later top-up receivable collections, tenant surplus
+  future rent-credit application or actual independently reviewed
+  bank refund, plus unique ledger and SQL integrity constraints.
+  The existing restricted same-deposit transfer remains fail-closed
+  for H4 until that writer has genuine PostgreSQL/HTTP coverage.
+- Authenticated successful financial midmonth completion and
+  cross-building/revocation/race test on real disposable PG,
+  genuine D06 signed-attachment origin review and Owner-scoped
+  exported new-contract file. No production.

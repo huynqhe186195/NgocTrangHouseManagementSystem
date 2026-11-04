@@ -50,6 +50,8 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
     public DbSet<RoomChangeMidMonthCompletionRecord> RoomChangeMidMonthCompletions { get; set; } = default!;
     // Phase 2H owner-editable room/service version history; never rewrite old tariffs.
     public DbSet<RoomScopedServiceTariffVersion> RoomScopedServiceTariffVersions { get; set; } = default!;
+    // Immutable source-specific room service cost evidence for frozen monthly candidates.
+    public DbSet<RoomScopedServiceInvoiceSourceBinding> RoomServiceInvoiceSourceBindings { get; set; } = default!;
     public DbSet<MoveOutRequest> MoveOutRequests { get; set; } = default!;
     public DbSet<MoveOutChecklistTask> MoveOutChecklistTasks { get; set; } = default!;
     public DbSet<MoveOutRoomDispositionRecord> MoveOutRoomDispositions { get; set; } = default!;
@@ -164,6 +166,8 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.RoomChangeDayPricingRuleCandidateConfiguration());
         builder.ApplyConfiguration(
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.RoomScopedServiceTariffVersionConfiguration());
+        builder.ApplyConfiguration(
+            new BuildingManagement.EntityFrameworkCore.EntityConfigurations.RoomScopedServiceInvoiceSourceBindingConfiguration());
         builder.ApplyConfiguration(
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.RoomChangeEvidenceArchiveRecordConfiguration());
         builder.ApplyConfiguration(

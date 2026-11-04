@@ -6271,7 +6271,7 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     operatorUserId = h4Classifier
                 }))
                 Assert.NotEqual(Guid.Empty,
-                    scopedGrant.RootElement.GetProperty("id").GetGuid());
+                    scopedGrant.RootElement.GetProperty("grantId").GetGuid());
 
             var h4Finance = FinalInvoices(h4SourceContract);
             var h4MonthlyDraftRoute = scopedContracts + "/" +

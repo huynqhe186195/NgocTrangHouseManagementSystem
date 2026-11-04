@@ -1696,14 +1696,41 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             // PHASE 2H OWNER DOCUMENT: genuinely authenticated HTTP against
             // the same two temporary databases and two independently scoped
             // buildings. No real tenant PII or external documents are used.
+            // Assert the CURRENT persisted Identity fixture explicitly:
+            // Root must have BootstrapOwner, Staff B must not. A failed HTTP
+            // authorization check must not be "repaired" by silently giving
+            // Staff B a root grant or by skipping its negative request.
+            await using (var verifiedIdentity = new NpgsqlConnection(idCs))
+            {
+                await verifiedIdentity.OpenAsync();
+                async Task<long> RootGrantCountAsync(Guid principal)
+                {
+                    await using var cmd = new NpgsqlCommand(
+                        """
+                        SELECT count(*) FROM "AbpPermissionGrants"
+                         WHERE "ProviderName"='U' AND "ProviderKey"=@actor
+                           AND "Name"=@permission
+                        """, verifiedIdentity);
+                    cmd.Parameters.AddWithValue("actor",principal.ToString("D"));
+                    cmd.Parameters.AddWithValue("permission",
+                        BuildingManagementPermissions.Buildings.BootstrapOwner);
+                    return Convert.ToInt64(await cmd.ExecuteScalarAsync());
+                }
+                Assert.Equal(1L,await RootGrantCountAsync(root));
+                Assert.Equal(0L,await RootGrantCountAsync(operatorB));
+            }
             string ContractExport(Guid id) =>
                 scopedContracts + "/" + id.ToString("D") + "/export.docx";
             using (var otherBuilding = await clientB.GetAsync(ContractExport(contractA)))
-                Assert.Equal(HttpStatusCode.Forbidden,otherBuilding.StatusCode);
+                Assert.True(otherBuilding.StatusCode==HttpStatusCode.Forbidden,
+                    $"B-only staff exporting A DOCX must be 403, actual={otherBuilding.StatusCode}. "+
+                    $"Test server diagnostics: {serverErrors.Describe()}");
             // An operator with active Contracts.Read in Building B is NOT
             // BootstrapOwner. Even their OWN building export must be denied.
             using (var staffOnly = await clientB.GetAsync(ContractExport(contractB)))
-                Assert.Equal(HttpStatusCode.Forbidden,staffOnly.StatusCode);
+                Assert.True(staffOnly.StatusCode==HttpStatusCode.Forbidden,
+                    $"B-only staff cannot export their own Owner-only DOCX. "+
+                    $"Actual={staffOnly.StatusCode}. Test errors: {serverErrors.Describe()}");
             using (var unauthenticated = app.GetTestClient())
             using (var anonymousExport = await unauthenticated.GetAsync(
                 ContractExport(contractA)))
@@ -1764,7 +1791,9 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 await revokeUow.CompleteAsync();
             }
             using (var revokedRoot = await clientRoot.GetAsync(ContractExport(contractA)))
-                Assert.Equal(HttpStatusCode.Forbidden,revokedRoot.StatusCode);
+                Assert.True(revokedRoot.StatusCode==HttpStatusCode.Forbidden,
+                    $"Persisted BootstrapOwner revocation must deny DOCX: "+
+                    $"{revokedRoot.StatusCode}. {serverErrors.Describe()}");
             using (var restoreScope = app.Services.CreateScope())
             {
                 using var restoreUow = restoreScope.ServiceProvider
@@ -1805,7 +1834,9 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
 
             var deniedStaffTariff = await PostTariffAsync(
                 clientB,roomB,200_000m,initialEffective);
-            Assert.Equal(HttpStatusCode.Forbidden,deniedStaffTariff.Status);
+            Assert.True(deniedStaffTariff.Status==HttpStatusCode.Forbidden,
+                $"Staff tariff append must deny with HTTP 403, actual={deniedStaffTariff.Status}. "+
+                $"Body={deniedStaffTariff.Body}");
             using (var deniedForeignRead=await clientB.GetAsync(
                 Tariffs(roomA)+"?serviceId="+serviceId.ToString("D")))
                 Assert.Equal(HttpStatusCode.Forbidden,deniedForeignRead.StatusCode);
@@ -1839,7 +1870,9 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             // fails rather than overwriting the original invoice source.
             var replayA=await PostTariffAsync(
                 clientRoot,roomA,999_000m,nextEffective);
-            Assert.Equal(HttpStatusCode.Forbidden,replayA.Status);
+            Assert.True(replayA.Status==HttpStatusCode.Forbidden,
+                $"Duplicate service tariff version must deny with HTTP 403. "+
+                $"Actual={replayA.Status}, body={replayA.Body}");
 
             using (var listA=await clientRoot.GetAsync(
                 Tariffs(roomA)+"?serviceId="+serviceId.ToString("D")))

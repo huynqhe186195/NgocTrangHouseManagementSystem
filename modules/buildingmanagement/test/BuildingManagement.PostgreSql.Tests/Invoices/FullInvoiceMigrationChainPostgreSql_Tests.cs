@@ -19,7 +19,7 @@ public sealed class FullInvoiceMigrationChainPostgreSql_Tests
     private const string OptInVariable = "BM_ALLOW_FULL_MIGRATION_REHEARSAL";
     private const string OptInValue = "CREATE_AND_DROP_FRESH_LOCAL_TEST_DATABASE";
     private const string ExpectedLatestMigration =
-        "20261104160000_Phase2HDepositDispositionIntentEvidence";
+        "20261104170000_Phase2HDepositDispositionIntentDigestIntegrity";
 
     [Fact]
     public async Task PGMIG01_Full_EF_Migrations_Succeed_In_Fresh_Disposable_Database()
@@ -338,6 +338,21 @@ public sealed class FullInvoiceMigrationChainPostgreSql_Tests
                 {
                     Assert.Equal(3L,
                         Convert.ToInt64(await h4IntentGuards.ExecuteScalarAsync()));
+                }
+
+                // H4 documentary money choices require SQL-calculated
+                // canonical SHA, not a syntactically valid user-supplied hash.
+                await using (var h4CanonicalDigest = new NpgsqlCommand(
+                    """
+                    SELECT count(*) FROM pg_trigger
+                     WHERE NOT tgisinternal
+                       AND tgname = 'TR_BM_2H_H4Intent_Digest'
+                       AND tgrelid =
+                        '"BuildingManagementRoomChangeDepositDispositionIntents"'::regclass
+                    """, verification))
+                {
+                    Assert.Equal(1L,
+                        Convert.ToInt64(await h4CanonicalDigest.ExecuteScalarAsync()));
                 }
 
                 // A frozen monthly invoice fee must be bound to its ORIGINAL

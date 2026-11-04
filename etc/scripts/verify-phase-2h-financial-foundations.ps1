@@ -71,8 +71,8 @@ try {
     Write-Host '== 2/5: Phase 2H PostgreSQL concurrency and atomic transfer =='
     $pgExit = Invoke-DotNetTestLogged $pg 'FullyQualifiedName~RoomChangeRequestsPostgreSql_Tests|FullyQualifiedName~RoomChangeTenantRosterPostgreSql_Tests|FullyQualifiedName~RoomChangeSourceDispositionPostgreSql_Tests|FullyQualifiedName~RoomChangeHandoverDigestPostgreSql_Tests|FullyQualifiedName~RoomChangeDayPricingRulePostgreSql_Tests|FullyQualifiedName~RoomChangeEvidenceArchivePostgreSql_Tests|FullyQualifiedName~RoomChangeMidMonthFinancialPostingPostgreSql_Tests|FullyQualifiedName~RoomChangeMidMonthCompletionPostgreSql_Tests|FullyQualifiedName~RoomScopedServiceTariffPostgreSql_Tests|FullyQualifiedName~RoomServiceInvoiceSourceBindingsPostgreSql_Tests|FullyQualifiedName~RoomChangeDepositDispositionIntentPostgreSql_Tests' 'console;verbosity=normal' '16-2h-postgresql.log'
     if ($pgExit -ne 0) { Throw-WithTestLog '2H PostgreSQL suite FAILED.' '16-2h-postgresql.log' }
-    if (-not (Select-String -Path (Join-Path $logs '16-2h-postgresql.log') -Pattern 'Total tests:\s*92\b' -Quiet) -or -not (Select-String -Path (Join-Path $logs '16-2h-postgresql.log') -Pattern 'Passed:\s*92\b' -Quiet)) {
-        Throw-WithTestLog 'Expected exactly 92/92 PostgreSQL transfer cases.' '16-2h-postgresql.log'
+    if (-not (Select-String -Path (Join-Path $logs '16-2h-postgresql.log') -Pattern 'Total tests:\s*96\b' -Quiet) -or -not (Select-String -Path (Join-Path $logs '16-2h-postgresql.log') -Pattern 'Passed:\s*96\b' -Quiet)) {
+        Throw-WithTestLog 'Expected exactly 96/96 PostgreSQL transfer and H4 digest cases.' '16-2h-postgresql.log'
     }
 
     Write-Host '== 3/5: Fresh disposable PostgreSQL migration chain =='

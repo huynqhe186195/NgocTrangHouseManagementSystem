@@ -123,7 +123,7 @@ public sealed class Phase2HD04H4SettlementJournal : Migration
                OR payment."PaidAt" IS DISTINCT FROM NEW."PaidAtUtc"
                OR payment."TransactionReference" IS DISTINCT FROM
                   NEW."BankTransactionReference"
-               OR payment."Notes" NOT LIKE 'BANK-PROOF: %'
+               OR coalesce(payment."Notes",'') NOT LIKE 'BANK-PROOF: %'
             THEN
               RAISE EXCEPTION 'Top-up review requires exact completed bank-backed receipt'
                 USING ERRCODE='23514';

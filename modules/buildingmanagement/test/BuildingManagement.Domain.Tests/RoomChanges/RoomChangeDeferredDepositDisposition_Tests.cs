@@ -236,7 +236,7 @@ public sealed class RoomChangeDeferredDepositDisposition_Tests
             InvoiceBillingMonth = null,
             IndependentlyVerifiedIssuedRentOutstandingVnd = null,
             NewlyVerifiedPayments = new[] {
-                Payment(1_000_000m, "BANK-CONFIRMED-REFUND-2026") },
+                Payment(1_000_000m, "BANK-TRANSFER-CLEARED-2026") },
             BankRefundReviewId = Guid.NewGuid(),
             IndependentBankReviewerId = Guid.NewGuid(),
             PaymentApproverId = owner,
@@ -251,6 +251,10 @@ public sealed class RoomChangeDeferredDepositDisposition_Tests
         Assert.Throws<InvalidOperationException>(() =>
             RoomChangeH4SettlementEvidenceGate.RequireEligible(refund with {
                 CompletedBankTransferReference = null
+            }));
+        Assert.Throws<InvalidOperationException>(() =>
+            RoomChangeH4SettlementEvidenceGate.RequireEligible(refund with {
+                CompletedBankTransferReference = "OTHER-BANK-TRANSACTION-2026"
             }));
     }
 

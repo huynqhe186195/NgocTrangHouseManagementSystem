@@ -23,3 +23,11 @@ This PR targets `wip/phase-2g2` independently from combined Spec Kit/H4 security
 - This is **one existing xUnit Fact**, not newly counted cases. No production writer, financial settlement, migration, workflow filter or threshold was changed.
 - Code commit: `115af54614d4c5f8b34a434be575648e6f9d534f` on combined draft PR #5. **New exact-head CI is PENDING/UNVERIFIED** as of this documentation update; previously green commit `d1af665b` cannot certify the newer code.
 - Still HOLD: independently accepted 28/29/30-day issued-invoice SQL/HTTP parity; approved append-only corrections and rollback; 2G.5 ordinary final-month billing regression; actual H4 bank-backed top-up/credit/refund; independent sign-off and production.
+
+
+## 2026-11-05 follow-up: independently reviewed CI and D01/D02 SQL tamper breadth
+
+- On exact prior integration SHA `578c11957d4473744e11f0f14ca5c23727e5badf`, all four workflows concluded SUCCESS: H4 disposable PG `42026735187`, Slice A PG `42026734904`, Windows regression `42026735131`, Identity `42026735026`. Job logs directly show `TRFPG32` and `TRFPG34` Passed in both PG workflows, full Windows 712 Domain / 183 Application / 447 EF / 76 HTTP PASS with zero failures or skips, and Slice A 162 Domain / 103 PG PASS. This closes **only** the preceding source/target rent-line and target-day tamper staging test verification; it does not certify bank settlement or full business acceptance.
+- Newer test-only SHA `ce5c9761a08ce2fafba046fb847cad9189acb60e` extends the **same existing `TRFPG32` Fact** with direct SQL insert tampering of the source-room days (+1) and actual calendar-month denominator (+1), while retaining previously added target-room amount and target-day rejection probes. No xUnit Fact count, CI threshold, financial application writer or migration changed.
+- The `ce5c9761` change must obtain its **own exact-head PostgreSQL and regression CI success** before these new probes can be called staging verified. The four prior workflow successes only prove SHA `578c1195`.
+- Still HOLD: 28/29/30-day officially issued rent-line correction parity, append-only signed financial correction, independent bank-backed H4 cash/credit/refund, the ordinary 2G.5 final-month regression and human BUSINESS ACCEPTANCE; production remains excluded.

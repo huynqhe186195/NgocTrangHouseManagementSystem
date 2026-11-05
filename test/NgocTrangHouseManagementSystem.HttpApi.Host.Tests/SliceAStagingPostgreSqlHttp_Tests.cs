@@ -7146,14 +7146,139 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             }
             else
             {
-                // Future rent credit cannot settle with a forged/non-issued
-                // invoice identifier. Positive credit needs a later actual
-                // target-room issued November receivable.
+                // D04 positive next-rent credit: unlike a preview, this
+                // uses the target's actual separately issued November bill
+                // and its official receivable, with original E/W evidence.
                 var deniedCredit = await PostFinalAsync(clientRoot,
                     d04PostAt, JsonSerializer.Serialize(new {
                         issuedInvoiceId = Guid.NewGuid()
                     }));
                 Assert.Equal(HttpStatusCode.Forbidden, deniedCredit.Status);
+                using (var monthScope = app.Services.CreateScope())
+                {
+                    var sp = monthScope.ServiceProvider;
+                    using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                        .Begin(requiresNew: true, isTransactional: true);
+                    var db = await sp.GetRequiredService<
+                        IDbContextProvider<BuildingManagementDbContext>>()
+                        .GetDbContextAsync();
+                    var eId = Guid.NewGuid();
+                    var wId = Guid.NewGuid();
+                    db.UtilityMeters.AddRange(
+                        new BuildingManagement.Utilities.UtilityMeter(
+                            eId, h4TargetRoom,
+                            BuildingManagement.Utilities.UtilityType.Electricity,
+                            "D04-NEXT-E-" + eId.ToString("N"), 0m,
+                            new DateTime(2026, 10, 15)),
+                        new BuildingManagement.Utilities.UtilityMeter(
+                            wId, h4TargetRoom,
+                            BuildingManagement.Utilities.UtilityType.Water,
+                            "D04-NEXT-W-" + wId.ToString("N"), 0m,
+                            new DateTime(2026, 10, 15)));
+                    db.MeterReadings.AddRange(
+                        new BuildingManagement.Utilities.MeterReading(
+                            Guid.NewGuid(), eId, 2026, 10, 0m, 0m,
+                            new DateTime(2026, 10, 31)),
+                        new BuildingManagement.Utilities.MeterReading(
+                            Guid.NewGuid(), wId, 2026, 10, 0m, 0m,
+                            new DateTime(2026, 10, 31)),
+                        new BuildingManagement.Utilities.MeterReading(
+                            Guid.NewGuid(), eId, 2026, 11, 0m, 0m,
+                            new DateTime(2026, 11, 30)),
+                        new BuildingManagement.Utilities.MeterReading(
+                            Guid.NewGuid(), wId, 2026, 11, 0m, 0m,
+                            new DateTime(2026, 11, 30)));
+                    await db.SaveChangesAsync();
+                    await uow.CompleteAsync();
+                }
+
+                // Simulate the completed next billing cycle using the
+                // fixture's disposable clock only, never production.
+                transferClock.SetUtc(new DateTimeOffset(
+                    2026, 12, 1, 4, 0, 0, TimeSpan.Zero));
+                try
+                {
+                    var targetMonthlyDraftAt = scopedContracts + "/" +
+                        h4TargetContract.ToString("D") +
+                        "/monthly-utility-drafts/2026/11";
+                    Guid targetDraft;
+                    using (var draft = await Positive2HPostAsync(
+                        clientB, targetMonthlyDraftAt, new { }))
+                        targetDraft = draft.RootElement.GetProperty("id").GetGuid();
+
+                    var targetFinance = FinalInvoices(h4TargetContract);
+                    Guid targetCandidate;
+                    using (var frozen = await Positive2HPostAsync(
+                        clientRoot, targetFinance + "/monthly-drafts/" +
+                            targetDraft.ToString("D") + "/candidate", new {
+                            contractId = h4TargetContract,
+                            roomId = h4TargetRoom,
+                            billingYear = 2026,
+                            billingMonth = 11,
+                            paymentDueDate = new DateOnly(2026, 12, 7),
+                            dueDatePolicyReference =
+                                "D04-OWNER-SIGNED-NOVEMBER-DUE-POLICY-2026",
+                            auxiliaryFeeDecision = 1,
+                            auxiliaryFeePolicyReference =
+                                "D04-OWNER-SIGNED-NO-EXTRA-FEES-2026",
+                            auxiliaryFeeReviewerId = root,
+                            auxiliaryCharges = Array.Empty<object>()
+                        }))
+                        targetCandidate = frozen.RootElement
+                            .GetProperty("candidateId").GetGuid();
+                    var targetCandidateAt = targetFinance +
+                        "/monthly-candidates/" + targetCandidate.ToString("D");
+                    using (var review = await Positive2HPostAsync(clientB,
+                        targetCandidateAt + "/review", new {
+                            accept = true,
+                            reason = "Independent D04 next-month target rent review"
+                        }))
+                        Assert.True(review.RootElement
+                            .GetProperty("accepted").GetBoolean());
+                    Guid targetIssued;
+                    using (var issued = await Positive2HPostAsync(clientRoot,
+                        targetCandidateAt + "/issue", new { }))
+                        targetIssued = issued.RootElement
+                            .GetProperty("issuedInvoiceId").GetGuid();
+                    using (var official = await Positive2HPostAsync(clientRoot,
+                        targetFinance + "/monthly-issued/" +
+                            targetIssued.ToString("D") + "/post-receivable",
+                        new { }))
+                        Assert.True(official.RootElement
+                            .GetProperty("isOfficialDebtPosted").GetBoolean());
+
+                    using (var applied = await Positive2HPostAsync(
+                        clientRoot, d04PostAt, new { issuedInvoiceId = targetIssued }))
+                    {
+                        Assert.Equal(1_000_000m, applied.RootElement
+                            .GetProperty("amountVnd").GetDecimal());
+                        Assert.Equal(0m, applied.RootElement
+                            .GetProperty("remainingOutstandingVnd").GetDecimal());
+                        Assert.True(applied.RootElement
+                            .GetProperty("isLedgerPosted").GetBoolean());
+                        Assert.False(applied.RootElement
+                            .GetProperty("isBankApiVerified").GetBoolean());
+                    }
+                    using (var net = await clientRoot.GetAsync(d04BalanceAt))
+                    {
+                        Assert.Equal(HttpStatusCode.OK, net.StatusCode);
+                        using var balance = JsonDocument.Parse(
+                            await net.Content.ReadAsStringAsync());
+                        Assert.Equal(targetIssued, balance.RootElement
+                            .GetProperty("creditedIssuedInvoiceId").GetGuid());
+                        Assert.Equal(1_000_000m, balance.RootElement
+                            .GetProperty("issuedRentDebtAfterCreditVnd")
+                            .GetDecimal());
+                        Assert.Equal(0m, balance.RootElement
+                            .GetProperty("remainingOutstandingVnd").GetDecimal());
+                    }
+                    var duplicateCredit = await PostFinalAsync(clientRoot,
+                        d04PostAt, JsonSerializer.Serialize(new {
+                            issuedInvoiceId = targetIssued
+                        }));
+                    Assert.Equal(HttpStatusCode.Forbidden, duplicateCredit.Status);
+                }
+                finally { transferClock.Reset(); }
             }
 
             // D04 SQL-bypass negative: no operator, including the Owner,

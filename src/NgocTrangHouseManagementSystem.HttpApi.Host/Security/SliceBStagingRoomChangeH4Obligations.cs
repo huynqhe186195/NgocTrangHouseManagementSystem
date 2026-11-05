@@ -122,9 +122,9 @@ public sealed partial class SliceBStagingRoomChangeRequests
                 IsOutstanding: remaining > 0m,
                 IsExternallyCollected: kind == 1 && remaining == 0m,
                 IsRefundPaid: kind == 3 && remaining == 0m,
-                // Until the official receivable accounting projection
-                // includes the D04 credit, do not mislabel it as consumed.
-                IsRentCreditApplied: false,
+                // The D04 rent-only ledger posting is included in the
+                // official receivable debt projection, never treated as cash.
+                IsRentCreditApplied: kind == 2 && remaining == 0m,
                 CanSettleDeposit: false,
                 RemainingAmountVnd: remaining);
         }, permitEndedContract: true);

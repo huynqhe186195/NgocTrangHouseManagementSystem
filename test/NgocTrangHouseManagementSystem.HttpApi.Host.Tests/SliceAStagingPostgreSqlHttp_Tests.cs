@@ -6807,6 +6807,81 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 var complete = await db.RoomChangeMidMonthCompletions
                     .SingleAsync(x => x.RequestId == h4Request);
                 complete.VerifyFingerprint();
+
+                // D01/D02 + D03 persisted PostgreSQL parity: original
+                // October issuance is never silently rewritten to a
+                // prorated amount. The independently approved, categorized
+                // signed rent credit is an append-only financial event.
+                // This is one actual authenticated H4 transaction per
+                // disposition, not an unpersisted calculator preview.
+                var savedRule = await db.RoomChangeDayPricingRuleCandidates
+                    .AsNoTracking().SingleAsync(x => x.RequestId == h4Request);
+                Assert.Equal(new DateOnly(2026, 10, 15),
+                    savedRule.TransferDate);
+                Assert.Equal(31, savedRule.CalendarDays);
+                Assert.Equal(14, savedRule.SourceChargeableDays);
+                Assert.Equal(17, savedRule.TargetChargeableDays);
+                Assert.Equal(31, savedRule.SourceChargeableDays +
+                    savedRule.TargetChargeableDays);
+                Assert.Equal(h4OriginalRent, savedRule.SourceMonthlyRentVnd);
+                Assert.Equal(targetRent, savedRule.TargetMonthlyRentVnd);
+                Assert.Equal(h4ProratedSource,
+                    savedRule.ProposedSourceRentVnd);
+                var expectedTargetProratedRent = decimal.Round(
+                    targetRent * 17m / 31m, 0,
+                    MidpointRounding.AwayFromZero);
+                Assert.Equal(expectedTargetProratedRent,
+                    savedRule.ProposedTargetRentVnd);
+                Assert.Equal(expectedTargetProratedRent,
+                    complete.TargetFirstMonthRentVnd);
+
+                var frozenOriginal = await db.MonthlyInvoiceCandidates
+                    .AsNoTracking().SingleAsync(x => x.Id == h4Candidate);
+                frozenOriginal.VerifyStoredEvidence();
+                Assert.Equal(h4SourceContract, frozenOriginal.ContractId);
+                Assert.Equal(h4SourceRoom, frozenOriginal.RoomId);
+                Assert.Equal(2026, frozenOriginal.BillingYear);
+                Assert.Equal(10, frozenOriginal.BillingMonth);
+                Assert.Equal(h4OriginalRent, frozenOriginal.RentAmount);
+                Assert.Equal(h4FrozenInvoiceTotal, frozenOriginal.TotalAmount);
+                var issuedOriginal = await db.MonthlyIssuedInvoices
+                    .AsNoTracking().SingleAsync(x => x.Id == h4Issued);
+                var independentIssueReview = await db.MonthlyInvoiceReviews
+                    .AsNoTracking().SingleAsync(x =>
+                        x.Id == issuedOriginal.ReviewId);
+                issuedOriginal.VerifyAgainst(frozenOriginal,
+                    independentIssueReview);
+                Assert.Equal(h4FrozenInvoiceTotal,
+                    issuedOriginal.TotalAmount);
+                Assert.Equal(frozenOriginal.FrozenEvidenceSha256,
+                    issuedOriginal.CandidateSha256);
+                var postedOriginal = await db.OfficialInvoiceReceivables
+                    .AsNoTracking().SingleAsync(x => x.Id == h4Receivable);
+                Assert.Equal(h4Issued, postedOriginal.IssuedInvoiceId);
+                Assert.Equal(h4FrozenInvoiceTotal,
+                    postedOriginal.OriginalAmount);
+                Assert.Equal(issuedOriginal.CandidateSha256,
+                    postedOriginal.SourceEvidenceSha256);
+                var signedCredit = await db.MonthlyInvoiceAdjustments
+                    .AsNoTracking().SingleAsync(x => x.Id == h4Adjustment);
+                signedCredit.VerifyAgainst(issuedOriginal);
+                Assert.Equal(h4SignedDelta, signedCredit.SignedDeltaAmount);
+                var independentlyApprovedCredit = await db
+                    .MonthlyInvoiceAdjustmentDecisions.AsNoTracking()
+                    .SingleAsync(x => x.AdjustmentId == h4Adjustment);
+                independentlyApprovedCredit.VerifyAgainst(
+                    signedCredit, issuedOriginal);
+                Assert.True(independentlyApprovedCredit.Accepted);
+                Assert.NotEqual(signedCredit.ProposedByUserId,
+                    independentlyApprovedCredit.ReviewedByUserId);
+                Assert.Equal(h4SignedDelta,
+                    independentlyApprovedCredit.ApprovedSignedDeltaAmount);
+                Assert.Equal(h4Issued, complete.SourceMonthlyInvoiceId);
+                Assert.Equal(h4Receivable, complete.SourceReceivableId);
+                Assert.Equal(h4FrozenInvoiceTotal + h4SignedDelta,
+                    complete.SourceAdjustedReceivableVnd);
+                Assert.Equal(h4FinalDue,
+                    complete.SourceAdjustedReceivableVnd);
                 Assert.Equal(h4SignedDelta, complete.SourceSignedAdjustmentVnd);
                 Assert.Equal(h4FinalDue, complete.SourceReviewedReceiptsVnd);
                 Assert.Equal(expectedTopUp, complete.H4UnpaidTopUpVnd);

@@ -1,7 +1,7 @@
 # NgocTrangHouseManagementSystem Constitution
 
 **Version:** 1.0.0  
-**Ratified:** 2026-11-05 (Asia/Ho_Chi_Minh)  
+**Proposed:** 2026-11-05 (Asia/Ho_Chi_Minh); pending owner review through the draft PR  
 **Scope:** Brownfield development on the `wip/phase-2g2` lineage. **Development/staging only; never an authorization to deploy production.**
 
 ## I. Business requirements and authority

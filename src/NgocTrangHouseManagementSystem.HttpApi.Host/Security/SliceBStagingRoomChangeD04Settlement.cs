@@ -356,9 +356,56 @@ public sealed partial class SliceBStagingRoomChangeRequests
             var paid = reader.GetDecimal(0);
             var count = reader.GetInt64(1);
             if (paid < 0m || paid > claim.Amount) throw Denied();
+            await reader.DisposeAsync();
+            Guid? matchedIssued = null;
+            decimal? remainingOfficialDebt = null;
+            // D04 credit is a non-cash offset against the exact originally
+            // issued target contract's next-month rent. Recalculate the
+            // issued debt after accepted bank receipts AND the D04 offset.
+            if (claim.Kind == 2 && paid > 0m)
+            {
+                Guid invoiceId;
+                await using (var link = Command(db, """
+                    SELECT "IssuedInvoiceId"
+                      FROM "BuildingManagementRoomChangeH4SettlementPostings"
+                     WHERE "ObligationId"=@obligation AND "Kind"=2
+                    """))
+                {
+                    Add(link, "obligation", claim.Id);
+                    var found = await link.ExecuteScalarAsync();
+                    if (found is not Guid guid || guid == Guid.Empty)
+                        throw Denied();
+                    invoiceId = guid;
+                }
+                var issued = await db.MonthlyIssuedInvoices.AsNoTracking()
+                    .SingleOrDefaultAsync(x => x.Id == invoiceId &&
+                        x.ContractId == claim.TargetContractId &&
+                        x.BuildingId == building) ?? throw Denied();
+                var official = await db.OfficialInvoiceReceivables.AsNoTracking()
+                    .SingleOrDefaultAsync(x =>
+                        x.Kind == OfficialInvoiceKind.Monthly &&
+                        x.IssuedInvoiceId == invoiceId &&
+                        x.ContractId == claim.TargetContractId) ?? throw Denied();
+                var bankReceipts = await db.OfficialInvoiceReceiptReviews
+                    .AsNoTracking().Where(x => x.ReceivablePostingId == official.Id &&
+                        x.Accepted).SumAsync(x => x.Amount);
+                var signedChanges = await db.MonthlyInvoiceAdjustmentDecisions
+                    .AsNoTracking().Where(x => x.IssuedInvoiceId == invoiceId &&
+                        x.Accepted).SumAsync(x => x.ApprovedSignedDeltaAmount);
+                var debt = official.OriginalAmount + signedChanges -
+                    bankReceipts - paid;
+                if (debt < 0m || issued.BillingYear !=
+                    claim.TransferDate.AddMonths(1).Year ||
+                    issued.BillingMonth != claim.TransferDate.AddMonths(1).Month)
+                    throw Denied();
+                matchedIssued = invoiceId;
+                remainingOfficialDebt = debt;
+            }
             return new SliceBRoomChangeD04BalanceRead(
                 claim.Id, claim.Kind, claim.Amount, paid, claim.Amount-paid,
-                count, IsBankApiVerified: false);
+                count, IsBankApiVerified: false,
+                CreditedIssuedInvoiceId: matchedIssued,
+                IssuedRentDebtAfterCreditVnd: remainingOfficialDebt);
         }, permitEndedContract: true);
 }
 
@@ -384,4 +431,6 @@ public sealed record SliceBRoomChangeD04PostingRead(
 public sealed record SliceBRoomChangeD04BalanceRead(
     Guid ObligationId, int Kind, decimal OriginalAmountVnd,
     decimal LedgerPostedAmountVnd, decimal RemainingOutstandingVnd,
-    long PostingCount, bool IsBankApiVerified);
+    long PostingCount, bool IsBankApiVerified,
+    Guid? CreditedIssuedInvoiceId = null,
+    decimal? IssuedRentDebtAfterCreditVnd = null);

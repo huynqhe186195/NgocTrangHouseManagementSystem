@@ -48,15 +48,44 @@ public sealed class RoomChangeApprovedH2H3ExecutionPolicy_Tests
     [Fact]
     public void TRF_D01_04_First_And_Last_Day_Have_No_Double_Billing()
     {
-        foreach (var day in new[] {
-            new DateOnly(2026, 11, 1),
-            new DateOnly(2026, 11, 30)
+        // 118 daily cases in a single xUnit Fact to preserve exact CI counts.
+        foreach (var first in new[] {
+            new DateOnly(2026, 2, 1), // nonleap: 28 days
+            new DateOnly(2028, 2, 1), // leap: 29 days
+            new DateOnly(2026, 4, 1), // 30 days
+            new DateOnly(2026, 1, 1)  // 31 days
         })
         {
-            var q = Quote(day);
-            RoomChangeApprovedH2H3ExecutionPolicy.RequireExecutableQuote(q);
-            Assert.Equal(30, q.SourceChargeableDays + q.TargetChargeableDays);
-            Assert.Equal(day, q.TargetFirstChargeableDate);
+            var days = DateTime.DaysInMonth(first.Year, first.Month);
+            for (var d = 1; d <= days; d++)
+            {
+                var handover = new DateOnly(first.Year, first.Month, d);
+                var quote = Quote(handover);
+                RoomChangeApprovedH2H3ExecutionPolicy.RequireExecutableQuote(quote);
+
+                Assert.Equal(days, quote.CalendarDaysInMonth);
+                Assert.Equal(d - 1, quote.SourceChargeableDays);
+                Assert.Equal(days - d + 1, quote.TargetChargeableDays);
+                Assert.Equal(days,
+                    quote.SourceChargeableDays + quote.TargetChargeableDays);
+                Assert.Equal(d == 1 ? (DateOnly?)null : handover.AddDays(-1),
+                    quote.SourceLastChargeableDate);
+                Assert.Equal((DateOnly?)handover,
+                    quote.TargetFirstChargeableDate);
+
+                var expectedSource = decimal.Round(
+                    3_000_000m * (d - 1) / days, 0,
+                    MidpointRounding.AwayFromZero);
+                var expectedTarget = decimal.Round(
+                    4_000_000m * (days - d + 1) / days, 0,
+                    MidpointRounding.AwayFromZero);
+                Assert.Equal(expectedSource, quote.ProposedSourceRentVnd);
+                Assert.Equal(expectedTarget, quote.ProposedTargetRentVnd);
+                Assert.Equal(expectedSource + expectedTarget,
+                    quote.ProposedCombinedRentVnd);
+                Assert.False(quote.CanIssueInvoice);
+                Assert.False(quote.CanExecuteRoomChange);
+            }
         }
     }
 
@@ -95,16 +124,45 @@ public sealed class RoomChangeApprovedH2H3ExecutionPolicy_Tests
     [Fact]
     public void TRF_D01_08_Exactly_Half_Vnd_Rounds_Up_On_Both_Rooms()
     {
-        var q = RoomChangeDailyRentQuoteCalculator.Calculate(
-            new DateOnly(2026, 11, 16), 45m, 45m,
-            RoomChangeTransferDayChargeOwner.TargetRoom,
-            RoomChangeRentRoundingRule.NearestVndAwayFromZero,
-            "OWNER-SIGNED-ROUNDING-EXACT-HALF-20261104");
-        RoomChangeApprovedH2H3ExecutionPolicy.RequireExecutableQuote(q);
-        Assert.Equal(15, q.SourceChargeableDays);
-        Assert.Equal(15, q.TargetChargeableDays);
-        Assert.Equal(23m, q.ProposedSourceRentVnd);
-        Assert.Equal(23m, q.ProposedTargetRentVnd);
+        // Independent 22.5-VND halves must each round to 23 VND
+        // in both 28- and 30-day months (separate rent lines).
+        foreach (var handover in new[] {
+            new DateOnly(2026, 2, 15), // nonleap February: 14 / 14
+            new DateOnly(2026, 4, 16)  // April: 15 / 15
+        })
+        {
+            var q = RoomChangeDailyRentQuoteCalculator.Calculate(
+                handover, 45m, 45m,
+                RoomChangeTransferDayChargeOwner.TargetRoom,
+                RoomChangeRentRoundingRule.NearestVndAwayFromZero,
+                "OWNER-SIGNED-ROUNDING-EXACT-HALF-20261104");
+            RoomChangeApprovedH2H3ExecutionPolicy.RequireExecutableQuote(q);
+            Assert.Equal(23m, q.ProposedSourceRentVnd);
+            Assert.Equal(23m, q.ProposedTargetRentVnd);
+            Assert.Equal(46m, q.ProposedCombinedRentVnd);
+        }
+
+        // For odd denominators, compare independent expected values
+        // rather than assuming an impossible exact half for integer rent.
+        foreach (var handover in new[] {
+            new DateOnly(2028, 2, 15), // leap February: 14 / 15
+            new DateOnly(2026, 1, 16)  // January: 15 / 16
+        })
+        {
+            var q = RoomChangeDailyRentQuoteCalculator.Calculate(
+                handover, 45m, 45m,
+                RoomChangeTransferDayChargeOwner.TargetRoom,
+                RoomChangeRentRoundingRule.NearestVndAwayFromZero,
+                "OWNER-SIGNED-ROUNDING-ODD-MONTH-20261104");
+            RoomChangeApprovedH2H3ExecutionPolicy.RequireExecutableQuote(q);
+            var days = DateTime.DaysInMonth(handover.Year, handover.Month);
+            Assert.Equal(decimal.Round(45m * q.SourceChargeableDays /
+                days, 0, MidpointRounding.AwayFromZero),
+                q.ProposedSourceRentVnd);
+            Assert.Equal(decimal.Round(45m * q.TargetChargeableDays /
+                days, 0, MidpointRounding.AwayFromZero),
+                q.ProposedTargetRentVnd);
+        }
     }
 
 }

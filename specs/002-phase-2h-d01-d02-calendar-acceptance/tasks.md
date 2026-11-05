@@ -14,3 +14,12 @@
 - [ ] Business/Owner review and separately evidenced acceptance. Keep PR draft; no `main` or production.
 
 This PR targets `wip/phase-2g2` independently from combined Spec Kit/H4 security PR #5. Financial H4 external collection, future rent-credit posting and bank refund stay HOLD.
+
+
+## 2026-11-05 negative SQL tamper follow-up (test-only; not yet CI accepted)
+
+- Existing `TRFPG32` now independently tries a forged **target-room rent amount** in addition to the previously covered forged source-room amount. The existing database validation must reject each with SQLSTATE `23514`.
+- The same fact also probes an invalid target-day count (+1), preserving the approved D01 partition (source owns D-1; target owns D). `TRFPG34` already contains other invalid-date/day probes; this adds a negative check adjacent to financial tampering.
+- This is **one existing xUnit Fact**, not newly counted cases. No production writer, financial settlement, migration, workflow filter or threshold was changed.
+- Code commit: `115af54614d4c5f8b34a434be575648e6f9d534f` on combined draft PR #5. **New exact-head CI is PENDING/UNVERIFIED** as of this documentation update; previously green commit `d1af665b` cannot certify the newer code.
+- Still HOLD: independently accepted 28/29/30-day issued-invoice SQL/HTTP parity; approved append-only corrections and rollback; 2G.5 ordinary final-month billing regression; actual H4 bank-backed top-up/credit/refund; independent sign-off and production.

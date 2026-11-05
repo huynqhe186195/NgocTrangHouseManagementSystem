@@ -70,3 +70,16 @@
 - Test candidate: `2a0391e54483c9cb1360617fbe60d8a3b4181c25` (PR #4, not merged). The [H4 authenticated disposable run 41994322548](https://github.com/huynqhe186195/NgocTrangHouseManagementSystem/actions/runs/41994322548) completed **SUCCESS** on the candidate. Read job `127133717137` log shows `STAGEPGHTTP01_Root_Bootstrap_Real_Permissions_And_Two_Building_Revocation` **1/1 PASS**, separate fresh EF migration **1/1 PASS**, and PostgreSQL H2–H6 suite **103/103 PASS**. The first xUnit case includes three H4 financial inner choices but is **one** test, not separate positive tests per outcome.
 - In the newly added choice-0 body, the exact-H4 HTTP pass covers persisted root BootstrapOwner revocation/inactive account and delegated member Building B revocation waiting for the H4 request-read UoW commit, plus after-revoke 403 and separate Owner-only intent denial. This does **not** mean signed H4 top-up was bank-paid or credit/refund actually settled.
 - **T007 remains PARTIAL** pending all exact-head workflow outcomes (especially full Slice A PostgreSQL membership scratch and Windows safe regression), source review and acceptance. No application writer or schema was modified.
+
+## Final exact-head T007 CI reconciliation — 2026-11-05
+
+Candidate code/test commit: `2a0391e54483c9cb1360617fbe60d8a3b4181c25` (draft PR #4; base `wip/phase-2g2`). All **four** GitHub workflows on this commit concluded **success**:
+
+| Workflow | Verified exact-head run evidence |
+|---|---|
+| [H4 authenticated disposable acceptance](https://github.com/huynqhe186195/NgocTrangHouseManagementSystem/actions/runs/41994322548) | Job `127133717137` logs: opted-in real `STAGEPGHTTP01` **1/1**, fresh migration **1/1**, H2–H6 PG **103/103** |
+| [Slice A disposable PostgreSQL](https://github.com/huynqhe186195/NgocTrangHouseManagementSystem/actions/runs/41994322523) | Job `127135822805` logs: Domain **162/162**, PG **103/103**, migration **1/1**, opted-in authenticated `STAGEPGHTTP01` **1/1**, SQL rollback/concurrency steps all successful |
+| [Windows safe regression](https://github.com/huynqhe186195/NgocTrangHouseManagementSystem/actions/runs/41994322601) | Job `127133716841` logs: selected H4 Domain **165/165**; full Domain **712/712**, Application **183/183**, EF **447/447**, HTTP **76/76**, zero failures/skips in these suites |
+| [ABP Identity composition](https://github.com/huynqhe186195/NgocTrangHouseManagementSystem/actions/runs/41994322594) | Workflow **success** |
+
+**T007 narrow test/evidence status: STAGING SECURITY PASS** for the protected Root persisted Identity grant/account and separately delegated Building membership revocation transaction race in the existing H4 test paths. This is **not** approval to revoke an immutable founding Owner membership, does not cover any later as-yet-unbuilt cash/credit/refund posting endpoints, and does not constitute a complete AC-H4-09 business acceptance. Prior pending entries above are dated snapshots superseded by this final check. Raw archived TRX XML was not independently extracted. D04-H4, D01/D02/D03/D06, owner review and production remain HOLD.

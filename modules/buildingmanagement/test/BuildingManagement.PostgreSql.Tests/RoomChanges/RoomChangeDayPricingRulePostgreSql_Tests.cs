@@ -194,6 +194,10 @@ public sealed class RoomChangeDayPricingRulePostgreSql_Tests
                 pricingRef: "FORGED-D01-D02-TARIFF-DOCUMENT-2026"), "23514");
             await Denied(db, tx, () => Insert(db, tx, f.Rule,
                 hash: new string('0', 64)), "23514");
+            // Every denied write must leave the append-only table empty.
+            // A SQLSTATE alone is insufficient evidence of atomic rollback.
+            Assert.Equal(0L, await Scalar(db, tx,
+                """SELECT count(*) FROM "BuildingManagementRoomChangeDayPricingRuleCandidates" """));
         });
     }
 

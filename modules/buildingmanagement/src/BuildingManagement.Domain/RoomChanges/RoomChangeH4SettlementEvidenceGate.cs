@@ -137,7 +137,11 @@ public static class RoomChangeH4SettlementEvidenceGate
                 evidence.PaymentApproverId is null ||
                 evidence.PaymentApproverId == Guid.Empty ||
                 evidence.IndependentBankReviewerId == evidence.PaymentApproverId ||
-                !Reference(evidence.CompletedBankTransferReference))
+                !Reference(evidence.CompletedBankTransferReference) ||
+                evidence.NewlyVerifiedPayments.Count != 1 ||
+                !StringComparer.Ordinal.Equals(
+                    evidence.NewlyVerifiedPayments.Single().BankOrReceiptReference.Trim(),
+                    evidence.CompletedBankTransferReference.Trim()))
                 throw new InvalidOperationException(
                     "Refund needs an independent reviewer and completed bank transfer evidence.");
         }

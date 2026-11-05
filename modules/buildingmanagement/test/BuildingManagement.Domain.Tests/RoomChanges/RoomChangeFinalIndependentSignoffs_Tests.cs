@@ -177,6 +177,12 @@ public sealed class RoomChangeFinalIndependentSignoffs_Tests
             x => x.Role == ContractTenantRole.Member).TenantId;
         Assert.Throws<InvalidOperationException>(() =>
             HandoverSign(f, primary: nonprimary));
+        // One human cannot satisfy two documentary roles, even with
+        // three different-looking signed-reference strings.
+        Assert.Throws<InvalidOperationException>(() =>
+            HandoverSign(f, owner: f.Physical.AttestedByUserId));
+        Assert.Throws<InvalidOperationException>(() =>
+            HandoverSign(f, owner: f.PrimaryTenantId));
     }
 
     [Fact]

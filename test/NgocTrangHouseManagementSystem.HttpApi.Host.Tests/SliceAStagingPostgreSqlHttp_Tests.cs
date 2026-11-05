@@ -5923,12 +5923,25 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             // H4 REAL AUTHENTICATED POSTGRESQL INTENT: source cash comes
             // only from completed, locked source allocations. The target
             // required deposit is a signed root *proposal*, not bank money.
-            var h4SourceRoom = await CreateChildAsync(clientB, roomCreate,
-                new { floorId = floorB, roomNumber = "119",
+            async Task RunH4DispositionScenarioAsync(int choice)
+            {
+                // Each scenario has its own rooms, source contract, original
+                // bank-backed 3M deposit and signed evidence; the only
+                // change is an exclusive future disposition obligation.
+                Assert.InRange(choice, 0, 2);
+                var targetRent = choice == 0 ? 4_000_000m : 2_000_000m;
+                var expectedCarry = choice == 0 ? 3_000_000m : 2_000_000m;
+                var expectedTopUp = choice == 0 ? 1_000_000m : 0m;
+                var expectedCredit = choice == 1 ? 1_000_000m : 0m;
+                var expectedRefund = choice == 2 ? 1_000_000m : 0m;
+                var expectedKind = choice == 0 ? 1 : choice == 1 ? 2 : 3;
+                var expectedDue = choice == 0 ? "2026-11-15" : null;
+                var h4SourceRoom = await CreateChildAsync(clientB, roomCreate,
+                new { floorId = floorB, roomNumber = (119 + choice * 2).ToString(),
                     name = "2H H4 source proof", area = 24m, capacity = 2,
                     status = (int)BuildingManagement.Rooms.RoomStatus.Occupied });
             var h4TargetRoom = await CreateChildAsync(clientB, roomCreate,
-                new { floorId = floorB, roomNumber = "120",
+                new { floorId = floorB, roomNumber = (120 + choice * 2).ToString(),
                     name = "2H H4 target proof", area = 24m, capacity = 2,
                     status = (int)BuildingManagement.Rooms.RoomStatus.Available });
             var h4SourceContract = Guid.NewGuid();
@@ -6067,7 +6080,7 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             using (var proposal = await Positive2HPostAsync(clientB,
                 h4At + "/business-policy-proposal", new {
                     contractTreatment = 1, pricingTreatment = 2,
-                    depositTreatment = 2, tenantTreatment = 1,
+                    depositTreatment = choice == 0 ? 2 : 3, tenantTreatment = 1,
                     contractPolicyReference = "OWNER-SIGNED-H4-NEW-CONTRACT-2027",
                     pricingPolicyReference = "OWNER-SIGNED-H4-PRORATION-2027",
                     depositPolicyReference = "OWNER-SIGNED-H4-TARGET-DEPOSIT-2027",
@@ -6083,22 +6096,22 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 Assert.True(approved.RootElement.GetProperty("accepted").GetBoolean());
             using (var day = await Positive2HPostAsync(clientB,
                 h4At + "/day-pricing-rule-candidate", new {
-                    targetMonthlyRentVnd = 4_000_000m,
+                    targetMonthlyRentVnd = targetRent,
                     transferDayOwner = 2, rounding = 1
                 }))
                 Assert.False(day.RootElement.GetProperty("canExecuteRoomChange").GetBoolean());
 
             var h4IntentUrl = h4At + "/h4-disposition-intent";
             var h4IntentInput = JsonSerializer.Serialize(new {
-                targetRequiredDepositVnd = 4_000_000m,
-                proposedTopUpDueDateVietnam = "2026-11-15",
-                surplusChoice = 0,
+                targetRequiredDepositVnd = targetRent,
+                proposedTopUpDueDateVietnam = expectedDue,
+                surplusChoice = choice,
                 ownerSignedDispositionReference = "ROOT-SIGNED-H4-DEFERRED-TOPUP-2027"
             });
             var invalidH4Input = JsonSerializer.Serialize(new {
-                targetRequiredDepositVnd = 4_000_000m,
+                targetRequiredDepositVnd = targetRent,
                 proposedTopUpDueDateVietnam = "2026-11-16",
-                surplusChoice = 0,
+                surplusChoice = choice == 0 ? 0 : choice,
                 ownerSignedDispositionReference = "ROOT-SIGNED-H4-INVALID-DUE-2027"
             });
             var deniedStaffH4 = await PostFinalAsync(
@@ -6116,9 +6129,9 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             // target deposit: this must fail without reserving source money.
             var wrongTargetDeposit = await PostFinalAsync(
                 clientRoot, h4IntentUrl, JsonSerializer.Serialize(new {
-                    targetRequiredDepositVnd = 5_000_000m,
-                    proposedTopUpDueDateVietnam = "2026-11-15",
-                    surplusChoice = 0,
+                    targetRequiredDepositVnd = targetRent + 1_000_000m,
+                    proposedTopUpDueDateVietnam = expectedDue,
+                    surplusChoice = choice,
                     ownerSignedDispositionReference =
                         "ROOT-SIGNED-H4-IMPOSSIBLE-TARGET-DEPOSIT"
                 }));
@@ -6130,10 +6143,16 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             {
                 Assert.Equal(3_000_000m, intent.RootElement.GetProperty(
                     "recordedSourceDepositVnd").GetDecimal());
-                Assert.Equal(3_000_000m, intent.RootElement.GetProperty(
+                Assert.Equal(expectedCarry, intent.RootElement.GetProperty(
                     "proposedCarriedDepositVnd").GetDecimal());
-                Assert.Equal(1_000_000m, intent.RootElement.GetProperty(
+                Assert.Equal(expectedTopUp, intent.RootElement.GetProperty(
                     "unpaidTopUpReceivableVnd").GetDecimal());
+                Assert.Equal(expectedCredit, intent.RootElement.GetProperty(
+                    "proposedNextRentCreditVnd").GetDecimal());
+                Assert.Equal(expectedRefund, intent.RootElement.GetProperty(
+                    "proposedManualRefundVnd").GetDecimal());
+                Assert.Equal(choice, intent.RootElement.GetProperty(
+                    "surplusChoice").GetInt32());
                 Assert.False(intent.RootElement.GetProperty(
                     "isBankCashVerified").GetBoolean());
                 Assert.False(intent.RootElement.GetProperty(
@@ -6173,7 +6192,7 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 var early = await PostFinalAsync(clientRoot,
                     h4At + "/complete-h4-mid-month-room-change",
                     JsonSerializer.Serialize(new {
-                        targetMonthlyRent = 4_000_000m,
+                        targetMonthlyRent = targetRent,
                         sourceRoomDisposition = 1,
                         dispositionEvidenceReference =
                             "ROOT-SIGNED-H4-SOURCE-ROOM-CLEARANCE-001",
@@ -6197,7 +6216,9 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     .SingleAsync(x => x.RequestId == h4Request);
                 saved.VerifyFingerprint();
                 Assert.Equal(3_000_000m, saved.ClaimedOriginalSourceHeldVnd);
-                Assert.Equal(1_000_000m, saved.ProposedUnpaidTopUpVnd);
+                Assert.Equal(expectedTopUp, saved.ProposedUnpaidTopUpVnd);
+                Assert.Equal(expectedCredit, saved.ProposedFutureRentCreditVnd);
+                Assert.Equal(expectedRefund, saved.ProposedManualRefundVnd);
                 Assert.Empty(await db.RoomChangeMidMonthCompletions.AsNoTracking()
                     .Where(x => x.RequestId == h4Request).ToArrayAsync());
                 Assert.Empty(await db.DepositSettlements.AsNoTracking()
@@ -6262,7 +6283,7 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             var h4CompletionRoute =
                 h4At + "/complete-h4-mid-month-room-change";
             var h4CompletePayload = new {
-                targetMonthlyRent = 4_000_000m,
+                targetMonthlyRent = targetRent,
                 sourceRoomDisposition = 1,
                 dispositionEvidenceReference =
                     "SIGNED-H4-ORIGINAL-ROOM-AVAILABLE-2026",
@@ -6463,7 +6484,7 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             Assert.Equal(HttpStatusCode.Forbidden, staffH4Complete.Status);
             var wrongH4Amount = await PostFinalAsync(clientRoot,
                 h4CompletionRoute, JsonSerializer.Serialize(new {
-                    targetMonthlyRent = 4_000_001m,
+                    targetMonthlyRent = targetRent + 1m,
                     sourceRoomDisposition = 1,
                     dispositionEvidenceReference =
                         "SIGNED-H4-ORIGINAL-ROOM-AVAILABLE-2026",
@@ -6532,7 +6553,7 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             {
                 Assert.Equal(h4SourceContract,
                     completed.RootElement.GetProperty("sourceContractId").GetGuid());
-                Assert.Equal(3_000_000m,
+                Assert.Equal(expectedCarry,
                     completed.RootElement.GetProperty(
                         "carriedDepositAmount").GetDecimal());
                 Assert.True(completed.RootElement.GetProperty(
@@ -6549,13 +6570,23 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 var body = await pendingObligation.Content.ReadAsStringAsync();
                 Assert.Equal(HttpStatusCode.OK, pendingObligation.StatusCode);
                 using var doc = JsonDocument.Parse(body);
-                Assert.Equal(1, doc.RootElement.GetProperty("kind").GetInt32());
+                Assert.Equal(expectedKind, doc.RootElement.GetProperty("kind").GetInt32());
                 Assert.Equal(1_000_000m, doc.RootElement.GetProperty(
                     "amountVnd").GetDecimal());
-                Assert.Equal(3_000_000m, doc.RootElement.GetProperty(
+                Assert.Equal(expectedCarry, doc.RootElement.GetProperty(
                     "carriedDepositVnd").GetDecimal());
-                Assert.Equal("2026-11-15", doc.RootElement.GetProperty(
-                    "dueDateVietnam").GetString());
+                if (expectedDue is null)
+                    Assert.Equal(JsonValueKind.Null, doc.RootElement.GetProperty(
+                        "dueDateVietnam").ValueKind);
+                else
+                    Assert.Equal(expectedDue, doc.RootElement.GetProperty(
+                        "dueDateVietnam").GetString());
+                Assert.Equal(expectedTopUp, doc.RootElement.GetProperty(
+                    "unpaidTopUpVnd").GetDecimal());
+                Assert.Equal(expectedCredit, doc.RootElement.GetProperty(
+                    "nextRentCreditVnd").GetDecimal());
+                Assert.Equal(expectedRefund, doc.RootElement.GetProperty(
+                    "manualRefundLiabilityVnd").GetDecimal());
                 Assert.Equal(h4TargetContract, doc.RootElement.GetProperty(
                     "targetContractId").GetGuid());
                 Assert.True(doc.RootElement.GetProperty(
@@ -6592,10 +6623,10 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     newContract.Status);
                 Assert.Equal(h4SourceContract, newContract.RenewedFromContractId);
                 Assert.Equal(new DateTime(2026, 10, 15), newContract.StartDate);
-                Assert.Equal(4_000_000m, newContract.DepositAmount);
+                Assert.Equal(targetRent, newContract.DepositAmount);
                 var carry = await db.DepositSettlements.SingleAsync(x =>
                     x.SourceContractId == h4SourceContract);
-                Assert.Equal(3_000_000m, carry.Amount);
+                Assert.Equal(expectedCarry, carry.Amount);
                 Assert.Equal(h4TargetContract, carry.TargetContractId);
                 Assert.Equal(2, await db.ContractTenants.AsNoTracking()
                     .Where(x => x.ContractId == h4SourceContract ||
@@ -6605,15 +6636,25 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 complete.VerifyFingerprint();
                 Assert.Equal(h4SignedDelta, complete.SourceSignedAdjustmentVnd);
                 Assert.Equal(h4FinalDue, complete.SourceReviewedReceiptsVnd);
-                Assert.Equal(1_000_000m, complete.H4UnpaidTopUpVnd);
+                Assert.Equal(expectedTopUp, complete.H4UnpaidTopUpVnd);
                 // The H4 top-up is a DEBT, not a completed source/target
                 // deposit receipt. Never auto-mint a bank transaction.
                 Assert.Equal(0, await db.Payments.AsNoTracking()
                     .CountAsync(x => x.ContractId == h4TargetContract &&
                         x.Purpose == BuildingManagement.Payments.PaymentPurpose.ContractDeposit &&
                         x.Status == BuildingManagement.Payments.PaymentStatus.Completed));
-                Assert.Equal(0m, complete.H4NextMonthRentCreditVnd);
-                Assert.Equal(0m, complete.H4ManualRefundLiabilityVnd);
+                Assert.Equal(expectedCredit, complete.H4NextMonthRentCreditVnd);
+                Assert.Equal(expectedRefund, complete.H4ManualRefundLiabilityVnd);
+                Assert.Equal(3_000_000m,
+                    complete.H4OriginalHeldDepositVnd);
+                Assert.Equal(targetRent,
+                    complete.H4TargetRequiredDepositVnd);
+                Assert.Equal(3_000_000m,
+                    complete.CarriedDepositVnd +
+                    complete.H4NextMonthRentCreditVnd +
+                    complete.H4ManualRefundLiabilityVnd);
+                Assert.Equal(targetRent,
+                    complete.CarriedDepositVnd + complete.H4UnpaidTopUpVnd);
                 Assert.Equal(BuildingManagement.Rooms.RoomStatus.Available,
                     (await db.Rooms.SingleAsync(x => x.Id == h4SourceRoom)).Status);
                 Assert.Equal(BuildingManagement.Rooms.RoomStatus.Occupied,
@@ -6642,6 +6683,12 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     async () => await h4Change.ExecuteNonQueryAsync());
                 Assert.Equal("23514", denied.SqlState);
             }
+
+            } // One fully independent H4 disposition scenario.
+
+            await RunH4DispositionScenarioAsync(choice: 0);
+            await RunH4DispositionScenarioAsync(choice: 1);
+            await RunH4DispositionScenarioAsync(choice: 2);
 
             var positiveRoute = ChangeRoute(transferContract);
             Guid positiveRequest;

@@ -1901,6 +1901,41 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 Assert.Equal(1,version.GetProperty("version").GetInt32());
             }
 
+            // D03 persisted source-of-truth acceptance: do not rely solely
+            // on an HTTP projection. Re-read committed tariff history through
+            // a fresh EF scope and verify immutable evidence fingerprints.
+            using (var tariffScope = app.Services.CreateScope())
+            {
+                using var tariffUow = tariffScope.ServiceProvider
+                    .GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var tariffDb = await tariffScope.ServiceProvider.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>()
+                    .GetDbContextAsync();
+                var persistedA = await tariffDb.RoomScopedServiceTariffVersions
+                    .AsNoTracking()
+                    .Where(x => x.RoomId == roomA && x.ServiceId == serviceId)
+                    .OrderBy(x => x.Version).ToArrayAsync();
+                Assert.Equal(2, persistedA.Length);
+                Assert.Equal(new[] { 1, 2 }, persistedA.Select(x => x.Version));
+                Assert.Equal(new[] { 150_000m, 180_000m },
+                    persistedA.Select(x => x.UnitPriceVnd));
+                Assert.Equal(new[] { initialEffective, nextEffective },
+                    persistedA.Select(x => x.EffectiveFrom));
+                foreach (var row in persistedA) row.VerifyFingerprint();
+                var persistedB = await tariffDb.RoomScopedServiceTariffVersions
+                    .AsNoTracking()
+                    .Where(x => x.RoomId == roomB && x.ServiceId == serviceId)
+                    .ToArrayAsync();
+                var onlyB = Assert.Single(persistedB);
+                onlyB.VerifyFingerprint();
+                Assert.Equal(1, onlyB.Version);
+                Assert.Equal(200_000m, onlyB.UnitPriceVnd);
+                // The denied replay must not have minted a third version.
+                Assert.Equal(3, persistedA.Length + persistedB.Length);
+                await tariffUow.CompleteAsync();
+            }
+
             // COMPLETE STAGING FINANCIAL HTTP FLOW:
             // scoped month-end draft -> prepared immutable evidence ->
             // independent reviewer -> root-issued ledger -> completed bank

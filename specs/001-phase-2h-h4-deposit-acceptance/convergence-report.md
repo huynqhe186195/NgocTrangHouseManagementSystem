@@ -38,14 +38,14 @@ Do not infer real H4 financial settlement, human sign-off, or production readine
 | H4 deferred deposit split and immutable intent | Staging verified for reviewed source SHA and tested routes | No external money settled by intent |
 | H4 Root permission/account and delegated Building membership test coverage (T007) | **STAGING SECURITY PASS**, exact-head four-workflow CI and real authenticated PostgreSQL | Human PR review and general H4 monetary-path acceptance remain separate |
 | AC-H4-01–12 | See `acceptance-matrix.md` for mixed STAGING PASS and PARTIAL status | Do not promote every criterion to BUSINESS ACCEPTED |
-| D01/D02/D03 | Existing signed fixture and guarded routes are evidenced, not universal policy sign-off | General mid-month effective cutoff/rounding/residual/issued-invoice policy details |
-| D04-H4 | HOLD | Independent bank-backed top-up receipt, approved refund payee/execution proof, replay-safe future rent credit consumption |
-| D06/H6 | PARTIAL/HOLD | Final accepted signatory matrix and physically validated handover/defects evidence |
+| D01/D02/D03 | **Owner policy approved 2026-11-04**: target owns handover day, VND midpoint-up/calendar denominator, room-specific versioned service tariffs | Full new-path enforce/SQL/golden tests, per-service fixed/prorated choice and issued-invoice posting/correction evidence |
+| D04-H4 | **Owner business direction approved 2026-11-04; settlement HOLD** | Actual collected (including partial/late) top-up, one-month due-date enforcement, approved bank refund proof, next-issued-rent credit applied once and independently reviewed |
+| D06/H6 | **Owner approved three signatories and signed-paper upload 2026-11-04; execution PARTIAL/HOLD** | Commit-time verified Owner/Staff/authorized Tenant signatures, physical handover and defects/readings/attachment evidence |
 | Production release | EXCLUDED | Requires separate authorization; never authorized here |
 
 ## Convergence decision
 
-**Do not duplicate the three implemented H4 pending-obligation writers.** The next bounded financial implementation, *only after owner-approved D04-H4 settlement details*, must create separately tested receipts/credit postings/refund confirmations with independent approval, money provenance, unique bank reference/idempotency, concurrent replay denial, rollback and immutable journal. No documentation or provisional approved direction is such proof.
+**Do not duplicate the three implemented H4 pending-obligation writers.** The Owner has already approved the 2026-11-04 D04-H4 direction (unpaid top-up receivable within one calendar month; exclusive next-month rent credit or independently verified refund). The next bounded financial implementation must independently post/verify receipts, credit and bank refunds under those rules, with independent approval, actual money provenance, unique bank reference/idempotency, concurrent replay denial, rollback and immutable journal; resolve only genuinely unapproved evidence/operational details rather than asking the Owner to repeat approved choices. No documentation or provisional approved direction is such proof.
 
 Retain PR #3 and PR #4 as reviewable drafts. Require final-head CI on the implementation/test PR and an explicit human business-acceptance record before widening the execution lane. All production changes remain excluded.
 
@@ -54,3 +54,9 @@ Retain PR #3 and PR #4 as reviewable drafts. Require final-head CI on the implem
 ### T007 final disposition
 
 After exact-head success in H4 PG `41994322548`, Slice A PG `41994322523`, safe Windows `41994322601` and isolated Identity `41994322594`, the targeted H4 security **test gap** can be closed as **staging verified**, not a business release. PR #4 is still Draft; no PR merged. Root's founding membership remains non-revocable via ordinary operator APIs. Owner Constitution review, actual external bank-backed H4 settlement, general mid-month D-gates, independent archived TRX inspection and production are not certified by these checks.
+
+## 2026-11-05 policy-precedence reconciliation — author-side review (T011)
+
+The original 2026-11-03 *candidate* HOLDs in historical audit ledgers are superseded as **business-rule status** by the owner-approved 2026-11-04 decision addendum. Current D01/D02/D03/D04/D06/Owner contract-export policies are enumerated in [approved-policy-reconciliation-20261105.md](./approved-policy-reconciliation-20261105.md). Some per-service billing choices and executed financial evidence remain implementation/operational gates, not a reason to repeat the already given target-day, rounding, unpaid-top-up, exclusive-credit/refund, or three-signatory decisions.
+
+Combined draft [PR #5](https://github.com/huynqhe186195/NgocTrangHouseManagementSystem/pull/5) head `7179cfacea658790582802b4397a532b7411629f` was separately verified on **all four** GitHub workflow conclusions (H4 `41997785666`, Slice A PG `41997785826`, Windows `41997785836`, Identity `41997785977`) and reviewed job-level expected-group results. A later documentation commit **requires its own final-head CI**; the 7179 checks are not inherited by this revision. The raw TRX artifact archive was not independently parsed; no actual financial writer, bank action or production deployment was performed. Constitution owner review and full business acceptance remain pending.

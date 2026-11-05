@@ -1,5 +1,8 @@
 # Feature 001 — H4 Acceptance Evidence Matrix
 
+> **CURRENT POLICY AND TEST STATUS — 2026-11-05 (supersedes dated interim assumptions below):** The approved decision register's **2026-11-04 addendum** finalized D01 target-day ownership, D02 VND midpoint-up/calendar denominator, D03 independent room-specific service tariffs, D04-H4 unpaid top-up receivable / exclusive next-rent credit or refund, D06 three signatories, plus Owner new-contract export. Do **not** describe those decisions as still unapproved. Their *implementation and external financial settlement* are still unaccepted. Combined PR #5 exact head `7179cfacea658790582802b4397a532b7411629f` passed four workflows (H4 `41997785666`, Slice A `41997785826`, Windows `41997785836`, Identity `41997785977`). This passes bounded T007 staging security, not AC-H4-09 for future financial endpoints or H4 paid cash. Full current-policy crosswalk: [approved-policy-reconciliation-20261105.md](./approved-policy-reconciliation-20261105.md). Historical candidate/pending sections below are retained for provenance only.
+
+
 **Audit date:** 2026-11-05 (Asia/Ho_Chi_Minh)
 **Scope:** evidence reconciliation only; no application, migration, deployment or bank execution changes.
 **Source under review:** `wip/phase-2g2` @ `a9519996c06d42db880cec4a741036a2e520e460`.
@@ -46,7 +49,7 @@
 
 **Reconciliation result:** the baseline already implements and tests all three **deferred financial outcomes** through authenticated staging H4 completion. No duplicate H4 intent or transfer writer should be introduced merely to satisfy the Spec Kit artifact. The missing business outcome is actual, externally evidenced settlement/consumption for the pending top-up, rent credit and refund when that is in scope, not the absence of those deferred records.
 
-**Separate gates:** D04 accepted for *ordinary Phase 2G.4 manual refunds* does not by itself approve *Phase 2H H4 room-transfer* top-up or refund settlement. Keep D04-H4 HOLD until exact independent bank evidence, authorized payee, separate review and duplicate reference behavior are defined and tested. D01/D02/D03 and D06 remain policy/acceptance gates for unrestricted mid-month use.
+**Separate gates (as of the 2026-11-04 owner addendum):** The Owner **also** explicitly approved the H4 transfer policy of unpaid top-up due within one Vietnam calendar month and mutually exclusive next-month rent credit or independently reviewed refund; ordinary Phase 2G.4 approval by itself had not done so. D01 target-day ownership, D02 calendar denominator/midpoint-up VND, D03 per-room effective service tariffs and D06 three signers are likewise approved as directions. **Actual** external bank evidence, authorized payee, separate financial review, replay-safe credit/receipt/refund posting, per-service rate treatment and all exact-SHA integration acceptance remain HOLD. Do not convert a policy approval into a settled money claim.
 
 **Decision:** no financial code change was justified by this source-and-log review alone. Do not merge the draft Spec Kit PR or mark BUSINESS ACCEPTED solely due to green CI. Next code changes belong in a separate implementation PR after precise remaining behavior is specified, with end-to-end H4 settlement/credit/posting tests and PostgreSQL SQL-bypass/concurrency/rollback where applicable.
 

@@ -40,3 +40,7 @@ Existing exact-SHA CI at the baseline reports `success` for both H4 disposable P
 - Spec-only PR: revert documentation commit if necessary; it does not alter database or execute application code.
 - Subsequent code PR: preserve a rollback plan for each change; never delete historical financial data to accommodate the spec.
 - Never represent an artifact check or code review as authenticated production security acceptance.
+
+## Approved-owner-policy correction (2026-11-05)
+
+The 2026-11-04 binding decision register supersedes any older plan phrase that D01/D02/D03/D04/D06 are *unapproved*. Feature 001 is still evidence-only, not actual settlement. For a subsequent implementation PR, enforce D01 **target-day** Vietnam civil date, D02 28/29/30/31-day midpoint-up whole-VND, D03 Room+Service effective tariffs with explicit service-unit policy, D04 top-up due no later than `transferDate.AddMonths(1)` and exclusive next-month *issued* rent credit or reviewed refund, D06 three authenticated handover signers with signed-paper attachments; Owner contract PDF/file export is separate. Check each against the source, DB schema, HTTP guards, SQL commit fences and a new exact-head scratch PostgreSQL suite **before** declaring acceptance. See [policy crosswalk](./approved-policy-reconciliation-20261105.md).

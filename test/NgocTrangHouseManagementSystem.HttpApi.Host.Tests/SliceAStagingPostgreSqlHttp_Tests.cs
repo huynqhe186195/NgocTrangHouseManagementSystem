@@ -7130,14 +7130,34 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                             "D04-REFUND-REVIEW-" + Guid.NewGuid().ToString("N")
                     }))
                     reviewId = review.RootElement.GetProperty("id").GetGuid();
-                using (var posting = await Positive2HPostAsync(
-                    clientRoot, d04PostAt, new { reviewId }))
+                // Two concurrent Owner submissions of the same signed
+                // bank refund must create ONE posting, never two withdrawals.
+                async Task<(HttpStatusCode Status,string Body)> TryRefundAsync()
                 {
-                    Assert.Equal(1_000_000m, posting.RootElement
+                    try
+                    {
+                        return await PostFinalAsync(clientRoot, d04PostAt,
+                            JsonSerializer.Serialize(new { reviewId }));
+                    }
+                    catch (PostgresException ex) when (
+                        ex.SqlState == PostgresErrorCodes.SerializationFailure)
+                    {
+                        return (HttpStatusCode.Conflict, string.Empty);
+                    }
+                }
+                var rivalRefunds = await Task.WhenAll(
+                    TryRefundAsync(), TryRefundAsync());
+                var winner = Assert.Single(rivalRefunds.Where(x =>
+                    x.Status is HttpStatusCode.OK or HttpStatusCode.Created));
+                Assert.Single(rivalRefunds.Where(x =>
+                    x.Status is HttpStatusCode.Forbidden or HttpStatusCode.Conflict));
+                using (var posted = JsonDocument.Parse(winner.Body))
+                {
+                    Assert.Equal(1_000_000m, posted.RootElement
                         .GetProperty("amountVnd").GetDecimal());
-                    Assert.Equal(0m, posting.RootElement
+                    Assert.Equal(0m, posted.RootElement
                         .GetProperty("remainingOutstandingVnd").GetDecimal());
-                    Assert.False(posting.RootElement
+                    Assert.False(posted.RootElement
                         .GetProperty("isBankTransferInitiatedBySystem").GetBoolean());
                 }
                 var duplicateRefund = await PostFinalAsync(clientRoot,

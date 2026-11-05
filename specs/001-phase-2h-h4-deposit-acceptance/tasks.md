@@ -10,12 +10,12 @@
 
 ## Evidence-first verification (still TODO)
 
-- [ ] **T004** Read exact-SHA CI job logs/TRX and map selected H4 Domain (165 expected) and PostgreSQL (103 expected) cases to AC-H4-01–12. Record observed counts and exclusions.
-- [ ] **T005** Audit H4 Domain intent/fingerprint and PostgreSQL deferred-commit constraints for conservation, re-hash contradictions, concurrency and idempotency.
-- [ ] **T006** Audit actual authenticated H4 top-up, next-rent credit, refund-liability HTTP paths and verify their **money-status labels** against approved H4 semantics.
-- [ ] **T007** Confirm active account, building membership and separation-of-duties authorization; negative cross-building tests must be authenticated, not source-only.
-- [ ] **T008** Compare dated project audit files and implemented code against each acceptance criterion. Prepare `acceptance-matrix.md` with code/test/CI links and PASS/PARTIAL/HOLD; do not fake missing evidence.
-- [ ] **T009** If T004–T008 reveal a real gap, design and implement the smallest cohesive correction in an independent code PR, with regression test before implementation.
+- [x] **T004** Read exact-commit PR CI job logs and correlate selected H4 Domain 165/165, PG 103/103, authenticated HTTP 1/1 and migration 1/1; Windows Full regression 712/183/447/76 PASS. Evidence: `acceptance-matrix.md`, runs 41985608433/41985608440. The PR checks execute synthetic merge SHA `3285089`, and archived TRX XML was not independently extracted; do not conflate parser fixture runs with behavioral tests.
+- [x] **T005** Audit H4 intent and completion fingerprints, conservation formulas, canonical re-hash and PostgreSQL `TRFH4PG01–17` invariant tests; cover stage transfer competition/rollback in `STAGEPGHTTP01`. This proves deferred intent/completion, NOT a future real-cash settlement writer. See `acceptance-matrix.md`.
+- [x] **T006** Audit authenticated H4 routes and three executed inner scenarios in `STAGEPGHTTP01`: top-up remains unpaid, future-rent credit and refund remain liabilities/instructions, not bank transfers or settled credits. Actual external H4 collection/refund/credit posting is **HOLD-D04-H4**; see `acceptance-matrix.md`.
+- [ ] **T007 PARTIAL** Authenticated H4 scenarios deny staff and cross-building intent/read/complete; `TRFH4PG04` denies foreign source at DB layer. Still explicitly map H4 account/membership revocation at commit and separation-of-duties to exact assertions; generic `STAGEPGHTTP01` title is not sufficient evidence.
+- [x] **T008** Create `acceptance-matrix.md` with all AC-H4-01–12, exact baseline/test-merge SHAs, test/code/CI links, bounded STAGING PASS versus PARTIAL/HOLD and source limitations.
+- [ ] **T009 HOLD / separate code PR** Reconciliation exposes unverified actual H4 top-up settlement, credit consumption and refund disbursement, plus T007 coverage gap. First define authorized D04-H4 behavior and testable gaps; do not duplicate the already-working H4 deferred-intent writer.
 - [ ] **T010** Execute exact-SHA stage-only Domain + Application + EF + HTTP + PostgreSQL regression for any code change. Capture immutable run URLs/TRX and prove rollback.
 - [ ] **T011** Review Constitution and spec compliance, align business decisions and code, and complete converge report without overstating production readiness.
 
@@ -26,4 +26,4 @@
 - [ ] **HOLD-D06:** final signature and physical handover evidence criteria.
 - [ ] **HOLD-RELEASE:** No `main` merge or production migration/activation from this adoption work.
 
-**Next action:** T004–T008 as a single review batch before any financial writer change.
+**Next action:** Finish T007 targeted identity/permission/commit-time review and resolve D04-H4 business settlement semantics before any real-money writer change. T004/T005/T006/T008 now have a dated evidence matrix; T010/T011 and owner/production gates remain open.

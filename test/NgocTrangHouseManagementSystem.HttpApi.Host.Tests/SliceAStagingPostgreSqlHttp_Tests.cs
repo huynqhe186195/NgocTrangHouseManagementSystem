@@ -6170,6 +6170,179 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 Assert.Equal(64, existing.RootElement.GetProperty(
                     "evidenceSha256").GetString()!.Length);
             }
+            // H4-specific Identity revocation race: a root-authorized
+            // H4 read holds the persisted BootstrapOwner grant through the
+            // Building UoW commit. Revocation must wait for that commit,
+            // and the same authenticated HTTP actor must then be denied.
+            // Only disposable PostgreSQL Identity/Building fixtures are used.
+            if (choice == 0)
+            {
+                Task<int>? revokeH4Bootstrap = null;
+                using (var leaseScope = app.Services.CreateScope())
+                {
+                    var sp = leaseScope.ServiceProvider;
+                    var accessor = sp.GetRequiredService<ICurrentPrincipalAccessor>();
+                    using (accessor.Change(new ClaimsPrincipal(new ClaimsIdentity(
+                        new[]
+                        {
+                            new Claim(AbpClaimTypes.UserId, root.ToString("D")),
+                            new Claim(ClaimTypes.NameIdentifier, root.ToString("D"))
+                        }, "H4CommitBoundRoot"))))
+                    {
+                        using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                            .Begin(requiresNew: true, isTransactional: true);
+                        var guarded = await sp.GetRequiredService<
+                            SliceBStagingRoomChangeRequests>()
+                            .GetH4DispositionIntentAsync(h4SourceContract, h4Request);
+                        Assert.Equal(h4Request, guarded.RequestId);
+                        revokeH4Bootstrap = Task.Run(async () =>
+                        {
+                            await using var connection = new NpgsqlConnection(idCs);
+                            await connection.OpenAsync();
+                            await using var command = new NpgsqlCommand(
+                                """
+                                DELETE FROM "AbpPermissionGrants"
+                                 WHERE "ProviderName" = 'U'
+                                   AND "ProviderKey" = @root
+                                   AND "Name" = @permission
+                                """, connection);
+                            command.Parameters.AddWithValue("root", root.ToString("D"));
+                            command.Parameters.AddWithValue("permission",
+                                BuildingManagementPermissions.Buildings.BootstrapOwner);
+                            return await command.ExecuteNonQueryAsync();
+                        });
+                        await Task.Delay(250);
+                        Assert.False(revokeH4Bootstrap.IsCompleted,
+                            "H4 BootstrapOwner revoke must await Building UoW commit.");
+                        await uow.CompleteAsync();
+                    }
+                }
+                Assert.NotNull(revokeH4Bootstrap);
+                Assert.Equal(1, await revokeH4Bootstrap!
+                    .WaitAsync(TimeSpan.FromSeconds(15)));
+                using (var revoked = await clientRoot.GetAsync(h4IntentUrl))
+                    Assert.Equal(HttpStatusCode.Forbidden, revoked.StatusCode);
+
+                using (var restoreScope = app.Services.CreateScope())
+                {
+                    var sp = restoreScope.ServiceProvider;
+                    using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                        .Begin(requiresNew: true, isTransactional: true);
+                    await sp.GetRequiredService<IPermissionManager>().SetForUserAsync(
+                        root, BuildingManagementPermissions.Buildings.BootstrapOwner, true);
+                    await uow.CompleteAsync();
+                }
+                using (var restored = await clientRoot.GetAsync(h4IntentUrl))
+                    Assert.Equal(HttpStatusCode.OK, restored.StatusCode);
+
+                // H4 must also fail closed when persisted Identity disables
+                // the account, even when the HTTP test principal is stale.
+                await using (var connection = new NpgsqlConnection(idCs))
+                {
+                    await connection.OpenAsync();
+                    await using var disable = new NpgsqlCommand(
+                        """
+                        UPDATE "AbpUsers" SET "IsActive"=FALSE
+                         WHERE "Id"=@root AND "IsActive"=TRUE
+                        """, connection);
+                    disable.Parameters.AddWithValue("root", root);
+                    Assert.Equal(1, await disable.ExecuteNonQueryAsync());
+                }
+                try
+                {
+                    using var inactive = await clientRoot.GetAsync(h4IntentUrl);
+                    Assert.Equal(HttpStatusCode.Forbidden, inactive.StatusCode);
+                }
+                finally
+                {
+                    await using var connection = new NpgsqlConnection(idCs);
+                    await connection.OpenAsync();
+                    await using var reactivate = new NpgsqlCommand(
+                        """
+                        UPDATE "AbpUsers" SET "IsActive"=TRUE
+                         WHERE "Id"=@root AND "IsActive"=FALSE
+                        """, connection);
+                    reactivate.Parameters.AddWithValue("root", root);
+                    Assert.Equal(1, await reactivate.ExecuteNonQueryAsync());
+                }
+                using (var active = await clientRoot.GetAsync(h4IntentUrl))
+                    Assert.Equal(HttpStatusCode.OK, active.StatusCode);
+
+                // A delegated operator can read this H4 REQUEST, but must
+                // never access the owner-only H4 deposit disposition. The
+                // Building membership lease must prevent a concurrent
+                // revocation from committing before this read UoW ends.
+                // Use the independent co-signer as a temporary B delegate;
+                // leave the existing operatorB membership and its revision
+                // unchanged for the later membership regression assertions.
+                using (var permissionScope = app.Services.CreateScope())
+                {
+                    var sp = permissionScope.ServiceProvider;
+                    using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                        .Begin(requiresNew: true, isTransactional: true);
+                    await sp.GetRequiredService<IPermissionManager>().SetForUserAsync(
+                        cosigner, BuildingManagementPermissions.Contracts.Manage, true);
+                    await uow.CompleteAsync();
+                }
+                using (var assignment = new StringContent(JsonSerializer.Serialize(
+                    new { buildingId = b, operatorUserId = cosigner }),
+                    Encoding.UTF8, "application/json"))
+                using (var response = await clientRoot.PostAsync(grants, assignment))
+                    Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+                using var h4Delegate = app.GetTestClient();
+                h4Delegate.DefaultRequestHeaders.Add(
+                    "X-Slice-A-Test-Actor", cosigner.ToString("D"));
+                using (var delegatedRead = await h4Delegate.GetAsync(h4At))
+                    Assert.Equal(HttpStatusCode.OK, delegatedRead.StatusCode);
+                using (var ownerOnly = await h4Delegate.GetAsync(h4IntentUrl))
+                    Assert.Equal(HttpStatusCode.Forbidden, ownerOnly.StatusCode);
+
+                Task<HttpStatusCode>? revokeH4Member = null;
+                using (var membershipScope = app.Services.CreateScope())
+                {
+                    var sp = membershipScope.ServiceProvider;
+                    var accessor = sp.GetRequiredService<ICurrentPrincipalAccessor>();
+                    using (accessor.Change(new ClaimsPrincipal(new ClaimsIdentity(
+                        new[]
+                        {
+                            new Claim(AbpClaimTypes.UserId, cosigner.ToString("D")),
+                            new Claim(ClaimTypes.NameIdentifier, cosigner.ToString("D"))
+                        }, "H4CommitBoundBuildingMember"))))
+                    {
+                        using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                            .Begin(requiresNew: true, isTransactional: true);
+                        var read = await sp.GetRequiredService<
+                            SliceBStagingRoomChangeRequests>()
+                            .GetAsync(h4SourceContract, h4Request);
+                        Assert.Equal(h4Request, read.Id);
+                        revokeH4Member = Task.Run(async () =>
+                        {
+                            using var payload = new StringContent(JsonSerializer.Serialize(
+                                new
+                                {
+                                    buildingId = b, operatorUserId = cosigner,
+                                    expectedRevision = 1
+                                }), Encoding.UTF8, "application/json");
+                            using var response = await clientRoot.PostAsync(
+                                grants + "/revoke", payload);
+                            return response.StatusCode;
+                        });
+                        await Task.Delay(250);
+                        Assert.False(revokeH4Member.IsCompleted,
+                            "H4 Building member revocation must await read UoW commit.");
+                        await uow.CompleteAsync();
+                    }
+                }
+                Assert.NotNull(revokeH4Member);
+                Assert.Equal(HttpStatusCode.NoContent, await revokeH4Member!
+                    .WaitAsync(TimeSpan.FromSeconds(15)));
+                using (var afterRevocation = await h4Delegate.GetAsync(h4At))
+                    Assert.Equal(HttpStatusCode.Forbidden, afterRevocation.StatusCode);
+                using (var ownerStillAuthorized = await clientRoot.GetAsync(h4IntentUrl))
+                    Assert.Equal(HttpStatusCode.OK, ownerStillAuthorized.StatusCode);
+            }
+
             // No H4 liability exists until one fully authorized mid-month
             // completion has atomically committed. Root, staff, and
             // cross-building probes must never invent an obligation.

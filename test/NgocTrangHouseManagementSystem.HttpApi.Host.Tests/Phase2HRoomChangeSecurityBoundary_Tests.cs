@@ -25,9 +25,9 @@ public sealed class Phase2HRoomChangeSecurityBoundary_Tests
         Assert.Equal(32, methods.Length);
         foreach (var d04 in new[] { "ReviewD04BankEvidenceAsync", "PostD04SettlementAsync", "GetD04SettlementBalanceAsync" })
         {
-            var route = Assert.Single(methods.Where(m => m.Name == d04));
-            Assert.NotNull(route.GetCustomAttribute<UnitOfWorkAttribute>());
-            Assert.NotNull(route.GetCustomAttribute<Microsoft.AspNetCore.Mvc.Routing.HttpMethodAttribute>());
+            var d04Method = Assert.Single(methods.Where(m => m.Name == d04));
+            Assert.NotNull(d04Method.GetCustomAttribute<UnitOfWorkAttribute>());
+            Assert.NotNull(d04Method.GetCustomAttribute<Microsoft.AspNetCore.Mvc.Routing.HttpMethodAttribute>());
         }
         Assert.Contains(methods, m => m.Name == "CompleteRoomChangeAsync");
         var h4ObligationRead = Assert.Single(methods.Where(m =>

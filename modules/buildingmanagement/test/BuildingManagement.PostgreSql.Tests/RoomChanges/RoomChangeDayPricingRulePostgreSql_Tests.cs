@@ -178,6 +178,12 @@ public sealed class RoomChangeDayPricingRulePostgreSql_Tests
             // Source D-1 and target D must partition the calendar month.
             await Denied(db, tx, () => Insert(db, tx, f.Rule,
                 targetDays: f.Rule.TargetChargeableDays + 1), "23514");
+            // Neither the old-room partition nor calendar denominator
+            // can be independently rewritten by a direct SQL client.
+            await Denied(db, tx, () => Insert(db, tx, f.Rule,
+                sourceDays: f.Rule.SourceChargeableDays + 1), "23514");
+            await Denied(db, tx, () => Insert(db, tx, f.Rule,
+                calendarDays: f.Rule.CalendarDays + 1), "23514");
             await Denied(db, tx, () => Insert(db, tx, f.Rule,
                 pricingRef: "FORGED-D01-D02-TARIFF-DOCUMENT-2026"), "23514");
             await Denied(db, tx, () => Insert(db, tx, f.Rule,
@@ -391,7 +397,8 @@ public sealed class RoomChangeDayPricingRulePostgreSql_Tests
     private static async Task Insert(NpgsqlConnection db, NpgsqlTransaction tx,
         RoomChangeDayPricingRuleCandidate r, decimal? sourceCharge = null,
         string? pricingRef = null, string? hash = null, int? targetDays = null,
-        decimal? targetCharge = null)
+        decimal? targetCharge = null, int? sourceDays = null,
+        int? calendarDays = null)
     {
         await using var cmd = new NpgsqlCommand("""
             INSERT INTO "BuildingManagementRoomChangeDayPricingRuleCandidates"
@@ -419,8 +426,8 @@ public sealed class RoomChangeDayPricingRulePostgreSql_Tests
         cmd.Parameters.AddWithValue("date",r.TransferDate);
         cmd.Parameters.AddWithValue("owner",(int)r.TransferDayOwner);
         cmd.Parameters.AddWithValue("rounding",(int)r.Rounding);
-        cmd.Parameters.AddWithValue("days",r.CalendarDays);
-        cmd.Parameters.AddWithValue("oldDays",r.SourceChargeableDays);
+        cmd.Parameters.AddWithValue("days",calendarDays??r.CalendarDays);
+        cmd.Parameters.AddWithValue("oldDays",sourceDays??r.SourceChargeableDays);
         cmd.Parameters.AddWithValue("newDays",targetDays??r.TargetChargeableDays);
         cmd.Parameters.AddWithValue("oldRent",r.SourceMonthlyRentVnd);
         cmd.Parameters.AddWithValue("newRent",r.TargetMonthlyRentVnd);

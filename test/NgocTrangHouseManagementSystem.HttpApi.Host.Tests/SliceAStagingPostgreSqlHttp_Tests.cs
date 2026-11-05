@@ -6792,6 +6792,17 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 h4TargetContract = completed.RootElement.GetProperty(
                     "targetContractId").GetGuid();
             }
+            // Owner export for the NEW H1/H4 replacement contract, not
+            // only the original pre-transfer contracts tested above.
+            // The whole migrated roster must be sourced from this new ID;
+            // Staff cannot obtain an Owner-only copy after completion.
+            await VerifyOriginalOwnerDocxAsync(h4TargetContract,
+                "Tenant B scratch", "Tenant A scratch",
+                (120 + choice * 2).ToString());
+            using (var staffNewContractExport =
+                await clientB.GetAsync(ContractExport(h4TargetContract)))
+                Assert.Equal(HttpStatusCode.Forbidden,
+                    staffNewContractExport.StatusCode);
             var h4Replay = await PostFinalAsync(clientRoot,
                 h4CompletionRoute, JsonSerializer.Serialize(h4CompletePayload));
             Assert.Equal(HttpStatusCode.Forbidden, h4Replay.Status);

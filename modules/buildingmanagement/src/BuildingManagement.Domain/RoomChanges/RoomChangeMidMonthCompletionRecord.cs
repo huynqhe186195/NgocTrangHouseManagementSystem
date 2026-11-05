@@ -48,8 +48,20 @@ public sealed class RoomChangeMidMonthCompletionRecord : Entity<Guid>
     public DateTime CompletedAtUtc { get; private set; }
     public string EvidenceSha256 { get; private set; } = string.Empty;
 
+    // H4 is an immutable original-choice disposition plus a *future*
+    // receivable or liability; these are not evidence of bank collection.
+    // Null preserves the exact legacy same-deposit completion fingerprint.
+    public Guid? H4DispositionIntentId { get; private set; }
+    public string? H4IntentSha256 { get; private set; }
+    public decimal H4OriginalHeldDepositVnd { get; private set; }
+    public decimal H4TargetRequiredDepositVnd { get; private set; }
+    public decimal H4UnpaidTopUpVnd { get; private set; }
+    public DateOnly? H4TopUpDueDateVietnam { get; private set; }
+    public decimal H4NextMonthRentCreditVnd { get; private set; }
+    public decimal H4ManualRefundLiabilityVnd { get; private set; }
+
     public bool IsExternalBankPayment => false;
-    public bool SupportsRefundOrTopUp => false;
+    public bool SupportsRefundOrTopUp => H4DispositionIntentId.HasValue;
 
     private RoomChangeMidMonthCompletionRecord() { }
     private RoomChangeMidMonthCompletionRecord(Guid id) : base(id) { }
@@ -72,7 +84,8 @@ public sealed class RoomChangeMidMonthCompletionRecord : Entity<Guid>
         RoomStatus sourceDisposition,
         string? dispositionEvidence,
         string? completionReference,
-        Guid actor, DateTime atUtc)
+        Guid actor, DateTime atUtc,
+        RoomChangeDepositDispositionIntentRecord? h4Intent = null)
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(source);
@@ -106,6 +119,48 @@ public sealed class RoomChangeMidMonthCompletionRecord : Entity<Guid>
         exactPricing.VerifyStoredSnapshot();
         signedHandover.VerifyStoredSnapshot();
 
+        // No change to the trusted original same-deposit lane. H4 must
+        // bind the original signed Root policy and only deferred obligations.
+        h4Intent?.VerifyFingerprint();
+        bool depositLaneMatches = h4Intent is null
+            ? policy.DepositTreatment ==
+                RoomChangeDepositTreatment.CarryAllWithNoDifference &&
+              source.MonthlyRent == target.MonthlyRent &&
+              source.DepositAmount == target.DepositAmount &&
+              carry.Amount == source.DepositAmount
+            : h4Intent.RequestId == request.Id &&
+              h4Intent.SourceContractId == source.Id &&
+              h4Intent.TargetContractId == target.Id &&
+              h4Intent.BuildingId == request.BuildingId &&
+              h4Intent.TransferDateVietnam == request.RequestedDate &&
+              h4Intent.ProposedByOwnerId == review.ReviewedByUserId &&
+              h4Intent.ProposedByOwnerId == actor &&
+              atUtc >= h4Intent.ProposedAtUtc &&
+              h4Intent.ClaimedOriginalSourceHeldVnd == source.DepositAmount &&
+              h4Intent.AlreadyPostedApprovedDeductionsVnd == 0m &&
+              h4Intent.ProposedCarryTargetVnd > 0m &&
+              carry.Amount == h4Intent.ProposedCarryTargetVnd &&
+              target.DepositAmount == h4Intent.TargetRequiredDepositVnd &&
+              target.DepositAmount == target.MonthlyRent &&
+              source.MonthlyRent != target.MonthlyRent &&
+              source.DepositAmount ==
+                  carry.Amount + h4Intent.ProposedFutureRentCreditVnd +
+                  h4Intent.ProposedManualRefundVnd &&
+              target.DepositAmount ==
+                  carry.Amount + h4Intent.ProposedUnpaidTopUpVnd &&
+              (h4Intent.ProposedUnpaidTopUpVnd > 0m
+                 ? policy.DepositTreatment ==
+                       RoomChangeDepositTreatment.CarryWithVerifiedTopUp &&
+                   h4Intent.SurplusChoice == RoomChangeDepositSurplusChoice.None &&
+                   h4Intent.ProposedTopUpDueDateVietnam >= request.RequestedDate &&
+                   h4Intent.ProposedTopUpDueDateVietnam <=
+                       request.RequestedDate.AddMonths(1)
+                 : policy.DepositTreatment ==
+                       RoomChangeDepositTreatment.PartialCarryWithRefund &&
+                   (h4Intent.ProposedFutureRentCreditVnd > 0m) !=
+                       (h4Intent.ProposedManualRefundVnd > 0m) &&
+                   h4Intent.ProposedTopUpDueDateVietnam is null);
+
         var reference = completionReference?.Trim() ?? string.Empty;
         var disposition = dispositionEvidence?.Trim() ?? string.Empty;
         var targetFirstDay = rule.SourceChargeableDays + 1;
@@ -128,7 +183,7 @@ public sealed class RoomChangeMidMonthCompletionRecord : Entity<Guid>
             !review.Accepted ||
             policy.ContractTreatment != RoomChangeContractTreatment.NewContract ||
             policy.PricingTreatment != RoomChangePricingTreatment.AgreedDayProration ||
-            policy.DepositTreatment != RoomChangeDepositTreatment.CarryAllWithNoDifference ||
+
             policy.TenantTreatment != RoomChangeTenantTreatment.AllCurrentTenants ||
             request.RequestedDate.Day == DateTime.DaysInMonth(
                 request.RequestedDate.Year, request.RequestedDate.Month) ||
@@ -156,9 +211,10 @@ public sealed class RoomChangeMidMonthCompletionRecord : Entity<Guid>
             DateOnly.FromDateTime(target.StartDate) != targetStart ||
             target.MonthlyRent != rule.TargetMonthlyRentVnd ||
             source.MonthlyRent != rule.SourceMonthlyRentVnd ||
-            source.DepositAmount != target.DepositAmount ||
+
+            !depositLaneMatches ||
             source.DepositAmount <= 0 ||
-            source.MonthlyRent != target.MonthlyRent ||
+
             exactPricing.Kind != RoomChangeEvidenceArchiveKind.SignedExactPricing ||
             exactPricing.RequestId != request.Id ||
             exactPricing.SourceContractId != source.Id ||
@@ -196,7 +252,7 @@ public sealed class RoomChangeMidMonthCompletionRecord : Entity<Guid>
             carry.Status != DepositSettlementStatus.Completed ||
             carry.SourceContractId != source.Id ||
             carry.TargetContractId != target.Id ||
-            carry.Amount != source.DepositAmount ||
+
             carry.CompletedAt is null ||
             sourceDisposition is not
                 (RoomStatus.Available or RoomStatus.Reserved or RoomStatus.Maintenance))
@@ -226,6 +282,18 @@ public sealed class RoomChangeMidMonthCompletionRecord : Entity<Guid>
             TargetFirstMonthRentVnd = rule.ProposedTargetRentVnd,
             CarryForwardSettlementId = carry.Id,
             CarriedDepositVnd = carry.Amount,
+            H4DispositionIntentId = h4Intent?.Id,
+            H4IntentSha256 = h4Intent?.EvidenceSha256,
+            H4OriginalHeldDepositVnd =
+                h4Intent?.ClaimedOriginalSourceHeldVnd ?? 0m,
+            H4TargetRequiredDepositVnd =
+                h4Intent?.TargetRequiredDepositVnd ?? 0m,
+            H4UnpaidTopUpVnd = h4Intent?.ProposedUnpaidTopUpVnd ?? 0m,
+            H4TopUpDueDateVietnam = h4Intent?.ProposedTopUpDueDateVietnam,
+            H4NextMonthRentCreditVnd =
+                h4Intent?.ProposedFutureRentCreditVnd ?? 0m,
+            H4ManualRefundLiabilityVnd =
+                h4Intent?.ProposedManualRefundVnd ?? 0m,
             SourceRoomDisposition = sourceDisposition,
             DispositionEvidenceReference = disposition,
             CompletionReference = reference,
@@ -252,6 +320,22 @@ public sealed class RoomChangeMidMonthCompletionRecord : Entity<Guid>
             CompletedAtUtc.Kind != DateTimeKind.Utc ||
             DispositionEvidenceReference.Length is < 12 or > 500 ||
             CompletionReference.Length is < 12 or > 500 ||
+            (H4DispositionIntentId.HasValue &&
+              (H4DispositionIntentId.Value == Guid.Empty ||
+               H4IntentSha256?.Length != 64 ||
+               H4OriginalHeldDepositVnd <= 0m ||
+               H4TargetRequiredDepositVnd <= 0m ||
+               H4UnpaidTopUpVnd < 0m ||
+               H4NextMonthRentCreditVnd < 0m ||
+               H4ManualRefundLiabilityVnd < 0m ||
+               H4OriginalHeldDepositVnd != CarriedDepositVnd +
+                   H4NextMonthRentCreditVnd + H4ManualRefundLiabilityVnd ||
+               H4TargetRequiredDepositVnd != CarriedDepositVnd +
+                   H4UnpaidTopUpVnd ||
+               (H4UnpaidTopUpVnd == 0m) !=
+                   (H4TopUpDueDateVietnam is null) ||
+               H4NextMonthRentCreditVnd > 0m &&
+                   H4ManualRefundLiabilityVnd > 0m)) ||
             EvidenceSha256 != Hash())
             throw new InvalidDataException("Mid-month completion snapshot fingerprint is inconsistent.");
     }
@@ -280,8 +364,26 @@ public sealed class RoomChangeMidMonthCompletionRecord : Entity<Guid>
             CompletedByUserId.ToString("D"),
             CompletedAtUtc.ToString("O", invariant)
         };
+        // Original 2H record hash is byte-for-byte unchanged when there
+        // is no signed H4 intent. The additional fields are append-only.
+        var original = string.Join("\n", parts);
+        if (H4DispositionIntentId is Guid intentId)
+        {
+            var extra = string.Join("\n", new[]
+            {
+                intentId.ToString("D"), H4IntentSha256 ?? string.Empty,
+                H4OriginalHeldDepositVnd.ToString("0", invariant),
+                H4TargetRequiredDepositVnd.ToString("0", invariant),
+                H4UnpaidTopUpVnd.ToString("0", invariant),
+                H4TopUpDueDateVietnam?.ToString("yyyy-MM-dd", invariant) ??
+                    string.Empty,
+                H4NextMonthRentCreditVnd.ToString("0", invariant),
+                H4ManualRefundLiabilityVnd.ToString("0", invariant)
+            });
+            original += "\n" + extra;
+        }
         return Convert.ToHexString(
-            SHA256.HashData(Encoding.UTF8.GetBytes(string.Join("\n", parts))))
+            SHA256.HashData(Encoding.UTF8.GetBytes(original)))
             .ToLowerInvariant();
     }
 }

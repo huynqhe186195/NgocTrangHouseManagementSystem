@@ -15,6 +15,8 @@ public sealed class RoomChangeMidMonthFinancialPostingPostgreSql_Tests
     private static readonly string Up = string.Join("\n",
         new Phase2HMidMonthFinancialJournal().UpOperations.OfType<SqlOperation>()
             .Concat(new Phase2HFinancialOriginalClaims().UpOperations.OfType<SqlOperation>())
+            .Concat(new Phase2HD03RootPostingAfterIndependentReviews()
+                .UpOperations.OfType<SqlOperation>())
             .Select(x => x.Sql));
     private const string Hash =
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -70,7 +72,7 @@ public sealed class RoomChangeMidMonthFinancialPostingPostgreSql_Tests
     private sealed record F(Guid Request,Guid Contract,Guid Room,
         Guid Building,Guid Actor,Guid Invoice,Guid Receivable,
         Guid Adjustment,Guid Decision,Guid D03,Guid D04,
-        Guid Payment,Guid Target,Guid D01,Guid D06);
+        Guid Payment,Guid Target,Guid D01,Guid D06,Guid Owner);
 
     private static string Posting(F f,int kind,decimal? amount=null,
         Guid? payment=null,Guid? receivable=null)
@@ -85,7 +87,7 @@ public sealed class RoomChangeMidMonthFinancialPostingPostgreSql_Tests
               {(kind==2?$"'{payment??f.Payment:D}'":"NULL")},
               {kind},{(amount??(kind==1?-50000m:1000000m)).ToString(System.Globalization.CultureInfo.InvariantCulture)},
               {(kind==1?"NULL":"'BANK-2H-ORIGINAL-RECEIPT-001'")},
-              '{Guid.NewGuid():D}','2026-11-02T10:00:00Z',
+              '{(kind==1?f.Owner:Guid.NewGuid()):D}','2026-11-02T10:00:00Z',
               {(kind==1?$"'{f.Adjustment:D}'":"NULL")})
             """;
 
@@ -93,6 +95,12 @@ public sealed class RoomChangeMidMonthFinancialPostingPostgreSql_Tests
     public async Task TRFPOSTPG01_Reviewed_D03_Official_Receivable_Correction_Is_AppendOnly()
     {
         await Scratch(IsolationLevel.Serializable,async(db,tx,f)=>{
+            var forgedByClassifier=Posting(f,1).Replace(
+                f.Owner.ToString("D"),f.Actor.ToString("D"),
+                StringComparison.Ordinal);
+            await Denied(db,tx,forgedByClassifier,"23514");
+            // An authenticated Root proposer may post only AFTER an
+            // independent staff decision AND third-party classification.
             await Run(db,tx,Posting(f,1));
             Assert.Equal(1L,await Count(db,tx));
             await Denied(db,tx,Posting(f,1),"23505");
@@ -240,7 +248,8 @@ public sealed class RoomChangeMidMonthFinancialPostingPostgreSql_Tests
                     Guid.NewGuid(),Guid.NewGuid(),Guid.NewGuid(),
                     Guid.NewGuid(),Guid.NewGuid(),Guid.NewGuid(),
                     Guid.NewGuid(),Guid.NewGuid(),Guid.NewGuid(),
-                    Guid.NewGuid(),Guid.NewGuid(),Guid.NewGuid());
+                    Guid.NewGuid(),Guid.NewGuid(),Guid.NewGuid(),
+                    Guid.NewGuid());
                 // Serialize JSON separately: braces in an interpolated C# raw
                 // SQL string otherwise conflict with C# interpolation delimiters.
                 var emptyEvidenceJson = "{}";
@@ -281,7 +290,7 @@ public sealed class RoomChangeMidMonthFinancialPostingPostgreSql_Tests
                     INSERT INTO "BuildingManagementMonthlyInvoiceAdjustments"
                      VALUES ('{f.Adjustment:D}','{f.Invoice:D}',
                       '{f.Contract:D}','{f.Building:D}',-50000,
-                        '{Guid.NewGuid():D}','2026-10-20T10:00:00Z');
+                        '{f.Owner:D}','2026-10-20T10:00:00Z');
                     INSERT INTO "BuildingManagementMonthlyInvoiceAdjustmentDecisions"
                      VALUES ('{f.Decision:D}','{f.Adjustment:D}',true,-50000,
                        '{Guid.NewGuid():D}','2026-10-21T10:00:00Z');

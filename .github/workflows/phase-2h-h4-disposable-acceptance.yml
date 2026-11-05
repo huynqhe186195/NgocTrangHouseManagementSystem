@@ -1,0 +1,129 @@
+# H4 candidate only. Disposable GitHub Actions PostgreSQL 16. No production DB.
+name: Phase 2H H4 authenticated disposable acceptance
+
+on:
+  push:
+    branches: [wip/phase-2h-h4-execution]
+  pull_request:
+    branches: [wip/phase-2g2]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: h4-atomic-candidate
+  cancel-in-progress: true
+
+jobs:
+  h4-acceptance:
+    name: Root-authenticated H4 transfer and PG16 atomic rollback
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: ngoctrang_integration_test
+          POSTGRES_USER: h4_ci
+          POSTGRES_PASSWORD: h4_ci_ephemeral_disposable_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U h4_ci -d ngoctrang_integration_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      BM_PG_TEST_CONNECTION: "Host=127.0.0.1;Port=5432;Database=ngoctrang_integration_test;Username=h4_ci;Password=h4_ci_ephemeral_disposable_only"
+      BM_PG_SLICE_A_HTTP_OPT_IN: I_ACCEPT_DISPOSABLE_PG_STAGING_HTTP
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@v4
+
+      - name: Install .NET SDK 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Print SHA and reject unexpected database targets
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD | tee h4-commit.sha
+          test "$BM_PG_SLICE_A_HTTP_OPT_IN" = "I_ACCEPT_DISPOSABLE_PG_STAGING_HTTP"
+          case "$BM_PG_TEST_CONNECTION" in
+            *"Host=127.0.0.1;Port=5432;Database=ngoctrang_integration_test;"*) ;;
+            *) echo "Refusing any non-disposable DB" >&2; exit 1;;
+          esac
+
+      - name: H4 true authenticated positive, denial, concurrency and replay
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet test test/NgocTrangHouseManagementSystem.HttpApi.Host.Tests/NgocTrangHouseManagementSystem.HttpApi.Host.Tests.csproj \
+            --filter "FullyQualifiedName~SliceAStagingPostgreSqlHttp_Tests.STAGEPGHTTP01" \
+            --logger "console;verbosity=normal" \
+            --logger "trx;LogFileName=h4-true-authenticated.trx" \
+            --results-directory . \
+            2>&1 | tee h4-http.log
+          python3 - <<'PY'
+          from xml.etree import ElementTree as ET
+          c = ET.parse('h4-true-authenticated.trx').getroot().find('.//{*}Counters')
+          assert c is not None and int(c.attrib['total']) == 1 and int(c.attrib['passed']) == 1 and int(c.attrib['failed']) == 0 and int(c.attrib['notExecuted']) == 0, c.attrib if c is not None else None
+          print('Authenticated H4 HTTP: 1/1 PASS')
+          PY
+
+      - name: Full H4 EF migration chain on fresh disposable database
+        shell: bash
+        env:
+          BM_ALLOW_FULL_MIGRATION_REHEARSAL: CREATE_AND_DROP_FRESH_LOCAL_TEST_DATABASE
+        run: |
+          set -euo pipefail
+          dotnet test modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/BuildingManagement.PostgreSql.Tests.csproj \
+            --filter "FullyQualifiedName~FullInvoiceMigrationChainPostgreSql_Tests" \
+            --logger "console;verbosity=normal" \
+            --logger "trx;LogFileName=h4-migration.trx" \
+            --results-directory . \
+            2>&1 | tee h4-migration.log
+          python3 - <<'PY'
+          from xml.etree import ElementTree as ET
+          c = ET.parse('h4-migration.trx').getroot().find('.//{*}Counters')
+          assert c is not None and int(c.attrib['total']) >= 1 and int(c.attrib['passed']) == int(c.attrib['total']) and int(c.attrib['failed']) == 0 and int(c.attrib['notExecuted']) == 0, c.attrib if c is not None else None
+          print('Disposable full H4 migration chain: ALL PASS')
+          PY
+
+      - name: Existing 103 H2-H6 PostgreSQL integrity cases
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet test modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/BuildingManagement.PostgreSql.Tests.csproj \
+            --filter "FullyQualifiedName~RoomChangeRequestsPostgreSql_Tests|FullyQualifiedName~RoomChangeTenantRosterPostgreSql_Tests|FullyQualifiedName~RoomChangeSourceDispositionPostgreSql_Tests|FullyQualifiedName~RoomChangeHandoverDigestPostgreSql_Tests|FullyQualifiedName~RoomChangeDayPricingRulePostgreSql_Tests|FullyQualifiedName~RoomChangeEvidenceArchivePostgreSql_Tests|FullyQualifiedName~RoomChangeMidMonthFinancialPostingPostgreSql_Tests|FullyQualifiedName~RoomChangeMidMonthCompletionPostgreSql_Tests|FullyQualifiedName~RoomScopedServiceTariffPostgreSql_Tests|FullyQualifiedName~RoomServiceInvoiceSourceBindingsPostgreSql_Tests|FullyQualifiedName~RoomChangeDepositDispositionIntentPostgreSql_Tests" \
+            --logger "console;verbosity=normal" \
+            --logger "trx;LogFileName=h4-postgres-103.trx" \
+            --results-directory . \
+            2>&1 | tee h4-postgres-103.log
+          python3 - <<'PY'
+          from xml.etree import ElementTree as ET
+          c = ET.parse('h4-postgres-103.trx').getroot().find('.//{*}Counters')
+          assert c is not None and int(c.attrib['total']) == 103 and int(c.attrib['passed']) == 103 and int(c.attrib['failed']) == 0 and int(c.attrib['notExecuted']) == 0, c.attrib if c is not None else None
+          print('H2-H6 PostgreSQL: 103/103 PASS')
+          PY
+
+      - name: Preserve exact-SHA acceptance logs and TRX
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase-2h-h4-exact-sha-evidence
+          path: |
+            h4-*.log
+            h4-*.trx
+            h4-*.sha
+          if-no-files-found: warn
+          retention-days: 14
+
+# Never starts the production host or migrates an existing application database.

@@ -22,8 +22,18 @@ public sealed class Phase2HRoomChangeSecurityBoundary_Tests
 
         var methods = controller.GetMethods(BindingFlags.Public |
             BindingFlags.Instance | BindingFlags.DeclaredOnly);
-        Assert.Equal(27, methods.Length);
+        Assert.Equal(29, methods.Length);
         Assert.Contains(methods, m => m.Name == "CompleteRoomChangeAsync");
+        var h4ObligationRead = Assert.Single(methods.Where(m =>
+            m.Name == "GetH4OutstandingObligationAsync"));
+        Assert.Equal("{requestId:guid}/h4-outstanding-obligation",
+            h4ObligationRead.GetCustomAttribute<HttpGetAttribute>()?.Template);
+        Assert.NotNull(h4ObligationRead.GetCustomAttribute<UnitOfWorkAttribute>());
+        var h4Writer=Assert.Single(methods.Where(m =>
+            m.Name=="CompleteH4MidMonthRoomChangeAsync"));
+        Assert.Equal("{requestId:guid}/complete-h4-mid-month-room-change",
+            h4Writer.GetCustomAttribute<HttpPostAttribute>()?.Template);
+        Assert.NotNull(h4Writer.GetCustomAttribute<UnitOfWorkAttribute>());
         foreach (var name in new[] {
             "ArchiveExactPricingAsync",
             "ArchiveThreePartyHandoverAsync",
@@ -76,7 +86,8 @@ public sealed class Phase2HRoomChangeSecurityBoundary_Tests
             m.Name.Contains("Approve", StringComparison.OrdinalIgnoreCase) ||
             (m.Name.Contains("Complete", StringComparison.OrdinalIgnoreCase) &&
              m.Name != "CompleteRoomChangeAsync" &&
-             m.Name != "CompleteMidMonthRoomChangeAsync") ||
+             m.Name != "CompleteMidMonthRoomChangeAsync" &&
+             m.Name != "CompleteH4MidMonthRoomChangeAsync") ||
             m.Name.Contains("Transfer", StringComparison.OrdinalIgnoreCase) ||
             m.Name.Contains("Refund", StringComparison.OrdinalIgnoreCase) ||
             m.Name.Contains("CarryForward", StringComparison.OrdinalIgnoreCase));
@@ -120,12 +131,14 @@ public sealed class Phase2HRoomChangeSecurityBoundary_Tests
         Assert.Contains(nameof(SliceBStagingRoomChangeRequests.GetDayPricingRuleAsync), methods);
         Assert.Contains(nameof(SliceBStagingRoomChangeRequests.CaptureH4DispositionIntentAsync), methods);
         Assert.Contains(nameof(SliceBStagingRoomChangeRequests.GetH4DispositionIntentAsync), methods);
+        Assert.Contains(nameof(SliceBStagingRoomChangeRequests.GetH4OutstandingObligationAsync), methods);
         Assert.Contains(nameof(SliceBStagingRoomChangeRequests.HoldForPolicyAsync), methods);
         Assert.DoesNotContain(methods, x =>
             x.Contains("Approve", StringComparison.OrdinalIgnoreCase) ||
             x.Contains("Transfer", StringComparison.OrdinalIgnoreCase) ||
             (x.Contains("Complete", StringComparison.OrdinalIgnoreCase) &&
              x != "CompleteRoomChangeAsync" &&
-             x != "CompleteMidMonthRoomChangeAsync"));
+             x != "CompleteMidMonthRoomChangeAsync" &&
+             x != "CompleteH4MidMonthRoomChangeAsync"));
     }
 }

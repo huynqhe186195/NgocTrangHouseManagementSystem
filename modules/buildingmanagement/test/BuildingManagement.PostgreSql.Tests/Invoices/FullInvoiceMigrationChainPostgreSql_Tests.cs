@@ -19,7 +19,7 @@ public sealed class FullInvoiceMigrationChainPostgreSql_Tests
     private const string OptInVariable = "BM_ALLOW_FULL_MIGRATION_REHEARSAL";
     private const string OptInValue = "CREATE_AND_DROP_FRESH_LOCAL_TEST_DATABASE";
     private const string ExpectedLatestMigration =
-        "20261104190000_Phase2HH4SignedPolicyAndTargetDepositBinding";
+        "20261104220000_Phase2HTypedH4DeferredCommitIntent";
 
     [Fact]
     public async Task PGMIG01_Full_EF_Migrations_Succeed_In_Fresh_Disposable_Database()
@@ -382,6 +382,91 @@ public sealed class FullInvoiceMigrationChainPostgreSql_Tests
                 {
                     Assert.Equal(1L,
                         Convert.ToInt64(await h4PolicyGuard.ExecuteScalarAsync()));
+                }
+
+                // H4 posting is a distinct, immutable future obligation.
+                // It cannot be passed off as a received top-up, paid refund
+                // or existing next-month rent receipt.
+                await using (var h4Obligations = new NpgsqlCommand(
+                    """
+                    SELECT count(*) FROM information_schema.tables
+                     WHERE table_schema=current_schema()
+                       AND table_name='BuildingManagementRoomChangeH4Obligations'
+                    """,verification))
+                {
+                    Assert.Equal(1L,
+                        Convert.ToInt64(await h4Obligations.ExecuteScalarAsync()));
+                }
+                await using (var h4LedgerTriggers = new NpgsqlCommand(
+                    """
+                    SELECT count(*) FROM pg_trigger
+                     WHERE NOT tgisinternal
+                       AND tgname IN ('TR_BM_2H_H4Obligation_Immutable',
+                                      'TR_BM_2H_H4Obligation_NoTruncate')
+                       AND tgrelid =
+                        '"BuildingManagementRoomChangeH4Obligations"'::regclass
+                    """,verification))
+                {
+                    Assert.Equal(2L,
+                        Convert.ToInt64(await h4LedgerTriggers.ExecuteScalarAsync()));
+                }
+
+                // H4 positive commit must be type-correct at the deferred
+                // PostgreSQL constraint, not only during controller action.
+                await using (var typedH4CommitGuard = new NpgsqlCommand(
+                    """
+                    SELECT pg_get_functiondef(
+                       '"BM_Verify2HMidMonthCommit"()'::regprocedure)
+                    """, verification))
+                {
+                    var definition=(string?)await typedH4CommitGuard.ExecuteScalarAsync();
+                    Assert.NotNull(definition);
+                    Assert.Contains(
+                        "intent \"BuildingManagementRoomChangeDepositDispositionIntents\"%ROWTYPE",
+                        definition!, StringComparison.Ordinal);
+                    Assert.Contains(
+                        "\"BM_2HH4IntentMatchesSignedPolicy\"(intent)",
+                        definition!, StringComparison.Ordinal);
+                }
+
+                // The H4 liability must remain untruncatable even when
+                // there are zero rows. Verify the *executing* PostgreSQL
+                // trigger, not merely its pg_trigger metadata.
+                await using (var h4NoTruncateTx = await verification
+                    .BeginTransactionAsync(System.Data.IsolationLevel.Serializable))
+                {
+                    await using (var sql = new NpgsqlCommand(
+                        """
+                        TRUNCATE "BuildingManagementRoomChangeH4Obligations"
+                        """, verification, h4NoTruncateTx))
+                    {
+                        var denied = await Assert.ThrowsAsync<PostgresException>(
+                            async () => await sql.ExecuteNonQueryAsync());
+                        Assert.Equal("23514", denied.SqlState);
+                    }
+                    await h4NoTruncateTx.RollbackAsync();
+                }
+
+                // Verify the NEW forward migration actually corrected
+                // the SQL root/staff/classifier authorization deadlock while
+                // keeping three distinct original financial roles.
+                await using (var d03RootFunction = new NpgsqlCommand(
+                    """
+                    SELECT pg_get_functiondef(
+                      '"BM_GuardRoomChangeMidMonthOriginalClaims"()'::regprocedure)
+                    """, verification))
+                {
+                    var definition = (string?)await d03RootFunction.ExecuteScalarAsync();
+                    Assert.NotNull(definition);
+                    Assert.Contains(
+                        "NEW.\"RecordedByUserId\" IS DISTINCT FROM proposal.\"ProposedByUserId\"",
+                        definition!, StringComparison.Ordinal);
+                    Assert.Contains(
+                        "NEW.\"RecordedByUserId\"=decision.\"ReviewedByUserId\"",
+                        definition!, StringComparison.Ordinal);
+                    Assert.Contains(
+                        "NEW.\"RecordedByUserId\"=archive.\"ArchivedByUserId\"",
+                        definition!, StringComparison.Ordinal);
                 }
 
                 // A frozen monthly invoice fee must be bound to its ORIGINAL

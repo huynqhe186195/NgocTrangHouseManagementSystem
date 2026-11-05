@@ -114,7 +114,8 @@ public static class RoomChangeH4SettlementEvidenceGate
             var next = evidence.TransferDateVietnam.AddMonths(1);
             if (previous != 0m || newly != evidence.OriginalAmountVnd ||
                 evidence.TopUpDueDateVietnam.HasValue ||
-                evidence.OfficialIssuedInvoiceId is null or { } id && id == Guid.Empty ||
+                !evidence.OfficialIssuedInvoiceId.HasValue ||
+                evidence.OfficialIssuedInvoiceId == Guid.Empty ||
                 evidence.InvoiceTargetContractId != evidence.TargetContractId ||
                 evidence.InvoiceBillingYear != next.Year ||
                 evidence.InvoiceBillingMonth != next.Month ||

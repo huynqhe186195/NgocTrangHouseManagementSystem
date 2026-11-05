@@ -7001,6 +7001,153 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 Assert.Equal("23514", denied.SqlState);
             }
 
+            // D04 can post only reviewed original sources after H4 COMMIT.
+            // These transactions live solely in the disposable CI database.
+            var d04ReviewAt = h4At + "/d04-bank-evidence-review";
+            var d04PostAt = h4At + "/d04-post-settlement";
+            var d04BalanceAt = h4At + "/d04-settlement-balance";
+            using (var original = await clientRoot.GetAsync(d04BalanceAt))
+            {
+                Assert.Equal(HttpStatusCode.OK, original.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await original.Content.ReadAsStringAsync());
+                Assert.Equal(1_000_000m, json.RootElement
+                    .GetProperty("remainingOutstandingVnd").GetDecimal());
+                Assert.Equal(0L, json.RootElement
+                    .GetProperty("postingCount").GetInt64());
+            }
+            using (var staffCannotPost = await clientB.PostAsync(d04PostAt,
+                new StringContent(JsonSerializer.Serialize(new {
+                    reviewId = Guid.NewGuid()
+                }), Encoding.UTF8, "application/json")))
+                Assert.Equal(HttpStatusCode.Forbidden, staffCannotPost.StatusCode);
+
+            if (choice == 0)
+            {
+                // Two independently reviewed actual Completed Payment records.
+                // The H4 original top-up is not marked paid until BOTH posts.
+                foreach (var chunk in new[] { 400_000m, 600_000m })
+                {
+                    var paymentId = Guid.NewGuid();
+                    var bankRef = "D04-BANK-TOPUP-" + paymentId.ToString("N");
+                    using (var paymentScope = app.Services.CreateScope())
+                    {
+                        var sp = paymentScope.ServiceProvider;
+                        using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                            .Begin(requiresNew: true, isTransactional: true);
+                        var db = await sp.GetRequiredService<
+                            IDbContextProvider<BuildingManagementDbContext>>()
+                            .GetDbContextAsync();
+                        var receipt = new BuildingManagement.Payments.Payment(
+                            paymentId, "D04-RECEIPT-" + paymentId.ToString("N"),
+                            tenantB,
+                            BuildingManagement.Payments.PaymentPurpose.ContractDeposit,
+                            BuildingManagement.Payments.BuildingManagement.Payments
+                                .PaymentMethod.BankTransfer,
+                            BuildingManagement.Payments.PaymentChannel.Manual,
+                            chunk, contractId: h4TargetContract,
+                            transactionReference: bankRef,
+                            notes: "BANK-PROOF: disposable independent H4 top-up");
+                        receipt.Complete(DateTime.UtcNow, bankRef);
+                        db.Payments.Add(receipt);
+                        await db.SaveChangesAsync();
+                        await uow.CompleteAsync();
+                    }
+                    var rootReviewAttempt = await PostFinalAsync(clientRoot,
+                        d04ReviewAt, JsonSerializer.Serialize(new {
+                            kind = 1, paymentId,
+                            bankStatementEvidenceReference =
+                                "D04-BANK-STATEMENT-TOPUP-2026",
+                            signedReviewReference =
+                                "D04-INDEPENDENT-REVIEW-TOPUP-2026"
+                        }));
+                    Assert.Equal(HttpStatusCode.Forbidden, rootReviewAttempt.Status);
+
+                    Guid reviewId;
+                    using (var review = await Positive2HPostAsync(
+                        clientB, d04ReviewAt, new {
+                            kind = 1, paymentId,
+                            bankStatementEvidenceReference =
+                                "D04-BANK-STATEMENT-TOPUP-" +
+                                paymentId.ToString("N"),
+                            signedReviewReference =
+                                "D04-INDEPENDENT-TOPUP-" +
+                                paymentId.ToString("N")
+                        }))
+                    {
+                        reviewId = review.RootElement.GetProperty("id").GetGuid();
+                        Assert.False(review.RootElement.GetProperty(
+                            "isFinancialPosting").GetBoolean());
+                    }
+                    using (var posting = await Positive2HPostAsync(
+                        clientRoot, d04PostAt, new { reviewId }))
+                    {
+                        Assert.Equal(chunk, posting.RootElement
+                            .GetProperty("amountVnd").GetDecimal());
+                        Assert.True(posting.RootElement
+                            .GetProperty("isLedgerPosted").GetBoolean());
+                        Assert.False(posting.RootElement
+                            .GetProperty("isBankApiVerified").GetBoolean());
+                    }
+                }
+                using var settled = await clientRoot.GetAsync(d04BalanceAt);
+                Assert.Equal(HttpStatusCode.OK, settled.StatusCode);
+                using var statement = JsonDocument.Parse(
+                    await settled.Content.ReadAsStringAsync());
+                Assert.Equal(1_000_000m, statement.RootElement
+                    .GetProperty("ledgerPostedAmountVnd").GetDecimal());
+                Assert.Equal(0m, statement.RootElement
+                    .GetProperty("remainingOutstandingVnd").GetDecimal());
+                Assert.Equal(2L, statement.RootElement
+                    .GetProperty("postingCount").GetInt64());
+            }
+            else if (choice == 2)
+            {
+                var bankRef = "D04-REFUND-BANK-" + Guid.NewGuid().ToString("N");
+                var rootReviewAttempt = await PostFinalAsync(
+                    clientRoot, d04ReviewAt, JsonSerializer.Serialize(new {
+                        kind = 3, bankTransactionReference = bankRef,
+                        paidAtUtc = DateTime.UtcNow,
+                        bankStatementEvidenceReference =
+                            "D04-REFUND-STATEMENT-INDEPENDENT-2026",
+                        signedReviewReference =
+                            "D04-REFUND-REVIEW-INDEPENDENT-2026"
+                    }));
+                Assert.Equal(HttpStatusCode.Forbidden, rootReviewAttempt.Status);
+                Guid reviewId;
+                using (var review = await Positive2HPostAsync(
+                    clientB, d04ReviewAt, new {
+                        kind = 3, bankTransactionReference = bankRef,
+                        paidAtUtc = DateTime.UtcNow,
+                        bankStatementEvidenceReference =
+                            "D04-REFUND-STATEMENT-" + Guid.NewGuid().ToString("N"),
+                        signedReviewReference =
+                            "D04-REFUND-REVIEW-" + Guid.NewGuid().ToString("N")
+                    }))
+                    reviewId = review.RootElement.GetProperty("id").GetGuid();
+                using (var posting = await Positive2HPostAsync(
+                    clientRoot, d04PostAt, new { reviewId }))
+                {
+                    Assert.Equal(1_000_000m, posting.RootElement
+                        .GetProperty("amountVnd").GetDecimal());
+                    Assert.Equal(0m, posting.RootElement
+                        .GetProperty("remainingOutstandingVnd").GetDecimal());
+                    Assert.False(posting.RootElement
+                        .GetProperty("isBankTransferInitiatedBySystem").GetBoolean());
+                }
+            }
+            else
+            {
+                // Future rent credit cannot settle with a forged/non-issued
+                // invoice identifier. Positive credit needs a later actual
+                // target-room issued November receivable.
+                var deniedCredit = await PostFinalAsync(clientRoot,
+                    d04PostAt, JsonSerializer.Serialize(new {
+                        issuedInvoiceId = Guid.NewGuid()
+                    }));
+                Assert.Equal(HttpStatusCode.Forbidden, deniedCredit.Status);
+            }
+
             } // One fully independent H4 disposition scenario.
 
             await RunH4DispositionScenarioAsync(choice: 0);

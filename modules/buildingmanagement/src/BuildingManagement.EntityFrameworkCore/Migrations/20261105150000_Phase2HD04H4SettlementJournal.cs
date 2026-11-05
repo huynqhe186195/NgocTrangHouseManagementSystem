@@ -238,6 +238,40 @@ public sealed class Phase2HD04H4SettlementJournal : Migration
         CREATE TRIGGER "TR_BM_D04_H4PostingNoTruncate"
           BEFORE TRUNCATE ON "BuildingManagementRoomChangeH4SettlementPostings"
           FOR EACH STATEMENT EXECUTE FUNCTION "BM_D04NoTruncateH4Settlement"();
+
+        -- A bank receipt posted AFTER a next-rent credit must not overpay
+        -- the same immutable official receivable. Original receipt guards
+        -- did not know about D04's new journal, so enforce both sources.
+        CREATE FUNCTION "BM_D04GuardReceiptsAfterRentCredit"()
+        RETURNS trigger LANGUAGE plpgsql AS $credit_recheck$
+        DECLARE due record; receipts numeric; credits numeric; delta numeric;
+        BEGIN
+          IF NEW."Accepted" IS DISTINCT FROM TRUE THEN RETURN NEW; END IF;
+          SELECT * INTO due
+            FROM "BuildingManagementOfficialInvoiceReceivables"
+           WHERE "Id"=NEW."ReceivablePostingId" AND "Kind"=1 FOR UPDATE;
+          IF due."Id" IS NULL THEN RETURN NEW; END IF;
+          SELECT COALESCE(sum(p."AmountVnd"),0) INTO credits
+            FROM "BuildingManagementRoomChangeH4SettlementPostings" p
+           WHERE p."Kind"=2 AND p."IssuedInvoiceId"=due."IssuedInvoiceId";
+          SELECT COALESCE(sum(r."Amount"),0) INTO receipts
+            FROM "BuildingManagementOfficialInvoiceReceiptReviews" r
+           WHERE r."ReceivablePostingId"=due."Id" AND r."Accepted"=TRUE;
+          SELECT COALESCE(sum(a."ApprovedSignedDeltaAmount"),0) INTO delta
+            FROM "BuildingManagementMonthlyInvoiceAdjustmentDecisions" a
+           WHERE a."IssuedInvoiceId"=due."IssuedInvoiceId"
+             AND a."Accepted"=TRUE;
+          IF receipts+credits>due."OriginalAmount"+delta THEN
+            RAISE EXCEPTION 'D04 rent credit plus bank receipts exceed issued debt'
+              USING ERRCODE='23514';
+          END IF;
+          RETURN NEW;
+        END;
+        $credit_recheck$;
+        CREATE TRIGGER "TR_BM_D04_OfficialReceiptCreditCap"
+          AFTER INSERT ON "BuildingManagementOfficialInvoiceReceiptReviews"
+          FOR EACH ROW EXECUTE FUNCTION "BM_D04GuardReceiptsAfterRentCredit"();
+
         """);
 
     protected override void Down(MigrationBuilder b) => b.Sql("""
@@ -254,6 +288,9 @@ public sealed class Phase2HD04H4SettlementJournal : Migration
           END IF;
         END;
         $revert$;
+        DROP TRIGGER "TR_BM_D04_OfficialReceiptCreditCap"
+          ON "BuildingManagementOfficialInvoiceReceiptReviews";
+        DROP FUNCTION "BM_D04GuardReceiptsAfterRentCredit"();
         DROP TRIGGER "TR_BM_D04_H4PostingNoTruncate"
           ON "BuildingManagementRoomChangeH4SettlementPostings";
         DROP TRIGGER "TR_BM_D04_H4ReviewNoTruncate"

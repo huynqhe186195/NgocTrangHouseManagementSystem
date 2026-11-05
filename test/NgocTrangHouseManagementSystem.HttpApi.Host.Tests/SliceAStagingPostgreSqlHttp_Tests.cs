@@ -6471,6 +6471,29 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 }))
                 Assert.False(signedPrice.RootElement.GetProperty(
                     "canExecuteTransfer").GetBoolean());
+            // D06 negative authenticated gates: a random representative
+            // is not the current primary tenant, and a blank Owner signature
+            // cannot attest a three-party physical handover. Both must leave
+            // the route available for the subsequent valid signed archive.
+            var threePartyRoute = h4At + "/three-party-handover-archive";
+            var wrongRepresentative = await PostFinalAsync(clientRoot,
+                threePartyRoute, JsonSerializer.Serialize(new {
+                    tenantRepresentativeId = Guid.NewGuid(),
+                    ownerSignedReference = "OWNER-H4-PHYSICAL-HANDOVER-SIGNATURE-2026",
+                    staffSignedReference = "STAFF-H4-PHYSICAL-HANDOVER-SIGNATURE-2026",
+                    tenantSignedReference = "TENANT-H4-PHYSICAL-HANDOVER-SIGNATURE-2026",
+                    assetDefectReviewReference = "H4-INSPECTION-NO-DAMAGE-2026"
+                }));
+            Assert.Equal(HttpStatusCode.Forbidden, wrongRepresentative.Status);
+            var missingOwnerSignature = await PostFinalAsync(clientRoot,
+                threePartyRoute, JsonSerializer.Serialize(new {
+                    tenantRepresentativeId = tenantB,
+                    ownerSignedReference = "",
+                    staffSignedReference = "STAFF-H4-PHYSICAL-HANDOVER-SIGNATURE-2026",
+                    tenantSignedReference = "TENANT-H4-PHYSICAL-HANDOVER-SIGNATURE-2026",
+                    assetDefectReviewReference = "H4-INSPECTION-NO-DAMAGE-2026"
+                }));
+            Assert.Equal(HttpStatusCode.Forbidden, missingOwnerSignature.Status);
             using (var signedPhysical = await Positive2HPostAsync(clientRoot,
                 h4At + "/three-party-handover-archive", new {
                     tenantRepresentativeId = tenantB,

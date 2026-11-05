@@ -7156,6 +7156,38 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 Assert.Equal(HttpStatusCode.Forbidden, deniedCredit.Status);
             }
 
+            // D04 SQL-bypass negative: no operator, including the Owner,
+            // may rewrite or delete historical settlement evidence. Probes
+            // run on isolated disposable PostgreSQL, not application DB.
+            if (choice is 0 or 2)
+            {
+                await using var journalAttack = new NpgsqlConnection(buildingCs);
+                await journalAttack.OpenAsync();
+                foreach (var commandText in new[] {
+                    """
+                    UPDATE "BuildingManagementRoomChangeH4SettlementPostings"
+                       SET "AmountVnd"="AmountVnd"+1
+                     WHERE "ObligationId" IN (
+                        SELECT "Id" FROM "BuildingManagementRoomChangeH4Obligations"
+                         WHERE "RequestId"=@request)
+                    """,
+                    """
+                    DELETE FROM "BuildingManagementRoomChangeH4SettlementPostings"
+                     WHERE "ObligationId" IN (
+                        SELECT "Id" FROM "BuildingManagementRoomChangeH4Obligations"
+                         WHERE "RequestId"=@request)
+                    """
+                })
+                {
+                    await using var attack = new NpgsqlCommand(
+                        commandText, journalAttack);
+                    attack.Parameters.AddWithValue("request", h4Request);
+                    var failure = await Assert.ThrowsAsync<PostgresException>(
+                        async () => await attack.ExecuteNonQueryAsync());
+                    Assert.Equal("23514", failure.SqlState);
+                }
+            }
+
             } // One fully independent H4 disposition scenario.
 
             await RunH4DispositionScenarioAsync(choice: 0);

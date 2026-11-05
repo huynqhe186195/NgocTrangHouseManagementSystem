@@ -15,14 +15,14 @@ This is a **review checklist**, not proof that code or banking behavior is accep
 - [x] Specification requires cash provenance, unique VND disposition and immutable audit trail.
 - [x] Specification requires authenticated ABP building isolation and independent approvals.
 - [x] Specification includes replay, duplicate, concurrent request, rollback and SQL-bypass negatives.
-- [ ] All requirements mapped to implementation and exact-SHA tests with evidence (T004–T008).
+- [x] Each AC-H4-01–12 mapped to source, test IDs, exact CI context and evidence gaps in `../acceptance-matrix.md`. Mapping completion is NOT full AC acceptance; T007 remains partial.
 
 ## Delivery evidence
 
 - [x] Baseline commit and relevant two GitHub Actions run URLs recorded.
 - [ ] Current HEAD rechecked immediately before implementation.
-- [ ] Detailed CI group logs/TRX reviewed; counts and exclusions recorded.
-- [ ] Acceptance matrix completed and missing tests converted to explicit tasks.
+- [x] CI job logs and their real test counts reviewed and recorded in `../acceptance-matrix.md`; artifact ZIP/TRX XML was not independently downloaded, and PR checks used the synthetic merge SHA.
+- [x] Acceptance matrix completed; unmet H4 executed-settlement work and H4-specific revocation test audit retained as open T007/T009/D04-H4, without inventing an implementation.
 - [ ] Independent code PR (if necessary) passes matching SHA checks.
 - [ ] Business acceptance decision recorded by authorized owner.
 - [ ] Production release authorized separately. **Currently forbidden.**

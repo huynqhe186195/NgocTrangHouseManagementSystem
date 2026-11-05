@@ -6,7 +6,8 @@
 - [x] Audit existing `RoomChangeDailyRentQuoteCalculator`, `RoomChangeApprovedH2H3ExecutionPolicy` and current H4 execution guards; reuse accepted source.
 - [x] Add exhaustive calendar oracle: 118 daily scenarios in existing `TRF_D01_04` Fact (xUnit test count unchanged).
 - [x] Add even/odd month midpoint rounding oracle in existing `TRF_D01_08` Fact (xUnit test count unchanged).
-- [ ] Verify CI on the **new exact SHA**, including test counts, failures, skips and scratch PostgreSQL/HTTP workflow conclusions.
+- [x] **Persisted SQL candidate regression implemented, CI NOT YET ACCEPTED:** extend existing `TRFPG34` to write and independently re-read all **118 signed/reviewed** D01/D02 date partitions across 28/29/30/31-day months in a single rollback-only SERIALIZABLE PostgreSQL scratch schema; verify stored integer VND amounts, day ownership and canonical SQL↔.NET digest for each row. Extend existing `TRFPG31` with SQL-persisted 22.5→23 VND cases for 28/30-day months. Preserve the seven existing xUnit Facts and strict **103** focused PG gate. Commit `684c5693` is only the first test-code candidate; exact-head CI is required before any PASS claim.
+- [ ] Verify CI on the **new exact SHA**, including test counts, failures, skips and scratch PostgreSQL/HTTP workflow conclusions. The 118 SQL candidate rows are NOT 118 issued invoices or 118 authenticated H4 transfers.
 - [ ] Independently inspect archived TRX XML when asserting artifact-level counters.
 - [ ] Persisted signed D01/D02 source ↔ official issued rent line and append-only correction / no overlapping days, with SQL parity and authenticated HTTP negative and positive tests.
 - [ ] Regression proof for ordinary 2G.5 full-final-month rent and immutable existing invoice.

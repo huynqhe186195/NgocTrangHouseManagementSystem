@@ -184,6 +184,14 @@ public sealed class RoomChangeDayPricingRulePostgreSql_Tests
                 sourceDays: f.Rule.SourceChargeableDays + 1), "23514");
             await Denied(db, tx, () => Insert(db, tx, f.Rule,
                 calendarDays: f.Rule.CalendarDays + 1), "23514");
+            // Signed date, day owner and rounding are also protected.
+            // Keep authentic amounts and hash, altering exactly one field.
+            await Denied(db, tx, () => Insert(db, tx, f.Rule,
+                transferDate: f.Rule.TransferDate.AddDays(1)), "23514");
+            await Denied(db, tx, () => Insert(db, tx, f.Rule,
+                transferDayOwner: RoomChangeTransferDayChargeOwner.SourceRoom), "23514");
+            await Denied(db, tx, () => Insert(db, tx, f.Rule,
+                roundingRule: RoomChangeRentRoundingRule.TruncateToWholeVnd), "23514");
             // Neither room's signed monthly rent may be changed directly,
             // even when the proposed daily charge and all dates stay put.
             await Denied(db, tx, () => Insert(db, tx, f.Rule,
@@ -421,7 +429,10 @@ public sealed class RoomChangeDayPricingRulePostgreSql_Tests
         string? pricingRef = null, string? hash = null, int? targetDays = null,
         decimal? targetCharge = null, int? sourceDays = null,
         int? calendarDays = null, decimal? sourceMonthlyRent = null,
-        decimal? targetMonthlyRent = null)
+        decimal? targetMonthlyRent = null,
+        DateOnly? transferDate = null,
+        RoomChangeTransferDayChargeOwner? transferDayOwner = null,
+        RoomChangeRentRoundingRule? roundingRule = null)
     {
         await using var cmd = new NpgsqlCommand("""
             INSERT INTO "BuildingManagementRoomChangeDayPricingRuleCandidates"
@@ -446,9 +457,9 @@ public sealed class RoomChangeDayPricingRulePostgreSql_Tests
         cmd.Parameters.AddWithValue("roster",r.RosterSnapshotId);
         cmd.Parameters.AddWithValue("policy",r.PolicyId);
         cmd.Parameters.AddWithValue("review",r.PolicyReviewId);
-        cmd.Parameters.AddWithValue("date",r.TransferDate);
-        cmd.Parameters.AddWithValue("owner",(int)r.TransferDayOwner);
-        cmd.Parameters.AddWithValue("rounding",(int)r.Rounding);
+        cmd.Parameters.AddWithValue("date",transferDate??r.TransferDate);
+        cmd.Parameters.AddWithValue("owner",(int)(transferDayOwner??r.TransferDayOwner));
+        cmd.Parameters.AddWithValue("rounding",(int)(roundingRule??r.Rounding));
         cmd.Parameters.AddWithValue("days",calendarDays??r.CalendarDays);
         cmd.Parameters.AddWithValue("oldDays",sourceDays??r.SourceChargeableDays);
         cmd.Parameters.AddWithValue("newDays",targetDays??r.TargetChargeableDays);

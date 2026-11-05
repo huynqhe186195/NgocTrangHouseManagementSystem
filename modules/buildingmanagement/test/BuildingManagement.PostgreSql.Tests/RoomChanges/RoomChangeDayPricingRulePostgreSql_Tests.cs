@@ -184,6 +184,12 @@ public sealed class RoomChangeDayPricingRulePostgreSql_Tests
                 sourceDays: f.Rule.SourceChargeableDays + 1), "23514");
             await Denied(db, tx, () => Insert(db, tx, f.Rule,
                 calendarDays: f.Rule.CalendarDays + 1), "23514");
+            // Neither room's signed monthly rent may be changed directly,
+            // even when the proposed daily charge and all dates stay put.
+            await Denied(db, tx, () => Insert(db, tx, f.Rule,
+                sourceMonthlyRent: f.Rule.SourceMonthlyRentVnd + 1m), "23514");
+            await Denied(db, tx, () => Insert(db, tx, f.Rule,
+                targetMonthlyRent: f.Rule.TargetMonthlyRentVnd + 1m), "23514");
             await Denied(db, tx, () => Insert(db, tx, f.Rule,
                 pricingRef: "FORGED-D01-D02-TARIFF-DOCUMENT-2026"), "23514");
             await Denied(db, tx, () => Insert(db, tx, f.Rule,
@@ -398,7 +404,8 @@ public sealed class RoomChangeDayPricingRulePostgreSql_Tests
         RoomChangeDayPricingRuleCandidate r, decimal? sourceCharge = null,
         string? pricingRef = null, string? hash = null, int? targetDays = null,
         decimal? targetCharge = null, int? sourceDays = null,
-        int? calendarDays = null)
+        int? calendarDays = null, decimal? sourceMonthlyRent = null,
+        decimal? targetMonthlyRent = null)
     {
         await using var cmd = new NpgsqlCommand("""
             INSERT INTO "BuildingManagementRoomChangeDayPricingRuleCandidates"
@@ -429,8 +436,8 @@ public sealed class RoomChangeDayPricingRulePostgreSql_Tests
         cmd.Parameters.AddWithValue("days",calendarDays??r.CalendarDays);
         cmd.Parameters.AddWithValue("oldDays",sourceDays??r.SourceChargeableDays);
         cmd.Parameters.AddWithValue("newDays",targetDays??r.TargetChargeableDays);
-        cmd.Parameters.AddWithValue("oldRent",r.SourceMonthlyRentVnd);
-        cmd.Parameters.AddWithValue("newRent",r.TargetMonthlyRentVnd);
+        cmd.Parameters.AddWithValue("oldRent",sourceMonthlyRent??r.SourceMonthlyRentVnd);
+        cmd.Parameters.AddWithValue("newRent",targetMonthlyRent??r.TargetMonthlyRentVnd);
         cmd.Parameters.AddWithValue("oldPrice",sourceCharge??r.ProposedSourceRentVnd);
         cmd.Parameters.AddWithValue("newPrice",targetCharge??r.ProposedTargetRentVnd);
         cmd.Parameters.AddWithValue("rule",pricingRef??r.SignedPricingRuleReference);

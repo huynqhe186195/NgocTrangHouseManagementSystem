@@ -140,8 +140,8 @@ public sealed class Phase2HD04H4SettlementJournal : Migration
         CREATE FUNCTION "BM_D04GuardH4SettlementPosting"()
         RETURNS trigger LANGUAGE plpgsql AS $posting$
         DECLARE obligation record; review record; invoice record;
-                receivable record; prior numeric; received numeric;
-                signed_delta numeric; month_start date;
+                receivable record; candidate record; prior numeric;
+                received numeric; signed_delta numeric; month_start date;
         BEGIN
           IF TG_OP<>'INSERT' OR
              current_setting('transaction_isolation')<>'serializable' THEN
@@ -188,6 +188,9 @@ public sealed class Phase2HD04H4SettlementJournal : Migration
             SELECT * INTO invoice
               FROM "BuildingManagementMonthlyIssuedInvoiceLedger"
              WHERE "Id"=NEW."IssuedInvoiceId" FOR SHARE;
+            SELECT * INTO candidate
+              FROM "BuildingManagementMonthlyInvoiceCandidates"
+             WHERE "Id"=invoice."CandidateId" FOR SHARE;
             SELECT * INTO receivable
               FROM "BuildingManagementOfficialInvoiceReceivables"
              WHERE "IssuedInvoiceId"=NEW."IssuedInvoiceId"
@@ -203,6 +206,9 @@ public sealed class Phase2HD04H4SettlementJournal : Migration
                  FROM "BuildingManagementRoomChangeRequests"
                 WHERE "Id"=obligation."RequestId")) + interval '1 month')::date;
             IF invoice."Id" IS NULL OR receivable."Id" IS NULL
+               OR candidate."Id" IS NULL
+               OR candidate."ContractId" IS DISTINCT FROM invoice."ContractId"
+               OR candidate."RentAmount"-received<NEW."AmountVnd"
                OR invoice."ContractId" IS DISTINCT FROM obligation."TargetContractId"
                OR receivable."ContractId" IS DISTINCT FROM invoice."ContractId"
                OR invoice."BuildingId" IS DISTINCT FROM receivable."BuildingId"

@@ -171,6 +171,13 @@ public sealed class RoomChangeDayPricingRulePostgreSql_Tests
             await Seed(db, tx, f);
             await Denied(db, tx, () => Insert(db, tx, f.Rule,
                 sourceCharge: 1m), "23514");
+            // Reject tampering with either signed rent line independently.
+            // A valid combined total cannot excuse a forged target line.
+            await Denied(db, tx, () => Insert(db, tx, f.Rule,
+                targetCharge: 1m), "23514");
+            // Source D-1 and target D must partition the calendar month.
+            await Denied(db, tx, () => Insert(db, tx, f.Rule,
+                targetDays: f.Rule.TargetChargeableDays + 1), "23514");
             await Denied(db, tx, () => Insert(db, tx, f.Rule,
                 pricingRef: "FORGED-D01-D02-TARIFF-DOCUMENT-2026"), "23514");
             await Denied(db, tx, () => Insert(db, tx, f.Rule,
@@ -383,7 +390,8 @@ public sealed class RoomChangeDayPricingRulePostgreSql_Tests
 
     private static async Task Insert(NpgsqlConnection db, NpgsqlTransaction tx,
         RoomChangeDayPricingRuleCandidate r, decimal? sourceCharge = null,
-        string? pricingRef = null, string? hash = null, int? targetDays = null)
+        string? pricingRef = null, string? hash = null, int? targetDays = null,
+        decimal? targetCharge = null)
     {
         await using var cmd = new NpgsqlCommand("""
             INSERT INTO "BuildingManagementRoomChangeDayPricingRuleCandidates"
@@ -417,7 +425,7 @@ public sealed class RoomChangeDayPricingRulePostgreSql_Tests
         cmd.Parameters.AddWithValue("oldRent",r.SourceMonthlyRentVnd);
         cmd.Parameters.AddWithValue("newRent",r.TargetMonthlyRentVnd);
         cmd.Parameters.AddWithValue("oldPrice",sourceCharge??r.ProposedSourceRentVnd);
-        cmd.Parameters.AddWithValue("newPrice",r.ProposedTargetRentVnd);
+        cmd.Parameters.AddWithValue("newPrice",targetCharge??r.ProposedTargetRentVnd);
         cmd.Parameters.AddWithValue("rule",pricingRef??r.SignedPricingRuleReference);
         cmd.Parameters.AddWithValue("actor",r.PreparedByUserId);
         cmd.Parameters.AddWithValue("time",r.PreparedAtUtc);

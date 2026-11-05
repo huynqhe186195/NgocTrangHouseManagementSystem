@@ -198,6 +198,18 @@ public sealed class RoomChangeDayPricingRulePostgreSql_Tests
             // A SQLSTATE alone is insufficient evidence of atomic rollback.
             Assert.Equal(0L, await Scalar(db, tx,
                 """SELECT count(*) FROM "BuildingManagementRoomChangeDayPricingRuleCandidates" """));
+            // A genuine signed candidate may be stored once. An exact
+            // replay must fail on the persisted identity and must not
+            // replace or add a second financial pricing candidate.
+            await Insert(db, tx, f.Rule);
+            var originalDigest = await StringScalar(db, tx,
+                $"""SELECT "EvidenceSha256" FROM "BuildingManagementRoomChangeDayPricingRuleCandidates" WHERE "Id"='{f.Rule.Id:D}'""");
+            Assert.Equal(f.Rule.EvidenceSha256, originalDigest);
+            await Denied(db, tx, () => Insert(db, tx, f.Rule), "23505");
+            Assert.Equal(1L, await Scalar(db, tx,
+                """SELECT count(*) FROM "BuildingManagementRoomChangeDayPricingRuleCandidates" """));
+            Assert.Equal(originalDigest, await StringScalar(db, tx,
+                $"""SELECT "EvidenceSha256" FROM "BuildingManagementRoomChangeDayPricingRuleCandidates" WHERE "Id"='{f.Rule.Id:D}'"""));
         });
     }
 

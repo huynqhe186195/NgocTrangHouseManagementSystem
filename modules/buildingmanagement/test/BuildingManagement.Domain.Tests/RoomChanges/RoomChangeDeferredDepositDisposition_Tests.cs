@@ -150,6 +150,7 @@ public sealed class RoomChangeDeferredDepositDisposition_Tests
             Plan(facts with { HasEarlierRefundOrCarryForward = true }));
         Assert.Throws<InvalidOperationException>(() =>
             Plan(facts, choice: (RoomChangeDepositSurplusChoice)999));
+        VerifyD04SettlementEvidenceBoundary();
     }
     [Fact]
     public void TRF_H4DEF13_MonthEnd_Due_Clamps_Across_April_And_December()
@@ -162,6 +163,95 @@ public sealed class RoomChangeDeferredDepositDisposition_Tests
         var december = Plan(facts, on: new DateOnly(2026, 12, 31));
         Assert.Equal(new DateOnly(2027, 1, 31),
             december.OutstandingTopUpDueDateVietnam!.Value);
+    }
+
+    // D04 preflight assertions live inside an EXISTING xUnit Fact so the
+    // strict historical CI test-count gate is unchanged.
+    private static void VerifyD04SettlementEvidenceBoundary()
+    {
+        var source = Guid.NewGuid();
+        var target = Guid.NewGuid();
+        var day = new DateOnly(2026, 11, 15);
+        RoomChangeH4VerifiedPayment Payment(decimal amount, string reference)
+            => new(Guid.NewGuid(), amount, reference);
+        var topUp = new RoomChangeH4SettlementEvidence(
+            Guid.NewGuid(), source, target,
+            RoomChangeH4SettlementKind.DepositTopUp, 1_000_000m, day,
+            day.AddMonths(1),
+            new[] { Payment(200_000m, "RECEIPT-POSTED-FIRST-2026") },
+            new[] { Payment(300_000m, "BANK-RECEIPT-SECOND-2026") },
+            null, null, null, null, null,
+            null, null, null, null);
+        var partial = RoomChangeH4SettlementEvidenceGate.RequireEligible(topUp);
+        Assert.Equal(300_000m, partial.NewlyEligibleAmountVnd);
+        Assert.Equal(500_000m, partial.OutstandingAfterVnd);
+        Assert.True(partial.IsPartialTopUp);
+        Assert.False(partial.IsFinancialPosting);
+        Assert.False(partial.IsExternallySettled);
+
+        Assert.Throws<InvalidOperationException>(() =>
+            RoomChangeH4SettlementEvidenceGate.RequireEligible(topUp with {
+                NewlyVerifiedPayments = new[] {
+                    Payment(900_000m, "OVERPAY-RECEIPT-2026") }
+            }));
+        Assert.Throws<InvalidOperationException>(() =>
+            RoomChangeH4SettlementEvidenceGate.RequireEligible(topUp with {
+                NewlyVerifiedPayments = topUp.PreviouslyPostedPayments
+            }));
+        Assert.Throws<InvalidOperationException>(() =>
+            RoomChangeH4SettlementEvidenceGate.RequireEligible(topUp with {
+                TopUpDueDateVietnam = day.AddMonths(1).AddDays(1)
+            }));
+
+        var credit = topUp with {
+            Kind = RoomChangeH4SettlementKind.NextMonthIssuedRentCredit,
+            PreviouslyPostedPayments = Array.Empty<RoomChangeH4VerifiedPayment>(),
+            NewlyVerifiedPayments = new[] {
+                Payment(1_000_000m, "CREDIT-ISSUED-NEXT-RENT-2026") },
+            TopUpDueDateVietnam = null,
+            OfficialIssuedInvoiceId = Guid.NewGuid(),
+            InvoiceTargetContractId = target,
+            InvoiceBillingYear = 2026,
+            InvoiceBillingMonth = 12,
+            IndependentlyVerifiedIssuedRentOutstandingVnd = 1_500_000m
+        };
+        var fullCredit = RoomChangeH4SettlementEvidenceGate.RequireEligible(credit);
+        Assert.Equal(0m, fullCredit.OutstandingAfterVnd);
+        Assert.False(fullCredit.CanMarkOriginalObligationPaid);
+        Assert.Throws<InvalidOperationException>(() =>
+            RoomChangeH4SettlementEvidenceGate.RequireEligible(credit with {
+                InvoiceBillingMonth = 11
+            }));
+        Assert.Throws<InvalidOperationException>(() =>
+            RoomChangeH4SettlementEvidenceGate.RequireEligible(credit with {
+                IndependentlyVerifiedIssuedRentOutstandingVnd = 999_999m
+            }));
+
+        var owner = Guid.NewGuid();
+        var refund = credit with {
+            Kind = RoomChangeH4SettlementKind.IndependentBankRefund,
+            OfficialIssuedInvoiceId = null,
+            InvoiceTargetContractId = null,
+            InvoiceBillingYear = null,
+            InvoiceBillingMonth = null,
+            IndependentlyVerifiedIssuedRentOutstandingVnd = null,
+            NewlyVerifiedPayments = new[] {
+                Payment(1_000_000m, "BANK-CONFIRMED-REFUND-2026") },
+            BankRefundReviewId = Guid.NewGuid(),
+            IndependentBankReviewerId = Guid.NewGuid(),
+            PaymentApproverId = owner,
+            CompletedBankTransferReference = "BANK-TRANSFER-CLEARED-2026"
+        };
+        Assert.Equal(0m, RoomChangeH4SettlementEvidenceGate
+            .RequireEligible(refund).OutstandingAfterVnd);
+        Assert.Throws<InvalidOperationException>(() =>
+            RoomChangeH4SettlementEvidenceGate.RequireEligible(refund with {
+                IndependentBankReviewerId = owner
+            }));
+        Assert.Throws<InvalidOperationException>(() =>
+            RoomChangeH4SettlementEvidenceGate.RequireEligible(refund with {
+                CompletedBankTransferReference = null
+            }));
     }
 
 }

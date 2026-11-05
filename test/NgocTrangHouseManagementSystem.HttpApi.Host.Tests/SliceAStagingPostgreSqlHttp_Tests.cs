@@ -7089,6 +7089,11 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                         Assert.False(posting.RootElement
                             .GetProperty("isBankApiVerified").GetBoolean());
                     }
+                    // A reviewed receipt cannot be claimed by the H4
+                    // settlement journal for a second time.
+                    var duplicate = await PostFinalAsync(clientRoot, d04PostAt,
+                        JsonSerializer.Serialize(new { reviewId }));
+                    Assert.Equal(HttpStatusCode.Forbidden, duplicate.Status);
                 }
                 using var settled = await clientRoot.GetAsync(d04BalanceAt);
                 Assert.Equal(HttpStatusCode.OK, settled.StatusCode);
@@ -7135,6 +7140,9 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     Assert.False(posting.RootElement
                         .GetProperty("isBankTransferInitiatedBySystem").GetBoolean());
                 }
+                var duplicateRefund = await PostFinalAsync(clientRoot,
+                    d04PostAt, JsonSerializer.Serialize(new { reviewId }));
+                Assert.Equal(HttpStatusCode.Forbidden, duplicateRefund.Status);
             }
             else
             {

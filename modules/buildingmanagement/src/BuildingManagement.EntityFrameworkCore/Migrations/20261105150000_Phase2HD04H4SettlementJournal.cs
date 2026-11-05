@@ -284,6 +284,39 @@ public sealed class Phase2HD04H4SettlementJournal : Migration
           AFTER INSERT ON "BuildingManagementOfficialInvoiceReceiptReviews"
           FOR EACH ROW EXECUTE FUNCTION "BM_D04GuardReceiptsAfterRentCredit"();
 
+        -- The opposite ordering is equally dangerous: a new approved
+        -- correction cannot erase debt already consumed by a D04 rent credit.
+        CREATE FUNCTION "BM_D04GuardAdjustmentsAfterRentCredit"()
+        RETURNS trigger LANGUAGE plpgsql AS $delta_recheck$
+        DECLARE due record; receipts numeric; credits numeric; delta numeric;
+        BEGIN
+          IF NEW."Accepted" IS DISTINCT FROM TRUE THEN RETURN NEW; END IF;
+          SELECT * INTO due
+            FROM "BuildingManagementOfficialInvoiceReceivables"
+           WHERE "IssuedInvoiceId"=NEW."IssuedInvoiceId" AND "Kind"=1
+           FOR UPDATE;
+          IF due."Id" IS NULL THEN RETURN NEW; END IF;
+          SELECT COALESCE(sum(p."AmountVnd"),0) INTO credits
+            FROM "BuildingManagementRoomChangeH4SettlementPostings" p
+           WHERE p."Kind"=2 AND p."IssuedInvoiceId"=due."IssuedInvoiceId";
+          SELECT COALESCE(sum(r."Amount"),0) INTO receipts
+            FROM "BuildingManagementOfficialInvoiceReceiptReviews" r
+           WHERE r."ReceivablePostingId"=due."Id" AND r."Accepted"=TRUE;
+          SELECT COALESCE(sum(a."ApprovedSignedDeltaAmount"),0) INTO delta
+            FROM "BuildingManagementMonthlyInvoiceAdjustmentDecisions" a
+           WHERE a."IssuedInvoiceId"=due."IssuedInvoiceId" AND a."Accepted"=TRUE;
+          IF credits+receipts>due."OriginalAmount"+delta THEN
+            RAISE EXCEPTION 'D04 credit cannot exceed corrected issued debt'
+              USING ERRCODE='23514';
+          END IF;
+          RETURN NEW;
+        END;
+        $delta_recheck$;
+        CREATE TRIGGER "TR_BM_D04_AdjustmentCreditCap"
+          AFTER INSERT ON "BuildingManagementMonthlyInvoiceAdjustmentDecisions"
+          FOR EACH ROW EXECUTE FUNCTION "BM_D04GuardAdjustmentsAfterRentCredit"();
+
+
         """);
 
     protected override void Down(MigrationBuilder b) => b.Sql("""
@@ -300,6 +333,9 @@ public sealed class Phase2HD04H4SettlementJournal : Migration
           END IF;
         END;
         $revert$;
+        DROP TRIGGER "TR_BM_D04_AdjustmentCreditCap"
+          ON "BuildingManagementMonthlyInvoiceAdjustmentDecisions";
+        DROP FUNCTION "BM_D04GuardAdjustmentsAfterRentCredit"();
         DROP TRIGGER "TR_BM_D04_OfficialReceiptCreditCap"
           ON "BuildingManagementOfficialInvoiceReceiptReviews";
         DROP FUNCTION "BM_D04GuardReceiptsAfterRentCredit"();

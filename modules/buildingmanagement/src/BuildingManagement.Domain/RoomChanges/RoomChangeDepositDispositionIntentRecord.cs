@@ -115,6 +115,43 @@ public sealed record RoomChangeDepositDispositionIntentRecord(
             EvidenceSha256 != Fingerprint())
             throw new InvalidDataException(
                 "Original H4 disposition intent evidence was modified.");
+
+        // A SHA-256 checksum is not an Owner signature. Recompute the
+        // exclusive top-up/credit/refund split from its frozen financial
+        // facts, so a re-hashed but contradictory record also fails closed.
+        try
+        {
+            var originalFacts = new RoomChangeDepositDifferenceFacts(
+                SourceContractId, TargetContractId,
+                ClaimedOriginalSourceHeldVnd,
+                AlreadyPostedApprovedDeductionsVnd,
+                TargetRequiredDepositVnd, OriginalCashLedgerReference,
+                TargetDepositPolicyReference, SignedDeductionReference,
+                HasUnresolvedDispute: false,
+                HasEarlierRefundOrCarryForward: false);
+            var canonical = RoomChangeDeferredDepositDispositionPlanner.Plan(
+                RequestId, originalFacts, TransferDateVietnam,
+                SurplusChoice, ProposedTopUpDueDateVietnam);
+            if (ClaimedOriginalSourceHeldVnd != canonical.SourceCashBackedHeldVnd ||
+                AlreadyPostedApprovedDeductionsVnd !=
+                    canonical.AlreadyPostedApprovedDeductionsVnd ||
+                ProposedCarryTargetVnd != canonical.CarriedTargetDepositVnd ||
+                TargetRequiredDepositVnd != canonical.TargetRequiredDepositVnd ||
+                ProposedUnpaidTopUpVnd != canonical.OutstandingTopUpReceivableVnd ||
+                ProposedTopUpDueDateVietnam !=
+                    canonical.OutstandingTopUpDueDateVietnam ||
+                ProposedFutureRentCreditVnd !=
+                    canonical.NextMonthRentCreditLiabilityVnd ||
+                ProposedManualRefundVnd != canonical.ManualRefundLiabilityVnd)
+                throw new InvalidDataException(
+                    "H4 proposed deposit obligations violate the original conservation rules.");
+        }
+        catch (Exception e) when (e is InvalidOperationException or
+            OverflowException or ArgumentOutOfRangeException)
+        {
+            throw new InvalidDataException(
+                "H4 proposed deposit accounting cannot be reconstructed.", e);
+        }
     }
 
     private static bool ValidReference(string? reference)

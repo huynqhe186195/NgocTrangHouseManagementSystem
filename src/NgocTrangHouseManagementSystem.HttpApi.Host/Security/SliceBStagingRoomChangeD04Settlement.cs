@@ -288,8 +288,17 @@ public sealed partial class SliceBStagingRoomChangeRequests
                 var adjustments = await db.MonthlyInvoiceAdjustmentDecisions
                     .AsNoTracking().Where(x => x.IssuedInvoiceId == invoiceId &&
                         x.Accepted).SumAsync(x => x.ApprovedSignedDeltaAmount);
-                invoiceOutstanding = receivable.OriginalAmount +
-                    adjustments - receipts;
+                // D04 policy is RENT-only: reserve all bank receipts
+                // against the rent component conservatively, so no credit
+                // can spill into electricity, water or auxiliary fees.
+                var originalCandidate = await db.MonthlyInvoiceCandidates
+                    .AsNoTracking().SingleOrDefaultAsync(x =>
+                        x.Id == issued.CandidateId &&
+                        x.ContractId == claim.TargetContractId)
+                    ?? throw Denied();
+                invoiceOutstanding = Math.Min(
+                    receivable.OriginalAmount + adjustments - receipts,
+                    originalCandidate.RentAmount - receipts);
                 amount = claim.Amount;
                 sourceReference = issued.InvoiceNumber;
                 issueTarget = issued.ContractId;

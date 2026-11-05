@@ -15,14 +15,14 @@ This is a **review checklist**, not proof that code or banking behavior is accep
 - [x] Specification requires cash provenance, unique VND disposition and immutable audit trail.
 - [x] Specification requires authenticated ABP building isolation and independent approvals.
 - [x] Specification includes replay, duplicate, concurrent request, rollback and SQL-bypass negatives.
-- [x] Each AC-H4-01–12 mapped to source, test IDs, exact CI context and evidence gaps in `../acceptance-matrix.md`. Mapping completion is NOT full AC acceptance; T007 remains partial.
+- [x] Each AC-H4-01–12 mapped to source, test IDs, exact CI context and evidence gaps in `../acceptance-matrix.md`. Mapping completion is NOT full AC acceptance. T007's bounded Identity/Building revocation regression passed on PR #4 exact SHA, but broader AC-H4-09 across future financial-posting endpoints remains PARTIAL and combined PR #5 requires fresh exact-head checks.
 
 ## Delivery evidence
 
 - [x] Baseline commit and relevant two GitHub Actions run URLs recorded.
 - [ ] Current HEAD rechecked immediately before implementation.
 - [x] CI job logs and their real test counts reviewed and recorded in `../acceptance-matrix.md`; artifact ZIP/TRX XML was not independently downloaded, and PR checks used the synthetic merge SHA.
-- [x] Acceptance matrix completed; unmet H4 executed-settlement work and H4-specific revocation test audit retained as open T007/T009/D04-H4, without inventing an implementation.
+- [x] Acceptance matrix completed; unmet H4 external financial settlement remains T009/D04-H4 HOLD. T007's bounded H4 staging-security regression is evidenced in PR #4, with combined PR #5 verification and human review still open; no financial implementation is inferred.
 - [ ] Independent code PR (if necessary) passes matching SHA checks.
 - [ ] Business acceptance decision recorded by authorized owner.
 - [ ] Production release authorized separately. **Currently forbidden.**

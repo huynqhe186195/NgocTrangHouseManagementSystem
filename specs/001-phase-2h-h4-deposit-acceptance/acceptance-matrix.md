@@ -1,0 +1,51 @@
+# Feature 001 — H4 Acceptance Evidence Matrix
+
+**Audit date:** 2026-11-05 (Asia/Ho_Chi_Minh)
+**Scope:** evidence reconciliation only; no application, migration, deployment or bank execution changes.
+**Source under review:** `wip/phase-2g2` @ `a9519996c06d42db880cec4a741036a2e520e460`.
+**Spec proposal:** `chore/adopt-spec-kit-20261105` @ `2c1ad737b385c0c244e4fa74950adb81c8b66060`, PR #3 (draft).
+**Important PR CI SHA nuance:** the PR checkouts report temporary test-merge SHA `3285089ea25d1ba111d409de93cdeaffb67d91cd` rather than the branch-head SHA. No business source files changed between the audited parent and PR head; do not label a PR synthetic-merge check as a direct branch-head test.
+
+## CI observations (actual job logs, not merely workflow definitions)
+
+- PR PostgreSQL workflow: https://github.com/huynqhe186195/NgocTrangHouseManagementSystem/actions/runs/41985608433; authenticated `STAGEPGHTTP01` 1/1 PASS, full migration chain 1/1 PASS, selected H2–H6 PostgreSQL 103/103 PASS, zero failures in those selected runs.
+- PR Windows workflow: https://github.com/huynqhe186195/NgocTrangHouseManagementSystem/actions/runs/41985608440; selected Domain 165/165 PASS, Domain regression 712/712 PASS, Application 183/183 PASS, EntityFrameworkCore 447/447 PASS, HTTP Host 76/76 PASS (zero failures/skips in those regression summaries).
+- Windows TRX parser's 165/165 and 96/96 fixture probes are synthetic parser tests; only the separately reported real 165/165 Domain run is behavioral evidence. The selected 165 tests overlap with the 712 Domain regression count. Never sum overlapping groups into an independent test total.
+- Source-baseline runs: PG https://github.com/huynqhe186195/NgocTrangHouseManagementSystem/actions/runs/41970261950 and Windows https://github.com/huynqhe186195/NgocTrangHouseManagementSystem/actions/runs/41970262020, both for `a9519996`.
+- PostgreSQL evidence artifact for the PR run: artifact ID `13396265352`, name `phase-2h-h4-exact-sha-evidence`, reported SHA-256 `2c189ce840129bd69ac4a7e1de3576dbda90705ae248725c348c15791e7ecc9e`; archive contents/TRX XML have not been independently extracted here. Job-log counters are independently observed.
+- Windows log has compile/analyzer warnings, so overall test success does not mean a warning-free build.
+
+## Reviewed implementation paths
+
+- Domain intent and hash: `modules/buildingmanagement/src/BuildingManagement.Domain/RoomChanges/RoomChangeDepositDispositionIntentRecord.cs`. `IsCashBackedPosting`, `IsTopUpCollected`, `IsTenantRefundPaid`, `IsRentCreditApplied`, and `CanCompleteTransfer` explicitly return false for an *intent* record; `VerifyFingerprint()` reconstructs its canonical financial split.
+- Domain completion: `modules/buildingmanagement/src/BuildingManagement.Domain/RoomChanges/RoomChangeMidMonthCompletionRecord.cs`. Validates the linked contract/approved policy/signed H4 intent, nonoverlapping day pricing, and conservation. Records `H4UnpaidTopUpVnd`, `H4NextMonthRentCreditVnd` or `H4ManualRefundLiabilityVnd`. `IsExternalBankPayment` is false.
+- Staging route and guard: `src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceBStagingRoomChangesController.cs`. Authenticated `[Authorize]`, isolated-stage database/environment checks and SERIALIZABLE operations for H4 intent/completion. Controller delegates business checks to `SliceBStagingRoomChangeRequests`; controller attributes alone are not proof of membership checks.
+- PostgreSQL test class: `modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/RoomChanges/RoomChangeDepositDispositionIntentPostgreSql_Tests.cs`, cases `TRFH4PG01` through `TRFH4PG17`, selected in the observed 103/103 PostgreSQL run.
+- Real authenticated PostgreSQL HTTP test: `test/NgocTrangHouseManagementSystem.HttpApi.Host.Tests/SliceAStagingPostgreSqlHttp_Tests.cs`, `STAGEPGHTTP01`, its `RunH4DispositionScenarioAsync(choice: 0/1/2)` section. All three execute in ONE xUnit test, and the 1/1 log proves the method passed; this is not three independent xUnit executions.
+
+## AC-to-evidence mapping
+
+| Acceptance criterion | Observed evidence (source and test IDs) | Scope-limited conclusion | Residual work |
+|---|---|---|---|
+| AC-H4-01 Separate carried cash from outstanding top-up | `RoomChangeMidMonthCompletionRecord.Complete/VerifyFingerprint`; `TRF_H4INT01`, `TRF_H4DEF01`, `TRFH4PG01`; `STAGEPGHTTP01` choices 0/1/2 and saved `H4UnpaidTopUpVnd` | **STAGING PASS** for accounting classification; future due is not cash collected | Verify UI/API consumers never interpret target contract configured deposit as settled held cash |
+| AC-H4-02 Mark collection paid only on trusted proof | Intent booleans explicitly false; HTTP asserts `isBankCashVerified=false`, `isFinancialPosting=false`; target contract has no completed new-deposit payment | **PARTIAL** — no false collection in tested intent/completion path | An actual, separately reviewed H4 top-up cash-collection-and-settlement path is NOT demonstrated by these tests; D04-H4 |
+| AC-H4-03 No duplicate posting/partial old close on failed, concurrent or replayed completion | `STAGEPGHTTP01` wrong-rent denial, state rollback assertions, 2 competing SERIALIZABLE calls -> exactly one winner, replay denied; PostgreSQL H4 invariant tests | **STAGING PASS** for tested transfer/intent atomicity | Does not certify future real top-up settlement atomicity |
+| AC-H4-04 Exclusive future rent credit, immutable and correct target | `TRF_H4INT02`, `TRF_H4DEF07`, `TRFH4PG02/08/16`; HTTP choice 1 verifies one completion and H4 credit amount; SQL mutation denial | **PARTIAL** — immutable credit/liability instruction tested | No independent proof that future official rent is credited/posted once with an append-only journal and never changes issued invoice |
+| AC-H4-05 Credit instruction is not repayment or settled receivable | `RoomChangeDepositDispositionIntentRecord` false posting flags; HTTP choice 1 and H4 obligation pending flags | **STAGING PASS** for status labeling | Future posting/consumption remains separate and unaccepted |
+| AC-H4-06 Refund liability distinct from completed bank refund | `TRF_H4INT03`, `TRF_H4DEF08`, `TRFH4PG02/08/16`; HTTP choice 2 checks `H4ManualRefundLiabilityVnd` and pending status | **PARTIAL / D04-H4 HOLD** — liability exists; no completed refund assertion | Exact destination/payee, external transfer evidence, independent bank review, replay-safe actual refund settlement not proved in this H4 lane |
+| AC-H4-07 Replay, tamper, contradictory rehash, competing transfer denied | `VerifyFingerprint`, `TRF_H4INT09/10`, `TRFH4PG05/09/11/12/15`, `TRFH4F01/02/03`, authenticated HTTP wrong-amount, duplicate intent/completion and competition | **STAGING PASS** for documented negative tests | Additional new financial-executor path must inherit same constraints |
+| AC-H4-08 VND conservation and exclusive disposition | `RoomChangeMidMonthCompletionRecord.VerifyFingerprint`; `TRF_H4INT08/09/10`, `TRFH4PG02/03`; HTTP checks source 3,000,000 = carried + credit + refund; target = carried + unpaid top-up | **STAGING PASS** for verified snapshot mathematics | Does not establish post-completion bank-ledger conservation |
+| AC-H4-09 Building/identity/member/role isolation | `[Authorize]`; stage guards; `TRFH4PG04`; HTTP `STAGEPGHTTP01` denies staff intent/complete/read and cross-building H4 request | **PARTIAL** — real authenticated negative paths exist | Reconcile H4-specific revoked membership/account and commit-time race coverage to code/test; generic test title alone is insufficient |
+| AC-H4-10 H1/H5/H6 linked contracts, full roster, source handover, meter, debt/invoice readiness | HTTP H4 scenario verifies linked ended/active contracts, exactly one roster migrated, signed E/W, corrected invoice and independently reviewed receipt | **PARTIAL** — demonstrated for test fixture | D01/D02/D03 signed broader policy, and D06 complete physical evidence/signatory acceptance not certified by this one scenario |
+| AC-H4-11 Positive/negative/replay/concurrency/rollback/direct SQL bypass | Real `STAGEPGHTTP01` 1/1 (three H4 inner scenarios); `TRFH4PG01–17` selected in PG 103/103; H4 obligation direct update denied with SQLSTATE 23514 | **STAGING PASS** for tested H4 transfer intent and completion; **PARTIAL** for entire requested scope | No evidence of every future executed top-up/credit/refund bank writer; do not infer missing positive tests passed |
+| AC-H4-12 Exact SHA/PR/acceptance report, no production | This matrix, PR #3, exact CI URLs, parent `a9519996`, PR synthetic merge `3285089` | **EVIDENCE RECONCILED, not BUSINESS ACCEPTED** | Owner review, signed D-gates and an independently reviewed future implementation PR required; no production release |
+
+## Decision and implementation boundary
+
+**Reconciliation result:** the baseline already implements and tests all three **deferred financial outcomes** through authenticated staging H4 completion. No duplicate H4 intent or transfer writer should be introduced merely to satisfy the Spec Kit artifact. The missing business outcome is actual, externally evidenced settlement/consumption for the pending top-up, rent credit and refund when that is in scope, not the absence of those deferred records.
+
+**Separate gates:** D04 accepted for *ordinary Phase 2G.4 manual refunds* does not by itself approve *Phase 2H H4 room-transfer* top-up or refund settlement. Keep D04-H4 HOLD until exact independent bank evidence, authorized payee, separate review and duplicate reference behavior are defined and tested. D01/D02/D03 and D06 remain policy/acceptance gates for unrestricted mid-month use.
+
+**Decision:** no financial code change was justified by this source-and-log review alone. Do not merge the draft Spec Kit PR or mark BUSINESS ACCEPTED solely due to green CI. Next code changes belong in a separate implementation PR after precise remaining behavior is specified, with end-to-end H4 settlement/credit/posting tests and PostgreSQL SQL-bypass/concurrency/rollback where applicable.
+
+**Limitations:** test assertions were read and job-level log counters checked, but this is a targeted source/CI audit, not a fresh local run. The archive ZIP/TRX contents have not been extracted and no production or external bank actions were performed.

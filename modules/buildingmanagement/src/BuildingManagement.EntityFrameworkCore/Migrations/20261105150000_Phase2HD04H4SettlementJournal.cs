@@ -124,6 +124,12 @@ public sealed class Phase2HD04H4SettlementJournal : Migration
                OR payment."TransactionReference" IS DISTINCT FROM
                   NEW."BankTransactionReference"
                OR coalesce(payment."Notes",'') NOT LIKE 'BANK-PROOF: %'
+               OR NEW."ReviewedByUserId"=payment."CreatorId"
+               OR EXISTS (
+                 SELECT 1 FROM "BuildingManagementDepositSettlements" d
+                  WHERE d."PaymentId"=NEW."PaymentId"
+                    AND d."Status"=2
+               )
             THEN
               RAISE EXCEPTION 'Top-up review requires exact completed bank-backed receipt'
                 USING ERRCODE='23514';

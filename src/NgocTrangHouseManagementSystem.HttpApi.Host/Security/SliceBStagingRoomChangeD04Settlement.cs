@@ -5,6 +5,7 @@ using System.Data.Common;
 using System.Linq;
 using System.Threading.Tasks;
 using BuildingManagement.EntityFrameworkCore;
+using BuildingManagement.Invoices;
 using BuildingManagement.Payments;
 using BuildingManagement.RoomChanges;
 using BuildingManagement.Security;
@@ -278,7 +279,8 @@ public sealed partial class SliceBStagingRoomChangeRequests
                         x.BuildingId == building) ?? throw Denied();
                 var receivable = await db.OfficialInvoiceReceivables.AsNoTracking()
                     .SingleOrDefaultAsync(x => x.IssuedInvoiceId == invoiceId &&
-                        x.Kind == 1 && x.ContractId == claim.TargetContractId)
+                        x.Kind == OfficialInvoiceKind.Monthly &&
+                        x.ContractId == claim.TargetContractId)
                     ?? throw Denied();
                 var receipts = await db.OfficialInvoiceReceiptReviews.AsNoTracking()
                     .Where(x => x.ReceivablePostingId == receivable.Id &&

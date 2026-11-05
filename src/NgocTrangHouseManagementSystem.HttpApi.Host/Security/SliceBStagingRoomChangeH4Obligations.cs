@@ -68,6 +68,9 @@ public sealed partial class SliceBStagingRoomChangeRequests
             var recordedAt = reader.GetDateTime(8);
             var signedReference = reader.GetString(9);
             if (await reader.ReadAsync()) throw Denied();
+            // Release the Npgsql reader before querying the journal on the
+            // same transaction/connection (NpgsqlOperationInProgress otherwise).
+            await reader.DisposeAsync();
 
             var expectedKind = completion.H4UnpaidTopUpVnd > 0m ? 1 :
                 completion.H4NextMonthRentCreditVnd > 0m ? 2 : 3;

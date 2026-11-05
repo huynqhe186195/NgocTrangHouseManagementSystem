@@ -66,13 +66,13 @@ jobs:
             catch { $rejected = $true }
             if (-not $rejected) { throw "TRX guard accepted invalid fixture for $expected cases." }
           }
-          Write-Trx 160 160 0 0
-          & $parser -Path $fixture -ExpectedTests 160
+          Write-Trx 165 165 0 0
+          & $parser -Path $fixture -ExpectedTests 165
           Expect-Rejected 96
-          Write-Trx 160 159 1 0
-          Expect-Rejected 160
-          Write-Trx 160 159 0 1
-          Expect-Rejected 160
+          Write-Trx 165 164 1 0
+          Expect-Rejected 165
+          Write-Trx 165 164 0 1
+          Expect-Rejected 165
           Write-Trx 96 96 0 0
           & $parser -Path $fixture -ExpectedTests 96
           Set-Content -LiteralPath $fixture -Value '<bad-trx' -Encoding UTF8
@@ -85,14 +85,14 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Validate actual .NET 10 Windows 160-domain TRX emission
+      - name: Validate actual .NET 10 Windows 165-domain TRX emission
         shell: pwsh
         run: |
-          $trxFile = Join-Path $env:RUNNER_TEMP 'phase2h-windows-160-domain.trx'
+          $trxFile = Join-Path $env:RUNNER_TEMP 'phase2h-windows-165-domain.trx'
           Remove-Item -LiteralPath $trxFile -Force -ErrorAction SilentlyContinue
-          & dotnet test .\modules\buildingmanagement\test\BuildingManagement.Domain.Tests\BuildingManagement.Domain.Tests.csproj --filter 'FullyQualifiedName~RoomChangeMidMonthRentReconciliation_Tests|FullyQualifiedName~RoomChangeDepositDifferencePreview_Tests|FullyQualifiedName~TRF_HAND|FullyQualifiedName~RoomChangeMidMonthFinancialReconciliationPacket_Tests|FullyQualifiedName~RoomChangeDayPricingRuleCandidate_Tests|FullyQualifiedName~RoomChangeOfficialSourceRentEvidenceBridge_Tests|FullyQualifiedName~RoomChangeFinalIndependentSignoffs_Tests|FullyQualifiedName~RoomChangeApprovedH2H3ExecutionPolicy_Tests|FullyQualifiedName~RoomChangeDeferredDepositDisposition_Tests|FullyQualifiedName~RoomScopedServiceTariffPolicy_Tests|FullyQualifiedName~RoomScopedServiceInvoiceSourceBinding_Tests|FullyQualifiedName~RoomChangeDepositDispositionIntent_Tests' --logger 'console;verbosity=normal' --logger 'trx;LogFileName=phase2h-windows-160-domain.trx' --results-directory $env:RUNNER_TEMP
+          & dotnet test .\modules\buildingmanagement\test\BuildingManagement.Domain.Tests\BuildingManagement.Domain.Tests.csproj --filter 'FullyQualifiedName~RoomChangeMidMonthRentReconciliation_Tests|FullyQualifiedName~RoomChangeDepositDifferencePreview_Tests|FullyQualifiedName~TRF_HAND|FullyQualifiedName~RoomChangeMidMonthFinancialReconciliationPacket_Tests|FullyQualifiedName~RoomChangeDayPricingRuleCandidate_Tests|FullyQualifiedName~RoomChangeOfficialSourceRentEvidenceBridge_Tests|FullyQualifiedName~RoomChangeFinalIndependentSignoffs_Tests|FullyQualifiedName~RoomChangeApprovedH2H3ExecutionPolicy_Tests|FullyQualifiedName~RoomChangeDeferredDepositDisposition_Tests|FullyQualifiedName~RoomScopedServiceTariffPolicy_Tests|FullyQualifiedName~RoomScopedServiceInvoiceSourceBinding_Tests|FullyQualifiedName~RoomChangeDepositDispositionIntent_Tests|FullyQualifiedName~RoomChangeMidMonthH4FingerprintBoundary_Tests' --logger 'console;verbosity=normal' --logger 'trx;LogFileName=phase2h-windows-165-domain.trx' --results-directory $env:RUNNER_TEMP
           if ($LASTEXITCODE -ne 0) { throw 'Real Phase 2H Domain Windows tests failed.' }
-          & .\etc\scripts\Assert-Phase2HTrx.ps1 -Path $trxFile -ExpectedTests 160
+          & .\etc\scripts\Assert-Phase2HTrx.ps1 -Path $trxFile -ExpectedTests 165
 
       - name: Security regression batch
         shell: pwsh

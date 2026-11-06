@@ -1,0 +1,51 @@
+name: payOS foundation isolated tests
+
+on:
+  pull_request:
+    paths:
+      - 'modules/buildingmanagement/src/BuildingManagement.Application/Payments/PayOs*.cs'
+      - 'modules/buildingmanagement/src/BuildingManagement.Domain/Payments/PayOs*.cs'
+      - 'modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/EntityConfigurations/PayOs*.cs'
+      - 'modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/EntityFrameworkCore/BuildingManagementDbContext.cs'
+      - 'modules/buildingmanagement/test/BuildingManagement.Application.Tests/Payments/PayOs*.cs'
+      - 'modules/buildingmanagement/test/BuildingManagement.Domain.Tests/Payments/PayOs*.cs'
+      - '.github/workflows/payos-foundation-isolated.yml'
+  push:
+    branches:
+      - 'feat/phase2h-payos-signature-foundation-20261106'
+  workflow_dispatch:
+
+jobs:
+  source-only-payments:
+    name: Build and isolated payOS .NET tests (no DB)
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    timeout-minutes: 25
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Domain payOS source tests
+        shell: pwsh
+        run: |
+          dotnet test modules/buildingmanagement/test/BuildingManagement.Domain.Tests/BuildingManagement.Domain.Tests.csproj --configuration Release --filter 'FullyQualifiedName~PayOsPaymentIntent_Tests' --logger 'trx;LogFileName=payos-domain.trx' --results-directory test-results/domain --verbosity normal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Application payOS source tests
+        shell: pwsh
+        run: |
+          dotnet test modules/buildingmanagement/test/BuildingManagement.Application.Tests/BuildingManagement.Application.Tests.csproj --configuration Release --filter 'FullyQualifiedName~PayOs' --logger 'trx;LogFileName=payos-application.trx' --results-directory test-results/application --verbosity normal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload raw test evidence, even when tests fail
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: payos-isolated-trx
+          path: test-results/**/*.trx
+          if-no-files-found: warn
+          retention-days: 14

@@ -14,6 +14,7 @@ using BuildingManagement.Security;
 using Npgsql;
 using Microsoft.Extensions.Hosting;
 using Microsoft.EntityFrameworkCore;
+using System.Net.Http;
 using BuildingManagement.EntityFrameworkCore.PayOsMigrations;
 using BuildingManagement.Payments;
 using NgocTrangHouseManagementSystem.Payments;
@@ -226,7 +227,7 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule // syst
             if (host is not ("127.0.0.1" or "localhost") ||
                 payOsDb.Database is null ||
                 !payOsDb.Database.StartsWith("bm_payos_staging_", StringComparison.OrdinalIgnoreCase) ||
-                !payOsDb.Database.AsSpan("bm_payos_staging_".Length).IsEmpty is false)
+                payOsDb.Database.Length <= "bm_payos_staging_".Length)
                 throw new InvalidOperationException(
                     "payOS staging must use an explicitly named loopback-only disposable database.");
 

@@ -112,6 +112,13 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.PayOsPaymentIntentConfiguration());
         builder.ApplyConfiguration(
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.PayOsWebhookInboxRecordConfiguration());
+        // payOS staging tables belong to the isolated PayOsPaymentMigrationDbContext.
+        // Keep their runtime mappings, but never let the out-of-sync legacy
+        // BuildingManagement migration snapshot generate/alter these tables.
+        builder.Entity<PayOsPaymentIntent>()
+            .ToTable("BuildingManagementPayOsPaymentIntents", t => t.ExcludeFromMigrations());
+        builder.Entity<PayOsWebhookInboxRecord>()
+            .ToTable("BuildingManagementPayOsWebhookInbox", t => t.ExcludeFromMigrations());
         // Source-only Slice A membership model. Adding the mapping alone
         // never authorizes a user; production providers stay DenyAll.
         builder.ApplyConfiguration(

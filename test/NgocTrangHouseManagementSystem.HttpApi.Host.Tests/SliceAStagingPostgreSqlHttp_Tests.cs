@@ -7348,6 +7348,66 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                         async () => await attack.ExecuteNonQueryAsync());
                     Assert.Equal("23514", failure.SqlState);
                 }
+
+                // D04-10: immutable reviews AND postings must reject TRUNCATE,
+                // including a direct SQL session that bypasses the HTTP role.
+                // Never truncate even an empty staging journal.
+                foreach (var table in new[] {
+                    "BuildingManagementRoomChangeH4SettlementReviews",
+                    "BuildingManagementRoomChangeH4SettlementPostings"
+                })
+                {
+                    await using var truncate = new NpgsqlCommand(
+                        "TRUNCATE TABLE \\"" + table + "\\"",
+                        journalAttack);
+                    var blocked = await Assert.ThrowsAsync<PostgresException>(
+                        async () => await truncate.ExecuteNonQueryAsync());
+                    Assert.Equal("23514", blocked.SqlState);
+                }
+
+                // D04-11: a failed SERIALIZABLE statement must roll back the
+                // whole isolated transaction, retaining the original ledger.
+                long CountPostingsAsync = 0;
+                await using (var count = new NpgsqlCommand(
+                    """
+                    SELECT count(*) FROM "BuildingManagementRoomChangeH4SettlementPostings"
+                    WHERE "ObligationId" IN (
+                        SELECT "Id" FROM "BuildingManagementRoomChangeH4Obligations"
+                         WHERE "RequestId"=@request)
+                    """, journalAttack))
+                {
+                    count.Parameters.AddWithValue("request", h4Request);
+                    CountPostingsAsync = (long)(await count.ExecuteScalarAsync())!;
+                }
+                await using (var failedTx = await journalAttack.BeginTransactionAsync(
+                    System.Data.IsolationLevel.Serializable))
+                {
+                    await using var invalidWrite = new NpgsqlCommand(
+                        """
+                        UPDATE "BuildingManagementRoomChangeH4SettlementPostings"
+                           SET "AmountVnd"="AmountVnd"+1
+                         WHERE "ObligationId" IN (
+                            SELECT "Id" FROM "BuildingManagementRoomChangeH4Obligations"
+                             WHERE "RequestId"=@request)
+                        """, journalAttack, failedTx);
+                    invalidWrite.Parameters.AddWithValue("request", h4Request);
+                    var rejected = await Assert.ThrowsAsync<PostgresException>(
+                        async () => await invalidWrite.ExecuteNonQueryAsync());
+                    Assert.Equal("23514", rejected.SqlState);
+                    await failedTx.RollbackAsync();
+                }
+                await using (var recount = new NpgsqlCommand(
+                    """
+                    SELECT count(*) FROM "BuildingManagementRoomChangeH4SettlementPostings"
+                    WHERE "ObligationId" IN (
+                        SELECT "Id" FROM "BuildingManagementRoomChangeH4Obligations"
+                         WHERE "RequestId"=@request)
+                    """, journalAttack))
+                {
+                    recount.Parameters.AddWithValue("request", h4Request);
+                    Assert.Equal(CountPostingsAsync,
+                        (long)(await recount.ExecuteScalarAsync())!);
+                }
             }
 
             } // One fully independent H4 disposition scenario.

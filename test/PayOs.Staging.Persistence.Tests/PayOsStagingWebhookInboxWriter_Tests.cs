@@ -30,14 +30,14 @@ public class PayOsStagingWebhookInboxWriter_Tests
         return new PayOsPaymentMigrationDbContextFactory().CreateDbContext(Array.Empty<string>());
     }
 
-    private static async Task<PayOsPaymentIntent> SeedAsync(bool cancelled = false)
+    private static async Task<PayOsPaymentIntent> SeedAsync(bool cancelled = false, bool attachLink = true)
     {
         await using var db = Db();
         var order = Interlocked.Increment(ref _orderSequence);
         var intent = new PayOsPaymentIntent(
             Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), order, 150000,
             DateTime.UtcNow.AddDays(1), paymentId: Guid.NewGuid());
-        intent.AttachProviderLink("LINK-" + order);
+        if (attachLink) intent.AttachProviderLink("LINK-" + order);
         if (cancelled) intent.CancelUnpaid();
         db.PayOsPaymentIntents.Add(intent);
         await db.SaveChangesAsync();
@@ -86,6 +86,18 @@ public class PayOsStagingWebhookInboxWriter_Tests
         Assert.Equal(intent.OrderCode, record.OrderCode);
         Assert.Equal(64, record.PayloadSha256.Length);
         // No Payment or invoice receivable is created or completed here.
+    }
+
+    [Fact]
+    public async Task Signed_webhook_before_checkout_link_commit_is_not_acknowledged_or_lost()
+    {
+        var intent = await SeedAsync(attachLink: false);
+        await using var db = Db();
+        var writer = new PayOsStagingWebhookInboxWriter(db, Key);
+        Assert.Equal(PayOsWebhookIngestResult.ConcurrentConflictRetry,
+            await writer.RecordAsync(Signed(intent, reference: "BANK-EARLY-" + intent.OrderCode)));
+        Assert.Equal(0, await db.PayOsWebhookInbox.CountAsync(x =>
+            x.PaymentIntentId == intent.Id));
     }
 
     [Fact]

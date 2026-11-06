@@ -10,6 +10,7 @@ on:
       - 'modules/buildingmanagement/test/BuildingManagement.Application.Tests/Payments/PayOs*.cs'
       - 'modules/buildingmanagement/test/BuildingManagement.Domain.Tests/Payments/PayOs*.cs'
       - '.github/workflows/payos-foundation-isolated.yml'
+      - 'etc/phase-audits/payos-postgresql16-schema-rehearsal.sql'
   push:
     branches:
       - 'feat/phase2h-payos-signature-foundation-20261106'
@@ -54,3 +55,51 @@ jobs:
           path: test-results/**/*.trx
           if-no-files-found: warn
           retention-days: 14
+
+  disposable-postgresql:
+    name: PostgreSQL 16 disposable schema / concurrent duplicate / rollback
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: disposable-only
+          POSTGRES_DB: payos_rehearsal_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d payos_rehearsal_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: SQL constraints and transaction rollback on disposable DB
+        shell: bash
+        run: |
+          set -euo pipefail
+          pg_container="$(docker ps --filter ancestor=postgres:16 --format '{{.ID}}' | head -n 1)"
+          test -n "$pg_container"
+          docker exec -i "$pg_container" psql -U postgres -d payos_rehearsal_test -v ON_ERROR_STOP=1 < etc/phase-audits/payos-postgresql16-schema-rehearsal.sql
+      - name: Concurrent same-order inserts must not both commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          pg_container="$(docker ps --filter ancestor=postgres:16 --format '{{.ID}}' | head -n 1)"
+          test -n "$pg_container"
+          first="INSERT INTO payos_rehearsal.payment_intents(id,building_id,payer_id,order_code,amount_vnd,payment_id,expires_at_utc,status) VALUES ('00000000-0000-0000-0000-000000000611','00000000-0000-0000-0000-000000000201','00000000-0000-0000-0000-000000000301',910000,150000,'00000000-0000-0000-0000-000000000711',now()+interval '1 day',0)"
+          second="INSERT INTO payos_rehearsal.payment_intents(id,building_id,payer_id,order_code,amount_vnd,payment_id,expires_at_utc,status) VALUES ('00000000-0000-0000-0000-000000000612','00000000-0000-0000-0000-000000000201','00000000-0000-0000-0000-000000000301',910000,150000,'00000000-0000-0000-0000-000000000712',now()+interval '1 day',0)"
+          docker exec "$pg_container" psql -U postgres -d payos_rehearsal_test -v ON_ERROR_STOP=1 -c "BEGIN; $first; SELECT pg_sleep(3); COMMIT;" > first.log 2>&1 &
+          first_pid=$!
+          sleep 1
+          if docker exec "$pg_container" psql -U postgres -d payos_rehearsal_test -v ON_ERROR_STOP=1 -c "$second" > second.log 2>&1; then
+            echo "FAIL: two simultaneous inserts with the same order_code committed"
+            cat first.log second.log
+            exit 1
+          fi
+          wait "$first_pid"
+          grep -q 'duplicate key value violates unique constraint' second.log
+          count="$(docker exec "$pg_container" psql -U postgres -d payos_rehearsal_test -A -t -c 'SELECT count(*) FROM payos_rehearsal.payment_intents WHERE order_code=910000')"
+          test "$count" = "1"
+          echo "PAYOS PG CONCURRENCY PASS: only 1 of 2 same-order inserts committed"

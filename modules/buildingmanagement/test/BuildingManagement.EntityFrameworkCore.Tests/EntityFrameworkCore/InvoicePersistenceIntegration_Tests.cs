@@ -1978,7 +1978,9 @@ public sealed class InvoicePersistenceIntegration_Tests
             var terms = new FinalInvoiceFinancialTermsProposal(
                 seeded.DraftId, seeded.ContractId, archive.RoomId,
                 archive.EvidenceSha256,
-                new DateOnly(2026, 11, 5),
+                DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(
+                    DateTime.UtcNow, TimeZoneInfo.FindSystemTimeZoneById(
+                        "Asia/Ho_Chi_Minh"))).AddDays(14),
                 "APPROVED-DUE-DATE-POLICY",
                 AuxiliaryFeeAssessmentDecision.ExplicitlyNoCharges,
                 "APPROVED-EXPLICIT-NO-FEES",

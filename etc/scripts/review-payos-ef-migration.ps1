@@ -15,8 +15,14 @@ foreach ($table in $expected) {
     }
 }
 $created = @([regex]::Matches($up, 'migrationBuilder\.CreateTable\('))
-if ($created.Count -ne 2) {
-    throw "Unexpected CreateTable count: $($created.Count). Old snapshot may be out of sync; manual migration review required."
+$tableNames = @([regex]::Matches($up, 'migrationBuilder\.CreateTable\(\s*name:\s*"([^"]+)"') | ForEach-Object { $_.Groups[1].Value })
+$unexpectedTables = @($tableNames | Where-Object { $_ -notin $expected } | Sort-Object -Unique)
+Write-Host "PAYOS EF SCAFFOLD DIAGNOSTIC: CreateTable total=$($created.Count); named tables=$($tableNames.Count); unrelated tables=$($unexpectedTables.Count)"
+foreach ($table in $unexpectedTables) { Write-Host "UNRELATED_CREATE_TABLE: $table" }
+$operations = [regex]::Matches($up, 'migrationBuilder\.([A-Za-z]+)\(') | ForEach-Object { $_.Groups[1].Value } | Group-Object | Sort-Object Name
+foreach ($operation in $operations) { Write-Host "EF_UP_OPERATION: $($operation.Name)=$($operation.Count)" }
+if ($created.Count -ne 2 -or $unexpectedTables.Count -ne 0) {
+    throw "Blocking migration snapshot drift: expected two payOS tables, found $($created.Count) CreateTable calls and $($unexpectedTables.Count) unrelated tables. Review the emitted list and artifact before any EF migration."
 }
 # No ALTER/DROP of existing production objects is allowed in this narrow preview.
 $forbidden = @('DropTable','DropColumn','AlterColumn','RenameTable','RenameColumn','DeleteData','UpdateData','Sql')

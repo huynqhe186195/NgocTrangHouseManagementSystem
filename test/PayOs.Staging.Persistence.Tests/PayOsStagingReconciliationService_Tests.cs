@@ -132,7 +132,7 @@ public class PayOsStagingReconciliationService_Tests
     {
         var (intent, payment) = await SeedAsync();
         await using var db = Db();
-        var result = await Service(db, payment, FullPaid(intent)).CheckAsync(payment.Id);
+        var result = await Service(db, payment, intent, FullPaid(intent)).CheckAsync(payment.Id);
         Assert.False(result.ConfirmedPendingFinancialReview);
         Assert.Equal(PayOsReconciliationDisposition.ConflictRequiresReview, result.Disposition);
         var original = await db.PayOsPaymentIntents.AsNoTracking()

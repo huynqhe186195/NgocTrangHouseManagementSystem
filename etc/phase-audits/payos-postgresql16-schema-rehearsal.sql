@@ -16,18 +16,21 @@ CREATE TABLE payos_rehearsal.payment_intents (
   expires_at_utc timestamptz NOT NULL,
   confirmed_at_utc timestamptz,
   status integer NOT NULL CHECK (status BETWEEN 0 AND 4),
+  CONSTRAINT uq_intent_id_building_order UNIQUE (id, building_id, order_code),
   CONSTRAINT ck_payment_target CHECK ((invoice_id IS NULL) <> (payment_id IS NULL))
 );
 CREATE TABLE payos_rehearsal.webhook_inbox (
   id uuid PRIMARY KEY,
   building_id uuid NOT NULL,
-  payment_intent_id uuid NOT NULL REFERENCES payos_rehearsal.payment_intents(id) ON DELETE RESTRICT,
+  payment_intent_id uuid NOT NULL,
   order_code bigint NOT NULL CHECK (order_code > 0),
   provider_reference varchar(128) NOT NULL UNIQUE,
   payload_sha256 varchar(64) NOT NULL CHECK (length(payload_sha256) = 64),
   received_at_utc timestamptz NOT NULL,
   reviewed_at_utc timestamptz,
-  status integer NOT NULL CHECK (status BETWEEN 0 AND 2)
+  status integer NOT NULL CHECK (status BETWEEN 0 AND 2),
+  CONSTRAINT fk_inbox_scoped_intent FOREIGN KEY (payment_intent_id, building_id, order_code)
+    REFERENCES payos_rehearsal.payment_intents(id, building_id, order_code) ON DELETE RESTRICT
 );
 CREATE UNIQUE INDEX ux_inbox_intent_ref
   ON payos_rehearsal.webhook_inbox(payment_intent_id, provider_reference);
@@ -94,6 +97,24 @@ BEGIN
   EXCEPTION WHEN foreign_key_violation THEN rejected := true;
   END;
   IF NOT rejected THEN RAISE EXCEPTION 'orphan webhook accepted'; END IF;
+
+  rejected := false;
+  BEGIN
+    INSERT INTO payos_rehearsal.webhook_inbox
+    (id,building_id,payment_intent_id,order_code,provider_reference,payload_sha256,received_at_utc,status)
+    VALUES (bad,'00000000-0000-0000-0000-000000000299',i,900001,'TX-CROSS-BUILDING',repeat('a',64),now(),0);
+  EXCEPTION WHEN foreign_key_violation THEN rejected := true;
+  END;
+  IF NOT rejected THEN RAISE EXCEPTION 'cross-building webhook accepted'; END IF;
+
+  rejected := false;
+  BEGIN
+    INSERT INTO payos_rehearsal.webhook_inbox
+    (id,building_id,payment_intent_id,order_code,provider_reference,payload_sha256,received_at_utc,status)
+    VALUES (bad,b,i,900099,'TX-WRONG-ORDER',repeat('a',64),now(),0);
+  EXCEPTION WHEN foreign_key_violation THEN rejected := true;
+  END;
+  IF NOT rejected THEN RAISE EXCEPTION 'wrong-order webhook accepted'; END IF;
 
   INSERT INTO payos_rehearsal.webhook_inbox
   (id,building_id,payment_intent_id,order_code,provider_reference,payload_sha256,received_at_utc,status)

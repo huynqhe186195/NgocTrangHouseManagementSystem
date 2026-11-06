@@ -2,6 +2,9 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using BuildingManagement.EntityFrameworkCore.PayOsMigrations;
+using BuildingManagement.Contracts;
+using BuildingManagement.Rooms;
+using BuildingManagement.Floors;
 using BuildingManagement.Payments;
 using BuildingManagement.Payments.BuildingManagement.Payments;
 using BuildingManagement.Security;
@@ -55,11 +58,24 @@ public class PayOsStagingReconciliationService_Tests
 
     private static PayOsStagingReconciliationService Service(
         PayOsPaymentMigrationDbContext db, Payment payment,
-        PayOsPaymentLinkSnapshot providerSnapshot)
+        PayOsPaymentIntent intent, PayOsPaymentLinkSnapshot providerSnapshot)
     {
         var payments = new Mock<IRepository<Payment, Guid>>();
+        var contracts = new Mock<IRepository<Contract, Guid>>();
+        var rooms = new Mock<IRepository<Room, Guid>>();
+        var floors = new Mock<IRepository<Floor, Guid>>();
+        var floor = new Floor(Guid.NewGuid(), intent.BuildingId, 1, "Test floor");
+        var room = new Room(Guid.NewGuid(), floor.Id, "101", "Room 101", 10m, 1, RoomStatus.Occupied);
+        var contract = new Contract(payment.ContractId!.Value, "RECON", room.Id, DateTime.UtcNow.AddDays(-1), null, 150000m);
+        contract.Sign();
         payments.Setup(x => x.FindAsync(It.IsAny<Guid>(), It.IsAny<bool>(),
                 It.IsAny<CancellationToken>())).ReturnsAsync(payment);
+        contracts.Setup(x => x.FindAsync(It.IsAny<Guid>(), It.IsAny<bool>(),
+                It.IsAny<CancellationToken>())).ReturnsAsync(contract);
+        rooms.Setup(x => x.FindAsync(It.IsAny<Guid>(), It.IsAny<bool>(),
+                It.IsAny<CancellationToken>())).ReturnsAsync(room);
+        floors.Setup(x => x.FindAsync(It.IsAny<Guid>(), It.IsAny<bool>(),
+                It.IsAny<CancellationToken>())).ReturnsAsync(floor);
         var access = new Mock<IBuildingCrudAccessPolicy>();
         access.Setup(x => x.EnsureResourceAsync(
                 BuildingBusinessResourceKind.Contract,
@@ -71,6 +87,7 @@ public class PayOsStagingReconciliationService_Tests
         user.SetupGet(x => x.Id).Returns(Guid.NewGuid());
         return new PayOsStagingReconciliationService(
             db, new PaidFakeProvider(providerSnapshot), payments.Object,
+            contracts.Object, rooms.Object, floors.Object,
             access.Object, user.Object);
     }
 
@@ -79,7 +96,7 @@ public class PayOsStagingReconciliationService_Tests
     {
         var (intent, payment) = await SeedAsync(inbox: true);
         await using var db = Db();
-        var service = Service(db, payment, FullPaid(intent));
+        var service = Service(db, payment, intent, FullPaid(intent));
         var result = await service.CheckAsync(payment.Id);
         Assert.True(result.ConfirmedPendingFinancialReview);
         Assert.Equal(PayOsReconciliationDisposition.FundsDetectedPendingIndependentPosting,
@@ -91,6 +108,22 @@ public class PayOsStagingReconciliationService_Tests
             .SingleAsync(x => x.PaymentIntentId == intent.Id);
         Assert.Equal(PayOsWebhookInboxStatus.ReconciledNoPosting, received.Status);
         // The D04 source Payment remains pending: no ledger or receipt was written.
+        Assert.Equal(PaymentStatus.Pending, payment.Status);
+    }
+
+
+    [Fact]
+    public async Task Repeated_reconciliation_is_idempotent_and_keeps_D04_pending()
+    {
+        var (intent, payment) = await SeedAsync(inbox: true);
+        await using var db = Db();
+        var service = Service(db, payment, intent, FullPaid(intent));
+        var first = await service.CheckAsync(payment.Id);
+        var second = await service.CheckAsync(payment.Id);
+        Assert.True(first.ConfirmedPendingFinancialReview);
+        Assert.True(second.ConfirmedPendingFinancialReview);
+        Assert.Equal(PayOsPaymentIntentStatus.ConfirmedPendingPosting,
+            (await db.PayOsPaymentIntents.AsNoTracking().SingleAsync(x => x.Id == intent.Id)).Status);
         Assert.Equal(PaymentStatus.Pending, payment.Status);
     }
 

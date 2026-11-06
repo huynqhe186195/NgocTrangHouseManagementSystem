@@ -7163,6 +7163,21 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 var duplicateRefund = await PostFinalAsync(clientRoot,
                     d04PostAt, JsonSerializer.Serialize(new { reviewId }));
                 Assert.Equal(HttpStatusCode.Forbidden, duplicateRefund.Status);
+                // Re-read after the competing requests and replay denial.
+                // A successful HTTP response alone cannot certify that a
+                // losing transaction left no second journal posting.
+                using (var settledRefund = await clientRoot.GetAsync(d04BalanceAt))
+                {
+                    Assert.Equal(HttpStatusCode.OK, settledRefund.StatusCode);
+                    using var statement = JsonDocument.Parse(
+                        await settledRefund.Content.ReadAsStringAsync());
+                    Assert.Equal(1_000_000m, statement.RootElement
+                        .GetProperty("ledgerPostedAmountVnd").GetDecimal());
+                    Assert.Equal(0m, statement.RootElement
+                        .GetProperty("remainingOutstandingVnd").GetDecimal());
+                    Assert.Equal(1L, statement.RootElement
+                        .GetProperty("postingCount").GetInt64());
+                }
             }
             else
             {

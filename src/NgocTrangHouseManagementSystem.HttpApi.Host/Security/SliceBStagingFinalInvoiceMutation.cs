@@ -2368,7 +2368,25 @@ public sealed class SliceBStagingFinalInvoiceMutation
                         : 0m;
                     var internalApplied = await PostedInternalOffsetForInvoiceAsync(
                         db, contractId, posting.Id);
-                    if (checked(alreadyVerified + candidate.Amount + internalApplied) >
+                    // D04 next-month H4 rent credit is a noncash offset
+                    // against this SAME issued receivable. The historic
+                    // receipt reviewer predates D04: without this preflight
+                    // it would rely only on a later SQL AFTER INSERT guard,
+                    // surfacing an avoidable SQL exception to the caller.
+                    decimal d04RentCredit = 0m;
+                    if (posting.Kind == OfficialInvoiceKind.Monthly)
+                    {
+                        await using var credit = Command(db, """
+                            SELECT COALESCE(SUM("AmountVnd"),0)
+                              FROM "BuildingManagementRoomChangeH4SettlementPostings"
+                             WHERE "Kind"=2 AND "IssuedInvoiceId"=@issued
+                            """);
+                        Add(credit, "issued", posting.IssuedInvoiceId);
+                        d04RentCredit = Convert.ToDecimal(
+                            await credit.ExecuteScalarAsync());
+                    }
+                    if (checked(alreadyVerified + candidate.Amount +
+                            internalApplied + d04RentCredit) >
                         checked(posting.OriginalAmount + delta))
                         throw Denied();
                 }

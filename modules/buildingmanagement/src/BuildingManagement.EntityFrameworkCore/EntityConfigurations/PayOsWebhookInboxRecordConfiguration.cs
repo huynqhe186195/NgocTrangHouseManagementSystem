@@ -30,7 +30,9 @@ public sealed class PayOsWebhookInboxRecordConfiguration : IEntityTypeConfigurat
         builder.HasIndex(x => new { x.BuildingId, x.Status, x.ReceivedAtUtc });
         builder.HasIndex(x => x.OrderCode);
         builder.HasOne<PayOsPaymentIntent>().WithMany()
-            .HasForeignKey(x => x.PaymentIntentId).OnDelete(DeleteBehavior.Restrict);
+            .HasForeignKey(x => new { x.PaymentIntentId, x.BuildingId, x.OrderCode })
+            .HasPrincipalKey(x => new { x.Id, x.BuildingId, x.OrderCode })
+            .OnDelete(DeleteBehavior.Restrict);
         builder.ToTable(t =>
         {
             t.HasCheckConstraint("CK_PayOsInbox_OrderCodePositive", "\"OrderCode\" > 0");

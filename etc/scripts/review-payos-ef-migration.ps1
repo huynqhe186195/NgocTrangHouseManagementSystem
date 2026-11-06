@@ -1,7 +1,7 @@
 # Fail closed when EF migration scaffolding includes unrelated historical schema drift.
 # This script NEVER connects to or changes a database.
 $ErrorActionPreference = 'Stop'
-$dir = 'modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Migrations'
+$dir = 'modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Migrations/PayOs'
 $migrations = @(Get-ChildItem "$dir/*StagePayOsPaymentIntentsAndWebhookInbox.cs" -ErrorAction Stop | Where-Object { $_.Name -notlike '*.Designer.cs' })
 if ($migrations.Count -ne 1) { throw "Expected exactly one generated migration file, found $($migrations.Count)." }
 $source = Get-Content -Raw $migrations[0].FullName
@@ -31,5 +31,7 @@ foreach ($action in $forbidden) {
         throw "Unsafe migration operation detected: $action."
     }
 }
-Write-Host 'PAYOS EF MIGRATION PREVIEW: two new tables present; no dangerous Up() operations detected.'
+if ($up -notmatch 'ForeignKey\(' -or $up -notmatch 'BuildingId' -or $up -notmatch 'OrderCode') { throw 'Composite building/order scope foreign key missing from Up().' }
+if ($up -notmatch 'CreateIndex\(' -or $up -notmatch 'unique: true') { throw 'PayOS unique provider/order indexes missing from Up().' }
+Write-Host 'PAYOS EF MIGRATION PREVIEW: isolated payOS migration contains two tables, composite FK and unique indexes; no unrelated operations.'
 Write-Host 'This is a generated preview only, not an applied migration or PostgreSQL acceptance.'

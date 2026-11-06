@@ -164,8 +164,8 @@ public sealed partial class SliceBStagingRoomChangeRequests
                 bankRef = input.BankTransactionReference!.Trim();
             }
             if (paidAt < claim.OriginalAtUtc ||
-                input.BankStatementEvidenceReference.Trim() == bankRef ||
-                input.SignedReviewReference.Trim() == bankRef ||
+                input.BankStatementEvidenceReference!.Trim() == bankRef ||
+                input.SignedReviewReference!.Trim() == bankRef ||
                 input.SignedReviewReference.Trim() ==
                     input.BankStatementEvidenceReference.Trim())
                 throw Denied();

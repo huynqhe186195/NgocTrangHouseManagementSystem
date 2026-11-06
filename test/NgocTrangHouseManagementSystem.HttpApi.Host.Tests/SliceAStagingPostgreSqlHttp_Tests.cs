@@ -7117,6 +7117,57 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                         Assert.False(review.RootElement.GetProperty(
                             "isFinancialPosting").GetBoolean());
                     }
+                    // D04-11: execute a fully valid first journal INSERT
+                    // followed by an illegal duplicate in ONE SERIALIZABLE
+                    // transaction. Rolling back the failure must erase even
+                    // the valid first INSERT (no half-settled top-up).
+                    if (chunk == 400_000m)
+                    {
+                        await using var checkDb = new NpgsqlConnection(buildingCs);
+                        await checkDb.OpenAsync();
+                        await using (var tx = await checkDb.BeginTransactionAsync(
+                            System.Data.IsolationLevel.Serializable))
+                        {
+                            const string writePosting = """
+                                INSERT INTO "BuildingManagementRoomChangeH4SettlementPostings"
+                                  ("Id","ObligationId","Kind","ReviewId","IssuedInvoiceId",
+                                   "AmountVnd","PostedByOwnerId","PostedAtUtc","SourceReference")
+                                SELECT @newId,r."ObligationId",r."Kind",r."Id",NULL,
+                                       r."AmountVnd",@owner,
+                                       r."ReviewedAtUtc" + interval '1 second',
+                                       r."BankTransactionReference"
+                                  FROM "BuildingManagementRoomChangeH4SettlementReviews" r
+                                 WHERE r."Id"=@review
+                                """;
+                            await using (var first = new NpgsqlCommand(
+                                writePosting, checkDb, tx))
+                            {
+                                first.Parameters.AddWithValue("newId", Guid.NewGuid());
+                                first.Parameters.AddWithValue("owner", root);
+                                first.Parameters.AddWithValue("review", reviewId);
+                                Assert.Equal(1, await first.ExecuteNonQueryAsync());
+                            }
+                            await using (var duplicate = new NpgsqlCommand(
+                                writePosting, checkDb, tx))
+                            {
+                                duplicate.Parameters.AddWithValue("newId", Guid.NewGuid());
+                                duplicate.Parameters.AddWithValue("owner", root);
+                                duplicate.Parameters.AddWithValue("review", reviewId);
+                                var blocked = await Assert.ThrowsAsync<PostgresException>(
+                                    async () => await duplicate.ExecuteNonQueryAsync());
+                                Assert.Contains(blocked.SqlState, new[] { "23505", "23514" });
+                            }
+                            await tx.RollbackAsync();
+                        }
+                        await using var verify = new NpgsqlCommand(
+                            """
+                            SELECT count(*)
+                              FROM "BuildingManagementRoomChangeH4SettlementPostings"
+                             WHERE "ReviewId"=@review
+                            """, checkDb);
+                        verify.Parameters.AddWithValue("review", reviewId);
+                        Assert.Equal(0L, (long)(await verify.ExecuteScalarAsync())!);
+                    }
                     using (var posting = await Positive2HPostAsync(
                         clientRoot, d04PostAt, new { reviewId }))
                     {

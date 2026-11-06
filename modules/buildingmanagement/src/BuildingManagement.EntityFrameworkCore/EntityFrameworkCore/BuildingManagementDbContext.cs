@@ -40,6 +40,8 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
     public DbSet<Payment> Payments { get; set; } = default!;
     // Source-only payOS intents; no API writer, migration or production receipt authorization.
     public DbSet<PayOsPaymentIntent> PayOsPaymentIntents { get; set; } = default!;
+    // Source-only signed webhook inbox evidence; NEVER auto-posts a receipt.
+    public DbSet<PayOsWebhookInboxRecord> PayOsWebhookInbox { get; set; } = default!;
     public DbSet<DepositSettlement> DepositSettlements {get; set;} = default!;
     public DbSet<RoomChangeRequest> RoomChangeRequests { get; set; } = default!;
     public DbSet<RoomChangeTenantRosterSnapshotRecord> RoomChangeRosterSnapshots { get; set; } = default!;
@@ -108,6 +110,8 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
         builder.ConfigureBuildingManagement();
         builder.ApplyConfiguration(
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.PayOsPaymentIntentConfiguration());
+        builder.ApplyConfiguration(
+            new BuildingManagement.EntityFrameworkCore.EntityConfigurations.PayOsWebhookInboxRecordConfiguration());
         // Source-only Slice A membership model. Adding the mapping alone
         // never authorizes a user; production providers stay DenyAll.
         builder.ApplyConfiguration(

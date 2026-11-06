@@ -58,13 +58,14 @@ public class PayOsStagingReconciliationService_Tests
 
     private static PayOsStagingReconciliationService Service(
         PayOsPaymentMigrationDbContext db, Payment payment,
-        PayOsPaymentIntent intent, PayOsPaymentLinkSnapshot providerSnapshot)
+        PayOsPaymentIntent intent, PayOsPaymentLinkSnapshot providerSnapshot,
+        Guid? overrideBuildingId = null)
     {
         var payments = new Mock<IRepository<Payment, Guid>>();
         var contracts = new Mock<IRepository<Contract, Guid>>();
         var rooms = new Mock<IRepository<Room, Guid>>();
         var floors = new Mock<IRepository<Floor, Guid>>();
-        var floor = new Floor(Guid.NewGuid(), intent.BuildingId, 1, "Test floor");
+        var floor = new Floor(Guid.NewGuid(), overrideBuildingId ?? intent.BuildingId, 1, "Test floor");
         var room = new Room(Guid.NewGuid(), floor.Id, "101", "Room 101", 10m, 1, RoomStatus.Occupied);
         var contract = new Contract(payment.ContractId!.Value, "RECON", room.Id, DateTime.UtcNow.AddDays(-1), null, 150000m);
         contract.Sign();
@@ -138,6 +139,20 @@ public class PayOsStagingReconciliationService_Tests
         var original = await db.PayOsPaymentIntents.AsNoTracking()
             .SingleAsync(x => x.Id == intent.Id);
         Assert.Equal(PayOsPaymentIntentStatus.AwaitingPayment, original.Status);
+    }
+
+    [Fact]
+    public async Task Retargeted_contract_to_another_building_cannot_reconcile_old_payment()
+    {
+        var (intent, payment) = await SeedAsync(inbox: true);
+        await using var db = Db();
+        var result = await Service(
+            db, payment, intent, FullPaid(intent), Guid.NewGuid()).CheckAsync(payment.Id);
+        Assert.False(result.ConfirmedPendingFinancialReview);
+        Assert.Equal(PayOsReconciliationDisposition.ConflictRequiresReview, result.Disposition);
+        Assert.Equal(PayOsPaymentIntentStatus.AwaitingPayment,
+            (await db.PayOsPaymentIntents.AsNoTracking()
+                .SingleAsync(x => x.Id == intent.Id)).Status);
     }
 
     [Fact]

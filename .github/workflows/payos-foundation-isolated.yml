@@ -18,10 +18,13 @@ on:
       - 'src/NgocTrangHouseManagementSystem.HttpApi.Host/Payments/PayOs*.cs'
       - 'src/NgocTrangHouseManagementSystem.HttpApi.Host/NgocTrangHouseManagementSystemHttpApiHostModule.cs'
       - 'test/PayOs.Staging.Persistence.Tests/**'
-  push:
-    branches:
-      - 'feat/phase2h-payos-signature-foundation-20261106'
   workflow_dispatch:
+
+# Only PR + manual runs; avoid 2 workflows per commit on the same branch.
+# When a newer commit arrives, terminate superseded pending CI runs.
+concurrency:
+  group: payos-foundation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   source-only-payments:

@@ -11,6 +11,7 @@ on:
       - 'modules/buildingmanagement/test/BuildingManagement.Domain.Tests/Payments/PayOs*.cs'
       - '.github/workflows/payos-foundation-isolated.yml'
       - 'etc/phase-audits/payos-postgresql16-schema-rehearsal.sql'
+      - 'etc/scripts/review-payos-ef-migration.ps1'
   push:
     branches:
       - 'feat/phase2h-payos-signature-foundation-20261106'
@@ -103,3 +104,40 @@ jobs:
           count="$(docker exec "$pg_container" psql -U postgres -d payos_rehearsal_test -A -t -c 'SELECT count(*) FROM payos_rehearsal.payment_intents WHERE order_code=910000')"
           test "$count" = "1"
           echo "PAYOS PG CONCURRENCY PASS: only 1 of 2 same-order inserts committed"
+
+  ef-migration-review:
+    name: Offline EF migration preview (never applies database)
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    timeout-minutes: 25
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+      BM_INVOICE_MIGRATION_OFFLINE: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Generate migration from existing model snapshot OFFLINE
+        shell: pwsh
+        run: |
+          dotnet tool install --global dotnet-ef --version 10.0.9
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet ef migrations add StagePayOsPaymentIntentsAndWebhookInbox --project modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/BuildingManagement.EntityFrameworkCore.csproj --startup-project modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/BuildingManagement.EntityFrameworkCore.csproj --context BuildingManagementDbContext --output-dir Migrations
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Refuse unexpected migration drift
+        shell: pwsh
+        run: |
+          ./etc/scripts/review-payos-ef-migration.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload generated migration for human review
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: payos-ef-migration-preview
+          path: |
+            modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Migrations/*StagePayOsPaymentIntentsAndWebhookInbox*
+            modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Migrations/BuildingManagementDbContextModelSnapshot.cs
+          retention-days: 14

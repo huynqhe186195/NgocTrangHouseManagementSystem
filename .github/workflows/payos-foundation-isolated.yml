@@ -15,6 +15,8 @@ on:
       - 'etc/scripts/review-payos-ef-migration.ps1'
       - 'modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/PayOsMigrations/*.cs'
       - 'modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Migrations/PayOs/**'
+      - 'src/NgocTrangHouseManagementSystem.HttpApi.Host/Payments/PayOs*.cs'
+      - 'test/PayOs.Staging.Persistence.Tests/**'
   push:
     branches:
       - 'feat/phase2h-payos-signature-foundation-20261106'
@@ -209,6 +211,19 @@ jobs:
           docker exec -i "$pg_container" psql -U postgres -d payos_ef_migration_test -v ON_ERROR_STOP=1 < etc/phase-audits/payos-generated-ef-migration-acceptance.sql
           history="$(docker exec "$pg_container" psql -U postgres -d payos_ef_migration_test -A -t -c 'SELECT count(*) FROM public."__EFMigrationsHistory_PayOs"')"
           test "$history" = "1"
+      - name: Signed webhook inbox writer acceptance on real EF tables
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet test test/PayOs.Staging.Persistence.Tests/PayOs.Staging.Persistence.Tests.csproj --configuration Release --filter 'FullyQualifiedName~PayOsStagingWebhookInboxWriter_Tests' --logger 'trx;LogFileName=payos-pg-webhook.trx' --results-directory test-results/payos-pg --verbosity normal
+      - name: Upload real PostgreSQL webhook test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: payos-webhook-pg16-trx
+          path: test-results/payos-pg/**/*.trx
+          if-no-files-found: warn
+          retention-days: 14
       - name: Roll back the actual EF migration to zero and reapply
         shell: bash
         run: |

@@ -44,3 +44,11 @@ Added source-only `PayOsPaymentLinkClient` for **POST /v2/payment-requests** and
 Official webhook sample golden signature is independently embedded in application tests; ambiguous duplicate JSON field names are rejected. Added dedicated secret-free, no-DB GitHub workflow `.github/workflows/payos-foundation-isolated.yml` to build and run both domain and application PayOs tests. Workflow status must be checked on exact commit; **a file committed to GitHub is not a test pass**.
 
 PAYMENT API HOLD: A service must use a durable reservation/intent before making an HTTP create call and reconcile uncertain provider outcomes before retry; never issue a second payment request merely because the first timed out. Store checkout URL and QR only after verifying intent scope, amount and ownership.
+
+## 2026-11-06 staged webhook inbox increment
+
+Source-only `PayOsWebhookInboxRecord` and EF Core configuration were added, including globally unique provider reference, a foreign key to `PayOsPaymentIntent`, building scope, SHA-256 payload fingerprint, received timestamp and terminal reconciliation/manual-review transitions. The inbox explicitly does **not** represent paid funds or a posted journal. Source-level tests cover invalid data and one-way transitions; CI now includes them.
+
+**Must remain HOLD:** This is not a durable deployed inbox until a complete EF migration/model snapshot has been generated and tested on a disposable PostgreSQL database. The production application has no webhook writer, endpoint, journal or outbox. A real ingress must verify the authentic payOS signature, match stored intent by orderCode/link/amount/tenant/building, acquire an intent-level DB lock, atomically insert the inbox record under a unique constraint, and ACK only once safely persisted. A second event with a conflicting reference/amount must go to manual review, not silently deduplicated. Raw webhook bodies/keys must not be logged publicly; a hash alone is not proof of settlement.
+
+No existing D04 settlement state or production schema has been modified.

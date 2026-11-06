@@ -73,6 +73,13 @@ public sealed class PayOsStagingWebhookInboxWriter
         if (intent is null)
             return PayOsWebhookIngestResult.UnknownIntent;
 
+        // The provider may send a genuine webhook between external checkout
+        // creation and the durable AttachProviderLink transaction. In that
+        // short window never ACK-and-discard funds as a bad signature. Signal
+        // temporary retry instead; the same orderCode must be reconciled.
+        if (intent.Status == PayOsPaymentIntentStatus.Created)
+            return PayOsWebhookIngestResult.ConcurrentConflictRetry;
+
         var validated = PayOsWebhookIntakeGuard.Prepare(rawBody, intent, _checksumKey);
         if (validated is null ||
             validated.BuildingId != intent.BuildingId ||

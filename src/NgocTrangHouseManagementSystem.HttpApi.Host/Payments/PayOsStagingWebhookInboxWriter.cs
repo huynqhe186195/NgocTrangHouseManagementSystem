@@ -119,6 +119,8 @@ public sealed class PayOsStagingWebhookInboxWriter
             pg.SqlState == PostgresErrorCodes.UniqueViolation)
         {
             await transaction.RollbackAsync(cancellationToken);
+            // Do not leave a failed Added entity pending on this DbContext.
+            _db.Entry(record).State = EntityState.Detached;
             // Let a retry with a fresh context distinguish an exact duplicate
             // from a conflicting reference after a concurrent unique violation.
             return PayOsWebhookIngestResult.ConcurrentConflictRetry;

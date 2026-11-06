@@ -82,3 +82,21 @@ The two-table migration has exactly 2 `CreateTable` and 11 `CreateIndex` operati
 [GitHub CI #42231216407](https://github.com/huynqhe186195/NgocTrangHouseManagementSystem/actions/runs/42231216407) verified the generated isolated EF migration on disposable PostgreSQL 16: apply, check indexes/scoped FK/invalid inserts, roll back to migration 0, reapply, and check the dedicated migration history. No production database was used. The committed migration source now has its own CI drift check via `dotnet ef migrations has-pending-model-changes` and final exact-head CI should be consulted before merging.
 
 **No financial writer is authorized.** Even when schema migrations pass, this does not constitute API/webhook integration, bank reconciliation, authenticated multi-building acceptance or D04 journal acceptance. The dedicated factory only permits offline scaffolding or fixed-name loopback disposable PostgreSQL acceptance; it is not a production migration procedure.
+
+## 2026-11-06: staging-only transactional webhook inbox writer
+
+Added `PayOsWebhookIntakeGuard` in Application and a separate `PayOsStagingWebhookInboxWriter` in HttpApi.Host. **This is not exposed as an HTTP controller or registered as a production integration.** The writer:
+- verifies payOS HMAC signature and enforces the maximum 64KiB JSON body before querying an intent;
+- locks the stored order-code intent with PostgreSQL `SELECT ... FOR UPDATE` in a transaction;
+- rechecks exact orderCode, amount, VND, paymentLinkId, success status and bounded bank transaction reference;
+- inserts an inbox record with signed-payload SHA256 digest; globally unique reference blocks cross-order reuse;
+- returns an exact duplicate without modifying an invoice; conflicting reference/payload is rejected;
+- treats funds after a canceled or previously confirmed/posted intent as **requires manual review**, not a receipt;
+- intentionally does **not** call `PaymentAppService.CompleteAsync`, create an invoice allocation, acknowledge a bank settlement or issue refunds.
+
+Additional source and dedicated PostgreSQL 16 tests:
+- `modules/buildingmanagement/test/BuildingManagement.Application.Tests/Payments/PayOsWebhookIntakeGuard_Tests.cs`
+- `test/PayOs.Staging.Persistence.Tests/PayOsStagingWebhookInboxWriter_Tests.cs`
+- `test/PayOs.Staging.Persistence.Tests/PayOs.Staging.Persistence.Tests.csproj`
+
+CI runs the dedicated database writer tests only after real EF migration acceptance in a disposable local PostgreSQL 16 service. A failed writer test must block acceptance; model/source tests alone are not enough. **No external payOS credentials, publicly reachable endpoint, production DB, D04 posting or full business acceptance.** Pending next: authenticate/authorize payment-link creation with stored tenant/building scope and a durable request reservation/idempotent timeout-recovery workflow; expose signed webhook ingress only after the persistence tests pass and a staging-only isolation gate is reviewed.

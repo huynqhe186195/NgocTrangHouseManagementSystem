@@ -11,6 +11,7 @@ on:
       - 'modules/buildingmanagement/test/BuildingManagement.Domain.Tests/Payments/PayOs*.cs'
       - '.github/workflows/payos-foundation-isolated.yml'
       - 'etc/phase-audits/payos-postgresql16-schema-rehearsal.sql'
+      - 'etc/phase-audits/payos-generated-ef-migration-acceptance.sql'
       - 'etc/scripts/review-payos-ef-migration.ps1'
       - 'modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/PayOsMigrations/*.cs'
       - 'modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Migrations/PayOs/**'
@@ -147,3 +148,69 @@ jobs:
             modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Migrations/PayOs/*StagePayOsPaymentIntentsAndWebhookInbox*
             modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Migrations/PayOs/PayOsPaymentMigrationDbContextModelSnapshot.cs
           retention-days: 14
+
+  ef-postgres-migration-acceptance:
+    name: EF payOS migration up/down/reapply on disposable PG16
+    needs: ef-migration-review
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 30
+    env:
+      BM_PAYOS_EF_TEST_DB: '1'
+      BM_PAYOS_EF_TEST_PASSWORD: 'disposable-only'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: disposable-only
+          POSTGRES_DB: payos_ef_migration_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d payos_ef_migration_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Download reviewed EF migration source from offline job
+        uses: actions/download-artifact@v4
+        with:
+          name: payos-ef-migration-preview
+          path: modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Migrations/PayOs
+      - name: Build generated migration and apply to test DB only
+        shell: bash
+        run: |
+          set -euo pipefail
+          project=modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/BuildingManagement.EntityFrameworkCore.csproj
+          dotnet tool install --global dotnet-ef --version 10.0.9
+          dotnet restore "$project"
+          dotnet ef database update StagePayOsPaymentIntentsAndWebhookInbox --context PayOsPaymentMigrationDbContext --project "$project" --startup-project "$project" --verbose
+      - name: Assert real EF-created tables, scoped FK and rollback from invalid rows
+        shell: bash
+        run: |
+          set -euo pipefail
+          pg_container="$(docker ps --filter ancestor=postgres:16 --format '{{.ID}}' | head -n 1)"
+          test -n "$pg_container"
+          docker exec -i "$pg_container" psql -U postgres -d payos_ef_migration_test -v ON_ERROR_STOP=1 < etc/phase-audits/payos-generated-ef-migration-acceptance.sql
+          history="$(docker exec "$pg_container" psql -U postgres -d payos_ef_migration_test -A -t -c 'SELECT count(*) FROM public."__EFMigrationsHistory_PayOs"')"
+          test "$history" = "1"
+      - name: Roll back the actual EF migration to zero and reapply
+        shell: bash
+        run: |
+          set -euo pipefail
+          project=modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/BuildingManagement.EntityFrameworkCore.csproj
+          dotnet ef database update 0 --context PayOsPaymentMigrationDbContext --project "$project" --startup-project "$project"
+          pg_container="$(docker ps --filter ancestor=postgres:16 --format '{{.ID}}' | head -n 1)"
+          remaining="$(docker exec "$pg_container" psql -U postgres -d payos_ef_migration_test -A -t -c "SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename IN ('BuildingManagementPayOsPaymentIntents','BuildingManagementPayOsWebhookInbox')")"
+          test "$remaining" = "0"
+          dotnet ef database update StagePayOsPaymentIntentsAndWebhookInbox --context PayOsPaymentMigrationDbContext --project "$project" --startup-project "$project"
+          restored="$(docker exec "$pg_container" psql -U postgres -d payos_ef_migration_test -A -t -c "SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename IN ('BuildingManagementPayOsPaymentIntents','BuildingManagementPayOsWebhookInbox')")"
+          test "$restored" = "2"
+          history="$(docker exec "$pg_container" psql -U postgres -d payos_ef_migration_test -A -t -c 'SELECT count(*) FROM public."__EFMigrationsHistory_PayOs"')"
+          test "$history" = "1"
+          echo "PAYOS REAL EF MIGRATION: APPLY/ROLLBACK/REAPPLY PASS"

@@ -7539,7 +7539,11 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                         journalAttack);
                     var blocked = await Assert.ThrowsAsync<PostgresException>(
                         async () => await truncate.ExecuteNonQueryAsync());
-                    Assert.Equal("23514", blocked.SqlState);
+                    // 0A000: PostgreSQL refuses TRUNCATE with the journal
+                    // foreign-key graph; 23514: our own no-TRUNCATE trigger.
+                    // Either outcome is fail-closed and preserves every row.
+                    Assert.Contains(blocked.SqlState,
+                        new[] { "0A000", "23514" });
                 }
 
                 // D04-11: a failed SERIALIZABLE statement must roll back the

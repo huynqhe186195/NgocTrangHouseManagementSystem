@@ -4,6 +4,8 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using BuildingManagement.Contracts;
+using BuildingManagement.Rooms;
+using BuildingManagement.Floors;
 using BuildingManagement.EntityFrameworkCore.PayOsMigrations;
 using BuildingManagement.Payments;
 using BuildingManagement.Security;
@@ -25,6 +27,9 @@ public sealed class PayOsStagingReconciliationService
     private readonly PayOsPaymentMigrationDbContext _db;
     private readonly IPayOsPaymentLinkProvider _provider;
     private readonly IRepository<Payment, Guid> _payments;
+    private readonly IRepository<Contract, Guid> _contracts;
+    private readonly IRepository<Room, Guid> _rooms;
+    private readonly IRepository<Floor, Guid> _floors;
     private readonly IBuildingCrudAccessPolicy _access;
     private readonly ICurrentUser _user;
 
@@ -32,12 +37,18 @@ public sealed class PayOsStagingReconciliationService
         PayOsPaymentMigrationDbContext db,
         IPayOsPaymentLinkProvider provider,
         IRepository<Payment, Guid> payments,
+        IRepository<Contract, Guid> contracts,
+        IRepository<Room, Guid> rooms,
+        IRepository<Floor, Guid> floors,
         IBuildingCrudAccessPolicy access,
         ICurrentUser user)
     {
         _db = db ?? throw new ArgumentNullException(nameof(db));
         _provider = provider ?? throw new ArgumentNullException(nameof(provider));
         _payments = payments ?? throw new ArgumentNullException(nameof(payments));
+        _contracts = contracts ?? throw new ArgumentNullException(nameof(contracts));
+        _rooms = rooms ?? throw new ArgumentNullException(nameof(rooms));
+        _floors = floors ?? throw new ArgumentNullException(nameof(floors));
         _access = access ?? throw new ArgumentNullException(nameof(access));
         _user = user ?? throw new ArgumentNullException(nameof(user));
     }
@@ -54,9 +65,19 @@ public sealed class PayOsStagingReconciliationService
         await _access.EnsureResourceAsync(
             BuildingBusinessResourceKind.Contract, contractId,
             BuildingBusinessCapability.ManageContract);
+        // Prove that the current contract still maps to the SAME building as
+        // the originally issued payment; resource scope may change over time.
+        var contract = await _contracts.FindAsync(contractId);
+        var room = contract is null ? null : await _rooms.FindAsync(contract.RoomId);
+        var floor = room is null ? null : await _floors.FindAsync(room.FloorId);
+        if (floor is null || floor.BuildingId == Guid.Empty ||
+            payment.Status != PaymentStatus.Pending)
+            throw Denied();
+
         var intent = await _db.PayOsPaymentIntents.AsNoTracking()
             .SingleOrDefaultAsync(x => x.PaymentId == paymentId, cancellationToken);
-        if (intent is null || intent.InvoiceId.HasValue ||
+        if (intent is null || intent.BuildingId != floor.BuildingId ||
+            intent.InvoiceId.HasValue ||
             intent.PayerId != payment.TenantId ||
             payment.Amount != intent.AmountVnd ||
             intent.Status == PayOsPaymentIntentStatus.Created ||
@@ -69,6 +90,25 @@ public sealed class PayOsStagingReconciliationService
         var classification = PayOsPaymentReconciliationPolicy.Classify(intent, provider);
         if (classification != PayOsReconciliationDisposition.FundsDetectedPendingIndependentPosting)
             return new PayOsReconciliationView(intent.OrderCode, classification, false);
+
+        // Retry after an earlier successful reconciliation is a READ, never
+        // a second financial mutation or a spurious conflict. Bank reference
+        // must still match the unique persisted signed inbox evidence.
+        if (intent.Status == PayOsPaymentIntentStatus.ConfirmedPendingPosting)
+        {
+            var reviewed = await _db.PayOsWebhookInbox.AsNoTracking()
+                .Where(x => x.PaymentIntentId == intent.Id &&
+                    x.BuildingId == intent.BuildingId &&
+                    x.OrderCode == intent.OrderCode)
+                .Take(2).ToListAsync(cancellationToken);
+            return reviewed.Count == 1 &&
+                   reviewed[0].Status == PayOsWebhookInboxStatus.ReconciledNoPosting &&
+                   reviewed[0].ProviderReference == intent.ProviderReference
+                ? new PayOsReconciliationView(intent.OrderCode,
+                    classification, true)
+                : new PayOsReconciliationView(intent.OrderCode,
+                    PayOsReconciliationDisposition.ConflictRequiresReview, false);
+        }
 
         // A provider status alone is not a bank transaction identifier.
         // Require exactly one previously signed and durably inserted inbox row.

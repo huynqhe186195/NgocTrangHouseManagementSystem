@@ -3290,7 +3290,9 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     contractId = financeContract,
                     roomId = financeRoom,
                     evidenceSha256 = evidenceHash,
-                    paymentDueDate = "2026-11-05",
+                    paymentDueDate = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(
+                        DateTime.UtcNow, TimeZoneInfo.FindSystemTimeZoneById(
+                            "Asia/Ho_Chi_Minh"))).AddDays(14).ToString("yyyy-MM-dd"),
                     dueDatePolicyReference = "AGREED-DUE-DATE-POLICY-2026",
                     auxiliaryFeeDecision = 1,
                     auxiliaryFeePolicyReference = "NO-AUXILIARY-FEES-POLICY-2026",

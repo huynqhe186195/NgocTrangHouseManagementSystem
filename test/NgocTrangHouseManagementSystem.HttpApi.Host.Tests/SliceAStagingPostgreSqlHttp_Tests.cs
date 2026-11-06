@@ -7358,7 +7358,7 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 })
                 {
                     await using var truncate = new NpgsqlCommand(
-                        "TRUNCATE TABLE \\"" + table + "\\"",
+                        $"TRUNCATE TABLE \"{table}\"",
                         journalAttack);
                     var blocked = await Assert.ThrowsAsync<PostgresException>(
                         async () => await truncate.ExecuteNonQueryAsync());

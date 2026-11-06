@@ -132,8 +132,18 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           dotnet tool install --global dotnet-ef --version 10.0.9
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          dotnet ef migrations add StagePayOsPaymentIntentsAndWebhookInbox --project modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/BuildingManagement.EntityFrameworkCore.csproj --startup-project modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/BuildingManagement.EntityFrameworkCore.csproj --context PayOsPaymentMigrationDbContext --output-dir Migrations/PayOs
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $project = 'modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/BuildingManagement.EntityFrameworkCore.csproj'
+          $dir = 'modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Migrations/PayOs'
+          $committed = @(Get-ChildItem "$dir/*StagePayOsPaymentIntentsAndWebhookInbox.cs" -ErrorAction SilentlyContinue | Where-Object { $_.Name -notlike '*.Designer.cs' })
+          if ($committed.Count -eq 0) {
+            dotnet ef migrations add StagePayOsPaymentIntentsAndWebhookInbox --project $project --startup-project $project --context PayOsPaymentMigrationDbContext --output-dir Migrations/PayOs
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } elseif ($committed.Count -eq 1) {
+            dotnet ef migrations has-pending-model-changes --project $project --startup-project $project --context PayOsPaymentMigrationDbContext
+            if ($LASTEXITCODE -ne 0) { throw 'Committed payOS migration snapshot differs from current EF model.' }
+          } else {
+            throw "Multiple payOS migration sources detected: $($committed.Count)"
+          }
       - name: Refuse unexpected migration drift
         shell: pwsh
         run: |

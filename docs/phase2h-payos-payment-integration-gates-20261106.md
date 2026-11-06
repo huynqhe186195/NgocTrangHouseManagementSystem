@@ -4,8 +4,10 @@ Status: **FOUNDATION ONLY / NOT BUSINESS ACCEPTED**. Source branch is `wip/phase
 
 ## Implemented in this branch
 
+- A pure checkout-request signature generator requiring positive integer VND/order codes and HTTPS redirect URLs.
+- A signed payment confirmation guard requiring matching order code, VND amount, payment-link ID, provider success status and bank reference; it is read-only and does not settle or acknowledge payment.
 - A pure payment-request webhook `data` signature verifier using sorted keys, HMAC-SHA256 and fixed-time byte comparison. It does **not** share logic with payOS payout signatures.
-- Unit test source for valid reordered fields, amount tampering, incorrect key and malformed signatures.
+- Unit test source for valid reordered fields, amount tampering, incorrect key, malformed signatures, checkout signing and signed-but-mismatched receipt data.
 - No endpoint and no `Payment.Complete` invocation. Tests and compiler execution have **not yet been verified**.
 
 Official protocol references:

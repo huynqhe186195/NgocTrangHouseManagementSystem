@@ -25,7 +25,7 @@ public static class PayOsPaymentReconciliationPolicy
             snapshot.AmountRemainingVnd < 0 ||
             snapshot.AmountPaidVnd > intent.AmountVnd ||
             snapshot.AmountRemainingVnd > intent.AmountVnd ||
-            snapshot.AmountPaidVnd + snapshot.AmountRemainingVnd != intent.AmountVnd)
+            snapshot.AmountPaidVnd != intent.AmountVnd - snapshot.AmountRemainingVnd)
             return PayOsReconciliationDisposition.ConflictRequiresReview;
 
         if (intent.Status == PayOsPaymentIntentStatus.Posted)

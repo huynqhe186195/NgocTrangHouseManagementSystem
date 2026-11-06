@@ -33,6 +33,15 @@ public static class PayOsPaymentWebhookSignature
         try { actual = Convert.FromHexString(supplied); }
         catch (FormatException) { return false; }
 
+        // Reject duplicate property names: GetProperty() reads one value while
+        // a signature over duplicate keys would be ambiguous to other parsers.
+        var distinctNames = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var field in data.EnumerateObject())
+            if (!distinctNames.Add(field.Name)) return false;
+        distinctNames.Clear();
+        foreach (var field in webhook.EnumerateObject())
+            if (!distinctNames.Add(field.Name)) return false;
+
         var fields = data.EnumerateObject()
             .OrderBy(x => x.Name, StringComparer.Ordinal)
             .Select(x => x.Name + "=" + CanonicalValue(x.Value));

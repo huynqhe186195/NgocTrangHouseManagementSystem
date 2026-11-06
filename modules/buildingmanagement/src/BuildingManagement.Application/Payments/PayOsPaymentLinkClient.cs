@@ -14,7 +14,14 @@ namespace BuildingManagement.Payments;
 /// before invoking this adapter. Neither method writes a receipt or journal.
 /// Credentials must come from the server secret store, never request DTOs.
 /// </summary>
-public sealed class PayOsPaymentLinkClient
+public interface IPayOsPaymentLinkProvider
+{
+    Task<PayOsCheckoutResult> CreateAsync(PayOsCheckoutCommand command, CancellationToken cancellationToken = default);
+    Task<PayOsPaymentLinkSnapshot> GetAsync(long orderCode, CancellationToken cancellationToken = default);
+    Task<PayOsPaymentLinkSnapshot?> FindAsync(long orderCode, CancellationToken cancellationToken = default);
+}
+
+public sealed class PayOsPaymentLinkClient : IPayOsPaymentLinkProvider
 {
     private static readonly Uri MerchantApi =
         new("https://api-merchant.payos.vn/");
@@ -93,6 +100,21 @@ public sealed class PayOsPaymentLinkClient
         var qrCode = RequiredString(data, "qrCode");
         return new PayOsCheckoutResult(
             command.OrderCode, command.AmountVnd, linkId, checkoutUrl, qrCode);
+    }
+
+    /// <summary>
+    /// Returns null only when the provider confirms HTTP 404 for the SAME
+    /// pre-reserved order code. An ambiguous timeout/5xx is propagated and
+    /// NEVER treated as permission to create a new order code.
+    /// </summary>
+    public async Task<PayOsPaymentLinkSnapshot?> FindAsync(
+        long orderCode, CancellationToken cancellationToken = default)
+    {
+        try { return await GetAsync(orderCode, cancellationToken); }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return null;
+        }
     }
 
     /// <summary>

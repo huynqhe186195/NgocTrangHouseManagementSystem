@@ -7008,6 +7008,67 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             var d04ReviewAt = h4At + "/d04-bank-evidence-review";
             var d04PostAt = h4At + "/d04-post-settlement";
             var d04BalanceAt = h4At + "/d04-settlement-balance";
+            // D04-09 commit-time authorization: this is the actual D04
+            // financial balance reader, not merely a generic H4 request.
+            // Root's Identity grant must remain leased until the Building
+            // transaction commits, then the same principal must get 403.
+            if (choice == 0)
+            {
+                Task<int>? revokeD04Bootstrap = null;
+                using (var leaseScope = app.Services.CreateScope())
+                {
+                    var sp = leaseScope.ServiceProvider;
+                    var principal = sp.GetRequiredService<ICurrentPrincipalAccessor>();
+                    using (principal.Change(new ClaimsPrincipal(new ClaimsIdentity(
+                        new[] {
+                            new Claim(AbpClaimTypes.UserId, root.ToString("D")),
+                            new Claim(ClaimTypes.NameIdentifier, root.ToString("D"))
+                        }, "D04CommitBoundRoot"))))
+                    {
+                        using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                            .Begin(requiresNew: true, isTransactional: true);
+                        var read = await sp.GetRequiredService<
+                            SliceBStagingRoomChangeRequests>()
+                            .GetH4SettlementBalanceAsync(h4SourceContract, h4Request);
+                        Assert.Equal(1_000_000m, read.OriginalAmountVnd);
+                        revokeD04Bootstrap = Task.Run(async () =>
+                        {
+                            await using var identity = new NpgsqlConnection(idCs);
+                            await identity.OpenAsync();
+                            await using var revoke = new NpgsqlCommand(
+                                """
+                                DELETE FROM "AbpPermissionGrants"
+                                 WHERE "ProviderName"='U' AND "ProviderKey"=@root
+                                   AND "Name"=@permission
+                                """, identity);
+                            revoke.Parameters.AddWithValue("root", root.ToString("D"));
+                            revoke.Parameters.AddWithValue("permission",
+                                BuildingManagementPermissions.Buildings.BootstrapOwner);
+                            return await revoke.ExecuteNonQueryAsync();
+                        });
+                        await Task.Delay(250);
+                        Assert.False(revokeD04Bootstrap.IsCompleted,
+                            "D04 revocation must wait for Building UoW commit.");
+                        await uow.CompleteAsync();
+                    }
+                }
+                Assert.NotNull(revokeD04Bootstrap);
+                Assert.Equal(1, await revokeD04Bootstrap!
+                    .WaitAsync(TimeSpan.FromSeconds(15)));
+                using (var revokedD04 = await clientRoot.GetAsync(d04BalanceAt))
+                    Assert.Equal(HttpStatusCode.Forbidden, revokedD04.StatusCode);
+                using (var restoreScope = app.Services.CreateScope())
+                {
+                    var sp = restoreScope.ServiceProvider;
+                    using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                        .Begin(requiresNew: true, isTransactional: true);
+                    await sp.GetRequiredService<IPermissionManager>().SetForUserAsync(
+                        root, BuildingManagementPermissions.Buildings.BootstrapOwner, true);
+                    await uow.CompleteAsync();
+                }
+                using (var restoredD04 = await clientRoot.GetAsync(d04BalanceAt))
+                    Assert.Equal(HttpStatusCode.OK, restoredD04.StatusCode);
+            }
             // D04-09: the financial balance endpoint must check the live
             // Identity record, not only a stale authenticated principal.
             // The same persisted-account fence covers settlement writes.

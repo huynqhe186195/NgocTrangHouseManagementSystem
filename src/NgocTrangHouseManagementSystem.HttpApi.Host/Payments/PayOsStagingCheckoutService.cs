@@ -105,6 +105,7 @@ public sealed class PayOsStagingCheckoutService
         // An issued checkout cannot be retargeted to another amount, tenant,
         // building or invoice after a caller retries. Unique PaymentId in PG
         // is the ultimate barrier to parallel requests for one source payment.
+        var reservedNow = false;
         var intent = await _db.PayOsPaymentIntents.SingleOrDefaultAsync(
             x => x.PaymentId == paymentId, cancellationToken);
         if (intent is null)
@@ -115,7 +116,11 @@ public sealed class PayOsStagingCheckoutService
                 amount, DateTime.UtcNow.AddMinutes(20),
                 paymentId: paymentId);
             _db.PayOsPaymentIntents.Add(intent);
-            try { await _db.SaveChangesAsync(cancellationToken); }
+            try
+            {
+                await _db.SaveChangesAsync(cancellationToken);
+                reservedNow = true;
+            }
             catch (DbUpdateException ex) when (
                 ex.InnerException is PostgresException pg &&
                 pg.SqlState == PostgresErrorCodes.UniqueViolation)
@@ -163,7 +168,11 @@ public sealed class PayOsStagingCheckoutService
         // An earlier create may have reached payOS before our HTTP request
         // timed out. ALWAYS recover the SAME orderCode first. 5xx / timeout
         // must propagate; only definitive HTTP 404 can authorize create.
-        var recovered = await _provider.FindAsync(intent.OrderCode, cancellationToken);
+        // A newly reserved intent has never been sent to payOS: create once.
+        // Only a retry of an existing Created intent needs a provider lookup.
+        var recovered = reservedNow
+            ? null
+            : await _provider.FindAsync(intent.OrderCode, cancellationToken);
         if (recovered is not null)
         {
             if (recovered.OrderCode != intent.OrderCode ||

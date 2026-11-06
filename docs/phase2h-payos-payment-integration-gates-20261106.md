@@ -4,6 +4,7 @@ Status: **FOUNDATION ONLY / NOT BUSINESS ACCEPTED**. Source branch is `wip/phase
 
 ## Implemented in this branch
 
+- Source-only payOS intent domain model and EF mapping with unique orderCode/paymentLinkId/providerReference, scoped building and payer IDs, immutable target and strict lifecycle. No migration has been generated; database persistence is NOT available until reviewed migration and tests.
 - A pure checkout-request signature generator requiring positive integer VND/order codes and HTTPS redirect URLs.
 - A signed payment confirmation guard requiring matching order code, VND amount, payment-link ID, provider success status and bank reference; it is read-only and does not settle or acknowledge payment.
 - A pure payment-request webhook `data` signature verifier using sorted keys, HMAC-SHA256 and fixed-time byte comparison. It does **not** share logic with payOS payout signatures.
@@ -16,7 +17,7 @@ Official protocol references:
 
 ## Remaining implementation gates (HOLD)
 
-1. Define durable `PaymentIntent` with unique (provider, orderCode), unique provider payment-link ID when non-null, building scope, payer, exact integer VND amount, currency, expiry, provider status and immutable purpose (invoice/deposit).
+1. Generate and review PostgreSQL migration for the staged intent mapping and apply only against disposable test database first; verify unique/check constraints, null-key semantics, race/concurrent inserts and complete EF model snapshot. The source mapping is NOT a migrated table. Define explicit purpose/provider and irreversible payment allocation target; verify building and payer ownership with authenticated API tests.
 2. Generate monotonic collision-free payOS numeric orderCode; create payment link server-side with checksum key and server-only credentials; persist request/response and use provider idempotency/reconciliation strategy before retry. Do not create checkout links for unauthorized buildings or unissued invoice lines.
 3. Add a dedicated anonymous HTTPS webhook ingress with request size limits, parsed payload validation, valid signature requirement, unique event/transaction deduplication, safe raw evidence storage and safe ACK only after durable recording. Never trust a browser return/cancel redirect as payment confirmation.
 4. Match provider/channel, amount, orderCode, currency=VND, paymentLinkId, reference and state against the persisted intent. Under a transaction and row lock, apply once, emit outbox event for downstream invoicing and preserve audit trail; reject cross-building, expired/replayed/conflicting events.
@@ -30,3 +31,7 @@ Official protocol references:
 - Bank statement settlement or proof of actual collection in this branch.
 - Deploying to production, merging to main, changing original D04 staging evidence.
 - Treating any checkout URL, browser success redirect or syntactically valid webhook signature as sufficient proof to post a financial journal without transaction reconciliation.
+
+## 2026-11-06 follow-up
+
+Added source-only `PayOsPaymentIntent` state model, EF Core configuration and domain test source. Transitions allow linked intent -> confirmation pending posting -> posted, but **do not perform posting**. The application/DB writer must validate authoritative provider status, lifecycle of delayed payments, linked IDs, expiry and ownership in a serializable or locked transaction. A 'cancel unpaid' state is not permission to dismiss a subsequently confirmed bank payment: it must enter manual reconciliation rather than be lost or double-booked. No production migration, CI pass or runtime use has been verified.

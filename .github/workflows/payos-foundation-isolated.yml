@@ -34,7 +34,7 @@ jobs:
       - name: Domain payOS source tests
         shell: pwsh
         run: |
-          dotnet test modules/buildingmanagement/test/BuildingManagement.Domain.Tests/BuildingManagement.Domain.Tests.csproj --configuration Release --filter 'FullyQualifiedName~PayOsPaymentIntent_Tests' --logger 'trx;LogFileName=payos-domain.trx' --results-directory test-results/domain --verbosity normal
+          dotnet test modules/buildingmanagement/test/BuildingManagement.Domain.Tests/BuildingManagement.Domain.Tests.csproj --configuration Release --filter 'FullyQualifiedName~PayOs' --logger 'trx;LogFileName=payos-domain.trx' --results-directory test-results/domain --verbosity normal
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Application payOS source tests
         shell: pwsh

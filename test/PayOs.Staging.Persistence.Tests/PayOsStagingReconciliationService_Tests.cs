@@ -11,6 +11,7 @@ using BuildingManagement.Security;
 using Microsoft.EntityFrameworkCore;
 using Moq;
 using NgocTrangHouseManagementSystem.Payments;
+using Volo.Abp.Authorization;
 using Volo.Abp.Domain.Repositories;
 using Volo.Abp.Users;
 using Xunit;
@@ -59,7 +60,8 @@ public class PayOsStagingReconciliationService_Tests
     private static PayOsStagingReconciliationService Service(
         PayOsPaymentMigrationDbContext db, Payment payment,
         PayOsPaymentIntent intent, PayOsPaymentLinkSnapshot providerSnapshot,
-        Guid? overrideBuildingId = null)
+        Guid? overrideBuildingId = null,
+        bool revokeAfterFirstAccess = false)
     {
         var payments = new Mock<IRepository<Payment, Guid>>();
         var contracts = new Mock<IRepository<Contract, Guid>>();
@@ -78,11 +80,15 @@ public class PayOsStagingReconciliationService_Tests
         floors.Setup(x => x.FindAsync(It.IsAny<Guid>(), It.IsAny<bool>(),
                 It.IsAny<CancellationToken>())).ReturnsAsync(floor);
         var access = new Mock<IBuildingCrudAccessPolicy>();
+        var accessCount = 0;
         access.Setup(x => x.EnsureResourceAsync(
                 BuildingBusinessResourceKind.Contract,
                 payment.ContractId!.Value,
                 BuildingBusinessCapability.ManageContract))
-            .Returns(Task.CompletedTask);
+            .Returns(() => !revokeAfterFirstAccess || ++accessCount == 1
+                ? Task.CompletedTask
+                : Task.FromException(new AbpAuthorizationException("Building grant revoked during provider lookup.")));
+
         var user = new Mock<ICurrentUser>();
         user.SetupGet(x => x.IsAuthenticated).Returns(true);
         user.SetupGet(x => x.Id).Returns(Guid.NewGuid());
@@ -153,6 +159,26 @@ public class PayOsStagingReconciliationService_Tests
         Assert.Equal(PayOsPaymentIntentStatus.AwaitingPayment,
             (await db.PayOsPaymentIntents.AsNoTracking()
                 .SingleAsync(x => x.Id == intent.Id)).Status);
+    }
+
+    [Fact]
+    public async Task Revoked_building_grant_after_provider_lookup_cannot_confirm_or_post()
+    {
+        var (intent, payment) = await SeedAsync(inbox: true);
+        await using var db = Db();
+        var service = Service(db, payment, intent, FullPaid(intent),
+            revokeAfterFirstAccess: true);
+
+        await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+            service.CheckAsync(payment.Id));
+
+        Assert.Equal(PayOsPaymentIntentStatus.AwaitingPayment,
+            (await db.PayOsPaymentIntents.AsNoTracking()
+                .SingleAsync(x => x.Id == intent.Id)).Status);
+        Assert.Equal(PayOsWebhookInboxStatus.PendingReconciliation,
+            (await db.PayOsWebhookInbox.AsNoTracking()
+                .SingleAsync(x => x.PaymentIntentId == intent.Id)).Status);
+        Assert.Equal(PaymentStatus.Pending, payment.Status);
     }
 
     [Fact]

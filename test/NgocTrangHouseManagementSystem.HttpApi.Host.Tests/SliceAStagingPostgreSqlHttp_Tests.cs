@@ -7178,6 +7178,51 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                         Assert.False(review.RootElement.GetProperty(
                             "isFinancialPosting").GetBoolean());
                     }
+                    // D04-10 direct SQL bypass: a privileged session may
+                    // not forge an Owner-self-reviewed bank evidence row,
+                    // even when copying a genuine independently reviewed
+                    // source. This is a constraint test, not a runtime-role
+                    // grant or an external bank verification.
+                    if (chunk == 400_000m)
+                    {
+                        var forgedId = Guid.NewGuid();
+                        await using var attackDb = new NpgsqlConnection(buildingCs);
+                        await attackDb.OpenAsync();
+                        await using (var tx = await attackDb.BeginTransactionAsync(
+                            System.Data.IsolationLevel.Serializable))
+                        {
+                            await using var forgery = new NpgsqlCommand(
+                                """
+                                INSERT INTO "BuildingManagementRoomChangeH4SettlementReviews"
+                                  ("Id","ObligationId","Kind","PaymentId","AmountVnd",
+                                   "BankTransactionReference",
+                                   "BankStatementEvidenceReference","PaidAtUtc",
+                                   "ReviewedByUserId","ReviewedAtUtc",
+                                   "SignedReviewReference")
+                                SELECT @forged,r."ObligationId",r."Kind",r."PaymentId",
+                                       r."AmountVnd",r."BankTransactionReference",
+                                       r."BankStatementEvidenceReference",r."PaidAtUtc",
+                                       @owner,r."ReviewedAtUtc",r."SignedReviewReference"
+                                  FROM "BuildingManagementRoomChangeH4SettlementReviews" r
+                                 WHERE r."Id"=@review
+                                """, attackDb, tx);
+                            forgery.Parameters.AddWithValue("forged", forgedId);
+                            forgery.Parameters.AddWithValue("owner", root);
+                            forgery.Parameters.AddWithValue("review", reviewId);
+                            var refused = await Assert.ThrowsAsync<PostgresException>(
+                                async () => await forgery.ExecuteNonQueryAsync());
+                            Assert.Equal("23514", refused.SqlState);
+                            await tx.RollbackAsync();
+                        }
+                        await using var verifyForgery = new NpgsqlCommand(
+                            """
+                            SELECT count(*) FROM "BuildingManagementRoomChangeH4SettlementReviews"
+                             WHERE "Id"=@forged
+                            """, attackDb);
+                        verifyForgery.Parameters.AddWithValue("forged", forgedId);
+                        Assert.Equal(0L,
+                            (long)(await verifyForgery.ExecuteScalarAsync())!);
+                    }
                     // D04-11: execute a fully valid first journal INSERT
                     // followed by an illegal duplicate in ONE SERIALIZABLE
                     // transaction. Rolling back the failure must erase even

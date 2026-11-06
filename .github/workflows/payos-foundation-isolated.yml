@@ -16,6 +16,7 @@ on:
       - 'modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/PayOsMigrations/*.cs'
       - 'modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Migrations/PayOs/**'
       - 'src/NgocTrangHouseManagementSystem.HttpApi.Host/Payments/PayOs*.cs'
+      - 'src/NgocTrangHouseManagementSystem.HttpApi.Host/NgocTrangHouseManagementSystemHttpApiHostModule.cs'
       - 'test/PayOs.Staging.Persistence.Tests/**'
   push:
     branches:
@@ -52,6 +53,11 @@ jobs:
         shell: pwsh
         run: |
           dotnet build modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/BuildingManagement.EntityFrameworkCore.csproj --configuration Release --verbosity minimal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build actual HTTP Host and staging payment DI without starting a server
+        shell: pwsh
+        run: |
+          dotnet build src/NgocTrangHouseManagementSystem.HttpApi.Host/NgocTrangHouseManagementSystem.HttpApi.Host.csproj --configuration Release --verbosity minimal
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload raw test evidence, even when tests fail
         if: always()

@@ -7147,14 +7147,14 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                                 first.Parameters.AddWithValue("review", reviewId);
                                 Assert.Equal(1, await first.ExecuteNonQueryAsync());
                             }
-                            await using (var duplicate = new NpgsqlCommand(
+                            await using (var duplicateInsert = new NpgsqlCommand(
                                 writePosting, checkDb, tx))
                             {
-                                duplicate.Parameters.AddWithValue("newId", Guid.NewGuid());
-                                duplicate.Parameters.AddWithValue("owner", root);
-                                duplicate.Parameters.AddWithValue("review", reviewId);
+                                duplicateInsert.Parameters.AddWithValue("newId", Guid.NewGuid());
+                                duplicateInsert.Parameters.AddWithValue("owner", root);
+                                duplicateInsert.Parameters.AddWithValue("review", reviewId);
                                 var blocked = await Assert.ThrowsAsync<PostgresException>(
-                                    async () => await duplicate.ExecuteNonQueryAsync());
+                                    async () => await duplicateInsert.ExecuteNonQueryAsync());
                                 Assert.Contains(blocked.SqlState, new[] { "23505", "23514" });
                             }
                             await tx.RollbackAsync();

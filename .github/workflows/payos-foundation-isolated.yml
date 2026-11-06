@@ -221,7 +221,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          dotnet test test/PayOs.Staging.Persistence.Tests/PayOs.Staging.Persistence.Tests.csproj --configuration Release --filter 'FullyQualifiedName~PayOsStagingWebhookInboxWriter_Tests' --logger 'trx;LogFileName=payos-pg-webhook.trx' --results-directory test-results/payos-pg --verbosity normal
+          dotnet test test/PayOs.Staging.Persistence.Tests/PayOs.Staging.Persistence.Tests.csproj --configuration Release --filter 'FullyQualifiedName~PayOsStaging' --logger 'trx;LogFileName=payos-pg-webhook.trx' --results-directory test-results/payos-pg --verbosity normal
       - name: Upload real PostgreSQL webhook test evidence
         if: always()
         uses: actions/upload-artifact@v4

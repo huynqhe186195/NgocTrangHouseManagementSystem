@@ -19,7 +19,7 @@ public sealed class FullInvoiceMigrationChainPostgreSql_Tests
     private const string OptInVariable = "BM_ALLOW_FULL_MIGRATION_REHEARSAL";
     private const string OptInValue = "CREATE_AND_DROP_FRESH_LOCAL_TEST_DATABASE";
     private const string ExpectedLatestMigration =
-        "20261104220000_Phase2HTypedH4DeferredCommitIntent";
+        "20261105150000_Phase2HD04H4SettlementJournal";
 
     [Fact]
     public async Task PGMIG01_Full_EF_Migrations_Succeed_In_Fresh_Disposable_Database()
@@ -442,7 +442,15 @@ public sealed class FullInvoiceMigrationChainPostgreSql_Tests
                     {
                         var denied = await Assert.ThrowsAsync<PostgresException>(
                             async () => await sql.ExecuteNonQueryAsync());
-                        Assert.Equal("23514", denied.SqlState);
+                        // D04 adds a restrictive FK from the settlement
+                        // journal to H4 obligations. PostgreSQL may now
+                        // reject TRUNCATE with 0A000 before our immutable
+                        // no-truncate trigger gets its 23514 turn.
+                        Assert.True(denied.SqlState == "23514" ||
+                            (denied.SqlState == "0A000" &&
+                             denied.MessageText.Contains(
+                                 "foreign key constraint", StringComparison.OrdinalIgnoreCase)),
+                            $"Unexpected H4 truncate SQLSTATE {denied.SqlState}: {denied.MessageText}");
                     }
                     await h4NoTruncateTx.RollbackAsync();
                 }

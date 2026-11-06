@@ -45,6 +45,8 @@ public sealed class SliceBStagingFinalInvoiceMutation
     private readonly ContractDepositOfficialOffsetReadAppService _offsetReader;
     private readonly MonthlyInvoiceBasePreviewAppService _monthlyPreview;
     private readonly IInvoiceDraftStorageAppService _utilityDrafts;
+    // Optional isolated-test clock; live registrations retain System time.
+    private readonly TimeProvider _clock;
 
     public SliceBStagingFinalInvoiceMutation(
         IDbContextProvider<BuildingManagementDbContext> provider,
@@ -58,7 +60,8 @@ public sealed class SliceBStagingFinalInvoiceMutation
         ContractDepositLedgerReviewAppService depositAudit,
         ContractDepositOfficialOffsetReadAppService offsetReader,
         MonthlyInvoiceBasePreviewAppService monthlyPreview,
-        IInvoiceDraftStorageAppService utilityDrafts)
+        IInvoiceDraftStorageAppService utilityDrafts,
+        TimeProvider? clock = null)
     {
         _provider = provider;
         _policy = policy;
@@ -72,6 +75,7 @@ public sealed class SliceBStagingFinalInvoiceMutation
         _offsetReader = offsetReader;
         _monthlyPreview = monthlyPreview;
         _utilityDrafts = utilityDrafts;
+        _clock = clock ?? TimeProvider.System;
     }
 
     /// <summary>
@@ -514,7 +518,7 @@ public sealed class SliceBStagingFinalInvoiceMutation
                     decimal.Truncate(input.Amount) != input.Amount ||
                     input.PaidAtUtc == default ||
                     input.PaidAtUtc.Kind != DateTimeKind.Utc ||
-                    input.PaidAtUtc > DateTime.UtcNow ||
+                    input.PaidAtUtc > _clock.GetUtcNow().UtcDateTime ||
                     string.IsNullOrWhiteSpace(input.TransactionReference) ||
                     input.TransactionReference.Trim().Length is < 8 or > 128 ||
                     string.IsNullOrWhiteSpace(input.BankEvidenceReference) ||
@@ -618,7 +622,7 @@ public sealed class SliceBStagingFinalInvoiceMutation
                 try
                 {
                     var today = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(
-                        DateTime.UtcNow,
+                        _clock.GetUtcNow().UtcDateTime,
                         TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh")));
                     adjusted = MonthlyInvoiceAdjustmentEvaluator.Assess(
                         issued, proposals, decisions, today, already);
@@ -658,7 +662,7 @@ public sealed class SliceBStagingFinalInvoiceMutation
                 entry.State = EntityState.Detached;
 
                 var allocation = MonthlyInvoicePaymentAllocationRecord.Capture(
-                    Guid.NewGuid(), issued, receipt, actor, DateTime.UtcNow);
+                    Guid.NewGuid(), issued, receipt, actor, _clock.GetUtcNow().UtcDateTime);
                 db.MonthlyInvoicePaymentAllocations.Add(allocation);
                 return new SliceBStagedMonthlyReceiptRead(
                     receipt.Id, allocation.Id, issued.Id, receipt.Amount,
@@ -2320,7 +2324,7 @@ public sealed class SliceBStagingFinalInvoiceMutation
                 try
                 {
                     candidate = OfficialInvoiceReceiptReviewRecord.Review(
-                        Guid.NewGuid(), posting, evidence, actor, DateTime.UtcNow,
+                        Guid.NewGuid(), posting, evidence, actor, _clock.GetUtcNow().UtcDateTime,
                         input.Accept, input.BankStatementEvidenceReference,
                         input.Reason);
                 }
@@ -2364,7 +2368,25 @@ public sealed class SliceBStagingFinalInvoiceMutation
                         : 0m;
                     var internalApplied = await PostedInternalOffsetForInvoiceAsync(
                         db, contractId, posting.Id);
-                    if (checked(alreadyVerified + candidate.Amount + internalApplied) >
+                    // D04 next-month H4 rent credit is a noncash offset
+                    // against this SAME issued receivable. The historic
+                    // receipt reviewer predates D04: without this preflight
+                    // it would rely only on a later SQL AFTER INSERT guard,
+                    // surfacing an avoidable SQL exception to the caller.
+                    decimal d04RentCredit = 0m;
+                    if (posting.Kind == OfficialInvoiceKind.Monthly)
+                    {
+                        await using var credit = Command(db, """
+                            SELECT COALESCE(SUM("AmountVnd"),0)
+                              FROM "BuildingManagementRoomChangeH4SettlementPostings"
+                             WHERE "Kind"=2 AND "IssuedInvoiceId"=@issued
+                            """);
+                        Add(credit, "issued", posting.IssuedInvoiceId);
+                        d04RentCredit = Convert.ToDecimal(
+                            await credit.ExecuteScalarAsync());
+                    }
+                    if (checked(alreadyVerified + candidate.Amount +
+                            internalApplied + d04RentCredit) >
                         checked(posting.OriginalAmount + delta))
                         throw Denied();
                 }

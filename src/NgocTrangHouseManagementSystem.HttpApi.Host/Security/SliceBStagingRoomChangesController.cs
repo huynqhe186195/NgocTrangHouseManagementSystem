@@ -272,6 +272,54 @@ public sealed class SliceBStagingRoomChangesController : ControllerBase
         catch (AbpAuthorizationException) { return Forbid(); }
     }
 
+    // D04 independently reviewed manual bank statement / completed deposit
+    // payment. Review itself neither settles money nor initiates a bank transfer.
+    [HttpPost("{requestId:guid}/d04-bank-evidence-review")]
+    [UnitOfWork(true, IsolationLevel.Serializable)]
+    public async Task<IActionResult> ReviewD04BankEvidenceAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid requestId,
+        [FromBody] SliceBRoomChangeD04ReviewInput input)
+    {
+        try
+        {
+            RequireIsolatedStaging();
+            return Ok(await _requests!.ReviewH4BankEvidenceAsync(
+                contractId, requestId, input));
+        }
+        catch (AbpAuthorizationException) { return Forbid(); }
+    }
+
+    // Owner-only append-only D04 journal; source amounts are DB-resolved,
+    // never accepted from a client-provided 'paid' boolean.
+    [HttpPost("{requestId:guid}/d04-post-settlement")]
+    [UnitOfWork(true, IsolationLevel.Serializable)]
+    public async Task<IActionResult> PostD04SettlementAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid requestId,
+        [FromBody] SliceBRoomChangeD04PostingInput input)
+    {
+        try
+        {
+            RequireIsolatedStaging();
+            return Ok(await _requests!.PostH4SettlementAsync(
+                contractId, requestId, input));
+        }
+        catch (AbpAuthorizationException) { return Forbid(); }
+    }
+
+    [HttpGet("{requestId:guid}/d04-settlement-balance")]
+    [UnitOfWork(true, IsolationLevel.Serializable)]
+    public async Task<IActionResult> GetD04SettlementBalanceAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid requestId)
+    {
+        try
+        {
+            RequireIsolatedStaging();
+            return Ok(await _requests!.GetH4SettlementBalanceAsync(
+                contractId, requestId));
+        }
+        catch (AbpAuthorizationException) { return Forbid(); }
+    }
+
     // Isolated staging only: H4 moves the complete roster and creates ONE
     // original signed outstanding financial obligation, never bank cash.
     [HttpPost("{requestId:guid}/complete-h4-mid-month-room-change")]

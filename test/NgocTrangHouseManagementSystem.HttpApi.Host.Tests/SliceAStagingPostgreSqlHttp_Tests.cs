@@ -1901,6 +1901,41 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 Assert.Equal(1,version.GetProperty("version").GetInt32());
             }
 
+            // D03 persisted source-of-truth acceptance: do not rely solely
+            // on an HTTP projection. Re-read committed tariff history through
+            // a fresh EF scope and verify immutable evidence fingerprints.
+            using (var tariffScope = app.Services.CreateScope())
+            {
+                using var tariffUow = tariffScope.ServiceProvider
+                    .GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var tariffDb = await tariffScope.ServiceProvider.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>()
+                    .GetDbContextAsync();
+                var persistedA = await tariffDb.RoomScopedServiceTariffVersions
+                    .AsNoTracking()
+                    .Where(x => x.RoomId == roomA && x.ServiceId == serviceId)
+                    .OrderBy(x => x.Version).ToArrayAsync();
+                Assert.Equal(2, persistedA.Length);
+                Assert.Equal(new[] { 1, 2 }, persistedA.Select(x => x.Version));
+                Assert.Equal(new[] { 150_000m, 180_000m },
+                    persistedA.Select(x => x.UnitPriceVnd));
+                Assert.Equal(new[] { initialEffective, nextEffective },
+                    persistedA.Select(x => x.EffectiveFrom));
+                foreach (var row in persistedA) row.VerifyFingerprint();
+                var persistedB = await tariffDb.RoomScopedServiceTariffVersions
+                    .AsNoTracking()
+                    .Where(x => x.RoomId == roomB && x.ServiceId == serviceId)
+                    .ToArrayAsync();
+                var onlyB = Assert.Single(persistedB);
+                onlyB.VerifyFingerprint();
+                Assert.Equal(1, onlyB.Version);
+                Assert.Equal(200_000m, onlyB.UnitPriceVnd);
+                // The denied replay must not have minted a third version.
+                Assert.Equal(3, persistedA.Length + persistedB.Length);
+                await tariffUow.CompleteAsync();
+            }
+
             // COMPLETE STAGING FINANCIAL HTTP FLOW:
             // scoped month-end draft -> prepared immutable evidence ->
             // independent reviewer -> root-issued ledger -> completed bank
@@ -3255,7 +3290,9 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     contractId = financeContract,
                     roomId = financeRoom,
                     evidenceSha256 = evidenceHash,
-                    paymentDueDate = "2026-11-05",
+                    paymentDueDate = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(
+                        DateTime.UtcNow, TimeZoneInfo.FindSystemTimeZoneById(
+                            "Asia/Ho_Chi_Minh"))).AddDays(14).ToString("yyyy-MM-dd"),
                     dueDatePolicyReference = "AGREED-DUE-DATE-POLICY-2026",
                     auxiliaryFeeDecision = 1,
                     auxiliaryFeePolicyReference = "NO-AUXILIARY-FEES-POLICY-2026",
@@ -6170,6 +6207,179 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 Assert.Equal(64, existing.RootElement.GetProperty(
                     "evidenceSha256").GetString()!.Length);
             }
+            // H4-specific Identity revocation race: a root-authorized
+            // H4 read holds the persisted BootstrapOwner grant through the
+            // Building UoW commit. Revocation must wait for that commit,
+            // and the same authenticated HTTP actor must then be denied.
+            // Only disposable PostgreSQL Identity/Building fixtures are used.
+            if (choice == 0)
+            {
+                Task<int>? revokeH4Bootstrap = null;
+                using (var leaseScope = app.Services.CreateScope())
+                {
+                    var sp = leaseScope.ServiceProvider;
+                    var accessor = sp.GetRequiredService<ICurrentPrincipalAccessor>();
+                    using (accessor.Change(new ClaimsPrincipal(new ClaimsIdentity(
+                        new[]
+                        {
+                            new Claim(AbpClaimTypes.UserId, root.ToString("D")),
+                            new Claim(ClaimTypes.NameIdentifier, root.ToString("D"))
+                        }, "H4CommitBoundRoot"))))
+                    {
+                        using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                            .Begin(requiresNew: true, isTransactional: true);
+                        var guarded = await sp.GetRequiredService<
+                            SliceBStagingRoomChangeRequests>()
+                            .GetH4DispositionIntentAsync(h4SourceContract, h4Request);
+                        Assert.Equal(h4Request, guarded.RequestId);
+                        revokeH4Bootstrap = Task.Run(async () =>
+                        {
+                            await using var connection = new NpgsqlConnection(idCs);
+                            await connection.OpenAsync();
+                            await using var command = new NpgsqlCommand(
+                                """
+                                DELETE FROM "AbpPermissionGrants"
+                                 WHERE "ProviderName" = 'U'
+                                   AND "ProviderKey" = @root
+                                   AND "Name" = @permission
+                                """, connection);
+                            command.Parameters.AddWithValue("root", root.ToString("D"));
+                            command.Parameters.AddWithValue("permission",
+                                BuildingManagementPermissions.Buildings.BootstrapOwner);
+                            return await command.ExecuteNonQueryAsync();
+                        });
+                        await Task.Delay(250);
+                        Assert.False(revokeH4Bootstrap.IsCompleted,
+                            "H4 BootstrapOwner revoke must await Building UoW commit.");
+                        await uow.CompleteAsync();
+                    }
+                }
+                Assert.NotNull(revokeH4Bootstrap);
+                Assert.Equal(1, await revokeH4Bootstrap!
+                    .WaitAsync(TimeSpan.FromSeconds(15)));
+                using (var revoked = await clientRoot.GetAsync(h4IntentUrl))
+                    Assert.Equal(HttpStatusCode.Forbidden, revoked.StatusCode);
+
+                using (var restoreScope = app.Services.CreateScope())
+                {
+                    var sp = restoreScope.ServiceProvider;
+                    using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                        .Begin(requiresNew: true, isTransactional: true);
+                    await sp.GetRequiredService<IPermissionManager>().SetForUserAsync(
+                        root, BuildingManagementPermissions.Buildings.BootstrapOwner, true);
+                    await uow.CompleteAsync();
+                }
+                using (var restored = await clientRoot.GetAsync(h4IntentUrl))
+                    Assert.Equal(HttpStatusCode.OK, restored.StatusCode);
+
+                // H4 must also fail closed when persisted Identity disables
+                // the account, even when the HTTP test principal is stale.
+                await using (var connection = new NpgsqlConnection(idCs))
+                {
+                    await connection.OpenAsync();
+                    await using var disable = new NpgsqlCommand(
+                        """
+                        UPDATE "AbpUsers" SET "IsActive"=FALSE
+                         WHERE "Id"=@root AND "IsActive"=TRUE
+                        """, connection);
+                    disable.Parameters.AddWithValue("root", root);
+                    Assert.Equal(1, await disable.ExecuteNonQueryAsync());
+                }
+                try
+                {
+                    using var inactive = await clientRoot.GetAsync(h4IntentUrl);
+                    Assert.Equal(HttpStatusCode.Forbidden, inactive.StatusCode);
+                }
+                finally
+                {
+                    await using var connection = new NpgsqlConnection(idCs);
+                    await connection.OpenAsync();
+                    await using var reactivate = new NpgsqlCommand(
+                        """
+                        UPDATE "AbpUsers" SET "IsActive"=TRUE
+                         WHERE "Id"=@root AND "IsActive"=FALSE
+                        """, connection);
+                    reactivate.Parameters.AddWithValue("root", root);
+                    Assert.Equal(1, await reactivate.ExecuteNonQueryAsync());
+                }
+                using (var active = await clientRoot.GetAsync(h4IntentUrl))
+                    Assert.Equal(HttpStatusCode.OK, active.StatusCode);
+
+                // A delegated operator can read this H4 REQUEST, but must
+                // never access the owner-only H4 deposit disposition. The
+                // Building membership lease must prevent a concurrent
+                // revocation from committing before this read UoW ends.
+                // Use the independent co-signer as a temporary B delegate;
+                // leave the existing operatorB membership and its revision
+                // unchanged for the later membership regression assertions.
+                using (var permissionScope = app.Services.CreateScope())
+                {
+                    var sp = permissionScope.ServiceProvider;
+                    using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                        .Begin(requiresNew: true, isTransactional: true);
+                    await sp.GetRequiredService<IPermissionManager>().SetForUserAsync(
+                        cosigner, BuildingManagementPermissions.Contracts.Manage, true);
+                    await uow.CompleteAsync();
+                }
+                using (var assignment = new StringContent(JsonSerializer.Serialize(
+                    new { buildingId = b, operatorUserId = cosigner }),
+                    Encoding.UTF8, "application/json"))
+                using (var response = await clientRoot.PostAsync(grants, assignment))
+                    Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+                using var h4Delegate = app.GetTestClient();
+                h4Delegate.DefaultRequestHeaders.Add(
+                    "X-Slice-A-Test-Actor", cosigner.ToString("D"));
+                using (var delegatedRead = await h4Delegate.GetAsync(h4At))
+                    Assert.Equal(HttpStatusCode.OK, delegatedRead.StatusCode);
+                using (var ownerOnly = await h4Delegate.GetAsync(h4IntentUrl))
+                    Assert.Equal(HttpStatusCode.Forbidden, ownerOnly.StatusCode);
+
+                Task<HttpStatusCode>? revokeH4Member = null;
+                using (var membershipScope = app.Services.CreateScope())
+                {
+                    var sp = membershipScope.ServiceProvider;
+                    var accessor = sp.GetRequiredService<ICurrentPrincipalAccessor>();
+                    using (accessor.Change(new ClaimsPrincipal(new ClaimsIdentity(
+                        new[]
+                        {
+                            new Claim(AbpClaimTypes.UserId, cosigner.ToString("D")),
+                            new Claim(ClaimTypes.NameIdentifier, cosigner.ToString("D"))
+                        }, "H4CommitBoundBuildingMember"))))
+                    {
+                        using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                            .Begin(requiresNew: true, isTransactional: true);
+                        var read = await sp.GetRequiredService<
+                            SliceBStagingRoomChangeRequests>()
+                            .GetAsync(h4SourceContract, h4Request);
+                        Assert.Equal(h4Request, read.Id);
+                        revokeH4Member = Task.Run(async () =>
+                        {
+                            using var payload = new StringContent(JsonSerializer.Serialize(
+                                new
+                                {
+                                    buildingId = b, operatorUserId = cosigner,
+                                    expectedRevision = 1
+                                }), Encoding.UTF8, "application/json");
+                            using var response = await clientRoot.PostAsync(
+                                grants + "/revoke", payload);
+                            return response.StatusCode;
+                        });
+                        await Task.Delay(250);
+                        Assert.False(revokeH4Member.IsCompleted,
+                            "H4 Building member revocation must await read UoW commit.");
+                        await uow.CompleteAsync();
+                    }
+                }
+                Assert.NotNull(revokeH4Member);
+                Assert.Equal(HttpStatusCode.NoContent, await revokeH4Member!
+                    .WaitAsync(TimeSpan.FromSeconds(15)));
+                using (var afterRevocation = await h4Delegate.GetAsync(h4At))
+                    Assert.Equal(HttpStatusCode.Forbidden, afterRevocation.StatusCode);
+                using (var ownerStillAuthorized = await clientRoot.GetAsync(h4IntentUrl))
+                    Assert.Equal(HttpStatusCode.OK, ownerStillAuthorized.StatusCode);
+            }
+
             // No H4 liability exists until one fully authorized mid-month
             // completion has atomically committed. Root, staff, and
             // cross-building probes must never invent an obligation.
@@ -6263,6 +6473,29 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 }))
                 Assert.False(signedPrice.RootElement.GetProperty(
                     "canExecuteTransfer").GetBoolean());
+            // D06 negative authenticated gates: a random representative
+            // is not the current primary tenant, and a blank Owner signature
+            // cannot attest a three-party physical handover. Both must leave
+            // the route available for the subsequent valid signed archive.
+            var threePartyRoute = h4At + "/three-party-handover-archive";
+            var wrongRepresentative = await PostFinalAsync(clientRoot,
+                threePartyRoute, JsonSerializer.Serialize(new {
+                    tenantRepresentativeId = Guid.NewGuid(),
+                    ownerSignedReference = "OWNER-H4-PHYSICAL-HANDOVER-SIGNATURE-2026",
+                    staffSignedReference = "STAFF-H4-PHYSICAL-HANDOVER-SIGNATURE-2026",
+                    tenantSignedReference = "TENANT-H4-PHYSICAL-HANDOVER-SIGNATURE-2026",
+                    assetDefectReviewReference = "H4-INSPECTION-NO-DAMAGE-2026"
+                }));
+            Assert.Equal(HttpStatusCode.Forbidden, wrongRepresentative.Status);
+            var missingOwnerSignature = await PostFinalAsync(clientRoot,
+                threePartyRoute, JsonSerializer.Serialize(new {
+                    tenantRepresentativeId = tenantB,
+                    ownerSignedReference = "",
+                    staffSignedReference = "STAFF-H4-PHYSICAL-HANDOVER-SIGNATURE-2026",
+                    tenantSignedReference = "TENANT-H4-PHYSICAL-HANDOVER-SIGNATURE-2026",
+                    assetDefectReviewReference = "H4-INSPECTION-NO-DAMAGE-2026"
+                }));
+            Assert.Equal(HttpStatusCode.Forbidden, missingOwnerSignature.Status);
             using (var signedPhysical = await Positive2HPostAsync(clientRoot,
                 h4At + "/three-party-handover-archive", new {
                     tenantRepresentativeId = tenantB,
@@ -6561,6 +6794,17 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 h4TargetContract = completed.RootElement.GetProperty(
                     "targetContractId").GetGuid();
             }
+            // Owner export for the NEW H1/H4 replacement contract, not
+            // only the original pre-transfer contracts tested above.
+            // The whole migrated roster must be sourced from this new ID;
+            // Staff cannot obtain an Owner-only copy after completion.
+            await VerifyOriginalOwnerDocxAsync(h4TargetContract,
+                "Tenant B scratch", "Tenant A scratch",
+                (120 + choice * 2).ToString());
+            using (var staffNewContractExport =
+                await clientB.GetAsync(ContractExport(h4TargetContract)))
+                Assert.Equal(HttpStatusCode.Forbidden,
+                    staffNewContractExport.StatusCode);
             var h4Replay = await PostFinalAsync(clientRoot,
                 h4CompletionRoute, JsonSerializer.Serialize(h4CompletePayload));
             Assert.Equal(HttpStatusCode.Forbidden, h4Replay.Status);
@@ -6634,6 +6878,81 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 var complete = await db.RoomChangeMidMonthCompletions
                     .SingleAsync(x => x.RequestId == h4Request);
                 complete.VerifyFingerprint();
+
+                // D01/D02 + D03 persisted PostgreSQL parity: original
+                // October issuance is never silently rewritten to a
+                // prorated amount. The independently approved, categorized
+                // signed rent credit is an append-only financial event.
+                // This is one actual authenticated H4 transaction per
+                // disposition, not an unpersisted calculator preview.
+                var savedRule = await db.RoomChangeDayPricingRuleCandidates
+                    .AsNoTracking().SingleAsync(x => x.RequestId == h4Request);
+                Assert.Equal(new DateOnly(2026, 10, 15),
+                    savedRule.TransferDate);
+                Assert.Equal(31, savedRule.CalendarDays);
+                Assert.Equal(14, savedRule.SourceChargeableDays);
+                Assert.Equal(17, savedRule.TargetChargeableDays);
+                Assert.Equal(31, savedRule.SourceChargeableDays +
+                    savedRule.TargetChargeableDays);
+                Assert.Equal(h4OriginalRent, savedRule.SourceMonthlyRentVnd);
+                Assert.Equal(targetRent, savedRule.TargetMonthlyRentVnd);
+                Assert.Equal(h4ProratedSource,
+                    savedRule.ProposedSourceRentVnd);
+                var expectedTargetProratedRent = decimal.Round(
+                    targetRent * 17m / 31m, 0,
+                    MidpointRounding.AwayFromZero);
+                Assert.Equal(expectedTargetProratedRent,
+                    savedRule.ProposedTargetRentVnd);
+                Assert.Equal(expectedTargetProratedRent,
+                    complete.TargetFirstMonthRentVnd);
+
+                var frozenOriginal = await db.MonthlyInvoiceCandidates
+                    .AsNoTracking().SingleAsync(x => x.Id == h4Candidate);
+                frozenOriginal.VerifyStoredEvidence();
+                Assert.Equal(h4SourceContract, frozenOriginal.ContractId);
+                Assert.Equal(h4SourceRoom, frozenOriginal.RoomId);
+                Assert.Equal(2026, frozenOriginal.BillingYear);
+                Assert.Equal(10, frozenOriginal.BillingMonth);
+                Assert.Equal(h4OriginalRent, frozenOriginal.RentAmount);
+                Assert.Equal(h4FrozenInvoiceTotal, frozenOriginal.TotalAmount);
+                var issuedOriginal = await db.MonthlyIssuedInvoices
+                    .AsNoTracking().SingleAsync(x => x.Id == h4Issued);
+                var independentIssueReview = await db.MonthlyInvoiceReviews
+                    .AsNoTracking().SingleAsync(x =>
+                        x.Id == issuedOriginal.ReviewId);
+                issuedOriginal.VerifyAgainst(frozenOriginal,
+                    independentIssueReview);
+                Assert.Equal(h4FrozenInvoiceTotal,
+                    issuedOriginal.TotalAmount);
+                Assert.Equal(frozenOriginal.FrozenEvidenceSha256,
+                    issuedOriginal.CandidateSha256);
+                var postedOriginal = await db.OfficialInvoiceReceivables
+                    .AsNoTracking().SingleAsync(x => x.Id == h4Receivable);
+                Assert.Equal(h4Issued, postedOriginal.IssuedInvoiceId);
+                Assert.Equal(h4FrozenInvoiceTotal,
+                    postedOriginal.OriginalAmount);
+                Assert.Equal(issuedOriginal.CandidateSha256,
+                    postedOriginal.SourceEvidenceSha256);
+                var signedCredit = await db.MonthlyInvoiceAdjustments
+                    .AsNoTracking().SingleAsync(x => x.Id == h4Adjustment);
+                signedCredit.VerifyAgainst(issuedOriginal);
+                Assert.Equal(h4SignedDelta, signedCredit.SignedDeltaAmount);
+                var independentlyApprovedCredit = await db
+                    .MonthlyInvoiceAdjustmentDecisions.AsNoTracking()
+                    .SingleAsync(x => x.AdjustmentId == h4Adjustment);
+                independentlyApprovedCredit.VerifyAgainst(
+                    signedCredit, issuedOriginal);
+                Assert.True(independentlyApprovedCredit.Accepted);
+                Assert.NotEqual(signedCredit.ProposedByUserId,
+                    independentlyApprovedCredit.ReviewedByUserId);
+                Assert.Equal(h4SignedDelta,
+                    independentlyApprovedCredit.ApprovedSignedDeltaAmount);
+                Assert.Equal(h4Issued, complete.SourceMonthlyInvoiceId);
+                Assert.Equal(h4Receivable, complete.SourceReceivableId);
+                Assert.Equal(h4FrozenInvoiceTotal + h4SignedDelta,
+                    complete.SourceAdjustedReceivableVnd);
+                Assert.Equal(h4FinalDue,
+                    complete.SourceAdjustedReceivableVnd);
                 Assert.Equal(h4SignedDelta, complete.SourceSignedAdjustmentVnd);
                 Assert.Equal(h4FinalDue, complete.SourceReviewedReceiptsVnd);
                 Assert.Equal(expectedTopUp, complete.H4UnpaidTopUpVnd);
@@ -6682,6 +7001,700 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 var denied = await Assert.ThrowsAsync<PostgresException>(
                     async () => await h4Change.ExecuteNonQueryAsync());
                 Assert.Equal("23514", denied.SqlState);
+            }
+
+            // D04 can post only reviewed original sources after H4 COMMIT.
+            // These transactions live solely in the disposable CI database.
+            var d04ReviewAt = h4At + "/d04-bank-evidence-review";
+            var d04PostAt = h4At + "/d04-post-settlement";
+            var d04BalanceAt = h4At + "/d04-settlement-balance";
+            // D04-09 commit-time authorization: this is the actual D04
+            // financial balance reader, not merely a generic H4 request.
+            // Root's Identity grant must remain leased until the Building
+            // transaction commits, then the same principal must get 403.
+            if (choice == 0)
+            {
+                Task<int>? revokeD04Bootstrap = null;
+                using (var leaseScope = app.Services.CreateScope())
+                {
+                    var sp = leaseScope.ServiceProvider;
+                    var principal = sp.GetRequiredService<ICurrentPrincipalAccessor>();
+                    using (principal.Change(new ClaimsPrincipal(new ClaimsIdentity(
+                        new[] {
+                            new Claim(AbpClaimTypes.UserId, root.ToString("D")),
+                            new Claim(ClaimTypes.NameIdentifier, root.ToString("D"))
+                        }, "D04CommitBoundRoot"))))
+                    {
+                        using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                            .Begin(requiresNew: true, isTransactional: true);
+                        var read = await sp.GetRequiredService<
+                            SliceBStagingRoomChangeRequests>()
+                            .GetH4SettlementBalanceAsync(h4SourceContract, h4Request);
+                        Assert.Equal(1_000_000m, read.OriginalAmountVnd);
+                        revokeD04Bootstrap = Task.Run(async () =>
+                        {
+                            await using var identity = new NpgsqlConnection(idCs);
+                            await identity.OpenAsync();
+                            await using var revoke = new NpgsqlCommand(
+                                """
+                                DELETE FROM "AbpPermissionGrants"
+                                 WHERE "ProviderName"='U' AND "ProviderKey"=@root
+                                   AND "Name"=@permission
+                                """, identity);
+                            revoke.Parameters.AddWithValue("root", root.ToString("D"));
+                            revoke.Parameters.AddWithValue("permission",
+                                BuildingManagementPermissions.Buildings.BootstrapOwner);
+                            return await revoke.ExecuteNonQueryAsync();
+                        });
+                        await Task.Delay(250);
+                        Assert.False(revokeD04Bootstrap.IsCompleted,
+                            "D04 revocation must wait for Building UoW commit.");
+                        await uow.CompleteAsync();
+                    }
+                }
+                Assert.NotNull(revokeD04Bootstrap);
+                Assert.Equal(1, await revokeD04Bootstrap!
+                    .WaitAsync(TimeSpan.FromSeconds(15)));
+                using (var revokedD04 = await clientRoot.GetAsync(d04BalanceAt))
+                    Assert.Equal(HttpStatusCode.Forbidden, revokedD04.StatusCode);
+                using (var restoreScope = app.Services.CreateScope())
+                {
+                    var sp = restoreScope.ServiceProvider;
+                    using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                        .Begin(requiresNew: true, isTransactional: true);
+                    await sp.GetRequiredService<IPermissionManager>().SetForUserAsync(
+                        root, BuildingManagementPermissions.Buildings.BootstrapOwner, true);
+                    await uow.CompleteAsync();
+                }
+                using (var restoredD04 = await clientRoot.GetAsync(d04BalanceAt))
+                    Assert.Equal(HttpStatusCode.OK, restoredD04.StatusCode);
+            }
+            // D04-09: the financial balance endpoint must check the live
+            // Identity record, not only a stale authenticated principal.
+            // The same persisted-account fence covers settlement writes.
+            await using (var identity = new NpgsqlConnection(idCs))
+            {
+                await identity.OpenAsync();
+                await using var disable = new NpgsqlCommand(
+                    """
+                    UPDATE "AbpUsers" SET "IsActive"=FALSE
+                    WHERE "Id"=@actor AND "IsActive"=TRUE
+                    """, identity);
+                disable.Parameters.AddWithValue("actor", root);
+                Assert.Equal(1, await disable.ExecuteNonQueryAsync());
+            }
+            try
+            {
+                using var inactiveD04 = await clientRoot.GetAsync(d04BalanceAt);
+                Assert.Equal(HttpStatusCode.Forbidden, inactiveD04.StatusCode);
+                var inactivePost = await PostFinalAsync(clientRoot,
+                    d04PostAt, JsonSerializer.Serialize(new {
+                        reviewId = Guid.NewGuid()
+                    }));
+                Assert.Equal(HttpStatusCode.Forbidden, inactivePost.Status);
+            }
+            finally
+            {
+                await using var identity = new NpgsqlConnection(idCs);
+                await identity.OpenAsync();
+                await using var enable = new NpgsqlCommand(
+                    """
+                    UPDATE "AbpUsers" SET "IsActive"=TRUE
+                    WHERE "Id"=@actor AND "IsActive"=FALSE
+                    """, identity);
+                enable.Parameters.AddWithValue("actor", root);
+                Assert.Equal(1, await enable.ExecuteNonQueryAsync());
+            }
+            using (var original = await clientRoot.GetAsync(d04BalanceAt))
+            {
+                Assert.Equal(HttpStatusCode.OK, original.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await original.Content.ReadAsStringAsync());
+                Assert.Equal(1_000_000m, json.RootElement
+                    .GetProperty("remainingOutstandingVnd").GetDecimal());
+                Assert.Equal(0L, json.RootElement
+                    .GetProperty("postingCount").GetInt64());
+            }
+            using (var staffCannotPost = await clientB.PostAsync(d04PostAt,
+                new StringContent(JsonSerializer.Serialize(new {
+                    reviewId = Guid.NewGuid()
+                }), Encoding.UTF8, "application/json")))
+                Assert.Equal(HttpStatusCode.Forbidden, staffCannotPost.StatusCode);
+
+            if (choice == 0)
+            {
+                // Two independently reviewed actual Completed Payment records.
+                // The H4 original top-up is not marked paid until BOTH posts.
+                foreach (var chunk in new[] { 400_000m, 600_000m })
+                {
+                    var paymentId = Guid.NewGuid();
+                    var bankRef = "D04-BANK-TOPUP-" + paymentId.ToString("N");
+                    using (var paymentScope = app.Services.CreateScope())
+                    {
+                        var sp = paymentScope.ServiceProvider;
+                        using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                            .Begin(requiresNew: true, isTransactional: true);
+                        var db = await sp.GetRequiredService<
+                            IDbContextProvider<BuildingManagementDbContext>>()
+                            .GetDbContextAsync();
+                        var receipt = new BuildingManagement.Payments.Payment(
+                            paymentId, "D04-RECEIPT-" + paymentId.ToString("N"),
+                            tenantB,
+                            BuildingManagement.Payments.PaymentPurpose.ContractDeposit,
+                            BuildingManagement.Payments.BuildingManagement.Payments
+                                .PaymentMethod.BankTransfer,
+                            BuildingManagement.Payments.PaymentChannel.Manual,
+                            chunk, contractId: h4TargetContract,
+                            transactionReference: bankRef,
+                            notes: "BANK-PROOF: disposable independent H4 top-up");
+                        receipt.Complete(DateTime.UtcNow, bankRef);
+                        db.Payments.Add(receipt);
+                        await db.SaveChangesAsync();
+                        await uow.CompleteAsync();
+                    }
+                    var rootReviewAttempt = await PostFinalAsync(clientRoot,
+                        d04ReviewAt, JsonSerializer.Serialize(new {
+                            kind = 1, paymentId,
+                            bankStatementEvidenceReference =
+                                "D04-BANK-STATEMENT-TOPUP-2026",
+                            signedReviewReference =
+                                "D04-INDEPENDENT-REVIEW-TOPUP-2026"
+                        }));
+                    Assert.Equal(HttpStatusCode.Forbidden, rootReviewAttempt.Status);
+
+                    Guid reviewId;
+                    using (var review = await Positive2HPostAsync(
+                        clientB, d04ReviewAt, new {
+                            kind = 1, paymentId,
+                            bankStatementEvidenceReference =
+                                "D04-BANK-STATEMENT-TOPUP-" +
+                                paymentId.ToString("N"),
+                            signedReviewReference =
+                                "D04-INDEPENDENT-TOPUP-" +
+                                paymentId.ToString("N")
+                        }))
+                    {
+                        reviewId = review.RootElement.GetProperty("id").GetGuid();
+                        Assert.False(review.RootElement.GetProperty(
+                            "isFinancialPosting").GetBoolean());
+                    }
+                    // D04-10 direct SQL bypass: a privileged session may
+                    // not forge an Owner-self-reviewed bank evidence row,
+                    // even when copying a genuine independently reviewed
+                    // source. This is a constraint test, not a runtime-role
+                    // grant or an external bank verification.
+                    if (chunk == 400_000m)
+                    {
+                        var forgedId = Guid.NewGuid();
+                        await using var attackDb = new NpgsqlConnection(buildingCs);
+                        await attackDb.OpenAsync();
+                        await using (var tx = await attackDb.BeginTransactionAsync(
+                            System.Data.IsolationLevel.Serializable))
+                        {
+                            await using var forgery = new NpgsqlCommand(
+                                """
+                                INSERT INTO "BuildingManagementRoomChangeH4SettlementReviews"
+                                  ("Id","ObligationId","Kind","PaymentId","AmountVnd",
+                                   "BankTransactionReference",
+                                   "BankStatementEvidenceReference","PaidAtUtc",
+                                   "ReviewedByUserId","ReviewedAtUtc",
+                                   "SignedReviewReference")
+                                SELECT @forged,r."ObligationId",r."Kind",r."PaymentId",
+                                       r."AmountVnd",r."BankTransactionReference",
+                                       r."BankStatementEvidenceReference",r."PaidAtUtc",
+                                       @owner,r."ReviewedAtUtc",r."SignedReviewReference"
+                                  FROM "BuildingManagementRoomChangeH4SettlementReviews" r
+                                 WHERE r."Id"=@review
+                                """, attackDb, tx);
+                            forgery.Parameters.AddWithValue("forged", forgedId);
+                            forgery.Parameters.AddWithValue("owner", root);
+                            forgery.Parameters.AddWithValue("review", reviewId);
+                            var refused = await Assert.ThrowsAsync<PostgresException>(
+                                async () => await forgery.ExecuteNonQueryAsync());
+                            Assert.Equal("23514", refused.SqlState);
+                            await tx.RollbackAsync();
+                        }
+                        await using var verifyForgery = new NpgsqlCommand(
+                            """
+                            SELECT count(*) FROM "BuildingManagementRoomChangeH4SettlementReviews"
+                             WHERE "Id"=@forged
+                            """, attackDb);
+                        verifyForgery.Parameters.AddWithValue("forged", forgedId);
+                        Assert.Equal(0L,
+                            (long)(await verifyForgery.ExecuteScalarAsync())!);
+                    }
+                    // D04-11: execute a fully valid first journal INSERT
+                    // followed by an illegal duplicate in ONE SERIALIZABLE
+                    // transaction. Rolling back the failure must erase even
+                    // the valid first INSERT (no half-settled top-up).
+                    if (chunk == 400_000m)
+                    {
+                        await using var checkDb = new NpgsqlConnection(buildingCs);
+                        await checkDb.OpenAsync();
+                        await using (var tx = await checkDb.BeginTransactionAsync(
+                            System.Data.IsolationLevel.Serializable))
+                        {
+                            const string writePosting = """
+                                INSERT INTO "BuildingManagementRoomChangeH4SettlementPostings"
+                                  ("Id","ObligationId","Kind","ReviewId","IssuedInvoiceId",
+                                   "AmountVnd","PostedByOwnerId","PostedAtUtc","SourceReference")
+                                SELECT @newId,r."ObligationId",r."Kind",r."Id",NULL,
+                                       r."AmountVnd",@owner,
+                                       r."ReviewedAtUtc" + interval '1 second',
+                                       r."BankTransactionReference"
+                                  FROM "BuildingManagementRoomChangeH4SettlementReviews" r
+                                 WHERE r."Id"=@review
+                                """;
+                            await using (var first = new NpgsqlCommand(
+                                writePosting, checkDb, tx))
+                            {
+                                first.Parameters.AddWithValue("newId", Guid.NewGuid());
+                                first.Parameters.AddWithValue("owner", root);
+                                first.Parameters.AddWithValue("review", reviewId);
+                                Assert.Equal(1, await first.ExecuteNonQueryAsync());
+                            }
+                            await using (var duplicateInsert = new NpgsqlCommand(
+                                writePosting, checkDb, tx))
+                            {
+                                duplicateInsert.Parameters.AddWithValue("newId", Guid.NewGuid());
+                                duplicateInsert.Parameters.AddWithValue("owner", root);
+                                duplicateInsert.Parameters.AddWithValue("review", reviewId);
+                                var blocked = await Assert.ThrowsAsync<PostgresException>(
+                                    async () => await duplicateInsert.ExecuteNonQueryAsync());
+                                Assert.Contains(blocked.SqlState, new[] { "23505", "23514" });
+                            }
+                            await tx.RollbackAsync();
+                        }
+                        await using var verify = new NpgsqlCommand(
+                            """
+                            SELECT count(*)
+                              FROM "BuildingManagementRoomChangeH4SettlementPostings"
+                             WHERE "ReviewId"=@review
+                            """, checkDb);
+                        verify.Parameters.AddWithValue("review", reviewId);
+                        Assert.Equal(0L, (long)(await verify.ExecuteScalarAsync())!);
+                    }
+                    using (var posting = await Positive2HPostAsync(
+                        clientRoot, d04PostAt, new { reviewId }))
+                    {
+                        Assert.Equal(chunk, posting.RootElement
+                            .GetProperty("amountVnd").GetDecimal());
+                        Assert.True(posting.RootElement
+                            .GetProperty("isLedgerPosted").GetBoolean());
+                        Assert.False(posting.RootElement
+                            .GetProperty("isBankApiVerified").GetBoolean());
+                    }
+                    // A reviewed receipt cannot be claimed by the H4
+                    // settlement journal for a second time.
+                    var duplicate = await PostFinalAsync(clientRoot, d04PostAt,
+                        JsonSerializer.Serialize(new { reviewId }));
+                    Assert.Equal(HttpStatusCode.Forbidden, duplicate.Status);
+                }
+                using var settled = await clientRoot.GetAsync(d04BalanceAt);
+                Assert.Equal(HttpStatusCode.OK, settled.StatusCode);
+                using var statement = JsonDocument.Parse(
+                    await settled.Content.ReadAsStringAsync());
+                Assert.Equal(1_000_000m, statement.RootElement
+                    .GetProperty("ledgerPostedAmountVnd").GetDecimal());
+                Assert.Equal(0m, statement.RootElement
+                    .GetProperty("remainingOutstandingVnd").GetDecimal());
+                Assert.Equal(2L, statement.RootElement
+                    .GetProperty("postingCount").GetInt64());
+            }
+            else if (choice == 2)
+            {
+                var bankRef = "D04-REFUND-BANK-" + Guid.NewGuid().ToString("N");
+                var rootReviewAttempt = await PostFinalAsync(
+                    clientRoot, d04ReviewAt, JsonSerializer.Serialize(new {
+                        kind = 3, bankTransactionReference = bankRef,
+                        paidAtUtc = DateTime.UtcNow,
+                        bankStatementEvidenceReference =
+                            "D04-REFUND-STATEMENT-INDEPENDENT-2026",
+                        signedReviewReference =
+                            "D04-REFUND-REVIEW-INDEPENDENT-2026"
+                    }));
+                Assert.Equal(HttpStatusCode.Forbidden, rootReviewAttempt.Status);
+                Guid reviewId;
+                using (var review = await Positive2HPostAsync(
+                    clientB, d04ReviewAt, new {
+                        kind = 3, bankTransactionReference = bankRef,
+                        paidAtUtc = DateTime.UtcNow,
+                        bankStatementEvidenceReference =
+                            "D04-REFUND-STATEMENT-" + Guid.NewGuid().ToString("N"),
+                        signedReviewReference =
+                            "D04-REFUND-REVIEW-" + Guid.NewGuid().ToString("N")
+                    }))
+                    reviewId = review.RootElement.GetProperty("id").GetGuid();
+                // Two concurrent Owner submissions of the same signed
+                // bank refund must create ONE posting, never two withdrawals.
+                async Task<(HttpStatusCode Status,string Body)> TryRefundAsync()
+                {
+                    try
+                    {
+                        return await PostFinalAsync(clientRoot, d04PostAt,
+                            JsonSerializer.Serialize(new { reviewId }));
+                    }
+                    catch (PostgresException ex) when (
+                        ex.SqlState == PostgresErrorCodes.SerializationFailure)
+                    {
+                        return (HttpStatusCode.Conflict, string.Empty);
+                    }
+                }
+                var rivalRefunds = await Task.WhenAll(
+                    TryRefundAsync(), TryRefundAsync());
+                var winner = Assert.Single(rivalRefunds.Where(x =>
+                    x.Status is HttpStatusCode.OK or HttpStatusCode.Created));
+                Assert.Single(rivalRefunds.Where(x =>
+                    x.Status is HttpStatusCode.Forbidden or HttpStatusCode.Conflict));
+                using (var posted = JsonDocument.Parse(winner.Body))
+                {
+                    Assert.Equal(1_000_000m, posted.RootElement
+                        .GetProperty("amountVnd").GetDecimal());
+                    Assert.Equal(0m, posted.RootElement
+                        .GetProperty("remainingOutstandingVnd").GetDecimal());
+                    Assert.False(posted.RootElement
+                        .GetProperty("isBankTransferInitiatedBySystem").GetBoolean());
+                }
+                var duplicateRefund = await PostFinalAsync(clientRoot,
+                    d04PostAt, JsonSerializer.Serialize(new { reviewId }));
+                Assert.Equal(HttpStatusCode.Forbidden, duplicateRefund.Status);
+                // Re-read after the competing requests and replay denial.
+                // A successful HTTP response alone cannot certify that a
+                // losing transaction left no second journal posting.
+                using (var settledRefund = await clientRoot.GetAsync(d04BalanceAt))
+                {
+                    Assert.Equal(HttpStatusCode.OK, settledRefund.StatusCode);
+                    using var statement = JsonDocument.Parse(
+                        await settledRefund.Content.ReadAsStringAsync());
+                    Assert.Equal(1_000_000m, statement.RootElement
+                        .GetProperty("ledgerPostedAmountVnd").GetDecimal());
+                    Assert.Equal(0m, statement.RootElement
+                        .GetProperty("remainingOutstandingVnd").GetDecimal());
+                    Assert.Equal(1L, statement.RootElement
+                        .GetProperty("postingCount").GetInt64());
+                }
+            }
+            else
+            {
+                // D04 positive next-rent credit: unlike a preview, this
+                // uses the target's actual separately issued November bill
+                // and its official receivable, with original E/W evidence.
+                var deniedCredit = await PostFinalAsync(clientRoot,
+                    d04PostAt, JsonSerializer.Serialize(new {
+                        issuedInvoiceId = Guid.NewGuid()
+                    }));
+                Assert.Equal(HttpStatusCode.Forbidden, deniedCredit.Status);
+                using (var monthScope = app.Services.CreateScope())
+                {
+                    var sp = monthScope.ServiceProvider;
+                    using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                        .Begin(requiresNew: true, isTransactional: true);
+                    var db = await sp.GetRequiredService<
+                        IDbContextProvider<BuildingManagementDbContext>>()
+                        .GetDbContextAsync();
+                    var eId = Guid.NewGuid();
+                    var wId = Guid.NewGuid();
+                    db.UtilityMeters.AddRange(
+                        new BuildingManagement.Utilities.UtilityMeter(
+                            eId, h4TargetRoom,
+                            BuildingManagement.Utilities.UtilityType.Electricity,
+                            "D04-NEXT-E-" + eId.ToString("N"), 0m,
+                            new DateTime(2026, 10, 15)),
+                        new BuildingManagement.Utilities.UtilityMeter(
+                            wId, h4TargetRoom,
+                            BuildingManagement.Utilities.UtilityType.Water,
+                            "D04-NEXT-W-" + wId.ToString("N"), 0m,
+                            new DateTime(2026, 10, 15)));
+                    db.MeterReadings.AddRange(
+                        new BuildingManagement.Utilities.MeterReading(
+                            Guid.NewGuid(), eId, 2026, 10, 0m, 0m,
+                            new DateTime(2026, 10, 31)),
+                        new BuildingManagement.Utilities.MeterReading(
+                            Guid.NewGuid(), wId, 2026, 10, 0m, 0m,
+                            new DateTime(2026, 10, 31)),
+                        new BuildingManagement.Utilities.MeterReading(
+                            Guid.NewGuid(), eId, 2026, 11, 0m, 0m,
+                            new DateTime(2026, 11, 30)),
+                        new BuildingManagement.Utilities.MeterReading(
+                            Guid.NewGuid(), wId, 2026, 11, 0m, 0m,
+                            new DateTime(2026, 11, 30)));
+                    await db.SaveChangesAsync();
+                    await uow.CompleteAsync();
+                }
+
+                // Simulate the completed next billing cycle using the
+                // fixture's disposable clock only, never production.
+                transferClock.SetUtc(new DateTimeOffset(
+                    2026, 12, 1, 4, 0, 0, TimeSpan.Zero));
+                try
+                {
+                    var targetMonthlyDraftAt = scopedContracts + "/" +
+                        h4TargetContract.ToString("D") +
+                        "/monthly-utility-drafts/2026/11";
+                    Guid targetDraft;
+                    using (var draft = await Positive2HPostAsync(
+                        clientB, targetMonthlyDraftAt, new { }))
+                        targetDraft = draft.RootElement.GetProperty("id").GetGuid();
+
+                    var targetFinance = FinalInvoices(h4TargetContract);
+                    Guid targetCandidate;
+                    using (var frozen = await Positive2HPostAsync(
+                        clientRoot, targetFinance + "/monthly-drafts/" +
+                            targetDraft.ToString("D") + "/candidate", new {
+                            contractId = h4TargetContract,
+                            roomId = h4TargetRoom,
+                            billingYear = 2026,
+                            billingMonth = 11,
+                            paymentDueDate = new DateOnly(2026, 12, 7),
+                            dueDatePolicyReference =
+                                "D04-OWNER-SIGNED-NOVEMBER-DUE-POLICY-2026",
+                            auxiliaryFeeDecision = 1,
+                            auxiliaryFeePolicyReference =
+                                "D04-OWNER-SIGNED-NO-EXTRA-FEES-2026",
+                            auxiliaryFeeReviewerId = root,
+                            auxiliaryCharges = Array.Empty<object>()
+                        }))
+                        targetCandidate = frozen.RootElement
+                            .GetProperty("candidateId").GetGuid();
+                    var targetCandidateAt = targetFinance +
+                        "/monthly-candidates/" + targetCandidate.ToString("D");
+                    using (var review = await Positive2HPostAsync(clientB,
+                        targetCandidateAt + "/review", new {
+                            accept = true,
+                            reason = "Independent D04 next-month target rent review"
+                        }))
+                        Assert.True(review.RootElement
+                            .GetProperty("accepted").GetBoolean());
+                    Guid targetIssued;
+                    using (var issued = await Positive2HPostAsync(clientRoot,
+                        targetCandidateAt + "/issue", new { }))
+                        targetIssued = issued.RootElement
+                            .GetProperty("issuedInvoiceId").GetGuid();
+                    Guid targetReceivable;
+                    using (var official = await Positive2HPostAsync(clientRoot,
+                        targetFinance + "/monthly-issued/" +
+                            targetIssued.ToString("D") + "/post-receivable",
+                        new { }))
+                    {
+                        Assert.True(official.RootElement
+                            .GetProperty("isOfficialDebtPosted").GetBoolean());
+                        targetReceivable = official.RootElement
+                            .GetProperty("postingId").GetGuid();
+                    }
+
+                    using (var applied = await Positive2HPostAsync(
+                        clientRoot, d04PostAt, new { issuedInvoiceId = targetIssued }))
+                    {
+                        Assert.Equal(1_000_000m, applied.RootElement
+                            .GetProperty("amountVnd").GetDecimal());
+                        Assert.Equal(0m, applied.RootElement
+                            .GetProperty("remainingOutstandingVnd").GetDecimal());
+                        Assert.True(applied.RootElement
+                            .GetProperty("isLedgerPosted").GetBoolean());
+                        Assert.False(applied.RootElement
+                            .GetProperty("isBankApiVerified").GetBoolean());
+                    }
+                    using (var net = await clientRoot.GetAsync(d04BalanceAt))
+                    {
+                        Assert.Equal(HttpStatusCode.OK, net.StatusCode);
+                        using var balance = JsonDocument.Parse(
+                            await net.Content.ReadAsStringAsync());
+                        Assert.Equal(targetIssued, balance.RootElement
+                            .GetProperty("creditedIssuedInvoiceId").GetGuid());
+                        Assert.Equal(1_000_000m, balance.RootElement
+                            .GetProperty("issuedRentDebtAfterCreditVnd")
+                            .GetDecimal());
+                        Assert.Equal(0m, balance.RootElement
+                            .GetProperty("remainingOutstandingVnd").GetDecimal());
+                    }
+                    // D04-12: accepted external-style receipt evidence must
+                    // respect the ALREADY posted noncash D04 rent credit.
+                    // Fixture payments are confined to disposable PG.
+                    var signedPaidAt = new DateTime(
+                        2026, 12, 1, 4, 0, 0, DateTimeKind.Utc);
+                    var invoiceReceipts = targetFinance + "/monthly-issued/" +
+                        targetIssued.ToString("D") + "/manual-receipts";
+                    var acceptedCollection = await PostFinalAsync(clientRoot,
+                        invoiceReceipts, JsonSerializer.Serialize(new {
+                            tenantId = tenantB, amount = 1_000_000m,
+                            paidAtUtc = signedPaidAt,
+                            transactionReference = "D04-POST-CREDIT-VALID-" +
+                                Guid.NewGuid().ToString("N"),
+                            bankEvidenceReference =
+                                "D04-POST-CREDIT-VALID-BANK-EVIDENCE"
+                        }));
+                    Assert.True(acceptedCollection.Status is
+                        HttpStatusCode.OK or HttpStatusCode.Created,
+                        "D04 valid net-rent receipt: " +
+                        acceptedCollection.Status + " " +
+                        acceptedCollection.Body);
+                    Guid targetReceiptAllocation;
+                    using (var payment = JsonDocument.Parse(acceptedCollection.Body))
+                        targetReceiptAllocation = payment.RootElement
+                            .GetProperty("allocationJournalId").GetGuid();
+                    var targetReviewAt = targetFinance + "/receivables/" +
+                        targetReceivable.ToString("D") + "/allocations/" +
+                        targetReceiptAllocation.ToString("D") + "/review";
+                    using (var verified = await Positive2HPostAsync(clientB,
+                        targetReviewAt, new {
+                            accept = true,
+                            bankStatementEvidenceReference =
+                                "D04-POST-CREDIT-INDEPENDENT-STATEMENT",
+                            reason = "Independent review of residual rent after D04 offset"
+                        }))
+                        Assert.True(verified.RootElement
+                            .GetProperty("accepted").GetBoolean());
+                    using (var cleared = await clientRoot.GetAsync(d04BalanceAt))
+                    {
+                        Assert.Equal(HttpStatusCode.OK, cleared.StatusCode);
+                        using var balance = JsonDocument.Parse(
+                            await cleared.Content.ReadAsStringAsync());
+                        Assert.Equal(0m, balance.RootElement.GetProperty(
+                            "issuedRentDebtAfterCreditVnd").GetDecimal());
+                    }
+                    // With zero outstanding, another cash collection must
+                    // never become an independently ACCEPTED official receipt.
+                    var excess = await PostFinalAsync(clientRoot,
+                        invoiceReceipts, JsonSerializer.Serialize(new {
+                            tenantId = tenantB, amount = 1m,
+                            paidAtUtc = signedPaidAt,
+                            transactionReference = "D04-POST-CREDIT-EXCESS-" +
+                                Guid.NewGuid().ToString("N"),
+                            bankEvidenceReference =
+                                "D04-POST-CREDIT-EXCESS-STATEMENT"
+                        }));
+                    if (excess.Status is HttpStatusCode.OK or HttpStatusCode.Created)
+                    {
+                        Guid excessAllocation;
+                        using (var payment = JsonDocument.Parse(excess.Body))
+                            excessAllocation = payment.RootElement
+                                .GetProperty("allocationJournalId").GetGuid();
+                        var rejectedReview = await PostFinalAsync(clientB,
+                            targetFinance + "/receivables/" +
+                            targetReceivable.ToString("D") + "/allocations/" +
+                            excessAllocation.ToString("D") + "/review",
+                            JsonSerializer.Serialize(new {
+                                accept = true,
+                                bankStatementEvidenceReference =
+                                    "D04-POST-CREDIT-EXCESS-REVIEW-STATEMENT",
+                                reason = "Attempt to overpay already cleared D04 rent"
+                            }));
+                        Assert.False(rejectedReview.Status is
+                            HttpStatusCode.OK or HttpStatusCode.Created,
+                            "D04 must deny a reviewed receipt past net debt.");
+                    }
+                    using (var afterExcess = await clientRoot.GetAsync(d04BalanceAt))
+                    {
+                        Assert.Equal(HttpStatusCode.OK, afterExcess.StatusCode);
+                        using var balance = JsonDocument.Parse(
+                            await afterExcess.Content.ReadAsStringAsync());
+                        Assert.Equal(0m, balance.RootElement.GetProperty(
+                            "issuedRentDebtAfterCreditVnd").GetDecimal());
+                    }
+
+                    var duplicateCredit = await PostFinalAsync(clientRoot,
+                        d04PostAt, JsonSerializer.Serialize(new {
+                            issuedInvoiceId = targetIssued
+                        }));
+                    Assert.Equal(HttpStatusCode.Forbidden, duplicateCredit.Status);
+                }
+                finally { transferClock.Reset(); }
+            }
+
+            // D04 SQL-bypass negative: no operator, including the Owner,
+            // may rewrite or delete historical settlement evidence. Probes
+            // run on isolated disposable PostgreSQL, not application DB.
+            if (choice is 0 or 2)
+            {
+                await using var journalAttack = new NpgsqlConnection(buildingCs);
+                await journalAttack.OpenAsync();
+                foreach (var commandText in new[] {
+                    """
+                    UPDATE "BuildingManagementRoomChangeH4SettlementPostings"
+                       SET "AmountVnd"="AmountVnd"+1
+                     WHERE "ObligationId" IN (
+                        SELECT "Id" FROM "BuildingManagementRoomChangeH4Obligations"
+                         WHERE "RequestId"=@request)
+                    """,
+                    """
+                    DELETE FROM "BuildingManagementRoomChangeH4SettlementPostings"
+                     WHERE "ObligationId" IN (
+                        SELECT "Id" FROM "BuildingManagementRoomChangeH4Obligations"
+                         WHERE "RequestId"=@request)
+                    """
+                })
+                {
+                    await using var attack = new NpgsqlCommand(
+                        commandText, journalAttack);
+                    attack.Parameters.AddWithValue("request", h4Request);
+                    var failure = await Assert.ThrowsAsync<PostgresException>(
+                        async () => await attack.ExecuteNonQueryAsync());
+                    Assert.Equal("23514", failure.SqlState);
+                }
+
+                // D04-10: immutable reviews AND postings must reject TRUNCATE,
+                // including a direct SQL session that bypasses the HTTP role.
+                // Never truncate even an empty staging journal.
+                foreach (var table in new[] {
+                    "BuildingManagementRoomChangeH4SettlementReviews",
+                    "BuildingManagementRoomChangeH4SettlementPostings"
+                })
+                {
+                    await using var truncate = new NpgsqlCommand(
+                        $"TRUNCATE TABLE \"{table}\"",
+                        journalAttack);
+                    var blocked = await Assert.ThrowsAsync<PostgresException>(
+                        async () => await truncate.ExecuteNonQueryAsync());
+                    // 0A000: PostgreSQL refuses TRUNCATE with the journal
+                    // foreign-key graph; 23514: our own no-TRUNCATE trigger.
+                    // Either outcome is fail-closed and preserves every row.
+                    Assert.Contains(blocked.SqlState,
+                        new[] { "0A000", "23514" });
+                }
+
+                // D04-11: a failed SERIALIZABLE statement must roll back the
+                // whole isolated transaction, retaining the original ledger.
+                long CountPostingsAsync = 0;
+                await using (var count = new NpgsqlCommand(
+                    """
+                    SELECT count(*) FROM "BuildingManagementRoomChangeH4SettlementPostings"
+                    WHERE "ObligationId" IN (
+                        SELECT "Id" FROM "BuildingManagementRoomChangeH4Obligations"
+                         WHERE "RequestId"=@request)
+                    """, journalAttack))
+                {
+                    count.Parameters.AddWithValue("request", h4Request);
+                    CountPostingsAsync = (long)(await count.ExecuteScalarAsync())!;
+                }
+                await using (var failedTx = await journalAttack.BeginTransactionAsync(
+                    System.Data.IsolationLevel.Serializable))
+                {
+                    await using var invalidWrite = new NpgsqlCommand(
+                        """
+                        UPDATE "BuildingManagementRoomChangeH4SettlementPostings"
+                           SET "AmountVnd"="AmountVnd"+1
+                         WHERE "ObligationId" IN (
+                            SELECT "Id" FROM "BuildingManagementRoomChangeH4Obligations"
+                             WHERE "RequestId"=@request)
+                        """, journalAttack, failedTx);
+                    invalidWrite.Parameters.AddWithValue("request", h4Request);
+                    var rejected = await Assert.ThrowsAsync<PostgresException>(
+                        async () => await invalidWrite.ExecuteNonQueryAsync());
+                    Assert.Equal("23514", rejected.SqlState);
+                    await failedTx.RollbackAsync();
+                }
+                await using (var recount = new NpgsqlCommand(
+                    """
+                    SELECT count(*) FROM "BuildingManagementRoomChangeH4SettlementPostings"
+                    WHERE "ObligationId" IN (
+                        SELECT "Id" FROM "BuildingManagementRoomChangeH4Obligations"
+                         WHERE "RequestId"=@request)
+                    """, journalAttack))
+                {
+                    recount.Parameters.AddWithValue("request", h4Request);
+                    Assert.Equal(CountPostingsAsync,
+                        (long)(await recount.ExecuteScalarAsync())!);
+                }
             }
 
             } // One fully independent H4 disposition scenario.

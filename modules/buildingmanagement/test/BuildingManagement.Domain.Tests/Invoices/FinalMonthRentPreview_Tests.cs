@@ -18,6 +18,20 @@ public sealed class FinalMonthRentPreview_Tests
         Assert.Equal(11, result.BillingMonth);
         Assert.Contains("FinalInvoiceNotIssued", result.Blockers);
         Assert.False(result.CanIssue);
+
+        // Ordinary Phase 2G.5 move-out is not a D01/D02 room transfer:
+        // an early or mid-month exit MUST retain the full final month's rent.
+        foreach (var exitDay in new[] { 1, 15, 29, 30 })
+        {
+            var (ordinary, active) = Fixture(new DateOnly(2026, 11, exitDay));
+            ordinary.Approve(DateTime.UtcNow, null);
+            var preview = FinalMonthRentPreview.Assess(ordinary, active);
+            Assert.Equal(3_500_000m, preview.FullMonthRent);
+            Assert.Equal(2026, preview.BillingYear);
+            Assert.Equal(11, preview.BillingMonth);
+            Assert.Contains("FinalInvoiceNotIssued", preview.Blockers);
+            Assert.False(preview.CanIssue);
+        }
     }
 
     [Fact]
@@ -54,14 +68,14 @@ public sealed class FinalMonthRentPreview_Tests
             FinalMonthRentPreview.Assess(request, future).Blockers);
     }
 
-    private static (MoveOutRequest, Contract) Fixture()
+    private static (MoveOutRequest, Contract) Fixture(DateOnly? exitDate = null)
     {
         var room = Guid.NewGuid();
         var contract = new Contract(Guid.NewGuid(), "FINAL-RENT",
             room, new DateTime(2026, 1, 1), null, 3500000m);
         contract.Activate();
         var request = new MoveOutRequest(Guid.NewGuid(), contract.Id,
-            room, new DateOnly(2026, 11, 30), "Test");
+            room, exitDate ?? new DateOnly(2026, 11, 30), "Test");
         return (request, contract);
     }
 }

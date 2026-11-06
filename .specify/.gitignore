@@ -1,0 +1,3 @@
+# Local Spec Kit state must not be committed.
+feature.json
+extensions/*/local-config.yml

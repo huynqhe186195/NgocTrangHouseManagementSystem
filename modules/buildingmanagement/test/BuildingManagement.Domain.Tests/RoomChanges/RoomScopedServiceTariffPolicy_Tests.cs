@@ -176,6 +176,21 @@ public sealed class RoomScopedServiceTariffPolicy_Tests
         Assert.Equal(150_000m, original.UnitPriceVnd);
         Assert.Equal(200_000m, edited.UnitPriceVnd);
         original.VerifyFingerprint();
+
+        // A future price revision must not rewrite a previously priced
+        // November fee, including the exact effective-date boundary.
+        var lastOldDay = RoomScopedServiceTariffVersion.SelectEffectiveForDate(
+            new[] { original, edited }, room, service, new DateOnly(2026, 11, 30));
+        var firstNewDay = RoomScopedServiceTariffVersion.SelectEffectiveForDate(
+            new[] { original, edited }, room, service, new DateOnly(2026, 12, 1));
+        Assert.Equal(original.Id, lastOldDay.Id);
+        Assert.Equal(edited.Id, firstNewDay.Id);
+        Assert.Equal(300_000m, lastOldDay.PreviewCharge(
+            new DateOnly(2026, 11, 1), new DateOnly(2026, 11, 30), 2)
+            .ProposedChargeVnd);
+        Assert.Equal(400_000m, firstNewDay.PreviewCharge(
+            new DateOnly(2026, 12, 1), new DateOnly(2026, 12, 31), 2)
+            .ProposedChargeVnd);
     }
 
     [Fact]

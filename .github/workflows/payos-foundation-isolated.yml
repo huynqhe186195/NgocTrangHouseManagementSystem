@@ -123,6 +123,10 @@ jobs:
       - name: Generate migration from existing model snapshot OFFLINE
         shell: pwsh
         run: |
+          dotnet restore modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/BuildingManagement.EntityFrameworkCore.csproj
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet build modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/BuildingManagement.EntityFrameworkCore.csproj --no-restore --configuration Debug
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           dotnet tool install --global dotnet-ef --version 10.0.9
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           dotnet ef migrations add StagePayOsPaymentIntentsAndWebhookInbox --project modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/BuildingManagement.EntityFrameworkCore.csproj --startup-project modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/BuildingManagement.EntityFrameworkCore.csproj --context BuildingManagementDbContext --output-dir Migrations

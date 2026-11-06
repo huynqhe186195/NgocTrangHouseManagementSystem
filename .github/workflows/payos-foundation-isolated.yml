@@ -139,6 +139,23 @@ jobs:
         run: |
           ./etc/scripts/review-payos-ef-migration.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Export reviewed migration source for controlled commit
+        shell: pwsh
+        run: |
+          $dir = 'modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Migrations/PayOs'
+          $files = @(Get-ChildItem $dir -File | Where-Object {
+            $_.Name -match 'StagePayOsPaymentIntentsAndWebhookInbox' -or
+            $_.Name -eq 'PayOsPaymentMigrationDbContextModelSnapshot.cs'
+          } | Sort-Object Name)
+          if ($files.Count -ne 3) { throw "Expected 3 generated EF source files, got $($files.Count)" }
+          foreach ($file in $files) {
+            Write-Host "PAYOS_FILE_BEGIN|$($file.Name)"
+            $encoded = [Convert]::ToBase64String([IO.File]::ReadAllBytes($file.FullName))
+            for ($i = 0; $i -lt $encoded.Length; $i += 1000) {
+              Write-Host "PAYOS_FILE_DATA|$($encoded.Substring($i, [Math]::Min(1000, $encoded.Length - $i)))"
+            }
+            Write-Host "PAYOS_FILE_END|$($file.Name)"
+          }
       - name: Upload generated migration for human review
         if: always()
         uses: actions/upload-artifact@v4

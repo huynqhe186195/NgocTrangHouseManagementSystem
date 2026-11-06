@@ -139,6 +139,34 @@ public class PayOsStagingWebhookInboxWriter_Tests
     }
 
     [Fact]
+    public async Task Two_different_orders_racing_on_same_bank_reference_cannot_double_record()
+    {
+        var a = await SeedAsync();
+        var b = await SeedAsync();
+        var reference = "BANK-RACE-" + a.OrderCode;
+        async Task<PayOsWebhookIngestResult> Store(PayOsPaymentIntent intent)
+        {
+            await using var db = Db();
+            return await new PayOsStagingWebhookInboxWriter(db, Key)
+                .RecordAsync(Signed(intent, reference: reference));
+        }
+
+        var outcomes = await Task.WhenAll(
+            Task.Run(() => Store(a)),
+            Task.Run(() => Store(b)));
+        Assert.Equal(1, outcomes.Count(x =>
+            x == PayOsWebhookIngestResult.StoredPendingReconciliation));
+        Assert.All(outcomes, item => Assert.True(item is
+            PayOsWebhookIngestResult.StoredPendingReconciliation or
+            PayOsWebhookIngestResult.Conflict or
+            PayOsWebhookIngestResult.ConcurrentConflictRetry));
+
+        await using var verify = Db();
+        Assert.Equal(1, await verify.PayOsWebhookInbox.AsNoTracking()
+            .CountAsync(x => x.ProviderReference == reference));
+    }
+
+    [Fact]
     public async Task Two_concurrent_replays_store_only_one_inbox_record()
     {
         var intent = await SeedAsync();

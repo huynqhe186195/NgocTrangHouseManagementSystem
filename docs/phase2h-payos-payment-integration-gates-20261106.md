@@ -35,3 +35,12 @@ Official protocol references:
 ## 2026-11-06 follow-up
 
 Added source-only `PayOsPaymentIntent` state model, EF Core configuration and domain test source. Transitions allow linked intent -> confirmation pending posting -> posted, but **do not perform posting**. The application/DB writer must validate authoritative provider status, lifecycle of delayed payments, linked IDs, expiry and ownership in a serializable or locked transaction. A 'cancel unpaid' state is not permission to dismiss a subsequently confirmed bank payment: it must enter manual reconciliation rather than be lost or double-booked. No production migration, CI pass or runtime use has been verified.
+
+
+## 2026-11-06 provider transport increment
+
+Added source-only `PayOsPaymentLinkClient` for **POST /v2/payment-requests** and read-only **GET /v2/payment-requests/{orderCode}**, with server-injected credentials, explicit HTTPS merchant host, signed create-request fields, positive order/amount, secure redirect URLs and response match checking. The create response provides checkout URL/QR but does **not** persist an intent or post a receipt. Provider queries are for eventual reconciliation, not proof of an approved journal.
+
+Official webhook sample golden signature is independently embedded in application tests; ambiguous duplicate JSON field names are rejected. Added dedicated secret-free, no-DB GitHub workflow `.github/workflows/payos-foundation-isolated.yml` to build and run both domain and application PayOs tests. Workflow status must be checked on exact commit; **a file committed to GitHub is not a test pass**.
+
+PAYMENT API HOLD: A service must use a durable reservation/intent before making an HTTP create call and reconcile uncertain provider outcomes before retry; never issue a second payment request merely because the first timed out. Store checkout URL and QR only after verifying intent scope, amount and ownership.

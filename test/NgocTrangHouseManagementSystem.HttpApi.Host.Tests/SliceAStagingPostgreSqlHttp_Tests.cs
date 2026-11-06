@@ -7008,6 +7008,42 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             var d04ReviewAt = h4At + "/d04-bank-evidence-review";
             var d04PostAt = h4At + "/d04-post-settlement";
             var d04BalanceAt = h4At + "/d04-settlement-balance";
+            // D04-09: the financial balance endpoint must check the live
+            // Identity record, not only a stale authenticated principal.
+            // The same persisted-account fence covers settlement writes.
+            await using (var identity = new NpgsqlConnection(idCs))
+            {
+                await identity.OpenAsync();
+                await using var disable = new NpgsqlCommand(
+                    """
+                    UPDATE "AbpUsers" SET "IsActive"=FALSE
+                    WHERE "Id"=@actor AND "IsActive"=TRUE
+                    """, identity);
+                disable.Parameters.AddWithValue("actor", root);
+                Assert.Equal(1, await disable.ExecuteNonQueryAsync());
+            }
+            try
+            {
+                using var inactiveD04 = await clientRoot.GetAsync(d04BalanceAt);
+                Assert.Equal(HttpStatusCode.Forbidden, inactiveD04.StatusCode);
+                var inactivePost = await PostFinalAsync(clientRoot,
+                    d04PostAt, JsonSerializer.Serialize(new {
+                        reviewId = Guid.NewGuid()
+                    }));
+                Assert.Equal(HttpStatusCode.Forbidden, inactivePost.Status);
+            }
+            finally
+            {
+                await using var identity = new NpgsqlConnection(idCs);
+                await identity.OpenAsync();
+                await using var enable = new NpgsqlCommand(
+                    """
+                    UPDATE "AbpUsers" SET "IsActive"=TRUE
+                    WHERE "Id"=@actor AND "IsActive"=FALSE
+                    """, identity);
+                enable.Parameters.AddWithValue("actor", root);
+                Assert.Equal(1, await enable.ExecuteNonQueryAsync());
+            }
             using (var original = await clientRoot.GetAsync(d04BalanceAt))
             {
                 Assert.Equal(HttpStatusCode.OK, original.StatusCode);

@@ -52,3 +52,18 @@ Source-only `PayOsWebhookInboxRecord` and EF Core configuration were added, incl
 **Must remain HOLD:** This is not a durable deployed inbox until a complete EF migration/model snapshot has been generated and tested on a disposable PostgreSQL database. The production application has no webhook writer, endpoint, journal or outbox. A real ingress must verify the authentic payOS signature, match stored intent by orderCode/link/amount/tenant/building, acquire an intent-level DB lock, atomically insert the inbox record under a unique constraint, and ACK only once safely persisted. A second event with a conflicting reference/amount must go to manual review, not silently deduplicated. Raw webhook bodies/keys must not be logged publicly; a hash alone is not proof of settlement.
 
 No existing D04 settlement state or production schema has been modified.
+
+## 2026-11-06 generated migration drift — BLOCKING, never bypass
+
+Exact-head CI `7835316d3b8fb07de891c5f2111f72339c7024ea`, [run 42216603287](https://github.com/huynqhe186195/NgocTrangHouseManagementSystem/actions/runs/42216603287):
+- PostgreSQL 16 disposable hand-authored rehearsal: SUCCESS (unique, FK, concurrent insert, rollback).
+- Domain + Application payOS tests and EF Core compile: SUCCESS.
+- **Offline EF migration preview: intentionally FAILED the drift gate**. A real `dotnet ef migrations add` succeeds after restore/build, but its generated `Up()` contains **34 `CreateTable` calls instead of the expected 2**. The pre-existing EF snapshot and the live model are not aligned. The preview is uploaded as CI artifact `payos-ef-migration-preview` (artifact ID 13501238051) for review; **do not commit/apply it**.
+- The gate is **correctly red** and must not be weakened to claim acceptance.
+
+Recommended safe remediation:
+1. Audit existing migration history and authoritative PostgreSQL baseline across both module and host contexts; identify which 32 unrelated tables arise from legacy snapshot drift. Do not assume missing tables are absent in live DB.
+2. Reconcile the baseline snapshot on a dedicated review branch, with a DB-design reviewer checking every entity/index/FK and matching the historical migration chain. Do not hand-delete unrelated operations from the migration while leaving snapshot/model inconsistent.
+3. Regenerate payOS EF migration. Require exactly two new tables, the composite foreign key (PaymentIntentId, BuildingId, OrderCode), unique transaction references and no D04 journal modifications.
+4. Execute the **actual** complete migration chain on a fresh disposable PostgreSQL 16 database and verify reverse migration, rollback, concurrent inserts and authenticated building-scope tests. This is separate from the passing rehearsal SQL.
+5. Retain PR Draft, stop all production schema changes and any external financial posting until evidence gates pass.

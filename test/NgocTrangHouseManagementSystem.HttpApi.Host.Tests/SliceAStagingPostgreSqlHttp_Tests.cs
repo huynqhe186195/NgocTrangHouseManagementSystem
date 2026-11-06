@@ -7313,12 +7313,17 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                         targetCandidateAt + "/issue", new { }))
                         targetIssued = issued.RootElement
                             .GetProperty("issuedInvoiceId").GetGuid();
+                    Guid targetReceivable;
                     using (var official = await Positive2HPostAsync(clientRoot,
                         targetFinance + "/monthly-issued/" +
                             targetIssued.ToString("D") + "/post-receivable",
                         new { }))
+                    {
                         Assert.True(official.RootElement
                             .GetProperty("isOfficialDebtPosted").GetBoolean());
+                        targetReceivable = official.RootElement
+                            .GetProperty("postingId").GetGuid();
+                    }
 
                     using (var applied = await Positive2HPostAsync(
                         clientRoot, d04PostAt, new { issuedInvoiceId = targetIssued }))
@@ -7345,6 +7350,91 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                         Assert.Equal(0m, balance.RootElement
                             .GetProperty("remainingOutstandingVnd").GetDecimal());
                     }
+                    // D04-12: accepted external-style receipt evidence must
+                    // respect the ALREADY posted noncash D04 rent credit.
+                    // Fixture payments are confined to disposable PG.
+                    var signedPaidAt = new DateTime(
+                        2026, 12, 1, 4, 0, 0, DateTimeKind.Utc);
+                    var invoiceReceipts = targetFinance + "/monthly-issued/" +
+                        targetIssued.ToString("D") + "/manual-receipts";
+                    var acceptedCollection = await PostFinalAsync(clientRoot,
+                        invoiceReceipts, JsonSerializer.Serialize(new {
+                            tenantId = tenantB, amount = 1_000_000m,
+                            paidAtUtc = signedPaidAt,
+                            transactionReference = "D04-POST-CREDIT-VALID-" +
+                                Guid.NewGuid().ToString("N"),
+                            bankEvidenceReference =
+                                "D04-POST-CREDIT-VALID-BANK-EVIDENCE"
+                        }));
+                    Assert.True(acceptedCollection.Status is
+                        HttpStatusCode.OK or HttpStatusCode.Created,
+                        "D04 valid net-rent receipt: " +
+                        acceptedCollection.Status + " " +
+                        acceptedCollection.Body);
+                    Guid targetReceiptAllocation;
+                    using (var payment = JsonDocument.Parse(acceptedCollection.Body))
+                        targetReceiptAllocation = payment.RootElement
+                            .GetProperty("allocationJournalId").GetGuid();
+                    var targetReviewAt = targetFinance + "/receivables/" +
+                        targetReceivable.ToString("D") + "/allocations/" +
+                        targetReceiptAllocation.ToString("D") + "/review";
+                    using (var verified = await Positive2HPostAsync(clientB,
+                        targetReviewAt, new {
+                            accept = true,
+                            bankStatementEvidenceReference =
+                                "D04-POST-CREDIT-INDEPENDENT-STATEMENT",
+                            reason = "Independent review of residual rent after D04 offset"
+                        }))
+                        Assert.True(verified.RootElement
+                            .GetProperty("accepted").GetBoolean());
+                    using (var cleared = await clientRoot.GetAsync(d04BalanceAt))
+                    {
+                        Assert.Equal(HttpStatusCode.OK, cleared.StatusCode);
+                        using var balance = JsonDocument.Parse(
+                            await cleared.Content.ReadAsStringAsync());
+                        Assert.Equal(0m, balance.RootElement.GetProperty(
+                            "issuedRentDebtAfterCreditVnd").GetDecimal());
+                    }
+                    // With zero outstanding, another cash collection must
+                    // never become an independently ACCEPTED official receipt.
+                    var excess = await PostFinalAsync(clientRoot,
+                        invoiceReceipts, JsonSerializer.Serialize(new {
+                            tenantId = tenantB, amount = 1m,
+                            paidAtUtc = signedPaidAt,
+                            transactionReference = "D04-POST-CREDIT-EXCESS-" +
+                                Guid.NewGuid().ToString("N"),
+                            bankEvidenceReference =
+                                "D04-POST-CREDIT-EXCESS-STATEMENT"
+                        }));
+                    if (excess.Status is HttpStatusCode.OK or HttpStatusCode.Created)
+                    {
+                        Guid excessAllocation;
+                        using (var payment = JsonDocument.Parse(excess.Body))
+                            excessAllocation = payment.RootElement
+                                .GetProperty("allocationJournalId").GetGuid();
+                        var rejectedReview = await PostFinalAsync(clientB,
+                            targetFinance + "/receivables/" +
+                            targetReceivable.ToString("D") + "/allocations/" +
+                            excessAllocation.ToString("D") + "/review",
+                            JsonSerializer.Serialize(new {
+                                accept = true,
+                                bankStatementEvidenceReference =
+                                    "D04-POST-CREDIT-EXCESS-REVIEW-STATEMENT",
+                                reason = "Attempt to overpay already cleared D04 rent"
+                            }));
+                        Assert.False(rejectedReview.Status is
+                            HttpStatusCode.OK or HttpStatusCode.Created,
+                            "D04 must deny a reviewed receipt past net debt.");
+                    }
+                    using (var afterExcess = await clientRoot.GetAsync(d04BalanceAt))
+                    {
+                        Assert.Equal(HttpStatusCode.OK, afterExcess.StatusCode);
+                        using var balance = JsonDocument.Parse(
+                            await afterExcess.Content.ReadAsStringAsync());
+                        Assert.Equal(0m, balance.RootElement.GetProperty(
+                            "issuedRentDebtAfterCreditVnd").GetDecimal());
+                    }
+
                     var duplicateCredit = await PostFinalAsync(clientRoot,
                         d04PostAt, JsonSerializer.Serialize(new {
                             issuedInvoiceId = targetIssued

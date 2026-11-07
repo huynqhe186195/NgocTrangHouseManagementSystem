@@ -90,8 +90,11 @@ public sealed class D04RealLegacyWriterAcceptance_Tests
         await using (var ddlConnection = new NpgsqlConnection(Connection))
         {
             await ddlConnection.OpenAsync();
-            await using var ddlCommand = new NpgsqlCommand(up, ddlConnection);
+            await using var ddlTransaction = await ddlConnection.BeginTransactionAsync();
+            await using var ddlCommand =
+                new NpgsqlCommand(up, ddlConnection, ddlTransaction);
             await ddlCommand.ExecuteNonQueryAsync();
+            await ddlTransaction.CommitAsync();
         }
 
         var b = Guid.NewGuid();

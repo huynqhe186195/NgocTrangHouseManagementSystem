@@ -29,7 +29,7 @@ namespace NgocTrangHouseManagementSystem.PayOs.Staging.Tests;
 /// RUN ONLY from verify-payos-d04-local.ps1 after it creates its temporary
 /// Postgres:16 container (127.0.0.1:15432). Never silently connect to 5432.
 /// </summary>
-public sealed class PayOsStagingD04RealLegacyWriterAcceptance_Tests
+public sealed class D04RealLegacyWriterAcceptance_Tests
 {
     private const string Connection =
         "Host=127.0.0.1;Port=15432;Database=payos_d04_legacy_test;" +

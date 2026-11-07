@@ -15,7 +15,15 @@ using BuildingManagement.Rooms;
 using BuildingManagement.Tenants;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Migrations.Operations;
+using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
+using Volo.Abp;
+using Volo.Abp.Data;
+using Volo.Abp.EntityFrameworkCore;
+using Volo.Abp.Modularity;
+using Volo.Abp.Testing;
+using Volo.Abp.Timing;
+using Volo.Abp.Uow;
 using Xunit;
 
 namespace NgocTrangHouseManagementSystem.PayOs.Staging.Tests;
@@ -30,8 +38,17 @@ namespace NgocTrangHouseManagementSystem.PayOs.Staging.Tests;
 /// Postgres:16 container (127.0.0.1:15432). Never silently connect to 5432.
 /// </summary>
 public sealed class D04RealLegacyWriterAcceptance_Tests
+    : AbpIntegratedTest<D04RealLegacyWriterAcceptanceTestModule>
 {
-    private const string Connection =
+    protected override void SetAbpApplicationCreationOptions(
+        AbpApplicationCreationOptions options)
+    {
+        // Match the BuildingManagement test base: ABP's property-injected
+        // dependencies are supplied by Autofac rather than 'new DbContext'.
+        options.UseAutofac();
+    }
+
+    internal const string Connection =
         "Host=127.0.0.1;Port=15432;Database=payos_d04_legacy_test;" +
         "Username=postgres;Password=disposable-only;Pooling=false;Timeout=5;Command Timeout=180";
 
@@ -62,20 +79,20 @@ public sealed class D04RealLegacyWriterAcceptance_Tests
 
         var options = new DbContextOptionsBuilder<BuildingManagementDbContext>()
             .UseNpgsql(Connection).Options;
-        await using var db = new BuildingManagementDbContext(options);
+        await using var migrationDb = new BuildingManagementDbContext(options);
 
         // Full canonical migration chain, never EnsureCreated or a cloned
         // short schema. The draft D04 SQL must NOT join this migration chain.
-        var canonical = db.Database.GetMigrations().ToArray();
+        var canonical = migrationDb.Database.GetMigrations().ToArray();
         Assert.NotEmpty(canonical);
         Assert.Equal("20261104220000_Phase2HTypedH4DeferredCommitIntent",
             canonical[^1]);
         Assert.DoesNotContain(canonical, name =>
             name.Contains("StagePayOsD04LegacySourceJournal",
                 StringComparison.Ordinal));
-        Assert.Empty(await db.Database.GetAppliedMigrationsAsync());
-        await db.Database.MigrateAsync();
-        Assert.Empty(await db.Database.GetPendingMigrationsAsync());
+        Assert.Empty(await migrationDb.Database.GetAppliedMigrationsAsync());
+        await migrationDb.Database.MigrateAsync();
+        Assert.Empty(await migrationDb.Database.GetPendingMigrationsAsync());
 
         // Apply the D04 DRAFT SQL explicitly in this disposable database
         // only; no MigrationAttribute is registered in the runtime model.
@@ -99,6 +116,18 @@ public sealed class D04RealLegacyWriterAcceptance_Tests
             await ddlCommand.ExecuteNonQueryAsync();
             await ddlTransaction.CommitAsync();
         }
+
+        // Resolve the REAL BuildingManagementDbContext via ABP's registered
+        // EF provider under a nontransactional ambient Unit of Work.
+        // The D04 writer itself owns the SERIALIZABLE financial transaction.
+        // Never call AbpDbContext.SaveChanges on a manually new'ed context.
+        using var scope = ServiceProvider.CreateScope();
+        var uowManager = scope.ServiceProvider.GetRequiredService<IUnitOfWorkManager>();
+        using var uow = uowManager.Begin(
+            new AbpUnitOfWorkOptions { IsTransactional = false });
+        var db = await scope.ServiceProvider
+            .GetRequiredService<IDbContextProvider<BuildingManagementDbContext>>()
+            .GetDbContextAsync();
 
         var b = Guid.NewGuid();
         var f = Guid.NewGuid();
@@ -251,6 +280,7 @@ public sealed class D04RealLegacyWriterAcceptance_Tests
         // payOS intent to Posted; a separate ACK proof is still required.
         Assert.Equal(PayOsPaymentIntentStatus.ConfirmedPendingPosting,
             intent.Status);
+        await uow.CompleteAsync();
     }
 
     private static async Task<long> CountAsync(
@@ -321,5 +351,39 @@ public sealed class D04RealLegacyWriterAcceptance_Tests
     private sealed class DisposableSyntheticLease : IAsyncDisposable
     {
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+}
+
+[DependsOn(typeof(BuildingManagementEntityFrameworkCoreModule))]
+public sealed class D04RealLegacyWriterAcceptanceTestModule : AbpModule
+{
+    public override void ConfigureServices(ServiceConfigurationContext context)
+    {
+        // Fail closed before registering any DB services. The test only runs
+        // from the disposable PG16 runner with all explicit safety opt-ins.
+        if (Environment.GetEnvironmentVariable("BM_PAYOS_D04_REAL_WRITER_TEST_DB")
+                != "I_ACCEPT_ONLY_DISPOSABLE_PAYOS_D04_DB" ||
+            Environment.GetEnvironmentVariable("BM_PAYOS_EF_TEST_DB") != "1" ||
+            Environment.GetEnvironmentVariable("BM_PAYOS_EF_TEST_PASSWORD")
+                != "disposable-only" ||
+            Environment.GetEnvironmentVariable("BM_PAYOS_EF_TEST_PORT") != "15432")
+            throw new InvalidOperationException(
+                "D04 ABP integration fixture refuses non-disposable database.");
+
+        var connection = D04RealLegacyWriterAcceptance_Tests.Connection;
+        Configure<AbpClockOptions>(options => options.Kind = DateTimeKind.Utc);
+        Configure<AbpDbConnectionOptions>(options =>
+        {
+            options.ConnectionStrings.Default = connection;
+            options.ConnectionStrings[BuildingManagementDbProperties.ConnectionStringName] =
+                connection;
+        });
+        Configure<AbpDbContextOptions>(options => options.UseNpgsql());
+        // No implicit ABP transaction: D04 writer explicitly owns its
+        // SERIALIZABLE money-commit transaction.
+        Configure<AbpUnitOfWorkDefaultOptions>(options =>
+        {
+            options.TransactionBehavior = UnitOfWorkTransactionBehavior.Disabled;
+        });
     }
 }

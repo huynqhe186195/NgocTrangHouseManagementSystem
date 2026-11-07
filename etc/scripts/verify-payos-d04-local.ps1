@@ -13,7 +13,8 @@ $containerId = ''
 $logRoot = ''
 $oldEnv = @{}
 foreach ($name in @('BM_PAYOS_EF_TEST_DB', 'BM_PAYOS_EF_TEST_PASSWORD',
-                    'BM_PAYOS_EF_TEST_PORT', 'BM_INVOICE_MIGRATION_OFFLINE')) {
+                    'BM_PAYOS_EF_TEST_PORT', 'BM_INVOICE_MIGRATION_OFFLINE',
+                    'BM_PAYOS_D04_REAL_WRITER_TEST_DB')) {
     $oldEnv[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
 }
 
@@ -369,6 +370,22 @@ SELECT count(*) FROM public."__EFMigrationsHistory_PayOs";
     # protocol rehearsal schemas and synthetic receipts, never the live writer.
     Invoke-Logged '19-create-d04-legacy-test-db' 'docker' @(
         'exec', $containerId, 'createdb', '-U', 'postgres', 'payos_d04_legacy_test')
+    # NEW A-level acceptance: real BuildingManagement EF migrations and
+    # real C# Payment/DepositSettlement/receipt/outbox writer against a second
+    # disposable database. Reviewer, signed inbox and Owner authority are
+    # SYNTHETIC fixtures; this is not authenticated HTTP acceptance.
+    # Never execute before the exact dedicated database has been created.
+    [Environment]::SetEnvironmentVariable(
+        'BM_PAYOS_D04_REAL_WRITER_TEST_DB',
+        'I_ACCEPT_ONLY_DISPOSABLE_PAYOS_D04_DB', 'Process')
+    Invoke-Logged '19a-real-legacy-writer-acceptance' 'dotnet' @(
+        'test', $pgTests, '-c', 'Release',
+        '--filter', 'FullyQualifiedName~D04RealLegacyWriterAcceptance_Tests',
+        '--logger', 'trx;LogFileName=payos-d04-real-writer.trx',
+        '--results-directory', $logRoot, '--verbosity', 'normal')
+    Assert-Trx 'payos-d04-real-writer.trx'
+    [Environment]::SetEnvironmentVariable(
+        'BM_PAYOS_D04_REAL_WRITER_TEST_DB', $null, 'Process')
     $d04Sql = Resolve-Path '.\etc\phase-audits\payos-d04-two-db-posting-recovery-rehearsal.sql'
     Invoke-Logged '20-copy-d04-two-db-sql' 'docker' @(
         'cp', [string]$d04Sql.Path, "$($containerId):/tmp/d04-two-db.sql")

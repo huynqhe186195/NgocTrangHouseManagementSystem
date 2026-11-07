@@ -103,9 +103,11 @@ public sealed class PayOsD04LegacyPostingWriter
         {
             contract = row;
         }
-        if (contract is null ||
-            contract.Status is not (ContractStatus.Signed or ContractStatus.Active))
-            throw Denied("The contract is no longer payable.");
+        if (contract is null)
+            throw Denied("The legacy contract was deleted.");
+        // A previously committed receipt still needs ACK after this contract
+        // subsequently ends. Its status is checked only for NEW posting, not
+        // for journal replay and reconciliation.
 
         Payment? payment = null;
         await foreach (var row in _db.Payments.FromSqlInterpolated(
@@ -154,6 +156,12 @@ public sealed class PayOsD04LegacyPostingWriter
         // revoked, but MUST NOT create any new money. Read exact source journal.
         var existing = await ReadJournalProofAsync(
             transaction, intentId, cancellationToken);
+        // A partially missing outbox or mismatched Payment can cause the
+        // joined proof query to return null. Never confuse that anomaly with
+        // an unposted intent and try to credit it a second time.
+        if (existing is null &&
+            await JournalForIntentExistsAsync(transaction, intentId, cancellationToken))
+            throw Denied("D04 receipt exists but its required Payment/settlement/outbox is incomplete or conflicting.");
         if (existing is not null)
         {
             var recoveryPlan = new PayOsD04LegacyCommitPlan(
@@ -174,8 +182,10 @@ public sealed class PayOsD04LegacyPostingWriter
                     : PayOsD04LegacyWriteDisposition.ExistingCommittedNeedsAck);
         }
 
-        // Existing journals may be acknowledged after permission expiry;
-        // NEW cash posting must never use an expired approval.
+        // Existing journals may be acknowledged after the contract closes
+        // or approval expires, but neither may authorize NEW cash posting.
+        if (contract.Status is not (ContractStatus.Signed or ContractStatus.Active))
+            throw Denied("The contract is no longer payable.");
         if (reviewed.ExpiresAtUtc <= DateTime.UtcNow)
             throw Denied("Owner approval expired before financial commit.");
 
@@ -336,6 +346,18 @@ public sealed class PayOsD04LegacyPostingWriter
         if (await reader.ReadAsync(ct))
             throw Denied("Multiple independent review/approval records for one intent.");
         return result;
+    }
+
+    private async Task<bool> JournalForIntentExistsAsync(
+        IDbContextTransaction tx, Guid intentId, CancellationToken ct)
+    {
+        await using var cmd = Command(tx, """
+            SELECT EXISTS(SELECT 1 FROM "BuildingManagementPayOsD04ReceiptJournal"
+                          WHERE "PayOsIntentId"=@intentId)
+            """);
+        cmd.Parameters.AddWithValue("intentId", intentId);
+        return (bool)(await cmd.ExecuteScalarAsync(ct) ??
+            throw Denied("D04 receipt presence could not be checked."));
     }
 
     private async Task<bool> JournalReferenceExistsAsync(

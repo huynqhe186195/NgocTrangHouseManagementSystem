@@ -27,13 +27,14 @@ public interface IPayOsD04TrustedStagingEvidenceReader
 }
 
 /// <summary>
-/// Current Identity + Building permission check at the time of LEGACY commit.
-/// Must verify active users and unrevoked membership/role for BOTH actors.
+/// Cross-database authorization boundary: lease MUST hold active ABP Identity
+/// and Building membership/permission read-locks preventing revocation races
+/// until AFTER the legacy BuildingManagement transaction commits.
 /// No permissive implementation or DI registration exists in this draft.
 /// </summary>
 public interface IPayOsD04CurrentDualAuthority
 {
-    Task EnsureCurrentAsync(
+    Task<IAsyncDisposable> AcquireCommitLeaseAsync(
         Guid buildingId, Guid paymentId, Guid bankReviewerId,
         Guid ownerApproverId, CancellationToken cancellationToken);
 }
@@ -167,7 +168,10 @@ public sealed class PayOsD04LegacyPostingWriter
                 throw Denied("Existing legacy D04 journal does not match the source.");
             return new PayOsD04LegacyWriteResult(
                 existing.ReceiptId, existing.DepositSettlementId,
-                existing.OutboxId, result, false);
+                existing.OutboxId,
+                result == PayOsD04RecoveryDecision.AlreadyAcknowledged
+                    ? PayOsD04LegacyWriteDisposition.ExistingAlreadyAcknowledged
+                    : PayOsD04LegacyWriteDisposition.ExistingCommittedNeedsAck);
         }
 
         // Existing journals may be acknowledged after permission expiry;
@@ -176,8 +180,11 @@ public sealed class PayOsD04LegacyPostingWriter
             throw Denied("Owner approval expired before financial commit.");
 
         // No receipt => current Identity/Building grants MUST be revalidated.
-        await _authority.EnsureCurrentAsync(reviewed.BuildingId, payment.Id,
-            reviewed.BankReviewerId, reviewed.OwnerApproverId, cancellationToken);
+        await using var activeAuthorizationLease =
+            await _authority.AcquireCommitLeaseAsync(
+                reviewed.BuildingId, payment.Id, reviewed.BankReviewerId,
+                reviewed.OwnerApproverId, cancellationToken)
+            ?? throw Denied("An active Identity/Building revocation-safe lease is required.");
 
         if (source.Intent.Status != PayOsPaymentIntentStatus.ConfirmedPendingPosting ||
             payment.Status != PaymentStatus.Pending ||
@@ -276,9 +283,12 @@ public sealed class PayOsD04LegacyPostingWriter
         // Commit legacy cash ONCE. Mark payOS Posted only in a separate
         // later read-back/ack transaction with the authoritative journal.
         await transaction.CommitAsync(cancellationToken);
+        // IMPORTANT: even after this commit, the coordinator must re-read
+        // the committed journal and only THEN consider payOS ACK. Returning
+        // MarkPayOsPostedAfterLegacyProof here would be a false assertion.
         return new PayOsD04LegacyWriteResult(
             receiptId, settlement.Id, outboxId,
-            PayOsD04RecoveryDecision.MarkPayOsPostedAfterLegacyProof, true);
+            PayOsD04LegacyWriteDisposition.NewlyCommittedPendingReadBack);
     }
 
     private async Task<(PayOsPaymentIntent Intent, PayOsWebhookInboxRecord Inbox)>
@@ -404,6 +414,17 @@ public sealed class PayOsD04LegacyPostingWriter
         DateTime VerifiedAtUtc, DateTime ApprovedAtUtc, DateTime ExpiresAtUtc);
 }
 
+public enum PayOsD04LegacyWriteDisposition
+{
+    NewlyCommittedPendingReadBack = 1,
+    ExistingCommittedNeedsAck = 2,
+    ExistingAlreadyAcknowledged = 3
+}
+
+/// <summary>
+/// Durable financial commit result, NOT a payOS marker-update permission.
+/// The coordinator must read the authoritative journal after commit.
+/// </summary>
 public sealed record PayOsD04LegacyWriteResult(
     Guid ReceiptId, Guid DepositSettlementId, Guid OutboxId,
-    PayOsD04RecoveryDecision Recovery, bool NewlyCommitted);
+    PayOsD04LegacyWriteDisposition Disposition);

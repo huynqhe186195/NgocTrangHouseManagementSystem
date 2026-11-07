@@ -108,10 +108,12 @@ function Assert-Trx([string]$filename, [int]$expectedCount = 0) {
 }
 
 function Invoke-D04RealWriterAcceptance {
-    # Create exactly ONE extra database inside the dedicated temporary
-    # container; never touch the user's PostgreSQL on 5432.
+    # Two separate disposable DBs for REAL BuildingManagement and an ABP
+    # Identity-shaped permission/role fixture. Neither is the user's 5432 DB.
     Invoke-Logged '19-create-d04-legacy-test-db' 'docker' @(
         'exec', $containerId, 'createdb', '-U', 'postgres', 'payos_d04_legacy_test')
+    Invoke-Logged '19a0-create-d04-identity-test-db' 'docker' @(
+        'exec', $containerId, 'createdb', '-U', 'postgres', 'payos_d04_identity_test')
     [Environment]::SetEnvironmentVariable('BM_PAYOS_EF_TEST_DB', '1', 'Process')
     [Environment]::SetEnvironmentVariable('BM_PAYOS_EF_TEST_PASSWORD', 'disposable-only', 'Process')
     [Environment]::SetEnvironmentVariable('BM_PAYOS_EF_TEST_PORT', '15432', 'Process')

@@ -118,6 +118,97 @@ public sealed class PayOsD04StagingDualAuthority : IPayOsD04CurrentDualAuthority
         }
     }
 
+
+    /// <summary>
+    /// Single reviewer authority for appending an independently inspected
+    /// statement attestation. The caller must bind reviewerId to ICurrentUser,
+    /// not a DTO. Its locks stay alive until the INSERT transaction commits.
+    /// </summary>
+    public Task<IAsyncDisposable> AcquireReviewLeaseAsync(
+        Guid buildingId, Guid reviewerId, CancellationToken cancellationToken)
+        => AcquireSingleActorLeaseAsync(buildingId, reviewerId,
+            BuildingManagementPermissions.Payments.ReviewBankEvidence,
+            requireOwnerRole: false, cancellationToken);
+
+    /// <summary>
+    /// Single Owner authority for submitting a separate approval. The
+    /// subsequent financial writer STILL validates BOTH actors afresh.
+    /// </summary>
+    public Task<IAsyncDisposable> AcquireOwnerApprovalLeaseAsync(
+        Guid buildingId, Guid ownerId, CancellationToken cancellationToken)
+        => AcquireSingleActorLeaseAsync(buildingId, ownerId,
+            BuildingManagementPermissions.Payments.ApproveD04Posting,
+            requireOwnerRole: true, cancellationToken);
+
+    private async Task<IAsyncDisposable> AcquireSingleActorLeaseAsync(
+        Guid buildingId, Guid actorId, string permission,
+        bool requireOwnerRole, CancellationToken ct)
+    {
+        if (buildingId == Guid.Empty || actorId == Guid.Empty ||
+            !_host.IsStaging() ||
+            !_config.GetValue<bool>("BuildingManagement:PayOsD04B:Enabled") ||
+            _config["BuildingManagement:PayOsD04B:Activation"] !=
+                "I_ACCEPT_DISPOSABLE_D04B_DUAL_AUTH_ONLY" ||
+            !IsExactDisposable(_config.GetConnectionString("Default"),
+                "payos_d04_identity_test") ||
+            !IsExactDisposable(_config.GetConnectionString("BuildingManagement"),
+                "payos_d04_legacy_test") ||
+            !_buildingDb.Database.IsNpgsql() ||
+            _buildingDb.Database.CurrentTransaction is null ||
+            _buildingDb.Database.CurrentTransaction.GetDbTransaction()
+                .IsolationLevel != IsolationLevel.Serializable)
+            throw Denied();
+
+        var actual = new NpgsqlConnectionStringBuilder(
+            _buildingDb.Database.GetDbConnection().ConnectionString);
+        if (!IsExactDisposableLocation(actual, "payos_d04_legacy_test"))
+            throw Denied();
+
+        var identity = new NpgsqlConnection(
+            _config.GetConnectionString("Default"));
+        NpgsqlTransaction? tx = null;
+        try
+        {
+            await identity.OpenAsync(ct);
+            tx = await identity.BeginTransactionAsync(
+                IsolationLevel.ReadCommitted, ct);
+            await LockActiveAccountAsync(identity, tx, actorId, ct);
+            await LockDirectGrantAsync(identity, tx, actorId, permission, ct);
+            if (requireOwnerRole)
+                await LockOwnerRoleAsync(identity, tx, actorId, ct);
+            await LockBuildingGrantAsync(buildingId, actorId, ct);
+            return new IdentityLease(identity, tx);
+        }
+        catch
+        {
+            if (tx is not null) await tx.DisposeAsync();
+            await identity.DisposeAsync();
+            throw;
+        }
+    }
+
+    private async Task LockBuildingGrantAsync(
+        Guid buildingId, Guid actorId, CancellationToken ct)
+    {
+        var tx = _buildingDb.Database.CurrentTransaction ?? throw Denied();
+        var conn = (NpgsqlConnection)_buildingDb.Database.GetDbConnection();
+        await using var cmd = new NpgsqlCommand("""
+            SELECT g."Id"
+              FROM "BuildingManagementOperatorBuildingGrants" g
+              JOIN "Buildings" b ON b."Id"=g."BuildingId"
+             WHERE g."BuildingId"=@building AND g."OperatorUserId"=@actor
+               AND g."RevokedAtUtc" IS NULL
+               AND g."GrantedAtUtc"<=NOW()
+               AND (g."ExpiresAtUtc" IS NULL OR g."ExpiresAtUtc">NOW())
+               AND b."IsDeleted"=FALSE
+             FOR SHARE OF g,b
+            """, conn, (NpgsqlTransaction)tx.GetDbTransaction());
+        cmd.Parameters.AddWithValue("building", buildingId);
+        cmd.Parameters.AddWithValue("actor", actorId);
+        if (await cmd.ExecuteScalarAsync(ct) is not Guid)
+            throw Denied();
+    }
+
     private static bool IsExactDisposable(string? source, string name)
     {
         if (string.IsNullOrWhiteSpace(source)) return false;

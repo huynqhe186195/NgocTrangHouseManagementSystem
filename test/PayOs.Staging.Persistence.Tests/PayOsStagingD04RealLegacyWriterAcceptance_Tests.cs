@@ -322,7 +322,7 @@ public sealed class D04RealLegacyWriterAcceptance_Tests
                     "Name" text NOT NULL);
                 CREATE TABLE "AbpRoles"(
                     "Id" uuid PRIMARY KEY, "TenantId" uuid NULL,
-                    "Name" text NOT NULL);
+                    "Name" text NOT NULL, "IsDeleted" boolean NOT NULL);
                 CREATE TABLE "AbpUserRoles"(
                     "UserId" uuid NOT NULL, "RoleId" uuid NOT NULL,
                     PRIMARY KEY("UserId","RoleId"));
@@ -335,7 +335,8 @@ public sealed class D04RealLegacyWriterAcceptance_Tests
                     "Id","IsDeleted","IsActive","LockoutEnabled")
                 VALUES (@reviewer,FALSE,TRUE,TRUE),
                        (@owner,FALSE,TRUE,TRUE);
-                INSERT INTO "AbpRoles"("Id","Name") VALUES(@role,'Owner');
+                INSERT INTO "AbpRoles"("Id","Name","IsDeleted")
+                VALUES(@role,'Owner',FALSE);
                 INSERT INTO "AbpUserRoles"("UserId","RoleId")
                 VALUES(@owner,@role);
                 INSERT INTO "AbpPermissionGrants"(

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
@@ -155,6 +156,56 @@ public sealed class PayOsStagingD04StagingReceiptAcknowledger_Tests
         Assert.Equal(PayOsPaymentIntentStatus.ConfirmedPendingPosting,
             (await db.PayOsPaymentIntents.SingleAsync(x => x.Id == intent.Id)).Status);
         Assert.Equal(0, legacy.AckCalls);
+    }
+
+    [Fact]
+    public async Task Recovery_batch_acks_one_valid_receipt_and_surfaces_invalid_source()
+    {
+        await using var db = Db();
+        var (intent, legacy) = await SeedAsync(db);
+        var scanner = new FakePendingOutboxScanner(new[] { intent.Id, Guid.Empty });
+        var pass = new PayOsD04OutboxRecoveryPass(
+            scanner, new PayOsD04StagingReceiptAcknowledger(db, legacy));
+
+        var report = await pass.RunOnceAsync(10);
+        Assert.Equal(2, report.Examined);
+        Assert.Equal(1, report.Posted);
+        Assert.Equal(0, report.AlreadyPosted);
+        Assert.Single(report.Failures);
+        Assert.Equal("InvalidOrDuplicateOutboxSource", report.Failures[0].ErrorKind);
+        Assert.Equal(1, legacy.AckCalls);
+    }
+
+    [Fact]
+    public async Task Recovery_batch_does_not_mark_missing_legacy_proof_as_success()
+    {
+        await using var db = Db();
+        var (intent, legacy) = await SeedAsync(db);
+        legacy.Result = null;
+        var scanner = new FakePendingOutboxScanner(new[] { intent.Id });
+        var pass = new PayOsD04OutboxRecoveryPass(
+            scanner, new PayOsD04StagingReceiptAcknowledger(db, legacy));
+
+        var report = await pass.RunOnceAsync(10);
+        Assert.Equal(1, report.Examined);
+        Assert.Equal(0, report.Posted);
+        Assert.Single(report.Failures);
+        Assert.Equal("MissingCommittedLegacyProof", report.Failures[0].ErrorKind);
+        db.ChangeTracker.Clear();
+        Assert.Equal(PayOsPaymentIntentStatus.ConfirmedPendingPosting,
+            (await db.PayOsPaymentIntents.SingleAsync(x => x.Id == intent.Id)).Status);
+        Assert.Equal(0, legacy.AckCalls);
+    }
+
+    private sealed class FakePendingOutboxScanner : IPayOsD04PendingOutboxScanner
+    {
+        private readonly IReadOnlyList<Guid> _ids;
+
+        public FakePendingOutboxScanner(IReadOnlyList<Guid> ids) => _ids = ids;
+
+        public Task<IReadOnlyList<Guid>> ReadPendingIntentIdsAsync(
+            int maxResults, CancellationToken cancellationToken) =>
+            Task.FromResult(_ids);
     }
 
     private sealed class FakeCommittedReceiptStore : IPayOsD04CommittedReceiptStore

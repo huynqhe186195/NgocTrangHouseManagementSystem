@@ -206,6 +206,44 @@ public sealed class PayOsStagingD04LegacyJournalSchema_Tests
                   EXCEPTION WHEN check_violation THEN refused := true; END;
                   IF NOT refused THEN RAISE EXCEPTION 'Same-person approval accepted'; END IF;
 
+                  -- Correct review IDs are insufficient if the contract's
+                  -- authoritative room/floor moved to another building.
+                  refused := false;
+                  BEGIN
+                    UPDATE "BuildingManagementFloors"
+                       SET "BuildingId"=gen_random_uuid() WHERE "Id"='{floor}';
+                    INSERT INTO "BuildingManagementPayOsD04ReceiptJournal"
+                    ("Id","PayOsIntentId","OrderCode","BuildingId","ContractId",
+                     "PaymentId","DepositSettlementId","BankReviewId",
+                     "OwnerApprovalId","SourceKey","BankReference","AmountVnd",
+                     "DocumentSha256","ReviewerId","OwnerApproverId","CreatedAtUtc")
+                    VALUES (gen_random_uuid(),'{intent}',91551001,'{building}',
+                            '{contract}','{payment}','{settlement}','{review}',
+                            '{approval}','{source}','{reference}',150000,
+                            repeat('a',64),'{reviewer}','{owner}',now());
+                  EXCEPTION WHEN check_violation THEN refused := true; END;
+                  IF NOT refused THEN
+                    RAISE EXCEPTION 'Cross-building legacy D04 receipt was accepted';
+                  END IF;
+
+                  refused := false;
+                  BEGIN
+                    UPDATE "BuildingManagementContractTenants" SET "Role"=2
+                     WHERE "ContractId"='{contract}' AND "TenantId"='{tenant}';
+                    INSERT INTO "BuildingManagementPayOsD04ReceiptJournal"
+                    ("Id","PayOsIntentId","OrderCode","BuildingId","ContractId",
+                     "PaymentId","DepositSettlementId","BankReviewId",
+                     "OwnerApprovalId","SourceKey","BankReference","AmountVnd",
+                     "DocumentSha256","ReviewerId","OwnerApproverId","CreatedAtUtc")
+                    VALUES (gen_random_uuid(),'{intent}',91551001,'{building}',
+                            '{contract}','{payment}','{settlement}','{review}',
+                            '{approval}','{source}','{reference}',150000,
+                            repeat('a',64),'{reviewer}','{owner}',now());
+                  EXCEPTION WHEN check_violation THEN refused := true; END;
+                  IF NOT refused THEN
+                    RAISE EXCEPTION 'Non-primary tenant legacy D04 receipt was accepted';
+                  END IF;
+
                   -- Case variants of a single real transaction reference
                   -- must not become two different independent bank reviews.
                   refused := false;

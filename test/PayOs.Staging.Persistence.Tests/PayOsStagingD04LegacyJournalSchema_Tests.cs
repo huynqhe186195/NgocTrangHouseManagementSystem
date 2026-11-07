@@ -56,6 +56,12 @@ public sealed class PayOsStagingD04LegacyJournalSchema_Tests
                     "TargetContractId" uuid NOT NULL,
                     "Type" integer NOT NULL, "Status" integer NOT NULL,
                     "Amount" numeric(18,0) NOT NULL);
+                -- Existing Phase 2G.4 global bank reference claim table.
+                -- Here we only supply the minimum fields used by D04 guard.
+                CREATE TABLE "BuildingManagementBankEvidenceClaims" (
+                    "NormalizedReference" varchar(128) PRIMARY KEY,
+                    "SourceKind" varchar(20) NOT NULL,
+                    "SourceId" uuid NOT NULL);
                 """);
 
             var migration = new StagePayOsD04LegacySourceJournal();
@@ -108,6 +114,9 @@ public sealed class PayOsStagingD04LegacyJournalSchema_Tests
                 INSERT INTO "BuildingManagementDepositSettlements"
                 ("Id","PaymentId","TargetContractId","Type","Status","Amount")
                 VALUES ('{settlement}','{payment}','{contract}',3,2,150000);
+                INSERT INTO "BuildingManagementBankEvidenceClaims"
+                ("NormalizedReference","SourceKind","SourceId")
+                VALUES (lower('{reference}'),'Payment','{payment}');
                 INSERT INTO "BuildingManagementPayOsD04BankReviews"
                 ("Id","PayOsIntentId","OrderCode","BuildingId","PaymentId","AmountVnd",
                  "BankReference","DocumentSha256","ExternalBankProofReference",

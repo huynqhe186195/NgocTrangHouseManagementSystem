@@ -35,8 +35,13 @@ public sealed class PayOsD04PendingOutboxScanner : IPayOsD04PendingOutboxScanner
             throw new ArgumentOutOfRangeException(nameof(maxResults),
                 "A D04 recovery pass may read only 1-50 pending receipts.");
 
-        // Do not open a transaction here: each subsequent ACK runs two
-        // separate database commits, never under a distributed/global lock.
+        // Do not use a DbContext already participating in another financial
+        // transaction: the scanner never inherits posting locks or credentials.
+        if (_db.Database.CurrentTransaction is not null)
+            throw new InvalidOperationException(
+                "D04 outbox scanner requires its own non-transactional reader.");
+        // Each subsequent ACK runs two separate database commits, never
+        // under a distributed/global lock.
         var connection = _db.Database.GetDbConnection() as NpgsqlConnection ??
             throw new InvalidOperationException("D04 outbox needs PostgreSQL.");
         var openedHere = connection.State != System.Data.ConnectionState.Open;

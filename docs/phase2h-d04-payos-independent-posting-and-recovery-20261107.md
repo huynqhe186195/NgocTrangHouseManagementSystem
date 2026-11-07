@@ -26,7 +26,7 @@ The remaining transactional protocol should be:
 
 1. In the *payOS staging DB*, retain unique PaymentIntent, signed inbox and provider reconciliation evidence. Stage an immutable independent bank review and Owner approval with actor IDs, proof references, timestamp, scope, amount, hash and expiry. Hold the transaction when manual bank evidence is unavailable.
 2. Use an authenticated *internal-only* legacy D04 command, not the public webhook and not generic `PaymentAppService.CompleteAsync`. Acquire Identity/Building grant at commit time; enforce least privilege for an independent Owner approver.
-3. In the **BuildingManagement DB** SERIALIZABLE transaction, lock Contract then Payment/affected deposit sources in the established order; verify amount due after prior cash/allocations and source reference uniqueness, including soft-deleted historical receipts and journal entries. Insert exactly one audited source receipt/settlement and a deterministic unique `payos` handoff key/outbox in this **same** legacy DB transaction. Any conflict rolls back all legacy changes. Do not mark the external payOS intent Posted in this transaction.
+3. In the **BuildingManagement DB** SERIALIZABLE transaction, lock Contract then Payment/affected deposit sources in the established order; verify amount due after prior cash/allocations and source reference uniqueness, including soft-deleted historical receipts and journal entries. Insert exactly one audited source receipt/settlement and the deterministic `PAYOS:D04:<intentId>` key (uniquely indexed) plus outbox in this **same** legacy DB transaction. Any conflict rolls back all legacy changes. Do not mark the external payOS intent Posted in this transaction.
 4. After the legacy transaction commits, the coordinator may mark `PayOsPaymentIntent` Posted under a separate locked payOS transaction **only after reading back the exact committed Payment + receipt journal**. This is an acknowledgment of an existing financial posting, not a second receipt.
 5. If the coordinator crashes *before* legacy commit, nothing has been posted: repeat the exact idempotency key after re-authorization/review. If it crashes *after* legacy commit but before the payOS status update, the next pass must detect the exact legacy journal and only acknowledge it. If provider/webhook/legacy evidence conflicts, STOP for manual investigation; never "fix" the gap by crediting the tenant again.
 6. Reject/hold expired, canceled, posted, cross-building or revoked-role flows. Handle bank refund/payout separately; it remains HOLD.
@@ -40,8 +40,8 @@ A real two-database integration test must induce process termination at BOTH com
 | Checkout/reconciliation provider timeout => HTTP 503 on server-side timeout, client disconnect still propagates | `PayOsStagingPaymentsController.cs` | Committed; not executed at new HEAD |
 | Retry keeps one reserved order after POST or recovery GET timeout | `PayOsStagingCheckoutService_Tests.cs` | 2 new source tests |
 | Independent bank review / Owner approval / exact source and scope gate | `PayOsD04PostingHandoffPolicy.cs` | Pure policy only |
-| Correct post-crash recovery classification | `PayOsD04PostingHandoffPolicy.cs` | Pure plan, no writer |
-| Missing bank evidence, same reviewer/approver, changed amount/scope, legacy conflict, crash/replay cases | `PayOsD04PostingHandoffPolicy_Tests.cs` | 10 new source tests |
+| Correct post-crash recovery classification and stable `PAYOS:D04:<intentId>` key | `PayOsD04PostingHandoffPolicy.cs` | Pure plan/key, no writer |
+| Missing bank evidence, same reviewer/approver, changed amount/scope, legacy conflict, crash/replay and stable idempotency key | `PayOsD04PostingHandoffPolicy_Tests.cs` | 11 new source tests |
 
 ## Test and release gates
 

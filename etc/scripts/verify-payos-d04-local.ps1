@@ -1,4 +1,4 @@
-param([switch]$PreflightOnly, [switch]$BuildOnly)
+param([switch]$PreflightOnly, [switch]$BuildOnly, [switch]$WriterOnly)
 
 # D04/payOS Windows acceptance bundle. Does NOT use existing local PostgreSQL.
 # It launches ONLY a new disposable postgres:16 Docker container, bound to
@@ -107,6 +107,27 @@ function Assert-Trx([string]$filename, [int]$expectedCount = 0) {
     Write-Host "TRX VERIFIED: $filename passed=$passed total=$total" -ForegroundColor Green
 }
 
+function Invoke-D04RealWriterAcceptance {
+    # Create exactly ONE extra database inside the dedicated temporary
+    # container; never touch the user's PostgreSQL on 5432.
+    Invoke-Logged '19-create-d04-legacy-test-db' 'docker' @(
+        'exec', $containerId, 'createdb', '-U', 'postgres', 'payos_d04_legacy_test')
+    [Environment]::SetEnvironmentVariable('BM_PAYOS_EF_TEST_DB', '1', 'Process')
+    [Environment]::SetEnvironmentVariable('BM_PAYOS_EF_TEST_PASSWORD', 'disposable-only', 'Process')
+    [Environment]::SetEnvironmentVariable('BM_PAYOS_EF_TEST_PORT', '15432', 'Process')
+    [Environment]::SetEnvironmentVariable('BM_PAYOS_D04_REAL_WRITER_TEST_DB',
+        'I_ACCEPT_ONLY_DISPOSABLE_PAYOS_D04_DB', 'Process')
+    Invoke-Logged '19a-real-legacy-writer-acceptance' 'dotnet' @(
+        'test', $pgTests, '-c', 'Release',
+        '--no-build',
+        '--filter', 'FullyQualifiedName~D04RealLegacyWriterAcceptance_Tests',
+        '--logger', 'trx;LogFileName=payos-d04-real-writer.trx',
+        '--results-directory', $logRoot, '--verbosity', 'normal')
+    Assert-Trx 'payos-d04-real-writer.trx' 1
+    [Environment]::SetEnvironmentVariable('BM_PAYOS_D04_REAL_WRITER_TEST_DB',
+        $null, 'Process')
+}
+
 function Assert-EfTableCount([string]$database, [int]$expected) {
     $sql = 'SELECT count(*) FROM pg_tables WHERE schemaname = ' +
            "'public'" + ' AND tablename IN (' +
@@ -132,8 +153,9 @@ try {
         throw "D04 SQL preflight failed: opens=$sqlOpenCount closes=$sqlCloseCount; expected 3 each."
     }
     Write-Host 'D04 SQL templates: 3 dollar-quoted blocks verified.' -ForegroundColor Green
-    if ($PreflightOnly -and $BuildOnly) {
-        throw 'Choose only one of -PreflightOnly or -BuildOnly.'
+    if (($PreflightOnly -and ($BuildOnly -or $WriterOnly)) -or
+        ($BuildOnly -and $WriterOnly)) {
+        throw 'Choose only one of -PreflightOnly, -BuildOnly or -WriterOnly.'
     }
     if ($PreflightOnly) {
         Write-Host '=== D04 PREFLIGHT ONLY PASS: no builds, database or containers used ===' -ForegroundColor Green
@@ -206,6 +228,12 @@ try {
         return
     }
 
+    if ($WriterOnly) {
+        # Compile tests BEFORE starting any disposable DB container.
+        Invoke-Logged '04a-staging-test-compile' 'dotnet' @(
+            'build', $pgTests, '-c', 'Release')
+    }
+    else {
     Invoke-Logged '01-domain' 'dotnet' @('test', $domain,
         '-c', 'Release', '--filter', 'FullyQualifiedName~PayOs',
         '--logger', 'trx;LogFileName=payos-domain.trx',
@@ -242,6 +270,7 @@ try {
         '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
         '.\etc\scripts\review-payos-ef-migration.ps1')
     [Environment]::SetEnvironmentVariable('BM_INVOICE_MIGRATION_OFFLINE',$null,'Process')
+    }
 
     # A new isolated database container, not the existing NgocTrang postgres.
     # Loopback-only binding and different local port prevent touching 5432.
@@ -279,6 +308,14 @@ try {
         throw 'Disposable PostgreSQL FINAL TCP server did not become ready. Review docker-postgres-tail.log.'
     }
     Write-Host 'PASS: final disposable PostgreSQL TCP server is accepting connections.' -ForegroundColor Green
+
+    if ($WriterOnly) {
+        Invoke-D04RealWriterAcceptance
+        Write-Host '=== PAYOS D04 WRITER-ONLY ACCEPTANCE PASS (synthetic authority, not business accepted) ===' -ForegroundColor Green
+        Write-Host "SOURCE_COMMIT=$sha"
+        Write-Host "LOG_DIRECTORY=$logRoot"
+        return
+    }
 
     Invoke-Logged '08-create-rehearsal-db' 'docker' @(
         'exec', $containerId, 'createdb', '-U', 'postgres', 'payos_rehearsal_test')
@@ -384,24 +421,7 @@ SELECT count(*) FROM public."__EFMigrationsHistory_PayOs";
 
     # Two actual databases in one disposable PG16 container. These are
     # protocol rehearsal schemas and synthetic receipts, never the live writer.
-    Invoke-Logged '19-create-d04-legacy-test-db' 'docker' @(
-        'exec', $containerId, 'createdb', '-U', 'postgres', 'payos_d04_legacy_test')
-    # NEW A-level acceptance: real BuildingManagement EF migrations and
-    # real C# Payment/DepositSettlement/receipt/outbox writer against a second
-    # disposable database. Reviewer, signed inbox and Owner authority are
-    # SYNTHETIC fixtures; this is not authenticated HTTP acceptance.
-    # Never execute before the exact dedicated database has been created.
-    [Environment]::SetEnvironmentVariable(
-        'BM_PAYOS_D04_REAL_WRITER_TEST_DB',
-        'I_ACCEPT_ONLY_DISPOSABLE_PAYOS_D04_DB', 'Process')
-    Invoke-Logged '19a-real-legacy-writer-acceptance' 'dotnet' @(
-        'test', $pgTests, '-c', 'Release',
-        '--filter', 'FullyQualifiedName~D04RealLegacyWriterAcceptance_Tests',
-        '--logger', 'trx;LogFileName=payos-d04-real-writer.trx',
-        '--results-directory', $logRoot, '--verbosity', 'normal')
-    Assert-Trx 'payos-d04-real-writer.trx' 1
-    [Environment]::SetEnvironmentVariable(
-        'BM_PAYOS_D04_REAL_WRITER_TEST_DB', $null, 'Process')
+    Invoke-D04RealWriterAcceptance
     $d04Sql = Resolve-Path '.\etc\phase-audits\payos-d04-two-db-posting-recovery-rehearsal.sql'
     Invoke-Logged '20-copy-d04-two-db-sql' 'docker' @(
         'cp', [string]$d04Sql.Path, "$($containerId):/tmp/d04-two-db.sql")

@@ -87,6 +87,14 @@ A real two-database integration test must induce process termination at BOTH com
 
 - Independently authenticated/verified bank-statement source and durable reviewer capture, verified Owner approval workflow, stale-evidence invalidation, revocation-safe current Identity/Building permission lease implementation (required by `PayOsD04LegacyPostingWriter`), and explicit least-privilege runtime activation.
 - Real Building DB migration-chain acceptance and authenticated two-DB HTTP/PG recovery, actual dual-worker crashes; operator staging with payOS only after manual review. Do not enable any webhook ledger mutation, auto-start worker, production migration or merge.
+## 2026-11-07 D04 bank-claim and building-scope hardening (source only)
+
+- Corrected the **legacy receipt insertion guard** to require the pre-existing `BuildingManagementBankEvidenceClaims` row for the **same Payment ID** and case-folded, trimmed bank reference. This deliberately reuses Phase 2G.4's globally unique incoming Payment/outgoing RefundReview claim instead of inventing a second reference ledger. Bank-review and D04 receipt unique-reference indexes normalize `lower(btrim(reference))`.
+- Hardened trigger verification of `Contract -> Room -> Floor -> BuildingId` from actual legacy tables and the **current PrimaryTenant** contract link (`Role=1`), not merely the `BuildingId` supplied in an evidence row. Reviews must be verified before separate Owner approval and receipt creation.
+- Expanded rollback-only isolated PG schema fixture with minimal canonical table columns for Floor, Room, ContractTenant and the existing global bank claims; added rejected-case tests for missing global claim, case-variant duplicate bank references, cross-building contract moves, and missing primary-tenant link.
+- **Safer Windows test staging:** `verify-payos-d04-local.ps1 -BuildOnly` compiles Domain, Application, EF, Host and the newly-added PayOs staging test assembly and exits **before EF migration tool, Docker container, PostgreSQL, or any database actions**. Full script first compiles the test assembly and only then proceeds to expensive Docker/PG stages. The old `-PreflightOnly` option remains.
+- **No new code has been executed in this assistant environment.** Treat current HEAD as **UNVERIFIED** until `-BuildOnly` and the full isolated PostgreSQL suite both pass on the owner's Windows machine. The only confirmed full local PASS is source `66d5ac561f68bac0d72d63f8b12e934c3b2a94c2`. PR stays Draft, no runtime writer DI, no production migration or live payment. Independent bank verification and authenticated Owner/Reviewer intake remain the missing business acceptance gates.
+
 ## Test and release gates
 
 | Gate | Evidence requirement | State |

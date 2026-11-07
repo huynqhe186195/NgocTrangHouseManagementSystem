@@ -313,7 +313,7 @@ SELECT count(*) FROM public."__EFMigrationsHistory_PayOs";
     # NOT the payOS DB; never infer a posted receipt from provider PAID alone.
     $proofSqlFile = Join-Path $logRoot '22-d04-legacy-proof.sql'
     Set-Content -LiteralPath $proofSqlFile -Encoding Ascii -Value @'
-DO $
+DO $d04$
 BEGIN
  IF (
    SELECT count(*)
@@ -337,7 +337,7 @@ BEGIN
      AND o.event_type = 'D04PayOsReceiptCommitted'
  ) <> 1 THEN RAISE EXCEPTION 'D04 source Payment+receipt+settlement+outbox proof missing/conflicting'; END IF;
  RAISE NOTICE 'D04 LEGACY: verified exact journal and outbox from independent database';
-END $;
+END $d04$;
 '@
     Invoke-Logged '22-copy-d04-legacy-proof' 'docker' @(
         'cp', $proofSqlFile, "$($containerId):/tmp/d04-legacy-proof.sql")
@@ -409,7 +409,7 @@ COMMIT;
     }
     $raceProofFile = Join-Path $logRoot '23b-d04-concurrent-proof.sql'
     Set-Content -LiteralPath $raceProofFile -Encoding Ascii -Value @'
-DO $
+DO $d04$
 BEGIN
   IF (SELECT count(*) FROM d04_acceptance.receipts
       WHERE payos_intent_id='00000000-0000-0000-0000-00000000d420')<>1 OR
@@ -422,7 +422,7 @@ BEGIN
     RAISE EXCEPTION 'Two concurrent D04 workers created partial or duplicate money';
   END IF;
   RAISE NOTICE 'D04 LEGACY: 1 of 2 concurrent workers committed exactly one financial bundle';
-END $;
+END $d04$;
 '@
     Invoke-Logged '23a-copy-concurrent-proof' 'docker' @(
         'cp', $raceProofFile, "$($containerId):/tmp/d04-concurrent-proof.sql")
@@ -437,7 +437,7 @@ END $;
     # test-only ack, not a production cross-DB service or crash-safe worker.
     $ackSqlFile = Join-Path $logRoot '24-d04-staging-ack.sql'
     Set-Content -LiteralPath $ackSqlFile -Encoding Ascii -Value @'
-DO $
+DO $d04$
 DECLARE current_status integer;
 BEGIN
  SELECT "Status" INTO current_status
@@ -478,7 +478,7 @@ BEGIN
      RAISE EXCEPTION 'D04 ack not durable';
  END IF;
  RAISE NOTICE 'D04 STAGING ACK: after legacy proof, replay is read-only PASS';
-END $;
+END $d04$;
 '@
     Invoke-Logged '24-copy-d04-staging-ack' 'docker' @(
         'cp', $ackSqlFile, "$($containerId):/tmp/d04-staging-ack.sql")

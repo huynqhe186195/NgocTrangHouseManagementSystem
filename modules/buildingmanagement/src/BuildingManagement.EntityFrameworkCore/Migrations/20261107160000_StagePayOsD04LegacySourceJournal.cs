@@ -134,6 +134,69 @@ public sealed class StagePayOsD04LegacySourceJournal : Migration
             CREATE UNIQUE INDEX "UX_PayOsD04Outbox_SourceKey"
                 ON "BuildingManagementPayOsD04Outbox"("SourceKey");
 
+            -- A direct SQL caller cannot claim a journal by supplying only
+            -- trusted-looking IDs. The actual completed Payment and completed
+            -- allocation must agree with the durable reviewed proof.
+            -- SERIALIZABLE is mandatory to exclude racing deposit writers.
+            CREATE FUNCTION "BM_PayOsD04ValidateReceipt"()
+            RETURNS trigger LANGUAGE plpgsql AS $d04_receipt$
+            DECLARE bank record;
+            DECLARE approval record;
+            DECLARE paid record;
+            DECLARE allocation record;
+            BEGIN
+              IF current_setting('transaction_isolation') <> 'serializable' THEN
+                RAISE EXCEPTION 'D04 financial receipt requires SERIALIZABLE'
+                    USING ERRCODE='23514';
+              END IF;
+              SELECT * INTO bank FROM "BuildingManagementPayOsD04BankReviews"
+               WHERE "Id"=NEW."BankReviewId" FOR SHARE;
+              SELECT * INTO approval FROM "BuildingManagementPayOsD04OwnerApprovals"
+               WHERE "Id"=NEW."OwnerApprovalId" FOR SHARE;
+              SELECT * INTO paid FROM "BuildingManagementPayments"
+               WHERE "Id"=NEW."PaymentId" FOR SHARE;
+              SELECT * INTO allocation FROM "BuildingManagementDepositSettlements"
+               WHERE "Id"=NEW."DepositSettlementId" FOR SHARE;
+
+              IF bank."Id" IS NULL OR approval."Id" IS NULL OR
+                 paid."Id" IS NULL OR allocation."Id" IS NULL OR
+                 bank."PayOsIntentId" IS DISTINCT FROM NEW."PayOsIntentId" OR
+                 bank."BuildingId" IS DISTINCT FROM NEW."BuildingId" OR
+                 bank."PaymentId" IS DISTINCT FROM NEW."PaymentId" OR
+                 bank."AmountVnd" IS DISTINCT FROM NEW."AmountVnd" OR
+                 bank."BankReference" IS DISTINCT FROM NEW."BankReference" OR
+                 bank."DocumentSha256" IS DISTINCT FROM NEW."DocumentSha256" OR
+                 bank."ReviewerId" IS DISTINCT FROM NEW."ReviewerId" OR
+                 approval."BankReviewId" IS DISTINCT FROM bank."Id" OR
+                 approval."ReviewerId" IS DISTINCT FROM bank."ReviewerId" OR
+                 approval."OwnerApproverId" IS DISTINCT FROM NEW."OwnerApproverId" OR
+                 approval."DocumentSha256" IS DISTINCT FROM bank."DocumentSha256" OR
+                 approval."ApprovedAtUtc" > NEW."CreatedAtUtc" OR
+                 approval."ExpiresAtUtc" <= NEW."CreatedAtUtc" OR
+                 paid."ContractId" IS DISTINCT FROM NEW."ContractId" OR
+                 paid."Purpose" IS DISTINCT FROM 2 OR
+                 paid."Method" IS DISTINCT FROM 2 OR
+                 paid."Channel" IS DISTINCT FROM 2 OR
+                 paid."Status" IS DISTINCT FROM 2 OR
+                 paid."PaidAt" IS NULL OR
+                 paid."IsDeleted" IS DISTINCT FROM FALSE OR
+                 paid."Amount" IS DISTINCT FROM NEW."AmountVnd" OR
+                 paid."TransactionReference" IS DISTINCT FROM NEW."BankReference" OR
+                 allocation."Type" IS DISTINCT FROM 3 OR
+                 allocation."Status" IS DISTINCT FROM 2 OR
+                 allocation."PaymentId" IS DISTINCT FROM NEW."PaymentId" OR
+                 allocation."TargetContractId" IS DISTINCT FROM NEW."ContractId" OR
+                 allocation."Amount" IS DISTINCT FROM NEW."AmountVnd" THEN
+                RAISE EXCEPTION 'D04 receipt lacks exact completed Payment/settlement and bank review approval'
+                  USING ERRCODE='23514';
+              END IF;
+              RETURN NEW;
+            END;
+            $d04_receipt$;
+            CREATE TRIGGER "TR_PayOsD04Receipt_VerifyLegacy"
+                BEFORE INSERT ON "BuildingManagementPayOsD04ReceiptJournal"
+                FOR EACH ROW EXECUTE FUNCTION "BM_PayOsD04ValidateReceipt"();
+
             -- Audit rows are insert-only even for ordinary DB writers; only
             -- the outbox acknowledgment/attempt metadata is mutable.
             CREATE FUNCTION "BM_PayOsD04RejectAuditMutation"()
@@ -219,6 +282,7 @@ public sealed class StagePayOsD04LegacySourceJournal : Migration
             DROP TABLE "BuildingManagementPayOsD04ReceiptJournal";
             DROP TABLE "BuildingManagementPayOsD04OwnerApprovals";
             DROP TABLE "BuildingManagementPayOsD04BankReviews";
+            DROP FUNCTION "BM_PayOsD04ValidateReceipt"();
             DROP FUNCTION "BM_PayOsD04GuardOutboxMutation"();
             DROP FUNCTION "BM_PayOsD04RejectAuditMutation"();
             DROP FUNCTION "BM_PayOsD04RejectTruncate"();

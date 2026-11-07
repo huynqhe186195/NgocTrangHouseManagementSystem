@@ -128,7 +128,7 @@ public sealed class PayOsD04StagingDualAuthority : IPayOsD04CurrentDualAuthority
         Guid buildingId, Guid reviewerId, CancellationToken cancellationToken)
         => AcquireSingleActorLeaseAsync(buildingId, reviewerId,
             BuildingManagementPermissions.Payments.ReviewBankEvidence,
-            requireOwnerRole: false, cancellationToken);
+            requireOwnerRole: false, ct: cancellationToken);
 
     /// <summary>
     /// Single Owner authority for submitting a separate approval. The
@@ -138,7 +138,7 @@ public sealed class PayOsD04StagingDualAuthority : IPayOsD04CurrentDualAuthority
         Guid buildingId, Guid ownerId, CancellationToken cancellationToken)
         => AcquireSingleActorLeaseAsync(buildingId, ownerId,
             BuildingManagementPermissions.Payments.ApproveD04Posting,
-            requireOwnerRole: true, cancellationToken);
+            requireOwnerRole: true, ct: cancellationToken);
 
     private async Task<IAsyncDisposable> AcquireSingleActorLeaseAsync(
         Guid buildingId, Guid actorId, string permission,

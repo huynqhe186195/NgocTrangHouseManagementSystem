@@ -10,6 +10,7 @@ using BuildingManagement.Floors;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Npgsql;
+using PaymentMethod = BuildingManagement.Payments.BuildingManagement.Payments.PaymentMethod;
 
 namespace BuildingManagement.EntityFrameworkCore;
 
@@ -116,10 +117,10 @@ public sealed class PayOsD04LegacyPostingWriter
         if (payment is null || payment.ContractId != contract.Id)
             throw Denied("The payment source changed while acquiring locks.");
 
-        var room = await _db.Rooms.IgnoreQueryFilters().AsNoTracking()
+        var room = await _db.Rooms.AsNoTracking()
             .SingleOrDefaultAsync(x => x.Id == contract.RoomId, cancellationToken);
         var floor = room is null ? null :
-            await _db.Floors.IgnoreQueryFilters().AsNoTracking()
+            await _db.Floors.AsNoTracking()
                 .SingleOrDefaultAsync(x => x.Id == room.FloorId, cancellationToken);
         if (floor is null || floor.BuildingId != initial.Intent.BuildingId)
             throw Denied("The contract no longer belongs to this building.");
@@ -145,7 +146,6 @@ public sealed class PayOsD04LegacyPostingWriter
             reviewed.BankReviewerId == reviewed.OwnerApproverId ||
             reviewed.VerifiedAtUtc.Kind != DateTimeKind.Utc ||
             reviewed.ApprovedAtUtc.Kind != DateTimeKind.Utc ||
-            reviewed.ExpiresAtUtc <= DateTime.UtcNow ||
             reviewed.ApprovedAtUtc < reviewed.VerifiedAtUtc)
             throw Denied("Independent bank review/Owner approval is missing or expired.");
 
@@ -170,20 +170,26 @@ public sealed class PayOsD04LegacyPostingWriter
                 existing.OutboxId, result, false);
         }
 
+        // Existing journals may be acknowledged after permission expiry;
+        // NEW cash posting must never use an expired approval.
+        if (reviewed.ExpiresAtUtc <= DateTime.UtcNow)
+            throw Denied("Owner approval expired before financial commit.");
+
         // No receipt => current Identity/Building grants MUST be revalidated.
         await _authority.EnsureCurrentAsync(reviewed.BuildingId, payment.Id,
             reviewed.BankReviewerId, reviewed.OwnerApproverId, cancellationToken);
 
-        if (payment.Status != PaymentStatus.Pending ||
+        if (source.Intent.Status != PayOsPaymentIntentStatus.ConfirmedPendingPosting ||
+            payment.Status != PaymentStatus.Pending ||
             payment.Purpose != PaymentPurpose.ContractDeposit ||
-            payment.Method != BuildingManagement.Payments.BuildingManagement.Payments.PaymentMethod.BankTransfer ||
+            payment.Method != PaymentMethod.BankTransfer ||
             payment.Channel != PaymentChannel.VietQr ||
             payment.Amount <= 0 || payment.Amount > long.MaxValue ||
             decimal.Truncate(payment.Amount) != payment.Amount ||
             payment.Amount != reviewed.AmountVnd)
             throw Denied("Pending VietQR ContractDeposit source is not valid.");
 
-        if (!await _db.ContractTenants.IgnoreQueryFilters().AnyAsync(x =>
+        if (!await _db.ContractTenants.AnyAsync(x =>
             x.ContractId == contract.Id && x.TenantId == payment.TenantId &&
             x.Role == ContractTenantRole.PrimaryTenant, cancellationToken))
             throw Denied("The primary tenant does not match the contract.");
@@ -280,7 +286,9 @@ public sealed class PayOsD04LegacyPostingWriter
     {
         var source = await _staging.ReadCurrentAsync(intentId, ct);
         if (source is null || source.Value.Intent.Id != intentId ||
-            source.Value.Intent.Status != PayOsPaymentIntentStatus.ConfirmedPendingPosting ||
+            source.Value.Intent.Status is not (
+                PayOsPaymentIntentStatus.ConfirmedPendingPosting or
+                PayOsPaymentIntentStatus.Posted) ||
             source.Value.Inbox.Status != PayOsWebhookInboxStatus.ReconciledNoPosting ||
             source.Value.Inbox.PaymentIntentId != intentId ||
             source.Value.Inbox.BuildingId != source.Value.Intent.BuildingId ||

@@ -49,8 +49,8 @@ public static class PayOsD04PostingHandoffPolicy
             // writer must prove the EXACT completed Payment + settlement/
             // receipt journal under its own transaction before this result.
             return exactLegacyJournalAlreadyExists &&
-                intent.Status is PayOsPaymentIntentStatus.ConfirmedPendingPosting or
-                    PayOsPaymentIntentStatus.Posted &&
+                (intent.Status is PayOsPaymentIntentStatus.ConfirmedPendingPosting or
+                    PayOsPaymentIntentStatus.Posted) &&
                 inbox.Status == PayOsWebhookInboxStatus.ReconciledNoPosting &&
                 string.Equals(payment.TransactionReference, intent.ProviderReference,
                     StringComparison.Ordinal)

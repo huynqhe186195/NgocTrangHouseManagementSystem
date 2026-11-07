@@ -25,6 +25,7 @@ public sealed class StagePayOsD04LegacySourceJournal : Migration
             CREATE TABLE "BuildingManagementPayOsD04BankReviews" (
                 "Id" uuid NOT NULL PRIMARY KEY,
                 "PayOsIntentId" uuid NOT NULL,
+                "OrderCode" bigint NOT NULL CHECK ("OrderCode" > 0),
                 "BuildingId" uuid NOT NULL,
                 "PaymentId" uuid NOT NULL
                     REFERENCES "BuildingManagementPayments"("Id") ON DELETE RESTRICT,
@@ -70,6 +71,7 @@ public sealed class StagePayOsD04LegacySourceJournal : Migration
             CREATE TABLE "BuildingManagementPayOsD04ReceiptJournal" (
                 "Id" uuid NOT NULL PRIMARY KEY,
                 "PayOsIntentId" uuid NOT NULL,
+                "OrderCode" bigint NOT NULL CHECK ("OrderCode" > 0),
                 "BuildingId" uuid NOT NULL,
                 "ContractId" uuid NOT NULL
                     REFERENCES "BuildingManagementContracts"("Id") ON DELETE RESTRICT,
@@ -165,6 +167,7 @@ public sealed class StagePayOsD04LegacySourceJournal : Migration
                  paid."Id" IS NULL OR source_contract."Id" IS NULL OR
                  allocation."Id" IS NULL OR
                  bank."PayOsIntentId" IS DISTINCT FROM NEW."PayOsIntentId" OR
+                 bank."OrderCode" IS DISTINCT FROM NEW."OrderCode" OR
                  bank."BuildingId" IS DISTINCT FROM NEW."BuildingId" OR
                  bank."PaymentId" IS DISTINCT FROM NEW."PaymentId" OR
                  bank."AmountVnd" IS DISTINCT FROM NEW."AmountVnd" OR

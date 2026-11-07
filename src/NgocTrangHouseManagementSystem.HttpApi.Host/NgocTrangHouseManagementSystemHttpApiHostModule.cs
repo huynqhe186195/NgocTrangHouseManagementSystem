@@ -284,6 +284,40 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule // syst
             // at startup. All requests still require endpoint-level gates.
         }
 
+        // D04-B is a separate, default-OFF TEST-ONLY three-database gate.
+        // It cannot enable the live merchant checkout, production Identity or
+        // Building DBs, and grants no permission/role automatically.
+        // This is the only way review/Owner/post HTTP services are registered.
+        if (configuration.GetValue<bool>("BuildingManagement:PayOsD04B:Enabled"))
+        {
+            if (!hostingEnvironment.IsStaging() ||
+                configuration["BuildingManagement:PayOsD04B:Activation"] !=
+                    "I_ACCEPT_DISPOSABLE_D04B_DUAL_AUTH_ONLY" ||
+                configuration.GetValue<bool>("BuildingManagement:PayOsStaging:Enabled"))
+                throw new InvalidOperationException(
+                    "D04-B requires dedicated no-merchant, three-DB disposable staging.");
+
+            var identityD04 = configuration.GetConnectionString("Default");
+            var legacyD04 = configuration.GetConnectionString("BuildingManagement");
+            var stagingD04 = configuration.GetConnectionString("PayOsD04BStaging");
+            if (!ExactD04BDisposableDatabase(identityD04, "payos_d04_identity_test") ||
+                !ExactD04BDisposableDatabase(legacyD04, "payos_d04_legacy_test") ||
+                !ExactD04BDisposableDatabase(stagingD04, "payos_ef_migration_test"))
+                throw new InvalidOperationException(
+                    "D04-B rejects anything but three exact disposable PostgreSQL databases.");
+
+            context.Services.AddDbContext<PayOsPaymentMigrationDbContext>(
+                options => options.UseNpgsql(stagingD04,
+                    db => db.MigrationsHistoryTable("__EFMigrationsHistory_PayOs")));
+            context.Services.AddScoped<PayOsD04BStagingOrchestrator>();
+            context.Services.AddScoped<IPayOsD04ManualEvidenceService>(services =>
+                services.GetRequiredService<PayOsD04BStagingOrchestrator>());
+            context.Services.AddScoped<IPayOsD04ReviewedPostingCoordinator>(services =>
+                services.GetRequiredService<PayOsD04BStagingOrchestrator>());
+            // No hosted worker, raw writer, permissive authority, live
+            // payOS API client, migration or tenant-facing endpoint is added.
+        }
+
         Configure<AbpMvcLibsOptions>(options =>
         {
             options.CheckLibs = false;
@@ -336,6 +370,21 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule // syst
         ConfigureVirtualFileSystem(context);
         ConfigureCors(context, configuration);
         ConfigureErrorHttpStatusCodeMappings();
+    }
+
+    private static bool ExactD04BDisposableDatabase(string? input, string name)
+    {
+        if (string.IsNullOrWhiteSpace(input)) return false;
+        try
+        {
+            var db = new NpgsqlConnectionStringBuilder(input);
+            return db.Host is "localhost" or "127.0.0.1" &&
+                   db.Port == 15432 &&
+                   string.Equals(db.Database, name, StringComparison.Ordinal) &&
+                   db.Username == "postgres" &&
+                   db.Password == "disposable-only";
+        }
+        catch (ArgumentException) { return false; }
     }
 
     private static bool HaveTwoIsolatedSliceADatabases(

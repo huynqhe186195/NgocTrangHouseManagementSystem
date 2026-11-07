@@ -60,6 +60,12 @@ public sealed class PayOsStagingPaymentsController : ControllerBase
             // Network ambiguity is NOT permission to reserve another order.
             return StatusCode(503, new { status = "ProviderRetrySameOrder" });
         }
+        catch (OperationCanceledException) when (!HttpContext.RequestAborted.IsCancellationRequested)
+        {
+            // HttpClient timeout can surface as TaskCanceledException, not
+            // HttpRequestException. Never tell the caller to create a new order.
+            return StatusCode(503, new { status = "ProviderRetrySameOrder" });
+        }
         catch (InvalidOperationException)
         {
             return Conflict(new { status = "ProviderOrPaymentRequiresReview" });
@@ -79,6 +85,11 @@ public sealed class PayOsStagingPaymentsController : ControllerBase
         }
         catch (HttpRequestException)
         {
+            return StatusCode(503, new { status = "ProviderRetryLater" });
+        }
+        catch (OperationCanceledException) when (!HttpContext.RequestAborted.IsCancellationRequested)
+        {
+            // Provider lookup ambiguity must not turn into a false "PAID".
             return StatusCode(503, new { status = "ProviderRetryLater" });
         }
         catch (InvalidOperationException)

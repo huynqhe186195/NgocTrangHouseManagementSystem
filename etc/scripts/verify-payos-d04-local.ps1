@@ -170,7 +170,7 @@ try {
     # Compile the PostgreSQL staging test assembly BEFORE creating a Docker
     # container. This catches newly-added D04 test source/EF dependencies.
     Invoke-Logged '04a-staging-test-compile' 'dotnet' @(
-        'build', $pgTests, '-c', 'Release', '--no-restore')
+        'build', $pgTests, '-c', 'Release')
     if ($BuildOnly) {
         Write-Host '=== PAYOS D04 BUILD ONLY PASS: no database/container/EF migration used ===' -ForegroundColor Green
         Write-Host "SOURCE_COMMIT=$sha"

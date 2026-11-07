@@ -7,6 +7,15 @@ namespace BuildingManagement.Payments.Tests;
 
 public class PayOsD04LegacyCommitProtocol_Tests
 {
+    [Fact]
+    public void D04_pure_policy_must_live_in_domain_not_application()
+    {
+        Assert.Same(typeof(Payment).Assembly,
+            typeof(PayOsD04PostingHandoffPolicy).Assembly);
+        Assert.Same(typeof(Payment).Assembly,
+            typeof(PayOsD04LegacyCommitProtocol).Assembly);
+    }
+
     private static readonly string Ref = "BANK-D04-INDEPENDENT-TEST";
     private static readonly string Digest = new('c', 64);
 

@@ -1,5 +1,13 @@
 # Phase 2H D04 — Technical Acceptance A (disposable PostgreSQL, no live money)
 
+## 2026-11-07 22:36 D04A_REAL01 ABP audit dependency failure — source fix, NOT retested
+
+- Owner provided Windows `19a-real-legacy-writer-acceptance.log`: `System.NullReferenceException` at `Volo.Abp.EntityFrameworkCore.AbpDbContext.SaveChangesAsync`, then `PayOsStagingD04RealLegacyWriterAcceptance_Tests.cs:133` (fixture's initial `db.SaveChangesAsync`), not C# compiler, webhook, actual money, or SQL migration.
+- **Verified source cause:** the test directly constructed `new BuildingManagementDbContext(options)` for entity saves without ABP's Autofac-resolved `IAbpLazyServiceProvider`/auditing/UoW services. Standalone migration metadata and `MigrateAsync` succeeded; `SaveChangesAsync` does not support being treated like a bare EF Core `DbContext`.
+- **Fix staged:** use a purpose-built `AbpIntegratedTest<D04RealLegacyWriterAcceptanceTestModule>`, `UseAutofac()`, actual `BuildingManagementEntityFrameworkCoreModule`, test-only `AbpDbConnectionOptions` hard-coded to disposable PostgreSQL, UTC clock and `IDbContextProvider<BuildingManagementDbContext>.GetDbContextAsync()` in a nontransactional Unit of Work. The real D04 writer retains its own SERIALIZABLE transaction and normal ABP `SaveChangesAsync` (no bypass). Plain `new BuildingManagementDbContext` remains only for migration metadata / `MigrateAsync` and never saves audited entities.
+- **Faster evidence gate:** `verify-payos-d04-local.ps1 -WriterOnly` compiles the test assembly, creates only the dedicated disposable PostgreSQL 16 container and `payos_d04_legacy_test` database, executes mandatory 1/1 `19a-real-legacy-writer-acceptance` TRX, and tears down only that container. This skips previously passed staging and two-DB rehearsal checks while diagnosing D04A_REAL01; full suite still runs the same mandatory test.
+- The code after prior owner `FAIL` is **UNVERIFIED** until the new exact-SHA Windows `-WriterOnly` returns `PASS`. Do not claim entire D04 TECHNICAL or BUSINESS ACCEPTED, do not register actual posting endpoints or migrate production.
+
 ## 2026-11-07 21:18 D04A_REAL01 failure — root cause fixed in source, not retested
 
 - User-provided real Windows stack trace: `19a-real-legacy-writer-acceptance.log`, lines 424–433, `System.FormatException: Index (zero based) must be greater than or equal to zero and less than the size of the argument list`, at test line **84** inside `Microsoft.EntityFrameworkCore.Storage.Internal.RawSqlCommandBuilder.Build` invoked by `ExecuteSqlRawAsync(up)`.

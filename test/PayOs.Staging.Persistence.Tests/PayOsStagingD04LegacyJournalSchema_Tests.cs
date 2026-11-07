@@ -42,12 +42,13 @@ public sealed class PayOsStagingD04LegacyJournalSchema_Tests
             // Minimal trusted FK roots; the migration itself uses the REAL
             // BuildingManagement table/column names and does not create cash.
             await ExecAsync(db, tx, """
-                CREATE TABLE "BuildingManagementContracts" ("Id" uuid PRIMARY KEY);
+                CREATE TABLE "BuildingManagementContracts" ("Id" uuid PRIMARY KEY,"Status" integer NOT NULL);
                 CREATE TABLE "BuildingManagementPayments" (
                     "Id" uuid PRIMARY KEY, "ContractId" uuid NOT NULL,
                     "Purpose" integer NOT NULL, "Method" integer NOT NULL,
                     "Channel" integer NOT NULL, "Status" integer NOT NULL,
                     "PaidAt" timestamptz, "IsDeleted" boolean NOT NULL,
+                    "DepositDisposition" integer,
                     "Amount" numeric(18,0) NOT NULL,
                     "TransactionReference" varchar(128));
                 CREATE TABLE "BuildingManagementDepositSettlements" (
@@ -99,11 +100,11 @@ public sealed class PayOsStagingD04LegacyJournalSchema_Tests
             var source = "PAYOS:D04:" + intent.ToString("N");
 
             await ExecAsync(db, tx, $"""
-                INSERT INTO "BuildingManagementContracts"("Id") VALUES ('{contract}');
+                INSERT INTO "BuildingManagementContracts"("Id","Status") VALUES ('{contract}',5);
                 INSERT INTO "BuildingManagementPayments"
                 ("Id","ContractId","Purpose","Method","Channel","Status",
-                 "PaidAt","IsDeleted","Amount","TransactionReference")
-                VALUES ('{payment}','{contract}',2,2,2,2,now(),false,150000,'{reference}');
+                 "PaidAt","IsDeleted","DepositDisposition","Amount","TransactionReference")
+                VALUES ('{payment}','{contract}',2,2,2,2,now(),false,1,150000,'{reference}');
                 INSERT INTO "BuildingManagementDepositSettlements"
                 ("Id","PaymentId","TargetContractId","Type","Status","Amount")
                 VALUES ('{settlement}','{payment}','{contract}',3,2,150000);

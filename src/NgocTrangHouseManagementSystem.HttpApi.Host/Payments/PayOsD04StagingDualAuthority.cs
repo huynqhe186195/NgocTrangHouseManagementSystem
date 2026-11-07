@@ -274,6 +274,7 @@ public sealed class PayOsD04StagingDualAuthority : IPayOsD04CurrentDualAuthority
               JOIN "AbpUsers" u ON u."Id"=ur."UserId"
               JOIN "AbpRoles" r ON r."Id"=ur."RoleId"
              WHERE ur."UserId"=@owner AND r."Name"='Owner'
+               AND r."IsDeleted"=FALSE
                AND r."TenantId" IS NOT DISTINCT FROM u."TenantId"
              ORDER BY r."Id"
              LIMIT 1

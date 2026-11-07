@@ -74,9 +74,9 @@ public static class PayOsD04LegacyCommitProtocol
             proof.ExactSettlementCount != 1 ||
             proof.ExactOutboxCount != 1 ||
             proof.GlobalBankReferenceCount != 1 ||
-            proof.CommittedAtUtc.Kind != DateTimeKind.Utc ||
+            proof.ReceiptCreatedAtUtc.Kind != DateTimeKind.Utc ||
             proof.OutboxCreatedAtUtc.Kind != DateTimeKind.Utc ||
-            proof.OutboxCreatedAtUtc < proof.CommittedAtUtc)
+            proof.OutboxCreatedAtUtc < proof.ReceiptCreatedAtUtc)
             return PayOsD04RecoveryDecision.StopAndInvestigate;
 
         // A source-proven journal bundle is required in ADDITION to the
@@ -124,5 +124,5 @@ public sealed record PayOsD04ReceiptOutboxProof(
     int ExactSettlementCount,
     int ExactOutboxCount,
     int GlobalBankReferenceCount,
-    DateTime CommittedAtUtc,
+    DateTime ReceiptCreatedAtUtc,
     DateTime OutboxCreatedAtUtc);

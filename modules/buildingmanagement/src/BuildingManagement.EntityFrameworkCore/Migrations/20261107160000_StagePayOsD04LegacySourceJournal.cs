@@ -143,6 +143,7 @@ public sealed class StagePayOsD04LegacySourceJournal : Migration
             DECLARE bank record;
             DECLARE approval record;
             DECLARE paid record;
+            DECLARE source_contract record;
             DECLARE allocation record;
             BEGIN
               IF current_setting('transaction_isolation') <> 'serializable' THEN
@@ -155,11 +156,14 @@ public sealed class StagePayOsD04LegacySourceJournal : Migration
                WHERE "Id"=NEW."OwnerApprovalId" FOR SHARE;
               SELECT * INTO paid FROM "BuildingManagementPayments"
                WHERE "Id"=NEW."PaymentId" FOR SHARE;
+              SELECT * INTO source_contract FROM "BuildingManagementContracts"
+               WHERE "Id"=NEW."ContractId" FOR SHARE;
               SELECT * INTO allocation FROM "BuildingManagementDepositSettlements"
                WHERE "Id"=NEW."DepositSettlementId" FOR SHARE;
 
               IF bank."Id" IS NULL OR approval."Id" IS NULL OR
-                 paid."Id" IS NULL OR allocation."Id" IS NULL OR
+                 paid."Id" IS NULL OR source_contract."Id" IS NULL OR
+                 allocation."Id" IS NULL OR
                  bank."PayOsIntentId" IS DISTINCT FROM NEW."PayOsIntentId" OR
                  bank."BuildingId" IS DISTINCT FROM NEW."BuildingId" OR
                  bank."PaymentId" IS DISTINCT FROM NEW."PaymentId" OR
@@ -174,11 +178,13 @@ public sealed class StagePayOsD04LegacySourceJournal : Migration
                  approval."ApprovedAtUtc" > NEW."CreatedAtUtc" OR
                  approval."ExpiresAtUtc" <= NEW."CreatedAtUtc" OR
                  paid."ContractId" IS DISTINCT FROM NEW."ContractId" OR
+                 source_contract."Status" NOT IN (2,5) OR
                  paid."Purpose" IS DISTINCT FROM 2 OR
                  paid."Method" IS DISTINCT FROM 2 OR
                  paid."Channel" IS DISTINCT FROM 2 OR
                  paid."Status" IS DISTINCT FROM 2 OR
                  paid."PaidAt" IS NULL OR
+                 paid."DepositDisposition" IS DISTINCT FROM 1 OR
                  paid."IsDeleted" IS DISTINCT FROM FALSE OR
                  paid."Amount" IS DISTINCT FROM NEW."AmountVnd" OR
                  paid."TransactionReference" IS DISTINCT FROM NEW."BankReference" OR
@@ -219,8 +225,11 @@ public sealed class StagePayOsD04LegacySourceJournal : Migration
             CREATE FUNCTION "BM_PayOsD04GuardOutboxMutation"()
             RETURNS trigger LANGUAGE plpgsql AS $d04_outbox$
             BEGIN
-                IF TG_OP = 'DELETE' OR
-                   NEW."Id" IS DISTINCT FROM OLD."Id" OR
+                IF TG_OP = 'DELETE' THEN
+                    RAISE EXCEPTION 'D04 outbox cannot be deleted'
+                        USING ERRCODE = '23514';
+                END IF;
+                IF NEW."Id" IS DISTINCT FROM OLD."Id" OR
                    NEW."ReceiptId" IS DISTINCT FROM OLD."ReceiptId" OR
                    NEW."SourceKey" IS DISTINCT FROM OLD."SourceKey" OR
                    NEW."EventType" IS DISTINCT FROM OLD."EventType" OR

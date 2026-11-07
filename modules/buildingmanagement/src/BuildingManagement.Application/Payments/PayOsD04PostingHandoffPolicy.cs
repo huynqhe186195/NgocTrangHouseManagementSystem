@@ -96,6 +96,28 @@ public static class PayOsD04PostingHandoffPolicy
         return PayOsD04HandoffDecision.ReadyForLockedD04Writer;
     }
 
+    /// <summary>
+    /// Recovery decision after the legacy Building DB writer committed.
+    /// Never marks payOS Posted unless the *authoritative* Building DB
+    /// reports the exact Payment + receipt journal and reference. This
+    /// method is read-only; a separate durable coordinator must execute
+    /// the marker update with a payOS row lock and retry on crash.
+    /// </summary>
+    public static PayOsD04RecoveryDecision PlanAfterLegacyCommit(
+        PayOsPaymentIntent intent,
+        PayOsWebhookInboxRecord inbox,
+        Payment payment,
+        bool exactLegacyJournalAlreadyExists)
+    {
+        var result = Assess(intent, inbox, payment, review: null,
+            exactLegacyJournalAlreadyExists: exactLegacyJournalAlreadyExists);
+        if (result != PayOsD04HandoffDecision.AlreadyPostedConsistently)
+            return PayOsD04RecoveryDecision.StopAndInvestigate;
+        return intent.Status == PayOsPaymentIntentStatus.Posted
+            ? PayOsD04RecoveryDecision.AlreadyAcknowledged
+            : PayOsD04RecoveryDecision.MarkPayOsPostedAfterLegacyProof;
+    }
+
     private static bool IsLowerSha256(string s)
     {
         if (s.Length != 64) return false;
@@ -136,4 +158,14 @@ public enum PayOsD04HandoffDecision
     ConflictRequiresInvestigation = 3,
     ReadyForLockedD04Writer = 4,
     AlreadyPostedConsistently = 5
+}
+
+/// <summary>
+/// Pure recovery PLAN; no cross-database write occurs in this model.
+/// </summary>
+public enum PayOsD04RecoveryDecision
+{
+    StopAndInvestigate = 0,
+    MarkPayOsPostedAfterLegacyProof = 1,
+    AlreadyAcknowledged = 2
 }

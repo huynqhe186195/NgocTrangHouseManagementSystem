@@ -141,7 +141,7 @@ public sealed class D04RealLegacyWriterAcceptance_Tests
         Assert.Empty(await db.DepositSettlements
             .Where(x => x.PaymentId == p).ToListAsync());
         Assert.Equal(0L, await CountAsync(db,
-            @"""BuildingManagementPayOsD04ReceiptJournal"""));
+            "\"BuildingManagementPayOsD04ReceiptJournal\""));
         db.ChangeTracker.Clear();
 
         var verifiedAt = now.AddMinutes(-2);
@@ -176,7 +176,7 @@ public sealed class D04RealLegacyWriterAcceptance_Tests
         Assert.Equal(PaymentStatus.Pending,
             (await db.Payments.SingleAsync(x => x.Id == p)).Status);
         Assert.Equal(0L, await CountAsync(db,
-            @"""BuildingManagementPayOsD04ReceiptJournal"""));
+            "\"BuildingManagementPayOsD04ReceiptJournal\""));
         db.ChangeTracker.Clear();
 
         var first = await writer.PostAsync(intent.Id);
@@ -199,9 +199,9 @@ public sealed class D04RealLegacyWriterAcceptance_Tests
         Assert.Equal(DepositSettlementStatus.Completed, settlement.Status);
         Assert.Equal(150000m, settlement.Amount);
         Assert.Equal(1L, await CountAsync(db,
-            @"""BuildingManagementPayOsD04ReceiptJournal"""));
+            "\"BuildingManagementPayOsD04ReceiptJournal\""));
         Assert.Equal(1L, await CountAsync(db,
-            @"""BuildingManagementPayOsD04Outbox"""));
+            "\"BuildingManagementPayOsD04Outbox\""));
 
         // Independent re-read from canonical legacy DB, not from a return
         // value or fake staging provider. Proves matching journal + outbox.
@@ -224,9 +224,9 @@ public sealed class D04RealLegacyWriterAcceptance_Tests
         Assert.Equal(first.ReceiptId, replay.ReceiptId);
         Assert.Equal(leaseCallsBeforeReplay, authority.LeaseCalls);
         Assert.Equal(1L, await CountAsync(db,
-            @"""BuildingManagementPayOsD04ReceiptJournal"""));
+            "\"BuildingManagementPayOsD04ReceiptJournal\""));
         Assert.Equal(1L, await CountAsync(db,
-            @"""BuildingManagementPayOsD04Outbox"""));
+            "\"BuildingManagementPayOsD04Outbox\""));
         Assert.Single(await db.DepositSettlements.AsNoTracking()
             .Where(x => x.PaymentId == p).ToListAsync());
 

@@ -371,8 +371,18 @@ public sealed class PayOsD04LegacyPostingWriter
                    (SELECT count(*) FROM "BuildingManagementPayOsD04ReceiptJournal"
                        WHERE "BankReference"=j."BankReference")
               FROM "BuildingManagementPayOsD04ReceiptJournal" j
+              JOIN "BuildingManagementPayments" p
+                ON p."Id"=j."PaymentId"
+               AND p."ContractId"=j."ContractId"
+               AND p."Status"=2 AND p."IsDeleted"=FALSE
+               AND p."TransactionReference"=j."BankReference"
+               AND p."Amount"=j."AmountVnd"
               JOIN "BuildingManagementDepositSettlements" s
                 ON s."Id"=j."DepositSettlementId"
+               AND s."PaymentId"=p."Id"
+               AND s."TargetContractId"=p."ContractId"
+               AND s."Status"=2 AND s."Type"=3
+               AND s."Amount"=j."AmountVnd"
               JOIN "BuildingManagementPayOsD04Outbox" o
                 ON o."ReceiptId"=j."Id" AND o."SourceKey"=j."SourceKey"
              WHERE j."PayOsIntentId"=@intentId

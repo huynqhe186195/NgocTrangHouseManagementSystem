@@ -1,4 +1,4 @@
-param([switch]$PreflightOnly)
+param([switch]$PreflightOnly, [switch]$BuildOnly)
 
 # D04/payOS Windows acceptance bundle. Does NOT use existing local PostgreSQL.
 # It launches ONLY a new disposable postgres:16 Docker container, bound to
@@ -97,6 +97,9 @@ try {
         throw "D04 SQL preflight failed: opens=$sqlOpenCount closes=$sqlCloseCount; expected 3 each."
     }
     Write-Host 'D04 SQL templates: 3 dollar-quoted blocks verified.' -ForegroundColor Green
+    if ($PreflightOnly -and $BuildOnly) {
+        throw 'Choose only one of -PreflightOnly or -BuildOnly.'
+    }
     if ($PreflightOnly) {
         Write-Host '=== D04 PREFLIGHT ONLY PASS: no builds, database or containers used ===' -ForegroundColor Green
         return
@@ -164,6 +167,16 @@ try {
 
     Invoke-Logged '03-ef-build' 'dotnet' @('build', $efProject, '-c', 'Release')
     Invoke-Logged '04-http-build' 'dotnet' @('build', $httpProject, '-c', 'Release')
+    # Compile the PostgreSQL staging test assembly BEFORE creating a Docker
+    # container. This catches newly-added D04 test source/EF dependencies.
+    Invoke-Logged '04a-staging-test-compile' 'dotnet' @(
+        'build', $pgTests, '-c', 'Release', '--no-restore')
+    if ($BuildOnly) {
+        Write-Host '=== PAYOS D04 BUILD ONLY PASS: no database/container/EF migration used ===' -ForegroundColor Green
+        Write-Host "SOURCE_COMMIT=$sha"
+        Write-Host "LOG_DIRECTORY=$logRoot"
+        return
+    }
 
     $toolDir = Join-Path $logRoot 'dotnet-ef'
     Invoke-Logged '05-install-isolated-ef-tool' 'dotnet' @(

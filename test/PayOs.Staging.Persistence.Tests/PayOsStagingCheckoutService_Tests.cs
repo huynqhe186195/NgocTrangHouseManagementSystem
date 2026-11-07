@@ -118,6 +118,49 @@ public class PayOsStagingCheckoutService_Tests
     }
 
     [Fact]
+    public async Task Provider_post_timeout_still_recovers_same_reserved_order_on_retry()
+    {
+        using var provider = new FakeProvider { FailAfterProviderCreatesAsTimeout = true };
+        await using var db = Db();
+        var (service, paymentId) = CreateService(db, provider);
+        await Assert.ThrowsAsync<TaskCanceledException>(() =>
+            service.StartOrRecoverAsync(paymentId));
+
+        var persisted = await db.PayOsPaymentIntents.AsNoTracking()
+            .SingleAsync(x => x.PaymentId == paymentId);
+        Assert.Equal(PayOsPaymentIntentStatus.Created, persisted.Status);
+
+        provider.FailAfterProviderCreatesAsTimeout = false;
+        var recovered = await service.StartOrRecoverAsync(paymentId);
+        Assert.Equal(PayOsCheckoutViewStatus.Recovered, recovered.Status);
+        Assert.Equal(persisted.OrderCode, recovered.OrderCode);
+        Assert.Equal(1, provider.Created);
+        Assert.Equal(1, await db.PayOsPaymentIntents.CountAsync(x => x.PaymentId == paymentId));
+    }
+
+    [Fact]
+    public async Task Provider_get_timeout_during_recovery_never_creates_second_checkout()
+    {
+        using var provider = new FakeProvider { FailAfterProviderCreates = true };
+        await using var db = Db();
+        var (service, paymentId) = CreateService(db, provider);
+        await Assert.ThrowsAsync<HttpRequestException>(() =>
+            service.StartOrRecoverAsync(paymentId));
+
+        provider.FailAfterProviderCreates = false;
+        provider.FindTimesOut = true;
+        await Assert.ThrowsAsync<TaskCanceledException>(() =>
+            service.StartOrRecoverAsync(paymentId));
+        Assert.Equal(1, provider.Created);
+
+        provider.FindTimesOut = false;
+        var recovered = await service.StartOrRecoverAsync(paymentId);
+        Assert.Equal(PayOsCheckoutViewStatus.Recovered, recovered.Status);
+        Assert.Equal(1, provider.Created);
+        Assert.Equal(1, await db.PayOsPaymentIntents.CountAsync(x => x.PaymentId == paymentId));
+    }
+
+    [Fact]
     public async Task Missing_building_contract_capability_prevents_checkout_and_outbound_provider_call()
     {
         using var provider = new FakeProvider();
@@ -145,6 +188,8 @@ public class PayOsStagingCheckoutService_Tests
         private readonly ConcurrentDictionary<long, PayOsPaymentLinkSnapshot> _links = new();
         public int Created { get; private set; }
         public bool FailAfterProviderCreates { get; set; }
+        public bool FailAfterProviderCreatesAsTimeout { get; set; }
+        public bool FindTimesOut { get; set; }
 
         public Task<PayOsCheckoutResult> CreateAsync(
             PayOsCheckoutCommand command, CancellationToken cancellationToken = default)
@@ -156,6 +201,8 @@ public class PayOsStagingCheckoutService_Tests
                 link, "PENDING");
             if (FailAfterProviderCreates)
                 throw new HttpRequestException("Simulated provider response lost");
+            if (FailAfterProviderCreatesAsTimeout)
+                throw new TaskCanceledException("Simulated provider POST timeout");
             return Task.FromResult(new PayOsCheckoutResult(
                 command.OrderCode, command.AmountVnd, link,
                 new Uri("https://pay.payos.vn/web/" + link), "SYNTHETIC-QR"));
@@ -164,6 +211,8 @@ public class PayOsStagingCheckoutService_Tests
         public Task<PayOsPaymentLinkSnapshot?> FindAsync(
             long orderCode, CancellationToken cancellationToken = default)
         {
+            if (FindTimesOut)
+                throw new TaskCanceledException("Simulated provider GET timeout");
             _links.TryGetValue(orderCode, out var result);
             return Task.FromResult(result);
         }

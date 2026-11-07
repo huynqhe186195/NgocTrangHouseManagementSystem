@@ -68,6 +68,8 @@ public sealed class D04RealLegacyWriterAcceptance_Tests
         // short schema. The draft D04 SQL must NOT join this migration chain.
         var canonical = db.Database.GetMigrations().ToArray();
         Assert.NotEmpty(canonical);
+        Assert.Equal("20261104220000_Phase2HTypedH4DeferredCommitIntent",
+            canonical[^1]);
         Assert.DoesNotContain(canonical, name =>
             name.Contains("StagePayOsD04LegacySourceJournal",
                 StringComparison.Ordinal));

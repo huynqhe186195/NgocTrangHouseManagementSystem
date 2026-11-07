@@ -76,7 +76,8 @@ public sealed class PayOsD04CommittedReceiptStore : IPayOsD04CommittedReceiptSto
                     WHERE "ReceiptId"=j."Id" AND "SourceKey"=j."SourceKey"),
                    (SELECT count(*) FROM "BuildingManagementPayOsD04ReceiptJournal"
                     WHERE "BankReference"=j."BankReference"),
-                   j."ReviewerId",j."OwnerApproverId",o."AcknowledgedAtUtc"
+                   j."ReviewerId",j."OwnerApproverId",o."AcknowledgedAtUtc",
+                   j."OrderCode"
             FROM "BuildingManagementPayOsD04ReceiptJournal" j
             JOIN "BuildingManagementPayments" p
               ON p."Id"=j."PaymentId"
@@ -96,6 +97,7 @@ public sealed class PayOsD04CommittedReceiptStore : IPayOsD04CommittedReceiptSto
             JOIN "BuildingManagementPayOsD04BankReviews" b
               ON b."Id"=j."BankReviewId"
              AND b."PayOsIntentId"=j."PayOsIntentId"
+             AND b."OrderCode"=j."OrderCode"
              AND b."BuildingId"=j."BuildingId"
              AND b."PaymentId"=j."PaymentId"
              AND b."BankReference"=j."BankReference"
@@ -134,7 +136,7 @@ public sealed class PayOsD04CommittedReceiptStore : IPayOsD04CommittedReceiptSto
                     reader.GetDateTime(12), reader.GetDateTime(13));
                 plan = new PayOsD04LegacyCommitPlan(
                     reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2),
-                    0, // Resolved against immutable staging OrderCode below.
+                    reader.GetInt64(21),
                     reader.GetInt64(8), reader.GetString(7),
                     reader.GetString(6), reader.GetString(10),
                     reader.GetGuid(18), reader.GetGuid(19));
@@ -166,9 +168,8 @@ public sealed class PayOsD04CommittedReceiptStore : IPayOsD04CommittedReceiptSto
             payment.TransactionReference != proof.BankReference)
             throw new InvalidOperationException("D04 legacy Payment read-back conflicts with receipt.");
 
-        // The original payOS OrderCode is not stored in the Building DB
-        // journal. The coordinator supplies the staging OrderCode when
-        // validating this immutable proof; it may not invent any other field.
+        // OrderCode comes from the immutable BuildingManagement journal and
+        // matched bank review, not from the caller or payOS webhook.
         await tx.CommitAsync(cancellationToken);
         return new PayOsD04CommittedReadBack(plan, proof, payment, acknowledged);
     }

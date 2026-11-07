@@ -48,22 +48,37 @@ function Invoke-Logged([string]$step, [string]$command, [string[]]$arguments) {
     }
     finally { $ErrorActionPreference = $previous }
     if ($exitCode -ne 0) {
-        # Surface the ORIGINAL compiler/SQL error immediately. The detailed
-        # log is still retained; never force the operator to manually grep it.
-        Write-Host "=== $step diagnostic lines (first 16) ===" -ForegroundColor Red
+        # Capture the true xUnit failure MESSAGE + stack context first.
+        # Generic "Failed to load prune package data" SDK warnings are not
+        # a test failure; never let them consume the diagnostic budget.
+        Write-Host "=== $step original error and stack ===" -ForegroundColor Red
         if (Test-Path -LiteralPath $log) {
-            $diagnostics = @(Get-Content -LiteralPath $log |
-                Where-Object {
-                    $_ -match '\berror (CS|NU|MSB)[0-9]+' -or
-                    $_ -match '(?i)(^|: )(?:ERROR|FATAL):' -or
-                    $_ -match '(?i)FAILED|Exception:'
-                } | Select-Object -First 16)
-            if ($diagnostics.Count -gt 0) {
-                $diagnostics | ForEach-Object { Write-Host $_ -ForegroundColor Red }
+            $logLines = @([System.IO.File]::ReadAllLines($log))
+            $start = -1
+            for ($i = 0; $i -lt $logLines.Length; $i++) {
+                if ($logLines[$i] -match '^\s*Failed\s+.*\[\d+\s*(ms|s)\]' -or
+                    $logLines[$i] -match '^\s*(Error Message:|\[xUnit.net.*\[FAIL\])') {
+                    $start = $i
+                    break
+                }
+            }
+            if ($start -ge 0) {
+                $end = [Math]::Min($start + 55, $logLines.Length - 1)
+                for ($i = $start; $i -le $end; $i++) {
+                    Write-Host $logLines[$i] -ForegroundColor Red
+                }
             }
             else {
-                Get-Content -LiteralPath $log -Tail 18 |
-                    ForEach-Object { Write-Host $_ -ForegroundColor Red }
+                $diagnostics = @($logLines | Where-Object {
+                    $_ -match '(?i)(error (CS|NU|MSB)[0-9]+|ERROR:|FATAL:|Exception:|Npgsql\.PostgresException|\[FAIL\])'
+                } | Select-Object -First 20)
+                if ($diagnostics.Count -gt 0) {
+                    $diagnostics | ForEach-Object { Write-Host $_ -ForegroundColor Red }
+                }
+                else {
+                    $logLines | Select-Object -Last 22 |
+                        ForEach-Object { Write-Host $_ -ForegroundColor Red }
+                }
             }
         }
         throw "$step FAILED (exit=$exitCode). Log: $log"

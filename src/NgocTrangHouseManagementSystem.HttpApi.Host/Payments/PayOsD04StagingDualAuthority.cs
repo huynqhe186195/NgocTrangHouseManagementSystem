@@ -68,7 +68,10 @@ public sealed class PayOsD04StagingDualAuthority : IPayOsD04CurrentDualAuthority
 
         var dbActual = new NpgsqlConnectionStringBuilder(
             _buildingDb.Database.GetDbConnection().ConnectionString);
-        if (!IsExactDisposable(dbActual, "payos_d04_legacy_test"))
+        // Npgsql may hide the password after opening a connection.
+        // Validate the actual database LOCATION, while the configured
+        // connection was already checked for the exact disposable secret.
+        if (!IsExactDisposableLocation(dbActual, "payos_d04_legacy_test"))
             throw Denied();
 
         // Identity is a SEPARATE DB. A ReadCommitted transaction with SHARE
@@ -123,11 +126,13 @@ public sealed class PayOsD04StagingDualAuthority : IPayOsD04CurrentDualAuthority
     }
 
     private static bool IsExactDisposable(NpgsqlConnectionStringBuilder cs, string name)
+        => IsExactDisposableLocation(cs, name) && cs.Password == "disposable-only";
+
+    private static bool IsExactDisposableLocation(NpgsqlConnectionStringBuilder cs, string name)
         => cs.Host is "127.0.0.1" or "localhost" &&
            cs.Port == 15432 &&
            string.Equals(cs.Database, name, StringComparison.Ordinal) &&
-           string.Equals(cs.Username, "postgres", StringComparison.Ordinal) &&
-           cs.Password == "disposable-only";
+           string.Equals(cs.Username, "postgres", StringComparison.Ordinal);
 
     private static async Task LockActiveAccountAsync(
         NpgsqlConnection conn, NpgsqlTransaction tx, Guid actor,

@@ -109,10 +109,10 @@ public sealed class PayOsStagingD04LegacyJournalSchema_Tests
                 ("Id","PaymentId","TargetContractId","Type","Status","Amount")
                 VALUES ('{settlement}','{payment}','{contract}',3,2,150000);
                 INSERT INTO "BuildingManagementPayOsD04BankReviews"
-                ("Id","PayOsIntentId","BuildingId","PaymentId","AmountVnd",
+                ("Id","PayOsIntentId","OrderCode","BuildingId","PaymentId","AmountVnd",
                  "BankReference","DocumentSha256","ExternalBankProofReference",
                  "ReviewerId","VerifiedAtUtc")
-                VALUES ('{review}','{intent}','{building}','{payment}',150000,
+                VALUES ('{review}','{intent}',91551001,'{building}','{payment}',150000,
                         '{reference}',repeat('a',64),'BANK-STATEMENT-DOCUMENT',
                         '{reviewer}',now());
                 INSERT INTO "BuildingManagementPayOsD04OwnerApprovals"
@@ -121,11 +121,11 @@ public sealed class PayOsStagingD04LegacyJournalSchema_Tests
                 VALUES ('{approval}','{review}','{reviewer}',repeat('a',64),
                         '{owner}',now(),now()+interval '1 day');
                 INSERT INTO "BuildingManagementPayOsD04ReceiptJournal"
-                ("Id","PayOsIntentId","BuildingId","ContractId","PaymentId",
+                ("Id","PayOsIntentId","OrderCode","BuildingId","ContractId","PaymentId",
                  "DepositSettlementId","BankReviewId","OwnerApprovalId",
                  "SourceKey","BankReference","AmountVnd","DocumentSha256",
                  "ReviewerId","OwnerApproverId","CreatedAtUtc")
-                VALUES ('{receipt}','{intent}','{building}','{contract}','{payment}',
+                VALUES ('{receipt}','{intent}',91551001,'{building}','{contract}','{payment}',
                         '{settlement}','{review}','{approval}','{source}',
                         '{reference}',150000,repeat('a',64),
                         '{reviewer}','{owner}',now());

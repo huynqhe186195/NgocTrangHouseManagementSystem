@@ -47,7 +47,7 @@ public sealed class StagePayOsD04LegacySourceJournal : Migration
             CREATE UNIQUE INDEX "UX_PayOsD04Review_Payment"
                 ON "BuildingManagementPayOsD04BankReviews"("PaymentId");
             CREATE UNIQUE INDEX "UX_PayOsD04Review_BankReference"
-                ON "BuildingManagementPayOsD04BankReviews"("BankReference");
+                ON "BuildingManagementPayOsD04BankReviews"((lower(btrim("BankReference"))));
 
             CREATE TABLE "BuildingManagementPayOsD04OwnerApprovals" (
                 "Id" uuid NOT NULL PRIMARY KEY,
@@ -108,7 +108,7 @@ public sealed class StagePayOsD04LegacySourceJournal : Migration
             CREATE UNIQUE INDEX "UX_PayOsD04Journal_SourceKey"
                 ON "BuildingManagementPayOsD04ReceiptJournal"("SourceKey");
             CREATE UNIQUE INDEX "UX_PayOsD04Journal_BankReference"
-                ON "BuildingManagementPayOsD04ReceiptJournal"("BankReference");
+                ON "BuildingManagementPayOsD04ReceiptJournal"((lower(btrim("BankReference"))));
             CREATE UNIQUE INDEX "UX_PayOsD04Journal_Review"
                 ON "BuildingManagementPayOsD04ReceiptJournal"("BankReviewId");
             CREATE UNIQUE INDEX "UX_PayOsD04Journal_Approval"
@@ -147,6 +147,7 @@ public sealed class StagePayOsD04LegacySourceJournal : Migration
             DECLARE paid record;
             DECLARE source_contract record;
             DECLARE allocation record;
+            DECLARE matched_global_claim boolean;
             BEGIN
               IF current_setting('transaction_isolation') <> 'serializable' THEN
                 RAISE EXCEPTION 'D04 financial receipt requires SERIALIZABLE'
@@ -162,10 +163,19 @@ public sealed class StagePayOsD04LegacySourceJournal : Migration
                WHERE "Id"=NEW."ContractId" FOR SHARE;
               SELECT * INTO allocation FROM "BuildingManagementDepositSettlements"
                WHERE "Id"=NEW."DepositSettlementId" FOR SHARE;
+              -- Reuse the existing 2G.4 GLOBAL claim table (including refund
+              -- references). Never introduce an independent conflicting
+              -- notion of who owns this bank transaction reference.
+              SELECT EXISTS (
+                SELECT 1 FROM "BuildingManagementBankEvidenceClaims" c
+                 WHERE c."NormalizedReference"=lower(btrim(NEW."BankReference"))
+                   AND c."SourceKind"='Payment'
+                   AND c."SourceId"=NEW."PaymentId"
+              ) INTO matched_global_claim;
 
               IF bank."Id" IS NULL OR approval."Id" IS NULL OR
                  paid."Id" IS NULL OR source_contract."Id" IS NULL OR
-                 allocation."Id" IS NULL OR
+                 allocation."Id" IS NULL OR NOT matched_global_claim OR
                  bank."PayOsIntentId" IS DISTINCT FROM NEW."PayOsIntentId" OR
                  bank."OrderCode" IS DISTINCT FROM NEW."OrderCode" OR
                  bank."BuildingId" IS DISTINCT FROM NEW."BuildingId" OR

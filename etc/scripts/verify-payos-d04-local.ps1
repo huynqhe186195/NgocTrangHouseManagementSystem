@@ -297,6 +297,119 @@ SELECT count(*) FROM public."__EFMigrationsHistory_PayOs";
     }
     Write-Host 'PASS: exactly one case-sensitive payOS EF migration history row.' -ForegroundColor Green
 
+    # Two actual databases in one disposable PG16 container. These are
+    # protocol rehearsal schemas and synthetic receipts, never the live writer.
+    Invoke-Logged '19-create-d04-legacy-test-db' 'docker' @(
+        'exec', $containerId, 'createdb', '-U', 'postgres', 'payos_d04_legacy_test')
+    $d04Sql = Resolve-Path '.\etc\phase-audits\payos-d04-two-db-posting-recovery-rehearsal.sql'
+    Invoke-Logged '20-copy-d04-two-db-sql' 'docker' @(
+        'cp', [string]$d04Sql.Path, "$($containerId):/tmp/d04-two-db.sql")
+    Invoke-Logged '21-d04-two-db-commit-rollback-review' 'docker' @(
+        'exec', $containerId, 'psql', '-U', 'postgres',
+        '-d', 'payos_ef_migration_test', '-v', 'ON_ERROR_STOP=1',
+        '-f', '/tmp/d04-two-db.sql')
+
+    # This is a mandatory read-back from the *separate* synthetic legacy DB,
+    # NOT the payOS DB; never infer a posted receipt from provider PAID alone.
+    $proofSqlFile = Join-Path $logRoot '22-d04-legacy-proof.sql'
+    Set-Content -LiteralPath $proofSqlFile -Encoding Ascii -Value @'
+DO $
+BEGIN
+ IF (
+   SELECT count(*)
+   FROM d04_acceptance.receipts r
+   JOIN d04_acceptance.payments p ON p.id = r.payment_id
+   JOIN d04_acceptance.deposit_settlements s
+     ON s.receipt_id = r.id AND s.payment_id = p.id
+   JOIN d04_acceptance.outbox o
+     ON o.receipt_id = r.id AND o.source_key = r.source_key
+   WHERE r.payos_intent_id = '00000000-0000-0000-0000-00000000d401'
+     AND r.payment_id = '00000000-0000-0000-0000-00000000d404'
+     AND p.building_id = '00000000-0000-0000-0000-00000000d402'
+     AND p.status = 1
+     AND p.bank_reference = 'D04-SYNTHETIC-REF'
+     AND p.amount_vnd = r.amount_vnd AND r.amount_vnd = s.amount_vnd
+     AND r.amount_vnd = 150000
+     AND r.bank_reference = 'D04-SYNTHETIC-REF'
+     AND r.source_key = 'PAYOS:D04:0000000000000000000000000000d401'
+     AND r.approved_by = '00000000-0000-0000-0000-00000000d409'
+     AND r.evidence_sha256 = repeat('b',64)
+     AND o.event_type = 'D04PayOsReceiptCommitted'
+ ) <> 1 THEN RAISE EXCEPTION 'D04 source Payment+receipt+settlement+outbox proof missing/conflicting'; END IF;
+ RAISE NOTICE 'D04 LEGACY: verified exact journal and outbox from independent database';
+END $;
+'@
+    Invoke-Logged '22-copy-d04-legacy-proof' 'docker' @(
+        'cp', $proofSqlFile, "$($containerId):/tmp/d04-legacy-proof.sql")
+    Invoke-Logged '23-proof-legacy-commit-before-ack' 'docker' @(
+        'exec', $containerId, 'psql', '-U', 'postgres',
+        '-d', 'payos_d04_legacy_test', '-v', 'ON_ERROR_STOP=1',
+        '-f', '/tmp/d04-legacy-proof.sql')
+
+    # ACK only after two independently successful checks: legacy financial
+    # journal above, and staging immutable approval/inbox below. This is a
+    # test-only ack, not a production cross-DB service or crash-safe worker.
+    $ackSqlFile = Join-Path $logRoot '24-d04-staging-ack.sql'
+    Set-Content -LiteralPath $ackSqlFile -Encoding Ascii -Value @'
+DO $
+DECLARE current_status integer;
+BEGIN
+ SELECT "Status" INTO current_status
+ FROM public."BuildingManagementPayOsPaymentIntents"
+ WHERE "Id"='00000000-0000-0000-0000-00000000d401'
+ FOR UPDATE;
+ IF current_status NOT IN (2,3) OR current_status IS NULL THEN
+   RAISE EXCEPTION 'D04 unexpected payOS intent status %', current_status;
+ END IF;
+ IF (SELECT count(*)
+     FROM d04_acceptance.independent_reviews r
+     JOIN d04_acceptance.owner_approvals a
+       ON a.payment_intent_id=r.payment_intent_id
+       AND a.reviewer_id=r.reviewer_id
+     JOIN public."BuildingManagementPayOsWebhookInbox" w
+       ON w."PaymentIntentId"=r.payment_intent_id
+       AND w."BuildingId"=r.building_id
+       AND w."OrderCode"=r.order_code
+       AND w."ProviderReference"=r.bank_reference
+     WHERE r.payment_intent_id='00000000-0000-0000-0000-00000000d401'
+       AND r.payment_id='00000000-0000-0000-0000-00000000d404'
+       AND r.amount_vnd=150000
+       AND r.bank_reference='D04-SYNTHETIC-REF'
+       AND r.document_sha256=repeat('b',64)
+       AND a.reviewed_evidence_sha256=r.document_sha256
+       AND a.owner_id<>r.reviewer_id
+       AND w."Status"=1) <> 1 THEN
+   RAISE EXCEPTION 'D04 immutable independent staging evidence not valid';
+ END IF;
+ IF current_status=2 THEN
+   UPDATE public."BuildingManagementPayOsPaymentIntents"
+     SET "Status"=3, "ConcurrencyStamp"='d04-ack'
+     WHERE "Id"='00000000-0000-0000-0000-00000000d401'
+       AND "Status"=2;
+ END IF;
+ IF (SELECT "Status" FROM public."BuildingManagementPayOsPaymentIntents"
+     WHERE "Id"='00000000-0000-0000-0000-00000000d401')<>3 THEN
+     RAISE EXCEPTION 'D04 ack not durable';
+ END IF;
+ RAISE NOTICE 'D04 STAGING ACK: after legacy proof, replay is read-only PASS';
+END $;
+'@
+    Invoke-Logged '24-copy-d04-staging-ack' 'docker' @(
+        'cp', $ackSqlFile, "$($containerId):/tmp/d04-staging-ack.sql")
+    Invoke-Logged '25-ack-after-legacy-proof' 'docker' @(
+        'exec', $containerId, 'psql', '-U', 'postgres',
+        '-d', 'payos_ef_migration_test', '-v', 'ON_ERROR_STOP=1',
+        '-f', '/tmp/d04-staging-ack.sql')
+    Invoke-Logged '26-repeated-ack-idempotent' 'docker' @(
+        'exec', $containerId, 'psql', '-U', 'postgres',
+        '-d', 'payos_ef_migration_test', '-v', 'ON_ERROR_STOP=1',
+        '-f', '/tmp/d04-staging-ack.sql')
+    Invoke-Logged '27-legacy-proof-after-repeated-ack' 'docker' @(
+        'exec', $containerId, 'psql', '-U', 'postgres',
+        '-d', 'payos_d04_legacy_test', '-v', 'ON_ERROR_STOP=1',
+        '-f', '/tmp/d04-legacy-proof.sql')
+    Write-Host 'D04 TWO-DB PROTOCOL REHEARSAL PASS (not financial writer acceptance).' -ForegroundColor Green
+
     Write-Host '=== PAYOS D04 LOCAL ISOLATED TEST BUNDLE PASS ===' -ForegroundColor Green
     Write-Host "SOURCE_COMMIT=$sha"
     Write-Host "LOG_DIRECTORY=$logRoot"

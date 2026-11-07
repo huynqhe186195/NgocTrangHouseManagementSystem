@@ -46,7 +46,7 @@ CREATE TABLE d04_acceptance.independent_reviews(
   document_sha256 varchar(64) NOT NULL CHECK (document_sha256 ~ '^[0-9a-f]{64}$'),
   reviewer_id uuid NOT NULL,
   evidence_verified_at_utc timestamptz NOT NULL,
-  UNIQUE(payment_intent_id,reviewer_id),
+  UNIQUE(payment_intent_id,reviewer_id,document_sha256),
   FOREIGN KEY(payment_intent_id,building_id,order_code)
     REFERENCES public."BuildingManagementPayOsPaymentIntents"("Id","BuildingId","OrderCode")
     ON DELETE RESTRICT
@@ -59,8 +59,8 @@ CREATE TABLE d04_acceptance.owner_approvals(
   reviewed_evidence_sha256 varchar(64) NOT NULL
     CHECK (reviewed_evidence_sha256 ~ '^[0-9a-f]{64}$'),
   approved_at_utc timestamptz NOT NULL,
-  FOREIGN KEY(payment_intent_id,reviewer_id)
-    REFERENCES d04_acceptance.independent_reviews(payment_intent_id,reviewer_id)
+  FOREIGN KEY(payment_intent_id,reviewer_id,reviewed_evidence_sha256)
+    REFERENCES d04_acceptance.independent_reviews(payment_intent_id,reviewer_id,document_sha256)
     ON DELETE RESTRICT
 );
 CREATE FUNCTION d04_acceptance.reject_mutation() RETURNS trigger

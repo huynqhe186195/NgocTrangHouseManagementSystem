@@ -291,7 +291,7 @@ public sealed class D04RealLegacyWriterAcceptance_Tests
 
         // D04-B checks actual SHARE locks against separate disposable
         // Identity and Building schemas (NOT mocked authorization).
-        await VerifyD04BIdentityLeaseAsync(db, b, actor, owner);
+        await VerifyD04BIdentityLeaseAsync(db, b, t, actor, owner);
         await uow.CompleteAsync();
     }
 
@@ -301,7 +301,7 @@ public sealed class D04RealLegacyWriterAcceptance_Tests
         "Username=postgres;Password=disposable-only;Pooling=false;Timeout=5";
 
     private static async Task VerifyD04BIdentityLeaseAsync(
-        BuildingManagementDbContext db, Guid buildingId,
+        BuildingManagementDbContext db, Guid buildingId, Guid tenantId,
         Guid bankReviewer, Guid owner)
     {
         // These are isolated SQL-shaped ABP Identity fixture tables.
@@ -397,6 +397,12 @@ public sealed class D04RealLegacyWriterAcceptance_Tests
         }
         db.ChangeTracker.Clear();
 
+        // Complete a SECOND actual ContractDeposit using the reviewer
+        // service + different Owner approval + real two-actor authority.
+        // This is a disposable test fixture, never a live bank receipt.
+        await VerifyD04BManualReviewApprovalAndPostingAsync(
+            db, buildingId, tenantId, bankReviewer, owner, authority);
+
         // Both actors currently active: acquire Identity and Building SHARE
         // locks. Concurrent disable must time out, proving the lease survives
         // beyond a preflight read and blocks revocation through commit.
@@ -447,6 +453,138 @@ public sealed class D04RealLegacyWriterAcceptance_Tests
                     bankReviewer, owner, CancellationToken.None));
             await revoked.RollbackAsync();
         }
+    }
+
+
+    private static async Task VerifyD04BManualReviewApprovalAndPostingAsync(
+        BuildingManagementDbContext db, Guid buildingId, Guid tenantId,
+        Guid reviewerId, Guid ownerId,
+        PayOsD04StagingDualAuthority authority)
+    {
+        var floor = await db.Floors.AsNoTracking()
+            .SingleAsync(x => x.BuildingId == buildingId);
+        var roomId = Guid.NewGuid();
+        var contractId = Guid.NewGuid();
+        var paymentId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        const long amount = 250000;
+        db.Rooms.Add(new Room(roomId, floor.Id, "D04B-TEST",
+            "Synthetic second contract room", 20m, 2, RoomStatus.Occupied));
+        var contract = new Contract(contractId,
+            "D04B-CONTRACT-" + Guid.NewGuid().ToString("N"),
+            roomId, now.Date, null, amount);
+        contract.Activate();
+        db.Contracts.Add(contract);
+        db.ContractTenants.Add(new ContractTenant(
+            Guid.NewGuid(), contractId, tenantId,
+            ContractTenantRole.PrimaryTenant));
+        db.Payments.Add(new Payment(paymentId,
+            "D04B-PAY-" + Guid.NewGuid().ToString("N"),
+            tenantId, PaymentPurpose.ContractDeposit,
+            PaymentMethod.BankTransfer, PaymentChannel.VietQr,
+            amount, contractId: contractId));
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+
+        var bankReference = "D04B-SYNTH-BANK-" + Guid.NewGuid().ToString("N");
+        var intent = new PayOsPaymentIntent(
+            Guid.NewGuid(), buildingId, tenantId,
+            912345679, amount, now.AddDays(2), paymentId: paymentId);
+        intent.AttachProviderLink("SYNTH-B-LINK-" + intent.Id.ToString("N"));
+        intent.MarkConfirmed(bankReference, now.AddMinutes(-5));
+        var inbox = new PayOsWebhookInboxRecord(
+            Guid.NewGuid(), buildingId, intent.Id, intent.OrderCode,
+            bankReference, new string('d', 64), now.AddMinutes(-4));
+        inbox.MarkReconciled(now.AddMinutes(-3));
+        var staged = new SyntheticSignedStagingEvidenceReader(intent, inbox);
+
+        var reviewer = new Mock<Volo.Abp.Users.ICurrentUser>();
+        reviewer.SetupGet(x => x.IsAuthenticated).Returns(true);
+        reviewer.SetupGet(x => x.Id).Returns(reviewerId);
+        var owner = new Mock<Volo.Abp.Users.ICurrentUser>();
+        owner.SetupGet(x => x.IsAuthenticated).Returns(true);
+        owner.SetupGet(x => x.Id).Returns(ownerId);
+
+        var manualReview = new PayOsD04ManualEvidenceService(
+            db, staged, authority, reviewer.Object);
+        var ownerService = new PayOsD04ManualEvidenceService(
+            db, staged, authority, owner.Object);
+        var writer = new PayOsD04LegacyPostingWriter(db, staged, authority);
+
+        var document = new byte[512];
+        System.Text.Encoding.ASCII.GetBytes("%PDF-1.7\n")
+            .CopyTo(document, 0);
+        var evidence = new PayOsD04ManualBankStatementSubmission(
+            bankReference, amount, document,
+            "SYNTHETIC-PROTECTED-ARCHIVE-REFERENCE-NO-LIVE-STATEMENT",
+            ReviewerAttestsBankStatementMatched: true);
+        var falseEvidence = evidence with
+        {
+            ReviewerAttestsBankStatementMatched = false
+        };
+        await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+            manualReview.RecordIndependentBankReviewAsync(
+                intent.Id, falseEvidence));
+        await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+            manualReview.RecordIndependentBankReviewAsync(
+                intent.Id, evidence with { AmountVnd = amount + 1 }));
+        Assert.Equal(0L, await CountAsync(db,
+            "\"BuildingManagementPayOsD04OwnerApprovals\"") - 1L);
+
+        var bankReviewId = await manualReview.RecordIndependentBankReviewAsync(
+            intent.Id, evidence);
+        Assert.NotEqual(Guid.Empty, bankReviewId);
+        Assert.Equal(bankReviewId,
+            await manualReview.RecordIndependentBankReviewAsync(intent.Id, evidence));
+
+        // No Owner approval means the real writer must not credit a payment.
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            writer.PostAsync(intent.Id));
+        db.ChangeTracker.Clear();
+        Assert.Equal(PaymentStatus.Pending,
+            (await db.Payments.SingleAsync(x => x.Id == paymentId)).Status);
+
+        await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+            manualReview.ApproveReviewedDepositAsync(bankReviewId));
+        var approvalId = await ownerService.ApproveReviewedDepositAsync(bankReviewId);
+        Assert.NotEqual(Guid.Empty, approvalId);
+        Assert.Equal(approvalId,
+            await ownerService.ApproveReviewedDepositAsync(bankReviewId));
+
+        db.ChangeTracker.Clear();
+        var posted = await writer.PostAsync(intent.Id);
+        Assert.Equal(PayOsD04LegacyWriteDisposition.NewlyCommittedPendingReadBack,
+            posted.Disposition);
+        db.ChangeTracker.Clear();
+        var paid = await db.Payments.AsNoTracking()
+            .SingleAsync(x => x.Id == paymentId);
+        Assert.Equal(PaymentStatus.Completed, paid.Status);
+        Assert.Equal(amount, paid.Amount);
+        Assert.Equal(bankReference, paid.TransactionReference);
+        var settlement = await db.DepositSettlements.AsNoTracking()
+            .SingleAsync(x => x.PaymentId == paymentId);
+        Assert.Equal(DepositSettlementType.AllocateToContractDeposit,
+            settlement.Type);
+        Assert.Equal(DepositSettlementStatus.Completed, settlement.Status);
+        Assert.Equal(amount, settlement.Amount);
+        var receipt = await new PayOsD04CommittedReceiptStore(db)
+            .ReadCommittedAsync(intent.Id, CancellationToken.None);
+        Assert.NotNull(receipt);
+        Assert.Equal(posted.ReceiptId, receipt.Proof.ReceiptId);
+        Assert.Equal(posted.OutboxId, receipt.Proof.OutboxId);
+        Assert.False(receipt.OutboxAcknowledged);
+
+        db.ChangeTracker.Clear();
+        var replay = await writer.PostAsync(intent.Id);
+        Assert.Equal(PayOsD04LegacyWriteDisposition.ExistingCommittedNeedsAck,
+            replay.Disposition);
+        Assert.Equal(posted.ReceiptId, replay.ReceiptId);
+        Assert.Equal(2L, await CountAsync(db,
+            "\"BuildingManagementPayOsD04ReceiptJournal\""));
+        Assert.Equal(2L, await CountAsync(db,
+            "\"BuildingManagementPayOsD04Outbox\""));
+        Assert.Equal(PayOsPaymentIntentStatus.ConfirmedPendingPosting,
+            intent.Status);
     }
 
     private static async Task<long> CountAsync(

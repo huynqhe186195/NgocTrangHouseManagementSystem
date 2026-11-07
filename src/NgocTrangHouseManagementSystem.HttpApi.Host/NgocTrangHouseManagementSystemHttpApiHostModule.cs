@@ -378,7 +378,7 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule // syst
         try
         {
             var db = new NpgsqlConnectionStringBuilder(input);
-            return db.Host is "localhost" or "127.0.0.1" &&
+            return db.Host is ("localhost" or "127.0.0.1") &&
                    db.Port == 15432 &&
                    string.Equals(db.Database, name, StringComparison.Ordinal) &&
                    db.Username == "postgres" &&

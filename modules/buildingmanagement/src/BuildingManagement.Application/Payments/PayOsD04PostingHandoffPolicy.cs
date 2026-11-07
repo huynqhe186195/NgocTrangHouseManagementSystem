@@ -97,6 +97,20 @@ public static class PayOsD04PostingHandoffPolicy
     }
 
     /// <summary>
+    /// Stable source key for the future legacy D04 UNIQUE journal/outbox
+    /// constraint. Must be used unchanged on retries or concurrent workers.
+    /// Generating this key does NOT insert or approve a receipt.
+    /// </summary>
+    public static string LegacyIdempotencyKey(PayOsPaymentIntent intent)
+    {
+        ArgumentNullException.ThrowIfNull(intent);
+        if (intent.Id == Guid.Empty || intent.PaymentId is null ||
+            intent.PaymentId == Guid.Empty || intent.BuildingId == Guid.Empty)
+            throw new InvalidOperationException("A persistently reserved payment intent is required.");
+        return "PAYOS:D04:" + intent.Id.ToString("N");
+    }
+
+    /// <summary>
     /// Recovery decision after the legacy Building DB writer committed.
     /// Never marks payOS Posted unless the *authoritative* Building DB
     /// reports the exact Payment + receipt journal and reference. This

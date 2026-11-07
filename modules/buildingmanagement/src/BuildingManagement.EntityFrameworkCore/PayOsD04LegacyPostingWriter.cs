@@ -140,6 +140,7 @@ public sealed class PayOsD04LegacyPostingWriter
         var reviewed = await ReadCommittedReviewAsync(
             transaction, intentId, cancellationToken);
         if (reviewed is null || reviewed.PaymentId != payment.Id ||
+            reviewed.OrderCode != source.Intent.OrderCode ||
             reviewed.BuildingId != floor.BuildingId ||
             reviewed.AmountVnd != source.Intent.AmountVnd ||
             !string.Equals(reviewed.BankReference, source.Intent.ProviderReference,
@@ -273,12 +274,12 @@ public sealed class PayOsD04LegacyPostingWriter
         var outboxId = Guid.NewGuid();
         await _db.Database.ExecuteSqlInterpolatedAsync($@"
             INSERT INTO ""BuildingManagementPayOsD04ReceiptJournal""
-            (""Id"", ""PayOsIntentId"", ""BuildingId"", ""ContractId"",
+            (""Id"", ""PayOsIntentId"", ""OrderCode"", ""BuildingId"", ""ContractId"",
              ""PaymentId"", ""DepositSettlementId"", ""BankReviewId"",
              ""OwnerApprovalId"", ""SourceKey"", ""BankReference"",
              ""AmountVnd"", ""DocumentSha256"", ""ReviewerId"",
              ""OwnerApproverId"", ""CreatedAtUtc"")
-            VALUES ({receiptId}, {plan.IntentId}, {plan.BuildingId}, {contract.Id},
+            VALUES ({receiptId}, {plan.IntentId}, {plan.OrderCode}, {plan.BuildingId}, {contract.Id},
                     {payment.Id}, {settlement.Id}, {reviewed.BankReviewId},
                     {reviewed.OwnerApprovalId}, {plan.SourceKey},
                     {plan.BankReference}, {plan.AmountVnd},
@@ -322,7 +323,7 @@ public sealed class PayOsD04LegacyPostingWriter
         IDbContextTransaction tx, Guid intentId, CancellationToken ct)
     {
         const string sql = """
-            SELECT b."Id",a."Id",b."BuildingId",b."PaymentId",b."AmountVnd",
+            SELECT b."Id",a."Id",b."BuildingId",b."PaymentId",b."OrderCode",b."AmountVnd",
                    b."BankReference",b."DocumentSha256",b."ReviewerId",
                    a."OwnerApproverId",b."VerifiedAtUtc",a."ApprovedAtUtc",
                    a."ExpiresAtUtc"
@@ -340,9 +341,9 @@ public sealed class PayOsD04LegacyPostingWriter
         if (!await reader.ReadAsync(ct)) return null;
         var result = new DurableReview(
             reader.GetGuid(0), reader.GetGuid(1), reader.GetGuid(2),
-            reader.GetGuid(3), reader.GetInt64(4), reader.GetString(5),
-            reader.GetString(6), reader.GetGuid(7), reader.GetGuid(8),
-            reader.GetDateTime(9), reader.GetDateTime(10), reader.GetDateTime(11));
+            reader.GetGuid(3), reader.GetInt64(4), reader.GetInt64(5),
+            reader.GetString(6), reader.GetString(7), reader.GetGuid(8), reader.GetGuid(9),
+            reader.GetDateTime(10), reader.GetDateTime(11), reader.GetDateTime(12));
         if (await reader.ReadAsync(ct))
             throw Denied("Multiple independent review/approval records for one intent.");
         return result;
@@ -441,7 +442,7 @@ public sealed class PayOsD04LegacyPostingWriter
 
     private sealed record DurableReview(
         Guid BankReviewId, Guid OwnerApprovalId, Guid BuildingId,
-        Guid PaymentId, long AmountVnd, string BankReference,
+        Guid PaymentId, long OrderCode, long AmountVnd, string BankReference,
         string DocumentSha256, Guid BankReviewerId, Guid OwnerApproverId,
         DateTime VerifiedAtUtc, DateTime ApprovedAtUtc, DateTime ExpiresAtUtc);
 }

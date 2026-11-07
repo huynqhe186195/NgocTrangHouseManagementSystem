@@ -148,6 +148,8 @@ public sealed class StagePayOsD04LegacySourceJournal : Migration
             DECLARE source_contract record;
             DECLARE allocation record;
             DECLARE matched_global_claim boolean;
+            DECLARE contract_building uuid;
+            DECLARE primary_tenant_is_current boolean;
             BEGIN
               IF current_setting('transaction_isolation') <> 'serializable' THEN
                 RAISE EXCEPTION 'D04 financial receipt requires SERIALIZABLE'
@@ -161,6 +163,14 @@ public sealed class StagePayOsD04LegacySourceJournal : Migration
                WHERE "Id"=NEW."PaymentId" FOR SHARE;
               SELECT * INTO source_contract FROM "BuildingManagementContracts"
                WHERE "Id"=NEW."ContractId" FOR SHARE;
+              -- Scope must come from canonical Contract -> Room -> Floor.
+              -- Never trust a caller-supplied BuildingId in an approval row.
+              SELECT f."BuildingId" INTO contract_building
+                FROM "BuildingManagementRooms" r
+                JOIN "BuildingManagementFloors" f ON f."Id"=r."FloorId"
+               WHERE r."Id"=source_contract."RoomId"
+                 AND r."IsDeleted"=FALSE AND f."IsDeleted"=FALSE
+               FOR SHARE OF r,f;
               SELECT * INTO allocation FROM "BuildingManagementDepositSettlements"
                WHERE "Id"=NEW."DepositSettlementId" FOR SHARE;
               -- Reuse the existing 2G.4 GLOBAL claim table (including refund
@@ -172,10 +182,19 @@ public sealed class StagePayOsD04LegacySourceJournal : Migration
                    AND c."SourceKind"='Payment'
                    AND c."SourceId"=NEW."PaymentId"
               ) INTO matched_global_claim;
+              SELECT EXISTS(
+                SELECT 1 FROM "BuildingManagementContractTenants" ct
+                 WHERE ct."ContractId"=NEW."ContractId"
+                   AND ct."TenantId"=paid."TenantId"
+                   AND ct."Role"=1 AND ct."IsDeleted"=FALSE
+              ) INTO primary_tenant_is_current;
 
               IF bank."Id" IS NULL OR approval."Id" IS NULL OR
                  paid."Id" IS NULL OR source_contract."Id" IS NULL OR
                  allocation."Id" IS NULL OR NOT matched_global_claim OR
+                 NOT primary_tenant_is_current OR
+                 contract_building IS DISTINCT FROM NEW."BuildingId" OR
+                 source_contract."IsDeleted" IS DISTINCT FROM FALSE OR
                  bank."PayOsIntentId" IS DISTINCT FROM NEW."PayOsIntentId" OR
                  bank."OrderCode" IS DISTINCT FROM NEW."OrderCode" OR
                  bank."BuildingId" IS DISTINCT FROM NEW."BuildingId" OR

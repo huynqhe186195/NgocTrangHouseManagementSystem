@@ -13,6 +13,11 @@ using NgocTrangHouseManagementSystem.Security;
 using BuildingManagement.Security;
 using Npgsql;
 using Microsoft.Extensions.Hosting;
+using Microsoft.EntityFrameworkCore;
+using System.Net.Http;
+using BuildingManagement.EntityFrameworkCore.PayOsMigrations;
+using BuildingManagement.Payments;
+using NgocTrangHouseManagementSystem.Payments;
 using Microsoft.OpenApi;
 using NgocTrangHouseManagementSystem.EntityFrameworkCore;
 using NgocTrangHouseManagementSystem.HealthChecks;
@@ -198,6 +203,85 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule // syst
                 context.Services.Replace(ServiceDescriptor.Transient<
                     IBuildingOwnerRecoveryWriter, SliceAStagingOwnerRecoveryWriter>());
             }
+        }
+
+        // Separate payOS staging activation. NEVER enabled by a regular
+        // development/production flag or by an unrelated admin permission.
+        // A direct provider API call may move real money even in staging;
+        // registration therefore requires explicit operator consent and a
+        // dedicated loopback-only disposable PostgreSQL database.
+        if (configuration.GetValue<bool>("BuildingManagement:PayOsStaging:Enabled"))
+        {
+            if (!hostingEnvironment.IsStaging() ||
+                configuration["BuildingManagement:PayOsStaging:Activation"] !=
+                    "I_ACCEPT_ISOLATED_PAYOS_STAGING_ONLY")
+                throw new InvalidOperationException(
+                    "payOS integration may only activate in explicitly approved isolated staging.");
+
+            var payOsConnection = configuration.GetConnectionString("PayOsStaging");
+            if (string.IsNullOrWhiteSpace(payOsConnection))
+                throw new InvalidOperationException("Dedicated payOS staging database missing.");
+
+            var payOsDb = new NpgsqlConnectionStringBuilder(payOsConnection);
+            var host = payOsDb.Host?.ToLowerInvariant();
+            if (host is not ("127.0.0.1" or "localhost") ||
+                payOsDb.Database is null ||
+                !payOsDb.Database.StartsWith("bm_payos_staging_", StringComparison.OrdinalIgnoreCase) ||
+                payOsDb.Database.Length <= "bm_payos_staging_".Length)
+                throw new InvalidOperationException(
+                    "payOS staging must use an explicitly named loopback-only disposable database.");
+
+            // BuildingManagement must be a separate DB; do not allow an
+            // accidental payment migration in its legacy snapshot/drifted DB.
+            var buildingConnection = configuration.GetConnectionString("BuildingManagement");
+            var identityConnection = configuration.GetConnectionString("Default");
+            foreach (var other in new[] { buildingConnection, identityConnection })
+            {
+                if (string.IsNullOrWhiteSpace(other)) continue;
+                var otherDb = new NpgsqlConnectionStringBuilder(other);
+                if (string.Equals(otherDb.Database, payOsDb.Database,
+                    StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException(
+                        "payOS staging database must not be shared with Building or Identity.");
+            }
+
+            var clientId = configuration["BuildingManagement:PayOsStaging:ClientId"];
+            var apiKey = configuration["BuildingManagement:PayOsStaging:ApiKey"];
+            var checksumKey = configuration["BuildingManagement:PayOsStaging:ChecksumKey"];
+            if (string.IsNullOrWhiteSpace(clientId) ||
+                string.IsNullOrWhiteSpace(apiKey) ||
+                string.IsNullOrWhiteSpace(checksumKey))
+                throw new InvalidOperationException(
+                    "payOS credentials must be provisioned from server-side secrets.");
+
+            var returnUrl = configuration["BuildingManagement:PayOsStaging:ReturnUrl"];
+            var cancelUrl = configuration["BuildingManagement:PayOsStaging:CancelUrl"];
+            if (!Uri.TryCreate(returnUrl, UriKind.Absolute, out var returnUri) ||
+                !Uri.TryCreate(cancelUrl, UriKind.Absolute, out var cancelUri) ||
+                returnUri.Scheme != Uri.UriSchemeHttps ||
+                cancelUri.Scheme != Uri.UriSchemeHttps ||
+                !string.IsNullOrEmpty(returnUri.UserInfo) ||
+                !string.IsNullOrEmpty(cancelUri.UserInfo))
+                throw new InvalidOperationException(
+                    "payOS return/cancel callback URLs must be server-configured HTTPS URLs.");
+
+            context.Services.AddDbContext<PayOsPaymentMigrationDbContext>(
+                options => options.UseNpgsql(payOsConnection,
+                    db => db.MigrationsHistoryTable("__EFMigrationsHistory_PayOs")));
+            context.Services.AddHttpClient("PayOsStaging");
+            context.Services.AddSingleton(new PayOsStagingCheckoutOptions(returnUri, cancelUri));
+            context.Services.AddScoped<IPayOsPaymentLinkProvider>(services =>
+                new PayOsPaymentLinkClient(
+                    services.GetRequiredService<IHttpClientFactory>().CreateClient("PayOsStaging"),
+                    clientId, apiKey, checksumKey));
+            context.Services.AddScoped<PayOsStagingCheckoutService>();
+            context.Services.AddScoped<PayOsStagingReconciliationService>();
+            context.Services.AddScoped<PayOsStagingWebhookInboxWriter>(services =>
+                new PayOsStagingWebhookInboxWriter(
+                    services.GetRequiredService<PayOsPaymentMigrationDbContext>(),
+                    checksumKey));
+            // No migration, provider call or webhook registration is executed
+            // at startup. All requests still require endpoint-level gates.
         }
 
         Configure<AbpMvcLibsOptions>(options =>

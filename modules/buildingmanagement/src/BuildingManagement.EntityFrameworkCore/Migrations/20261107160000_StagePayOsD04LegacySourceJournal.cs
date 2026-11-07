@@ -188,6 +188,8 @@ public sealed class StagePayOsD04LegacySourceJournal : Migration
                  approval."ReviewerId" IS DISTINCT FROM bank."ReviewerId" OR
                  approval."OwnerApproverId" IS DISTINCT FROM NEW."OwnerApproverId" OR
                  approval."DocumentSha256" IS DISTINCT FROM bank."DocumentSha256" OR
+                 bank."VerifiedAtUtc" > approval."ApprovedAtUtc" OR
+                 bank."VerifiedAtUtc" > NEW."CreatedAtUtc" OR
                  approval."ApprovedAtUtc" > NEW."CreatedAtUtc" OR
                  approval."ExpiresAtUtc" <= NEW."CreatedAtUtc" OR
                  paid."ContractId" IS DISTINCT FROM NEW."ContractId" OR

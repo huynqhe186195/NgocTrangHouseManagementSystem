@@ -21,7 +21,13 @@ namespace NgocTrangHouseManagementSystem.Payments;
 /// This class is NOT DI-registered until authenticated three-DB HTTP tests
 /// and statement archival have passed.
 /// </summary>
-public sealed class PayOsD04ReviewedPostingCoordinator
+public interface IPayOsD04ReviewedPostingCoordinator
+{
+    Task<PayOsD04PostingOutcome> PostApprovedAsync(
+        Guid intentId, CancellationToken ct = default);
+}
+
+public sealed class PayOsD04ReviewedPostingCoordinator : IPayOsD04ReviewedPostingCoordinator
 {
     private readonly BuildingManagementDbContext _db;
     private readonly PayOsD04LegacyPostingWriter _writer;

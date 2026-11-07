@@ -43,15 +43,28 @@ A real two-database integration test must induce process termination at BOTH com
 | Correct post-crash recovery classification and stable `PAYOS:D04:<intentId>` key | `PayOsD04PostingHandoffPolicy.cs` | Pure plan/key, no writer |
 | Missing bank evidence, same reviewer/approver, changed amount/scope, legacy conflict, crash/replay and stable idempotency key | `PayOsD04PostingHandoffPolicy_Tests.cs` | 11 new source tests |
 
+## 2026-11-07 Windows baseline and two-database D04 rehearsal
+
+**Owner-executed Windows baseline at 06218343df6b1f995e603ce4db9b70b11444f093: PASS.** The user reported the exact-source success marker, real disposable PG16 checkout/webhook 23/23 PASS, and EF migration rollback/reapply and history verification. The earlier G1/G2 isolated foundation gates passed locally, not through GitHub Actions.
+
+**New source after that baseline has NOT YET been executed on the owner PC.** The expanded Windows script now rehearses two distinct PostgreSQL databases inside its dedicated temporary postgres:16 container:
+
+- Staging database payos_ef_migration_test: synthetic ConfirmedPendingPosting intent and reconciled inbox in real EF tables, a TEST-ONLY append-only independent bank review, separate Owner approval, FK-bound immutable evidence digest, different reviewer and approver.
+- Synthetic legacy database payos_d04_legacy_test: Payment and unique PAYOS:D04:<intentId> source receipt, deposit settlement and outbox. A pre-commit ROLLBACK must leave no money rows. A later SERIALIZABLE commit must create exactly one set.
+- Two concurrent synthetic writers compete on one source key; only one full receipt/settlement/outbox bundle may commit. A duplicate bank reference across simulated buildings is rejected.
+- After the synthetic legacy commit but before payOS acknowledgment, staging must remain ConfirmedPendingPosting. The runner separately verifies the exact committed legacy Payment/receipt/settlement/outbox, then performs ACK and a repeated read-only ACK.
+- The new source-only PayOsD04LegacyCommitProtocol and six Application unit tests validate typed receipt/settlement/outbox read-back rather than only a caller-supplied boolean.
+
+**Release boundary:** The d04_acceptance SQL tables are temporary protocol fixtures, NOT production EF migrations or a real authorized financial writer. Independent bank verification, durable authenticated Owner approval, the actual canonical BuildingManagement D04 writer and cross-database outbox coordinator are STILL MISSING. No live payOS call, automatic posting or production deployment is authorized. Do not mark BUSINESS ACCEPTED.
 ## Test and release gates
 
 | Gate | Evidence requirement | State |
 |---|---|---|
-| G1 | Exact-head .NET Domain/Application/Host build and source tests | BLOCKED: GitHub Actions jobs not starting |
-| G2 | EF migration model drift, actual apply/rollback/reapply, scoped FK and unique indices on disposable PG16 | Previously passed on older HEAD, **not verified on current HEAD** |
+| G1 | Exact-head .NET Domain/Application/Host build and source tests | Windows baseline 06218343 PASS; new HEAD needs rerun |
+| G2 | EF migration model drift, actual apply/rollback/reapply, scoped FK and unique indices on disposable PG16 | Windows baseline 06218343 PASS; new HEAD needs rerun |
 | G3 | Authenticated HTTP + PostgreSQL checkout, anonymous signed webhook, scope/revoke, duplicate concurrency, provider timeout/5xx, recheck after revoke | PARTIAL source tests; exact-head acceptance needed |
-| G4 | Real independently authorized bank evidence / Owner permission / durable approval and append-only audit | NOT IMPLEMENTED |
-| G5 | Unique legacy D04 receipt/outbox, cross-DB coordinator and two crash-point recovery | NOT IMPLEMENTED |
+| G4 | Real independently authorized bank evidence / Owner permission / durable approval and append-only audit | Disposable SQL model rehearsal; runtime NOT IMPLEMENTED |
+| G5 | Unique legacy D04 receipt/outbox, cross-DB coordinator and two crash-point recovery | Two-DB SQL rehearsal and typed proof added; actual writer/coordinator NOT IMPLEMENTED |
 | G6 | Full D01–D04 regression, bank/provider controlled acceptance, no double journal under concurrent writers | NOT ACCEPTED |
 | G7 | Production keys, live callbacks, real money, refund and release | **HOLD**, explicitly not authorized |
 

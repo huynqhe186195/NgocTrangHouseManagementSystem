@@ -133,4 +133,38 @@ public class PayOsD04PostingHandoffPolicy_Tests
         Assert.Equal(PayOsD04HandoffDecision.ConflictRequiresInvestigation,
             PayOsD04PostingHandoffPolicy.Assess(intent, inbox, otherPayment, review));
     }
+    [Fact]
+    public void Crash_after_legacy_commit_requires_exact_journal_before_payos_ack()
+    {
+        var (intent, inbox, payment) = Reconciled();
+        payment.Complete(DateTime.UtcNow, BankReference);
+        Assert.Equal(PayOsD04RecoveryDecision.StopAndInvestigate,
+            PayOsD04PostingHandoffPolicy.PlanAfterLegacyCommit(intent, inbox,
+                payment, exactLegacyJournalAlreadyExists: false));
+        Assert.Equal(PayOsD04RecoveryDecision.MarkPayOsPostedAfterLegacyProof,
+            PayOsD04PostingHandoffPolicy.PlanAfterLegacyCommit(intent, inbox,
+                payment, exactLegacyJournalAlreadyExists: true));
+    }
+
+    [Fact]
+    public void Repeated_ack_after_already_posted_is_read_only()
+    {
+        var (intent, inbox, payment) = Reconciled();
+        payment.Complete(DateTime.UtcNow, BankReference);
+        intent.MarkPosted();
+        Assert.Equal(PayOsD04RecoveryDecision.AlreadyAcknowledged,
+            PayOsD04PostingHandoffPolicy.PlanAfterLegacyCommit(intent, inbox,
+                payment, exactLegacyJournalAlreadyExists: true));
+    }
+
+    [Fact]
+    public void Payos_marked_posted_without_completed_legacy_payment_is_inconsistent()
+    {
+        var (intent, inbox, payment) = Reconciled();
+        intent.MarkPosted();
+        Assert.Equal(PayOsD04RecoveryDecision.StopAndInvestigate,
+            PayOsD04PostingHandoffPolicy.PlanAfterLegacyCommit(intent, inbox,
+                payment, exactLegacyJournalAlreadyExists: true));
+    }
+
 }

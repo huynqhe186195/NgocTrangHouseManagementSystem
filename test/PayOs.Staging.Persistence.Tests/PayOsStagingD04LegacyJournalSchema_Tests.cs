@@ -43,8 +43,18 @@ public sealed class PayOsStagingD04LegacyJournalSchema_Tests
             // BuildingManagement table/column names and does not create cash.
             await ExecAsync(db, tx, """
                 CREATE TABLE "BuildingManagementContracts" ("Id" uuid PRIMARY KEY);
-                CREATE TABLE "BuildingManagementPayments" ("Id" uuid PRIMARY KEY);
-                CREATE TABLE "BuildingManagementDepositSettlements" ("Id" uuid PRIMARY KEY);
+                CREATE TABLE "BuildingManagementPayments" (
+                    "Id" uuid PRIMARY KEY, "ContractId" uuid NOT NULL,
+                    "Purpose" integer NOT NULL, "Method" integer NOT NULL,
+                    "Channel" integer NOT NULL, "Status" integer NOT NULL,
+                    "PaidAt" timestamptz, "IsDeleted" boolean NOT NULL,
+                    "Amount" numeric(18,0) NOT NULL,
+                    "TransactionReference" varchar(128));
+                CREATE TABLE "BuildingManagementDepositSettlements" (
+                    "Id" uuid PRIMARY KEY, "PaymentId" uuid NOT NULL,
+                    "TargetContractId" uuid NOT NULL,
+                    "Type" integer NOT NULL, "Status" integer NOT NULL,
+                    "Amount" numeric(18,0) NOT NULL);
                 """);
 
             var migration = new StagePayOsD04LegacySourceJournal();
@@ -90,8 +100,13 @@ public sealed class PayOsStagingD04LegacyJournalSchema_Tests
 
             await ExecAsync(db, tx, $"""
                 INSERT INTO "BuildingManagementContracts"("Id") VALUES ('{contract}');
-                INSERT INTO "BuildingManagementPayments"("Id") VALUES ('{payment}');
-                INSERT INTO "BuildingManagementDepositSettlements"("Id") VALUES ('{settlement}');
+                INSERT INTO "BuildingManagementPayments"
+                ("Id","ContractId","Purpose","Method","Channel","Status",
+                 "PaidAt","IsDeleted","Amount","TransactionReference")
+                VALUES ('{payment}','{contract}',2,2,2,2,now(),false,150000,'{reference}');
+                INSERT INTO "BuildingManagementDepositSettlements"
+                ("Id","PaymentId","TargetContractId","Type","Status","Amount")
+                VALUES ('{settlement}','{payment}','{contract}',3,2,150000);
                 INSERT INTO "BuildingManagementPayOsD04BankReviews"
                 ("Id","PayOsIntentId","BuildingId","PaymentId","AmountVnd",
                  "BankReference","DocumentSha256","ExternalBankProofReference",

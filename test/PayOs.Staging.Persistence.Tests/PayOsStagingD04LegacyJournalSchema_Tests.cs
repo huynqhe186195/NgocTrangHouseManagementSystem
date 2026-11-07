@@ -180,6 +180,51 @@ public sealed class PayOsStagingD04LegacyJournalSchema_Tests
                             repeat('a',64),'{reviewer}',now(),now()+interval '1 day');
                   EXCEPTION WHEN check_violation THEN refused := true; END;
                   IF NOT refused THEN RAISE EXCEPTION 'Same-person approval accepted'; END IF;
+
+                  -- Case variants of a single real transaction reference
+                  -- must not become two different independent bank reviews.
+                  refused := false;
+                  BEGIN
+                    INSERT INTO "BuildingManagementPayments"(
+                      "Id","ContractId","Purpose","Method","Channel","Status",
+                      "PaidAt","IsDeleted","DepositDisposition","Amount",
+                      "TransactionReference")
+                    VALUES (gen_random_uuid(),'{contract}',2,2,2,2,now(),false,1,
+                            150000,lower('{reference}'));
+                    INSERT INTO "BuildingManagementPayOsD04BankReviews"
+                     ("Id","PayOsIntentId","OrderCode","BuildingId","PaymentId",
+                      "AmountVnd","BankReference","DocumentSha256",
+                      "ExternalBankProofReference","ReviewerId","VerifiedAtUtc")
+                    SELECT gen_random_uuid(),gen_random_uuid(),91551999,
+                           '{building}',"Id",150000,lower('{reference}'),
+                           repeat('b',64),'DIFFERENT-BANK-STATEMENT',
+                           gen_random_uuid(),now()
+                      FROM "BuildingManagementPayments"
+                     WHERE "TransactionReference"=lower('{reference}');
+                  EXCEPTION WHEN unique_violation THEN refused := true; END;
+                  IF NOT refused THEN
+                    RAISE EXCEPTION 'Case-variant duplicate bank review accepted';
+                  END IF;
+
+                  -- A receipt without the EXACT global Payment bank claim
+                  -- must be rejected even when the other approvals exist.
+                  refused := false;
+                  BEGIN
+                    DELETE FROM "BuildingManagementBankEvidenceClaims"
+                     WHERE "NormalizedReference"=lower('{reference}');
+                    INSERT INTO "BuildingManagementPayOsD04ReceiptJournal"
+                    ("Id","PayOsIntentId","OrderCode","BuildingId","ContractId",
+                     "PaymentId","DepositSettlementId","BankReviewId",
+                     "OwnerApprovalId","SourceKey","BankReference","AmountVnd",
+                     "DocumentSha256","ReviewerId","OwnerApproverId","CreatedAtUtc")
+                    VALUES (gen_random_uuid(),'{intent}',91551001,'{building}',
+                            '{contract}','{payment}','{settlement}','{review}',
+                            '{approval}','{source}','{reference}',150000,
+                            repeat('a',64),'{reviewer}','{owner}',now());
+                  EXCEPTION WHEN check_violation THEN refused := true; END;
+                  IF NOT refused THEN
+                    RAISE EXCEPTION 'D04 receipt accepted without a global bank claim';
+                  END IF;
                 END;
                 $tests$;
                 """);

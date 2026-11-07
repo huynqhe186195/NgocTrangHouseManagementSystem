@@ -175,6 +175,20 @@ try {
     $httpProject = 'src/NgocTrangHouseManagementSystem.HttpApi.Host/NgocTrangHouseManagementSystem.HttpApi.Host.csproj'
     $pgTests = 'test/PayOs.Staging.Persistence.Tests/PayOs.Staging.Persistence.Tests.csproj'
 
+    # The narrow build gate performs NO tests, EF migration or database work.
+    # Compile each D04-involved project before requiring the full suite.
+    if ($BuildOnly) {
+        Invoke-Logged '01-domain-build' 'dotnet' @('build', $domain, '-c', 'Release')
+        Invoke-Logged '02-application-build' 'dotnet' @('build', $application, '-c', 'Release')
+        Invoke-Logged '03-ef-build' 'dotnet' @('build', $efProject, '-c', 'Release')
+        Invoke-Logged '04-http-build' 'dotnet' @('build', $httpProject, '-c', 'Release')
+        Invoke-Logged '04a-staging-test-compile' 'dotnet' @('build', $pgTests, '-c', 'Release')
+        Write-Host '=== PAYOS D04 BUILD ONLY PASS: no tests, database, Docker or EF migration used ===' -ForegroundColor Green
+        Write-Host "SOURCE_COMMIT=$sha"
+        Write-Host "LOG_DIRECTORY=$logRoot"
+        return
+    }
+
     Invoke-Logged '01-domain' 'dotnet' @('test', $domain,
         '-c', 'Release', '--filter', 'FullyQualifiedName~PayOs',
         '--logger', 'trx;LogFileName=payos-domain.trx',
@@ -193,13 +207,6 @@ try {
     # container. This catches newly-added D04 test source/EF dependencies.
     Invoke-Logged '04a-staging-test-compile' 'dotnet' @(
         'build', $pgTests, '-c', 'Release')
-    if ($BuildOnly) {
-        Write-Host '=== PAYOS D04 BUILD ONLY PASS: no database/container/EF migration used ===' -ForegroundColor Green
-        Write-Host "SOURCE_COMMIT=$sha"
-        Write-Host "LOG_DIRECTORY=$logRoot"
-        return
-    }
-
     $toolDir = Join-Path $logRoot 'dotnet-ef'
     Invoke-Logged '05-install-isolated-ef-tool' 'dotnet' @(
         'tool', 'install', 'dotnet-ef', '--version', '10.0.9',

@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Volo.Abp.Authorization;
+using Volo.Abp.Uow;
 
 namespace NgocTrangHouseManagementSystem.Payments;
 
@@ -19,6 +20,10 @@ namespace NgocTrangHouseManagementSystem.Payments;
 /// </summary>
 [ApiController]
 [Authorize]
+// Every action uses ABP's context provider, but the reviewed writer owns
+// the SERIALIZABLE financial commit. A nested ambient ABP transaction would
+// break the Contract->Payment lock order and the cross-DB ACK protocol.
+[UnitOfWork(isTransactional: false)]
 [ApiExplorerSettings(IgnoreApi = true)]
 [Route("api/payments/payos/d04/staging")]
 public sealed class PayOsD04StagingReviewController : ControllerBase

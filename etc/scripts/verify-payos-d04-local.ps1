@@ -200,19 +200,26 @@ try {
         throw "Docker did not return a valid disposable container ID: $containerId"
     }
 
+    # postgres:16 Docker entrypoint temporarily starts a UNIX-socket-only
+    # server to initialize POSTGRES_DB, then stops it and starts the FINAL
+    # TCP-listening server. The old pg_isready (no -h) could pass during the
+    # temporary server, racing the restart at 08-createdb. Probe TCP only.
     $ready = $false
-    for ($i = 0; $i -lt 50; $i++) {
+    for ($i = 0; $i -lt 120; $i++) {
         $previous = $ErrorActionPreference
         try {
             $ErrorActionPreference = 'Continue'
-            & docker exec $containerId pg_isready -U postgres -d payos_ef_migration_test *> $null
+            & docker exec $containerId pg_isready -h 127.0.0.1 -p 5432 -U postgres -d payos_ef_migration_test *> $null
             $result = $LASTEXITCODE
         }
         finally { $ErrorActionPreference = $previous }
         if ($result -eq 0) { $ready = $true; break }
         Start-Sleep -Milliseconds 500
     }
-    if (-not $ready) { throw 'Disposable PostgreSQL did not become ready.' }
+    if (-not $ready) {
+        throw 'Disposable PostgreSQL FINAL TCP server did not become ready. Review docker-postgres-tail.log.'
+    }
+    Write-Host 'PASS: final disposable PostgreSQL TCP server is accepting connections.' -ForegroundColor Green
 
     Invoke-Logged '08-create-rehearsal-db' 'docker' @(
         'exec', $containerId, 'createdb', '-U', 'postgres', 'payos_rehearsal_test')
@@ -525,6 +532,23 @@ catch {
     Write-Host "=== PAYOS D04 LOCAL TEST FAILED: $($_.Exception.Message) ===" -ForegroundColor Red
     if ($logRoot) {
         Write-Host "LOG_DIRECTORY=$logRoot" -ForegroundColor Yellow
+        # Retain context from ONLY the disposable container, even when
+        # the finally block removes it. Do not read other Docker containers.
+        if ($containerId) {
+            $diagnosticPath = Join-Path $logRoot 'docker-postgres-tail.log'
+            $oldPreference = $ErrorActionPreference
+            try {
+                $ErrorActionPreference = 'Continue'
+                & docker logs --tail 150 $containerId *>&1 |
+                    ForEach-Object { $_.ToString() } |
+                    Set-Content -LiteralPath $diagnosticPath
+                Write-Host "DISPOSABLE_POSTGRES_LOG=$diagnosticPath" -ForegroundColor Yellow
+            }
+            catch {
+                Write-Host 'Could not preserve disposable PostgreSQL container logs.' -ForegroundColor Yellow
+            }
+            finally { $ErrorActionPreference = $oldPreference }
+        }
     }
     throw
 }

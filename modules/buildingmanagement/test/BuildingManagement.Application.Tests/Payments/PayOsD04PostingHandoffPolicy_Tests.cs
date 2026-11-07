@@ -167,4 +167,17 @@ public class PayOsD04PostingHandoffPolicy_Tests
                 payment, exactLegacyJournalAlreadyExists: true));
     }
 
+    [Fact]
+    public void Retry_and_crash_reuse_a_single_immutable_legacy_receipt_key()
+    {
+        var (intent, _, _) = Reconciled();
+        var first = PayOsD04PostingHandoffPolicy.LegacyIdempotencyKey(intent);
+        var retry = PayOsD04PostingHandoffPolicy.LegacyIdempotencyKey(intent);
+        Assert.Equal(first, retry);
+        Assert.StartsWith("PAYOS:D04:", first);
+
+        var (other, _, _) = Reconciled();
+        Assert.NotEqual(first, PayOsD04PostingHandoffPolicy.LegacyIdempotencyKey(other));
+    }
+
 }

@@ -279,12 +279,23 @@ try {
         '--project', $efProject, '--startup-project', $efProject)
     Assert-EfTableCount 'payos_ef_migration_test' 2
 
+    # Windows PowerShell 5.1 + docker.exe can remove embedded double
+    # quotes from a native -c argument. PostgreSQL then lowercases the
+    # mixed-case EF history identifier and incorrectly reports no relation.
+    # Send this exact identifier in a SQL file instead of native argv.
+    $historySqlFile = Join-Path $logRoot '18-ef-history.sql'
+    Set-Content -LiteralPath $historySqlFile -Encoding Ascii -Value @'
+SELECT count(*) FROM public."__EFMigrationsHistory_PayOs";
+'@
+    Invoke-Logged '18-copy-ef-history-sql' 'docker' @(
+        'cp', $historySqlFile, "$($containerId):/tmp/ef-history.sql")
     $history = Invoke-Capture 'docker' @('exec', $containerId, 'psql',
-        '-U','postgres','-d','payos_ef_migration_test', '-At',
-        '-c', 'SELECT count(*) FROM public."__EFMigrationsHistory_PayOs"')
+        '-U', 'postgres', '-d', 'payos_ef_migration_test', '-At',
+        '-v', 'ON_ERROR_STOP=1', '-f', '/tmp/ef-history.sql')
     if ($history.Trim() -ne '1') {
         throw "Expected exactly one payOS migration history row; got $history."
     }
+    Write-Host 'PASS: exactly one case-sensitive payOS EF migration history row.' -ForegroundColor Green
 
     Write-Host '=== PAYOS D04 LOCAL ISOLATED TEST BUNDLE PASS ===' -ForegroundColor Green
     Write-Host "SOURCE_COMMIT=$sha"

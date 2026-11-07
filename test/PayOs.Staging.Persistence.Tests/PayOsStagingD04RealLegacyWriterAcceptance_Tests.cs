@@ -529,8 +529,10 @@ public sealed class D04RealLegacyWriterAcceptance_Tests
         await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
             manualReview.RecordIndependentBankReviewAsync(
                 intent.Id, evidence with { AmountVnd = amount + 1 }));
-        Assert.Equal(0L, await CountAsync(db,
-            "\"BuildingManagementPayOsD04OwnerApprovals\"") - 1L);
+        // The first (D04-A) contract already has one Owner approval.
+        // Neither rejected submission may add a second one.
+        Assert.Equal(1L, await CountAsync(db,
+            "\"BuildingManagementPayOsD04OwnerApprovals\""));
 
         var bankReviewId = await manualReview.RecordIndependentBankReviewAsync(
             intent.Id, evidence);

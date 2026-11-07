@@ -71,7 +71,7 @@ function Invoke-Logged([string]$step, [string]$command, [string[]]$arguments) {
     Write-Host "PASS: $step" -ForegroundColor Green
 }
 
-function Assert-Trx([string]$filename) {
+function Assert-Trx([string]$filename, [int]$expectedCount = 0) {
     $path = Join-Path $logRoot $filename
     if (-not (Test-Path -LiteralPath $path)) {
         throw "Missing TRX evidence: $path"
@@ -85,8 +85,9 @@ function Assert-Trx([string]$filename) {
     $passed = [int]$counters.GetAttribute('passed')
     $failed = [int]$counters.GetAttribute('failed')
     $skipped = [int]$counters.GetAttribute('notExecuted')
-    if ($total -lt 1 -or $passed -lt 1 -or $failed -ne 0 -or $skipped -ne 0) {
-        throw "TRX failed/empty/skipped: total=$total passed=$passed failed=$failed notExecuted=$skipped ($path)"
+    if ($total -lt 1 -or $passed -lt 1 -or $failed -ne 0 -or $skipped -ne 0 -or
+        ($expectedCount -gt 0 -and ($total -ne $expectedCount -or $passed -ne $expectedCount))) {
+        throw "TRX failed/empty/skipped/wrong test count: total=$total passed=$passed failed=$failed notExecuted=$skipped expected=$expectedCount ($path)"
     }
     Write-Host "TRX VERIFIED: $filename passed=$passed total=$total" -ForegroundColor Green
 }
@@ -383,7 +384,7 @@ SELECT count(*) FROM public."__EFMigrationsHistory_PayOs";
         '--filter', 'FullyQualifiedName~D04RealLegacyWriterAcceptance_Tests',
         '--logger', 'trx;LogFileName=payos-d04-real-writer.trx',
         '--results-directory', $logRoot, '--verbosity', 'normal')
-    Assert-Trx 'payos-d04-real-writer.trx'
+    Assert-Trx 'payos-d04-real-writer.trx' 1
     [Environment]::SetEnvironmentVariable(
         'BM_PAYOS_D04_REAL_WRITER_TEST_DB', $null, 'Process')
     $d04Sql = Resolve-Path '.\etc\phase-audits\payos-d04-two-db-posting-recovery-rehearsal.sql'

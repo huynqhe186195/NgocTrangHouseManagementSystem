@@ -29,7 +29,16 @@ namespace NgocTrangHouseManagementSystem.Payments;
 /// not be enabled with real bank documents until a protected durable archive
 /// and retention/deletion policy have passed a separate security review.
 /// </summary>
-public sealed class PayOsD04ManualEvidenceService
+public interface IPayOsD04ManualEvidenceService
+{
+    Task<Guid> RecordIndependentBankReviewAsync(
+        Guid intentId, PayOsD04ManualBankStatementSubmission evidence,
+        CancellationToken ct = default);
+    Task<Guid> ApproveReviewedDepositAsync(
+        Guid bankReviewId, CancellationToken ct = default);
+}
+
+public sealed class PayOsD04ManualEvidenceService : IPayOsD04ManualEvidenceService
 {
     private readonly BuildingManagementDbContext _db;
     private readonly IPayOsD04TrustedStagingEvidenceReader _staging;
@@ -282,6 +291,19 @@ public sealed class PayOsD04ManualEvidenceService
             .SingleOrDefaultAsync(x => x.Id == room.FloorId, ct);
         if (floor is null || floor.BuildingId == Guid.Empty ||
             floor.BuildingId != source.BuildingId)
+            throw Denied();
+
+        // Refuse an already-covered deposit before accepting an independent
+        // bank review; the authoritative writer repeats this calculation
+        // under its Contract/Payment lock at final commit.
+        var covered = await _db.DepositSettlements.AsNoTracking()
+            .Where(x => x.TargetContractId == contractId &&
+                x.Status == BuildingManagement.DepositSettlements.DepositSettlementStatus.Completed &&
+                (x.Type == BuildingManagement.DepositSettlements.DepositSettlementType.AllocateToContractDeposit ||
+                 x.Type == BuildingManagement.DepositSettlements.DepositSettlementType.ContractTransfer ||
+                 x.Type == BuildingManagement.DepositSettlements.DepositSettlementType.RoomChangeCarryForward))
+            .SumAsync(x => (decimal?)x.Amount, ct) ?? 0m;
+        if (contract.DepositAmount - covered < payment.Amount)
             throw Denied();
         return floor.BuildingId;
     }

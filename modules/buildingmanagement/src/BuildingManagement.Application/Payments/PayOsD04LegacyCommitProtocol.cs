@@ -47,7 +47,8 @@ public static class PayOsD04LegacyCommitProtocol
         ArgumentNullException.ThrowIfNull(payment);
         ArgumentNullException.ThrowIfNull(plan);
 
-        if (proof is null ||
+        if (proof is null || intent.InvoiceId.HasValue ||
+            intent.PaymentId != payment.Id ||
             plan.IntentId != intent.Id || plan.BuildingId != intent.BuildingId ||
             plan.PaymentId != payment.Id || plan.OrderCode != intent.OrderCode ||
             plan.AmountVnd != intent.AmountVnd ||

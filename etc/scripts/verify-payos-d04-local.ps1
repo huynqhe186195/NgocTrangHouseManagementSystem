@@ -47,6 +47,24 @@ function Invoke-Logged([string]$step, [string]$command, [string[]]$arguments) {
     }
     finally { $ErrorActionPreference = $previous }
     if ($exitCode -ne 0) {
+        # Surface the ORIGINAL compiler/SQL error immediately. The detailed
+        # log is still retained; never force the operator to manually grep it.
+        Write-Host "=== $step diagnostic lines (first 16) ===" -ForegroundColor Red
+        if (Test-Path -LiteralPath $log) {
+            $diagnostics = @(Get-Content -LiteralPath $log |
+                Where-Object {
+                    $_ -match '\berror (CS|NU|MSB)[0-9]+' -or
+                    $_ -match '(?i)(^|: )(?:ERROR|FATAL):' -or
+                    $_ -match '(?i)FAILED|Exception:'
+                } | Select-Object -First 16)
+            if ($diagnostics.Count -gt 0) {
+                $diagnostics | ForEach-Object { Write-Host $_ -ForegroundColor Red }
+            }
+            else {
+                Get-Content -LiteralPath $log -Tail 18 |
+                    ForEach-Object { Write-Host $_ -ForegroundColor Red }
+            }
+        }
         throw "$step FAILED (exit=$exitCode). Log: $log"
     }
     Write-Host "PASS: $step" -ForegroundColor Green
@@ -105,7 +123,7 @@ try {
         return
     }
 
-    foreach ($command in @('git','dotnet','docker')) {
+    foreach ($command in @('git','dotnet')) {
         if (-not (Get-Command $command -ErrorAction SilentlyContinue)) {
             throw "Missing required tool: $command"
         }
@@ -138,9 +156,13 @@ try {
     if ($sdkList -notmatch '(?m)^10\.') {
         throw '.NET SDK 10 is required (net10.0 test projects).'
     }
-    $dockerServer = Invoke-Capture 'docker' @('info', '--format', '{{.ServerVersion}}')
     Write-Host "SOURCE COMMIT: $sha"
-    Write-Host "DOCKER SERVER: $dockerServer"
+    # Build-only mode has no Docker or PostgreSQL dependency. Validate
+    # Docker only when a full test run is actually requested.
+    if (-not $BuildOnly) {
+        $dockerServer = Invoke-Capture 'docker' @('info', '--format', '{{.ServerVersion}}')
+        Write-Host "DOCKER SERVER: $dockerServer"
+    }
 
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
     $logRoot = Join-Path (Join-Path $HOME 'NgocTrang-Test-Logs') "payos-$stamp"

@@ -3,6 +3,8 @@ using System.Data;
 using System.Linq;
 using System.Threading.Tasks;
 using BuildingManagement.Migrations;
+using BuildingManagement.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Migrations.Operations;
 using Npgsql;
 using Xunit;
@@ -17,6 +19,24 @@ namespace NgocTrangHouseManagementSystem.PayOs.Staging.Tests;
 /// </summary>
 public sealed class PayOsStagingD04LegacyJournalSchema_Tests
 {
+    [Fact]
+    public void Draft_D04_receipt_migration_must_not_be_discoverable_in_canonical_ef_chain()
+    {
+        var draftType = typeof(StagePayOsD04LegacySourceJournal);
+        Assert.DoesNotContain(draftType.GetCustomAttributes(inherit: false),
+            attribute => attribute.GetType().Name is
+                "DbContextAttribute" or "MigrationAttribute");
+        // This is an OFFLINE EF metadata check: UseNpgsql() configures the
+        // provider but GetMigrations() does NOT open a DB connection.
+        var options = new DbContextOptionsBuilder<BuildingManagementDbContext>()
+            .UseNpgsql("Host=127.0.0.1;Port=1;Database=never_connect;Username=none;Password=none")
+            .Options;
+        using var db = new BuildingManagementDbContext(options);
+        Assert.DoesNotContain(db.Database.GetMigrations(),
+            name => name.Contains("StagePayOsD04LegacySourceJournal",
+                StringComparison.Ordinal));
+    }
+
     [Fact]
     public async Task Real_legacy_schema_enforces_immutable_review_approval_unique_receipt_and_outbox()
     {

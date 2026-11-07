@@ -111,6 +111,8 @@
     "BuildingManagement:ReservationDepositExceedsRemaining": "Số tiền thanh toán vượt quá số tiền cọc còn lại.",
     "BuildingManagement:ReservationDepositAlreadyFullyPaid": "Tiền cọc của yêu cầu đặt phòng đã được thanh toán đầy đủ.",
     "BuildingManagement:ActiveRenewalHoldBlocksReservationDeposit": "Phòng đang được giữ quyền gia hạn cho khách hiện tại nên chưa thể nhận tiền cọc đặt phòng.",
+    "Permission:Payments.ReviewBankEvidence": "Kiểm tra chứng từ ngân hàng D04 độc lập",
+    "Permission:Payments.ApproveD04Posting": "Owner phê duyệt ghi sổ thanh toán D04",
     "BuildingManagement:InvalidTenantPhoneNumber": "Số điện thoại người thuê không hợp lệ.",
     "BuildingManagement:TenantPhoneNumberAlreadyExists": "Số điện thoại này đã được sử dụng bởi một người thuê khác.",
     "BuildingManagement:InvalidTenantCitizenId": "Số căn cước công dân không hợp lệ.",

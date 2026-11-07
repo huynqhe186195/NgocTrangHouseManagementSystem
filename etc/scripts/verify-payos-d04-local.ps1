@@ -382,9 +382,7 @@ COMMIT;
             $raceJobs += Start-Job -ArgumentList $containerId,$raceSql -ScriptBlock {
                 param($cid,$statement)
                 $ErrorActionPreference = 'Continue'
-                $result = (& docker exec $cid psql -U postgres
-                    -d payos_d04_legacy_test -v ON_ERROR_STOP=1
-                    -c $statement 2>&1 | Out-String)
+                $result = (& docker exec $cid psql -U postgres -d payos_d04_legacy_test -v ON_ERROR_STOP=1 -c $statement 2>&1 | Out-String)
                 [pscustomobject]@{ ExitCode = [int]$LASTEXITCODE; Output = $result }
             }
         }

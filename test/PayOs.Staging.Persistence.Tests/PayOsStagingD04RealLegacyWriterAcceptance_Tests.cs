@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Data;
 using System.Linq;
 using System.Threading;
@@ -7,6 +8,7 @@ using BuildingManagement;
 using BuildingManagement.Buildings;
 using BuildingManagement.Contracts;
 using BuildingManagement.DepositSettlements;
+using BuildingManagement.Permissions;
 using BuildingManagement.EntityFrameworkCore;
 using BuildingManagement.Floors;
 using BuildingManagement.Migrations;
@@ -16,8 +18,13 @@ using BuildingManagement.Rooms;
 using BuildingManagement.Tenants;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Migrations.Operations;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Moq;
+using NgocTrangHouseManagementSystem.Payments;
 using Npgsql;
+using Volo.Abp.Authorization;
 using Volo.Abp;
 using Volo.Abp.Data;
 using Volo.Abp.EntityFrameworkCore;
@@ -281,7 +288,165 @@ public sealed class D04RealLegacyWriterAcceptance_Tests
         // payOS intent to Posted; a separate ACK proof is still required.
         Assert.Equal(PayOsPaymentIntentStatus.ConfirmedPendingPosting,
             intent.Status);
+
+        // D04-B checks actual SHARE locks against separate disposable
+        // Identity and Building schemas (NOT mocked authorization).
+        await VerifyD04BIdentityLeaseAsync(db, b, actor, owner);
         await uow.CompleteAsync();
+    }
+
+
+    private const string IdentityConnection =
+        "Host=127.0.0.1;Port=15432;Database=payos_d04_identity_test;" +
+        "Username=postgres;Password=disposable-only;Pooling=false;Timeout=5";
+
+    private static async Task VerifyD04BIdentityLeaseAsync(
+        BuildingManagementDbContext db, Guid buildingId,
+        Guid bankReviewer, Guid owner)
+    {
+        // These are isolated SQL-shaped ABP Identity fixture tables.
+        // They are NOT a substitute for native Identity migration/HTTP UAT.
+        await using (var identity = new NpgsqlConnection(IdentityConnection))
+        {
+            await identity.OpenAsync();
+            await using var schema = new NpgsqlCommand("""
+                CREATE TABLE "AbpUsers"(
+                    "Id" uuid PRIMARY KEY, "TenantId" uuid NULL,
+                    "IsDeleted" boolean NOT NULL, "IsActive" boolean NOT NULL,
+                    "LockoutEnabled" boolean NOT NULL,
+                    "LockoutEnd" timestamptz NULL);
+                CREATE TABLE "AbpPermissionGrants"(
+                    "Id" uuid PRIMARY KEY, "TenantId" uuid NULL,
+                    "ProviderName" text NOT NULL,
+                    "ProviderKey" text NOT NULL,
+                    "Name" text NOT NULL);
+                CREATE TABLE "AbpRoles"(
+                    "Id" uuid PRIMARY KEY, "TenantId" uuid NULL,
+                    "Name" text NOT NULL);
+                CREATE TABLE "AbpUserRoles"(
+                    "UserId" uuid NOT NULL, "RoleId" uuid NOT NULL,
+                    PRIMARY KEY("UserId","RoleId"));
+                """, identity);
+            await schema.ExecuteNonQueryAsync();
+
+            var role = Guid.NewGuid();
+            await using var seed = new NpgsqlCommand("""
+                INSERT INTO "AbpUsers"(
+                    "Id","IsDeleted","IsActive","LockoutEnabled")
+                VALUES (@reviewer,FALSE,TRUE,TRUE),
+                       (@owner,FALSE,TRUE,TRUE);
+                INSERT INTO "AbpRoles"("Id","Name") VALUES(@role,'Owner');
+                INSERT INTO "AbpUserRoles"("UserId","RoleId")
+                VALUES(@owner,@role);
+                INSERT INTO "AbpPermissionGrants"(
+                    "Id","ProviderName","ProviderKey","Name")
+                VALUES(@grant1,'U',@reviewerKey,@reviewPermission),
+                      (@grant2,'U',@ownerKey,@ownerPermission);
+                """, identity);
+            seed.Parameters.AddWithValue("reviewer", bankReviewer);
+            seed.Parameters.AddWithValue("owner", owner);
+            seed.Parameters.AddWithValue("role", role);
+            seed.Parameters.AddWithValue("grant1", Guid.NewGuid());
+            seed.Parameters.AddWithValue("grant2", Guid.NewGuid());
+            seed.Parameters.AddWithValue("reviewerKey", bankReviewer.ToString("D"));
+            seed.Parameters.AddWithValue("ownerKey", owner.ToString("D"));
+            seed.Parameters.AddWithValue("reviewPermission",
+                BuildingManagementPermissions.Payments.ReviewBankEvidence);
+            seed.Parameters.AddWithValue("ownerPermission",
+                BuildingManagementPermissions.Payments.ApproveD04Posting);
+            await seed.ExecuteNonQueryAsync();
+        }
+
+        var now = DateTime.UtcNow.AddMinutes(-10);
+        await db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO "BuildingManagementOperatorBuildingGrants"
+              ("Id","OperatorUserId","BuildingId","GrantedByUserId",
+               "GrantedAtUtc","RevisionNumber","ExtraProperties","ConcurrencyStamp")
+            VALUES ({Guid.NewGuid()},{bankReviewer},{buildingId},{owner},
+                    {now},{1},{"{}"},{Guid.NewGuid().ToString("N")}),
+                   ({Guid.NewGuid()},{owner},{buildingId},{owner},
+                    {now},{1},{"{}"},{Guid.NewGuid().ToString("N")})
+            """);
+
+        var config = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?>
+            {
+                ["BuildingManagement:PayOsD04B:Enabled"] = "true",
+                ["BuildingManagement:PayOsD04B:Activation"] =
+                    "I_ACCEPT_DISPOSABLE_D04B_DUAL_AUTH_ONLY",
+                ["ConnectionStrings:Default"] = IdentityConnection,
+                ["ConnectionStrings:BuildingManagement"] = Connection
+            }).Build();
+        var host = new Mock<IHostEnvironment>();
+        host.SetupGet(h => h.EnvironmentName).Returns("Staging");
+        var authority = new PayOsD04StagingDualAuthority(db, config, host.Object);
+
+        // The current Building SERIALIZABLE transaction is mandatory.
+        await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+            authority.AcquireCommitLeaseAsync(buildingId, Guid.NewGuid(),
+                bankReviewer, owner, CancellationToken.None));
+
+        // WRONG building must fail even with genuine reviewer/Owner roles.
+        await using (var wrong = await db.Database.BeginTransactionAsync(
+            IsolationLevel.Serializable))
+        {
+            await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+                authority.AcquireCommitLeaseAsync(Guid.NewGuid(), Guid.NewGuid(),
+                    bankReviewer, owner, CancellationToken.None));
+            await wrong.RollbackAsync();
+        }
+        db.ChangeTracker.Clear();
+
+        // Both actors currently active: acquire Identity and Building SHARE
+        // locks. Concurrent disable must time out, proving the lease survives
+        // beyond a preflight read and blocks revocation through commit.
+        await using (var committing = await db.Database.BeginTransactionAsync(
+            IsolationLevel.Serializable))
+        {
+            await using (var lease = await authority.AcquireCommitLeaseAsync(
+                buildingId, Guid.NewGuid(), bankReviewer, owner,
+                CancellationToken.None))
+            {
+                await using var revoke = new NpgsqlConnection(IdentityConnection);
+                await revoke.OpenAsync();
+                await using var revokeTx = await revoke.BeginTransactionAsync();
+                await using (var timeout = new NpgsqlCommand(
+                    "SET LOCAL lock_timeout = '200ms'", revoke, revokeTx))
+                    await timeout.ExecuteNonQueryAsync();
+                await using (var disable = new NpgsqlCommand("""
+                    UPDATE "AbpUsers" SET "IsActive"=FALSE
+                     WHERE "Id"=@owner
+                    """, revoke, revokeTx))
+                {
+                    disable.Parameters.AddWithValue("owner", owner);
+                    var failure = await Assert.ThrowsAsync<PostgresException>(
+                        () => disable.ExecuteNonQueryAsync());
+                    Assert.Equal("55P03", failure.SqlState);
+                }
+                await revokeTx.RollbackAsync();
+                await committing.CommitAsync(); // Only now may revoke proceed.
+            }
+        }
+
+        // Revocation already committed BEFORE new lease => deny, even if a
+        // JWT might still contain the old Owner role/permission claim.
+        await using (var identity = new NpgsqlConnection(IdentityConnection))
+        {
+            await identity.OpenAsync();
+            await using var disable = new NpgsqlCommand("""
+                UPDATE "AbpUsers" SET "IsActive"=FALSE WHERE "Id"=@owner
+                """, identity);
+            disable.Parameters.AddWithValue("owner", owner);
+            Assert.Equal(1, await disable.ExecuteNonQueryAsync());
+        }
+        await using (var revoked = await db.Database.BeginTransactionAsync(
+            IsolationLevel.Serializable))
+        {
+            await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+                authority.AcquireCommitLeaseAsync(buildingId, Guid.NewGuid(),
+                    bankReviewer, owner, CancellationToken.None));
+            await revoked.RollbackAsync();
+        }
     }
 
     private static async Task<long> CountAsync(

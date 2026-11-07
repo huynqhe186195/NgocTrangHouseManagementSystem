@@ -1,5 +1,6 @@
 using System;
 using System.Data;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using BuildingManagement.EntityFrameworkCore;
@@ -104,15 +105,19 @@ public sealed class PayOsD04ReviewedPostingCoordinator : IPayOsD04ReviewedPostin
         {
             throw;
         }
-        catch
+        catch (Exception e) when (e is NpgsqlException or
+            Microsoft.EntityFrameworkCore.DbUpdateException or
+            IOException or TimeoutException or OperationCanceledException)
         {
-            // DO NOT undo a successfully committed cash transaction and
-            // DO NOT reissue another payment order. The one legacy source
-            // key is the recoverable authority.
+            // Transport/DB timeout after a COMMITTED receipt is a retriable
+            // ACK gap. NEVER create a new order or a second financial row.
             return new PayOsD04PostingOutcome(write.ReceiptId,
                 write.DepositSettlementId, write.OutboxId,
                 AckPending: true);
         }
+        // Integrity mismatch / unexpected exception MUST propagate for
+        // investigation. Never advertise an inconsistent ledger as simply
+        // "ACK pending"; the legacy source receipt remains immutable.
     }
 
     private static AbpAuthorizationException Denied()

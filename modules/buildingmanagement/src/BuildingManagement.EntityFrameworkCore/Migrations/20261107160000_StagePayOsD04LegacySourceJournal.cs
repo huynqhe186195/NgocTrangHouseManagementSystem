@@ -1,5 +1,3 @@
-using BuildingManagement.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
@@ -13,8 +11,12 @@ namespace BuildingManagement.Migrations;
 /// Do NOT apply to production. No HTTP writer or webhook uses these tables.
 /// Deliberately absent from the legacy EF model snapshot pending acceptance.
 /// </summary>
-[DbContext(typeof(BuildingManagementDbContext))]
-[Migration("20261107160000_StagePayOsD04LegacySourceJournal")]
+// SAFETY: This is deliberately NOT decorated with DbContextAttribute or
+// MigrationAttribute. EF Core must NOT discover/apply it in the canonical
+// BuildingManagementDbContext Migrate() chain. The isolated PostgreSQL
+// acceptance test may invoke UpOperations explicitly after creating disposable
+// stub tables. Before production, replace with a separately approved,
+// fully rehearsed migration that passes the complete chain.
 public sealed class StagePayOsD04LegacySourceJournal : Migration
 {
     protected override void Up(MigrationBuilder builder)

@@ -98,10 +98,12 @@ try {
     $sha = Invoke-Capture 'git' @('rev-parse', 'HEAD')
     $remoteLine = Invoke-Capture 'git' @('ls-remote', '--exit-code',
         'origin', "refs/heads/$expectedBranch")
-    if ($remoteLine -notmatch '^([0-9a-fA-F]{40})\s+') {
+    if ($remoteLine -match '^([0-9a-fA-F]{40})\s+') {
+        $remoteSha = $Matches[1]
+    }
+    else {
         throw 'Cannot validate current origin HEAD. Do not run stale tests.'
     }
-    $remoteSha = $Matches[1]
     if ($sha -ne $remoteSha) {
         throw "Local SHA $sha differs from origin $remoteSha. Use git pull --ff-only; keep local edits safe."
     }

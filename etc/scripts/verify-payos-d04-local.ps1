@@ -1,4 +1,4 @@
-param()
+param([switch]$PreflightOnly)
 
 # D04/payOS Windows acceptance bundle. Does NOT use existing local PostgreSQL.
 # It launches ONLY a new disposable postgres:16 Docker container, bound to
@@ -85,6 +85,23 @@ function Assert-EfTableCount([string]$database, [int]$expected) {
 
 Push-Location $root
 try {
+    # ReadAllLines strips Windows CRLF before comparison.
+    # No multiline regex or PowerShell string interpolation is involved.
+    $sqlOpenCount = 0
+    $sqlCloseCount = 0
+    foreach ($sqlLine in [System.IO.File]::ReadAllLines($PSCommandPath)) {
+        if ($sqlLine -ceq 'DO $d04$') { $sqlOpenCount++ }
+        if ($sqlLine -ceq 'END $d04$;') { $sqlCloseCount++ }
+    }
+    if ($sqlOpenCount -ne 3 -or $sqlCloseCount -ne 3) {
+        throw "D04 SQL preflight failed: opens=$sqlOpenCount closes=$sqlCloseCount; expected 3 each."
+    }
+    Write-Host 'D04 SQL templates: 3 dollar-quoted blocks verified.' -ForegroundColor Green
+    if ($PreflightOnly) {
+        Write-Host '=== D04 PREFLIGHT ONLY PASS: no builds, database or containers used ===' -ForegroundColor Green
+        return
+    }
+
     foreach ($command in @('git','dotnet','docker')) {
         if (-not (Get-Command $command -ErrorAction SilentlyContinue)) {
             throw "Missing required tool: $command"
@@ -112,14 +129,7 @@ try {
         throw "Tracked working tree has edits. Review 'git status' before running."
     }
 
-    # Fail fast if the generated PostgreSQL DO blocks have bad dollar quotes.
-    $scriptSource = Get-Content -LiteralPath $PSCommandPath -Raw
-    $sqlOpenCount = ([regex]::Matches($scriptSource, '(?m)^DO \$d04\$$')).Count
-    $sqlCloseCount = ([regex]::Matches($scriptSource, '(?m)^END \$d04\$;$')).Count
-    if ($sqlOpenCount -ne 3 -or $sqlCloseCount -ne 3) {
-        throw "D04 SQL preflight failed: opens=$sqlOpenCount closes=$sqlCloseCount; expected 3 each."
-    }
-    Write-Host 'D04 SQL templates: 3 dollar-quoted blocks verified.' -ForegroundColor Green
+
 
     $sdkList = Invoke-Capture 'dotnet' @('--list-sdks')
     if ($sdkList -notmatch '(?m)^10\.') {

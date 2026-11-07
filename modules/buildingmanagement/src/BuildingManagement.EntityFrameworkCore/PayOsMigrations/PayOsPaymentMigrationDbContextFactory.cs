@@ -22,8 +22,16 @@ public sealed class PayOsPaymentMigrationDbContextFactory :
         if (disposable && string.IsNullOrWhiteSpace(password))
             throw new InvalidOperationException("Disposable test password missing.");
 
+        // CI uses localhost:5432; the one-command Windows local rehearsal
+        // uses a NEW disposable postgres:16 container bound to 127.0.0.1:15432.
+        // Never allow arbitrary hosts, ports or database names through env.
+        var testPort = Environment.GetEnvironmentVariable("BM_PAYOS_EF_TEST_PORT") ?? "5432";
+        if (disposable && testPort != "5432" && testPort != "15432")
+            throw new InvalidOperationException(
+                "Disposable payOS tests permit only loopback port 5432 (CI) or 15432 (local).");
+
         var connection = disposable
-            ? "Host=127.0.0.1;Port=5432;Database=payos_ef_migration_test;Username=postgres;Password=" + password + ";Timeout=3"
+            ? "Host=127.0.0.1;Port=" + testPort + ";Database=payos_ef_migration_test;Username=postgres;Password=" + password + ";Timeout=3"
             : "Host=127.0.0.1;Port=1;Database=payos_offline_scaffold;Username=offline;Password=offline-only;Timeout=1";
 
         var options = new DbContextOptionsBuilder<PayOsPaymentMigrationDbContext>()

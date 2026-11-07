@@ -81,7 +81,18 @@ public sealed class D04RealLegacyWriterAcceptance_Tests
         // only; no MigrationAttribute is registered in the runtime model.
         var up = Assert.Single(new StagePayOsD04LegacySourceJournal()
             .UpOperations.OfType<SqlOperation>()).Sql;
-        await db.Database.ExecuteSqlRawAsync(up);
+        // IMPORTANT: Do NOT use EF ExecuteSqlRawAsync(up). EF passes SQL
+        // through composite String.Format and tries to interpret regex
+        // quantifiers such as {64} in SHA256 CHECKs as parameter indexes,
+        // causing FormatException BEFORE PostgreSQL sees the DDL. This SQL
+        // is a fixed, repository-owned migration script, not user input.
+        // Execute its literal bytes against ONLY the isolated test database.
+        await using (var ddlConnection = new NpgsqlConnection(Connection))
+        {
+            await ddlConnection.OpenAsync();
+            await using var ddlCommand = new NpgsqlCommand(up, ddlConnection);
+            await ddlCommand.ExecuteNonQueryAsync();
+        }
 
         var b = Guid.NewGuid();
         var f = Guid.NewGuid();

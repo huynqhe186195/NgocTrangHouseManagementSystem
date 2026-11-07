@@ -42,9 +42,22 @@ public sealed class PayOsStagingD04LegacyJournalSchema_Tests
             // Minimal trusted FK roots; the migration itself uses the REAL
             // BuildingManagement table/column names and does not create cash.
             await ExecAsync(db, tx, """
-                CREATE TABLE "BuildingManagementContracts" ("Id" uuid PRIMARY KEY,"Status" integer NOT NULL);
+                CREATE TABLE "BuildingManagementFloors" (
+                    "Id" uuid PRIMARY KEY,"BuildingId" uuid NOT NULL,
+                    "IsDeleted" boolean NOT NULL);
+                CREATE TABLE "BuildingManagementRooms" (
+                    "Id" uuid PRIMARY KEY,"FloorId" uuid NOT NULL,
+                    "IsDeleted" boolean NOT NULL);
+                CREATE TABLE "BuildingManagementContracts" (
+                    "Id" uuid PRIMARY KEY,"RoomId" uuid NOT NULL,
+                    "Status" integer NOT NULL,"IsDeleted" boolean NOT NULL);
+                CREATE TABLE "BuildingManagementContractTenants" (
+                    "Id" uuid PRIMARY KEY,"ContractId" uuid NOT NULL,
+                    "TenantId" uuid NOT NULL,"Role" integer NOT NULL,
+                    "IsDeleted" boolean NOT NULL);
                 CREATE TABLE "BuildingManagementPayments" (
                     "Id" uuid PRIMARY KEY, "ContractId" uuid NOT NULL,
+                    "TenantId" uuid NOT NULL,
                     "Purpose" integer NOT NULL, "Method" integer NOT NULL,
                     "Channel" integer NOT NULL, "Status" integer NOT NULL,
                     "PaidAt" timestamptz, "IsDeleted" boolean NOT NULL,
@@ -95,6 +108,9 @@ public sealed class PayOsStagingD04LegacyJournalSchema_Tests
             var building = Guid.NewGuid();
             var payment = Guid.NewGuid();
             var contract = Guid.NewGuid();
+            var room = Guid.NewGuid();
+            var floor = Guid.NewGuid();
+            var tenant = Guid.NewGuid();
             var settlement = Guid.NewGuid();
             var review = Guid.NewGuid();
             var approval = Guid.NewGuid();
@@ -106,11 +122,20 @@ public sealed class PayOsStagingD04LegacyJournalSchema_Tests
             var source = "PAYOS:D04:" + intent.ToString("N");
 
             await ExecAsync(db, tx, $"""
-                INSERT INTO "BuildingManagementContracts"("Id","Status") VALUES ('{contract}',5);
+                INSERT INTO "BuildingManagementFloors"("Id","BuildingId","IsDeleted")
+                VALUES ('{floor}','{building}',false);
+                INSERT INTO "BuildingManagementRooms"("Id","FloorId","IsDeleted")
+                VALUES ('{room}','{floor}',false);
+                INSERT INTO "BuildingManagementContracts"
+                ("Id","RoomId","Status","IsDeleted")
+                VALUES ('{contract}','{room}',5,false);
+                INSERT INTO "BuildingManagementContractTenants"
+                ("Id","ContractId","TenantId","Role","IsDeleted")
+                VALUES (gen_random_uuid(),'{contract}','{tenant}',1,false);
                 INSERT INTO "BuildingManagementPayments"
-                ("Id","ContractId","Purpose","Method","Channel","Status",
+                ("Id","ContractId","TenantId","Purpose","Method","Channel","Status",
                  "PaidAt","IsDeleted","DepositDisposition","Amount","TransactionReference")
-                VALUES ('{payment}','{contract}',2,2,2,2,now(),false,1,150000,'{reference}');
+                VALUES ('{payment}','{contract}','{tenant}',2,2,2,2,now(),false,1,150000,'{reference}');
                 INSERT INTO "BuildingManagementDepositSettlements"
                 ("Id","PaymentId","TargetContractId","Type","Status","Amount")
                 VALUES ('{settlement}','{payment}','{contract}',3,2,150000);
@@ -186,11 +211,11 @@ public sealed class PayOsStagingD04LegacyJournalSchema_Tests
                   refused := false;
                   BEGIN
                     INSERT INTO "BuildingManagementPayments"(
-                      "Id","ContractId","Purpose","Method","Channel","Status",
+                      "Id","ContractId","TenantId","Purpose","Method","Channel","Status",
                       "PaidAt","IsDeleted","DepositDisposition","Amount",
                       "TransactionReference")
-                    VALUES (gen_random_uuid(),'{contract}',2,2,2,2,now(),false,1,
-                            150000,lower('{reference}'));
+                    VALUES (gen_random_uuid(),'{contract}','{tenant}',2,2,2,2,
+                            now(),false,1,150000,lower('{reference}'));
                     INSERT INTO "BuildingManagementPayOsD04BankReviews"
                      ("Id","PayOsIntentId","OrderCode","BuildingId","PaymentId",
                       "AmountVnd","BankReference","DocumentSha256",

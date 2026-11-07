@@ -81,6 +81,9 @@ public sealed class D04RealLegacyWriterAcceptance_Tests
         // only; no MigrationAttribute is registered in the runtime model.
         var up = Assert.Single(new StagePayOsD04LegacySourceJournal()
             .UpOperations.OfType<SqlOperation>()).Sql;
+        // Keep the exact SQL regex that exposed the EF composite formatting
+        // error; never remove integrity checks just to make a test pass.
+        Assert.Contains("'^[0-9a-f]{64}$'", up);
         // IMPORTANT: Do NOT use EF ExecuteSqlRawAsync(up). EF passes SQL
         // through composite String.Format and tries to interpret regex
         // quantifiers such as {64} in SHA256 CHECKs as parameter indexes,

@@ -346,6 +346,94 @@ END $;
         '-d', 'payos_d04_legacy_test', '-v', 'ON_ERROR_STOP=1',
         '-f', '/tmp/d04-legacy-proof.sql')
 
+    # Two workers race on the same legacy Payment/source key. The loser must
+    # roll back its entire receipt+settlement+outbox; it may not add money.
+    $raceJobs = @()
+    try {
+        foreach ($suffix in @('0','1')) {
+            $receiptId = if ($suffix -eq '0') {
+                '00000000-0000-0000-0000-00000000d430'
+            } else { '00000000-0000-0000-0000-00000000d431' }
+            $settlementId = if ($suffix -eq '0') {
+                '00000000-0000-0000-0000-00000000d432'
+            } else { '00000000-0000-0000-0000-00000000d433' }
+            $outboxId = if ($suffix -eq '0') {
+                '00000000-0000-0000-0000-00000000d434'
+            } else { '00000000-0000-0000-0000-00000000d435' }
+            $raceSql = @"
+BEGIN;
+SELECT id FROM d04_acceptance.payments WHERE id='00000000-0000-0000-0000-00000000d412' FOR UPDATE;
+UPDATE d04_acceptance.payments SET status=1,bank_reference='D04-CONCURRENT-REF',completed_at_utc=now()
+ WHERE id='00000000-0000-0000-0000-00000000d412';
+INSERT INTO d04_acceptance.receipts
+(id,payment_id,payos_intent_id,source_key,bank_reference,amount_vnd,approved_by,evidence_sha256,created_at_utc)
+VALUES ('$receiptId','00000000-0000-0000-0000-00000000d412',
+'00000000-0000-0000-0000-00000000d420',
+'PAYOS:D04:0000000000000000000000000000d420','D04-CONCURRENT-REF',150000,
+'00000000-0000-0000-0000-00000000d421',repeat('c',64),now());
+INSERT INTO d04_acceptance.deposit_settlements(id,payment_id,receipt_id,amount_vnd)
+VALUES('$settlementId','00000000-0000-0000-0000-00000000d412','$receiptId',150000);
+INSERT INTO d04_acceptance.outbox(id,receipt_id,source_key,event_type,created_at_utc)
+VALUES('$outboxId','$receiptId','PAYOS:D04:0000000000000000000000000000d420',
+'D04PayOsReceiptCommitted',now());
+SELECT pg_sleep(2);
+COMMIT;
+"@
+            $raceJobs += Start-Job -ArgumentList $containerId,$raceSql -ScriptBlock {
+                param($cid,$statement)
+                $ErrorActionPreference = 'Continue'
+                $result = (& docker exec $cid psql -U postgres
+                    -d payos_d04_legacy_test -v ON_ERROR_STOP=1
+                    -c $statement 2>&1 | Out-String)
+                [pscustomobject]@{ ExitCode = [int]$LASTEXITCODE; Output = $result }
+            }
+        }
+        Wait-Job -Job $raceJobs -Timeout 40 | Out-Null
+        if (@($raceJobs | Where-Object { $_.State -ne 'Completed' }).Count -ne 0) {
+            throw 'D04 double-writer rehearsal timed out.'
+        }
+        $raceResults = @($raceJobs | ForEach-Object { Receive-Job -Job $_ })
+        ($raceResults | Format-List | Out-String) |
+            Set-Content -Path (Join-Path $logRoot '23a-d04-concurrent-writers.log')
+        $won = @($raceResults | Where-Object { $_.ExitCode -eq 0 }).Count
+        $lost = @($raceResults | Where-Object {
+            $_.ExitCode -ne 0 -and
+            $_.Output -match 'duplicate key value violates unique constraint'
+        }).Count
+        if ($won -ne 1 -or $lost -ne 1) {
+            throw "D04 concurrency requires 1 commit + 1 unique violation, got $won/$lost. Check 23a-d04-concurrent-writers.log"
+        }
+    }
+    finally {
+        foreach ($job in $raceJobs) {
+            Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
+        }
+    }
+    $raceProofFile = Join-Path $logRoot '23b-d04-concurrent-proof.sql'
+    Set-Content -LiteralPath $raceProofFile -Encoding Ascii -Value @'
+DO $
+BEGIN
+  IF (SELECT count(*) FROM d04_acceptance.receipts
+      WHERE payos_intent_id='00000000-0000-0000-0000-00000000d420')<>1 OR
+     (SELECT count(*) FROM d04_acceptance.deposit_settlements
+      WHERE payment_id='00000000-0000-0000-0000-00000000d412')<>1 OR
+     (SELECT count(*) FROM d04_acceptance.outbox
+      WHERE source_key='PAYOS:D04:0000000000000000000000000000d420')<>1 OR
+     (SELECT status FROM d04_acceptance.payments
+      WHERE id='00000000-0000-0000-0000-00000000d412')<>1 THEN
+    RAISE EXCEPTION 'Two concurrent D04 workers created partial or duplicate money';
+  END IF;
+  RAISE NOTICE 'D04 LEGACY: 1 of 2 concurrent workers committed exactly one financial bundle';
+END $;
+'@
+    Invoke-Logged '23a-copy-concurrent-proof' 'docker' @(
+        'cp', $raceProofFile, "$($containerId):/tmp/d04-concurrent-proof.sql")
+    Invoke-Logged '23b-verify-no-double-receipt-settlement-outbox' 'docker' @(
+        'exec', $containerId, 'psql', '-U', 'postgres',
+        '-d', 'payos_d04_legacy_test', '-v', 'ON_ERROR_STOP=1',
+        '-f', '/tmp/d04-concurrent-proof.sql')
+    Write-Host 'D04 concurrency PASS: only one of two legacy writers committed.' -ForegroundColor Green
+
     # ACK only after two independently successful checks: legacy financial
     # journal above, and staging immutable approval/inbox below. This is a
     # test-only ack, not a production cross-DB service or crash-safe worker.

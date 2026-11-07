@@ -220,7 +220,7 @@ public sealed class PayOsD04StagingDualAuthority : IPayOsD04CurrentDualAuthority
         => IsExactDisposableLocation(cs, name) && cs.Password == "disposable-only";
 
     private static bool IsExactDisposableLocation(NpgsqlConnectionStringBuilder cs, string name)
-        => cs.Host is "127.0.0.1" or "localhost" &&
+        => cs.Host is ("127.0.0.1" or "localhost") &&
            cs.Port == 15432 &&
            string.Equals(cs.Database, name, StringComparison.Ordinal) &&
            string.Equals(cs.Username, "postgres", StringComparison.Ordinal);

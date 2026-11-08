@@ -2,8 +2,11 @@ using BuildingManagement.EntityFrameworkCore;
 using BuildingManagement.EntityFrameworkCore.PayOsMigrations;
 using BuildingManagement.Payments;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using NgocTrangHouseManagementSystem.Payments;
 using Npgsql;
+using Volo.Abp.Data;
+using Volo.Abp.DependencyInjection;
 
 // This is an actual separate OS process run ONLY under the guarded local
 // disposable PostgreSQL 16 test script. It can never invoke a live payOS API
@@ -39,6 +42,23 @@ var stageOptions = new DbContextOptionsBuilder<PayOsPaymentMigrationDbContext>()
 
 await using var legacy = new BuildingManagementDbContext(legacyOptions);
 await using var staging = new PayOsPaymentMigrationDbContext(stageOptions);
+
+// This probe deliberately constructs the ABP financial DbContext outside
+// the full Host. The ABP model can be built without injected services, but
+// its compiled ISoftDelete query filter evaluates IDataFilter at query time.
+// With an uninitialized LazyServiceProvider it throws before printing the
+// committed-journal barrier. Initialize only the required, standard ABP
+// query-filter infrastructure for READBACK. No writer/UoW/permission
+// bypass is installed and the SQL data safety checks remain intact.
+_ = legacy.Model;
+var queryServices = new ServiceCollection();
+queryServices.AddOptions();
+queryServices.AddSingleton<IDataFilter, DataFilter>();
+queryServices.AddTransient(typeof(IDataFilter<>), typeof(DataFilter<>));
+using var queryProvider = queryServices.BuildServiceProvider();
+legacy.LazyServiceProvider = new AbpLazyServiceProvider(queryProvider);
+_ = legacy.DataFilter; // Fail explicitly before SQL readback if miswired.
+
 var receipts = new PayOsD04CommittedReceiptStore(legacy);
 // Progress markers are emitted to STDERR only so the parent still requires
 // the exact, exclusive COMMITTED barrier from STDOUT. No bank data or keys.

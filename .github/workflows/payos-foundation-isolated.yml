@@ -119,6 +119,65 @@ jobs:
           test "$count" = "1"
           echo "PAYOS PG CONCURRENCY PASS: only 1 of 2 same-order inserts committed"
 
+
+  d04b-three-database-posting:
+    name: D04-B real three-DB writer and ACK (synthetic actors, no bank funds)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 30
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+      BM_PAYOS_EF_TEST_DB: '1'
+      BM_PAYOS_EF_TEST_PASSWORD: 'disposable-only'
+      BM_PAYOS_EF_TEST_PORT: '15432'
+      BM_PAYOS_D04_REAL_WRITER_TEST_DB: 'I_ACCEPT_ONLY_DISPOSABLE_PAYOS_D04_DB'
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: disposable-only
+          POSTGRES_DB: payos_ef_migration_test
+        ports:
+          - 15432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d payos_ef_migration_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Create separate disposable Identity and Building databases
+        shell: bash
+        run: |
+          set -euo pipefail
+          pg_container="$(docker ps --filter ancestor=postgres:16 --format '{{.ID}}' | head -n 1)"
+          test -n "$pg_container"
+          docker exec "$pg_container" createdb -U postgres payos_d04_identity_test
+          docker exec "$pg_container" createdb -U postgres payos_d04_legacy_test
+          docker exec "$pg_container" psql -U postgres -d payos_ef_migration_test -At -c 'SELECT current_database()'
+      - name: Real Building writer, locked Identity grants, persisted staging proof, durable ACK and replay
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p test-results/d04b
+          dotnet test test/PayOs.Staging.Persistence.Tests/PayOs.Staging.Persistence.Tests.csproj \
+            --configuration Release \
+            --filter 'FullyQualifiedName~D04RealLegacyWriterAcceptance_Tests' \
+            --logger 'trx;LogFileName=payos-d04b-three-db.trx' \
+            --results-directory test-results/d04b \
+            --verbosity normal
+      - name: Retain D04-B three-DB TRX, including on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: payos-d04b-three-db-trx
+          path: test-results/d04b/**/*.trx
+          if-no-files-found: warn
+          retention-days: 14
+
   ef-migration-review:
     name: Offline EF migration preview (never applies database)
     runs-on: windows-latest

@@ -32,6 +32,7 @@ using Npgsql;
 using Volo.Abp.Authorization;
 using Volo.Abp;
 using Volo.Abp.Data;
+using Volo.Abp.DependencyInjection;
 using Volo.Abp.EntityFrameworkCore;
 using Volo.Abp.Modularity;
 using Volo.Abp.Testing;
@@ -771,16 +772,35 @@ public sealed class D04RealLegacyWriterAcceptanceTestModule : AbpModule
         // initializers before the test creates its isolated database.
         context.Services.AddAbpDbContext<NgocTrangHouseManagementSystemDbContext>(
             options => options.AddDefaultRepositories(includeAllEntities: true));
-        // AddAbpDbContext wires the ABP context PROVIDER and options, but
-        // this narrow test module does not depend on the application EF
-        // module (to avoid starting unrelated OpenIddict initializers).
-        // Unlike the application's own assembly-scanned module, the native
-        // Identity DbContext lives in a DIFFERENT assembly, so ABP's
-        // conventional DI scanner does not register that concrete class.
-        // UnitOfWorkDbContextProvider<T> resolves TDbContext from DI at
-        // runtime; explicitly register the concrete transient as well.
-        // Keep DbContextOptions/UnitOfWork/property injection ABP-owned.
-        context.Services.AddTransient<NgocTrangHouseManagementSystemDbContext>();
+        // Register the native Identity context using the SAME ABP options
+        // and UnitOfWorkDbContextProvider as production, but inject its
+        // property dependencies explicitly. The native DbContext's assembly
+        // is intentionally outside this narrow test module's DependsOn chain.
+        // ABP Autofac skips implicit property injection for such "orphaned"
+        // assemblies, which leaves LazyServiceProvider NULL and makes
+        // AbpDbContext.UnitOfWorkManager throw NullReferenceException when
+        // UnitOfWorkDbContextProvider<T>.Initialize() is called.
+        //
+        // IInjectPropertiesService is ABP's supported mechanism for an
+        // object from outside its conventionally scanned module assemblies.
+        // Do NOT restore a full application EF module dependency: it boots
+        // OpenIddict/PermissionManagement before disposable Identity setup.
+        context.Services.AddTransient<NgocTrangHouseManagementSystemDbContext>(sp =>
+        {
+            var identityDb = ActivatorUtilities.CreateInstance<
+                NgocTrangHouseManagementSystemDbContext>(sp);
+            try
+            {
+                sp.GetRequiredService<IInjectPropertiesService>()
+                    .InjectProperties(identityDb);
+                return identityDb;
+            }
+            catch
+            {
+                identityDb.Dispose();
+                throw;
+            }
+        });
 
         var connection = D04RealLegacyWriterAcceptance_Tests.Connection;
         var identityConnection =

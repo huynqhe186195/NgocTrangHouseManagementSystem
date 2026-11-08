@@ -25,14 +25,36 @@ internal static class D04BForcedProcessRecoveryGate
 
         using var interrupted = NewProbe(probe!, "hold", intentId);
         Assert.True(interrupted.Start());
+        // Drain stderr ASYNCHRONOUSLY from the moment the child starts:
+        // PostgreSQL/.NET can write an exception before printing the
+        // expected stdout barrier. Otherwise a null ReadLine obscures the
+        // true failure and a full stderr pipe can deadlock the child.
+        var childErrors = interrupted.StandardError.ReadToEndAsync();
         try
         {
-            // The child first opens real disposable DBs and confirms the
-            // legacy journal is committed while staging is not yet Posted.
+            // The child must first read the durable journal and prove
+            // staging has not been ACKed. Null means the process exited
+            // prematurely, NOT that the crash-recovery gate succeeded.
             var barrier = await interrupted.StandardOutput.ReadLineAsync()
                 .WaitAsync(TimeSpan.FromSeconds(25));
-            Assert.Equal("D04_PROCESS_BARRIER_COMMITTED_UNACKNOWLEDGED",
-                barrier);
+            if (!string.Equals(barrier,
+                    "D04_PROCESS_BARRIER_COMMITTED_UNACKNOWLEDGED",
+                    StringComparison.Ordinal))
+            {
+                if (!interrupted.HasExited)
+                {
+                    // A non-barrier line is never a valid proof. Stop ONLY
+                    // our own child instead of allowing it to run indefinitely.
+                    interrupted.Kill(entireProcessTree: true);
+                }
+                await interrupted.WaitForExitAsync()
+                    .WaitAsync(TimeSpan.FromSeconds(20));
+                var stderr = await childErrors.WaitAsync(TimeSpan.FromSeconds(10));
+                Assert.True(false,
+                    "D04 crash-probe hold did not reach committed barrier. " +
+                    $"exit={interrupted.ExitCode}; firstStdout={barrier ?? "<EOF>"}; " +
+                    $"stderr={stderr}");
+            }
 
             // Terminate exactly the process WE created. This is an actual
             // OS kill rather than Dispose/rollback within the same test.
@@ -48,6 +70,8 @@ internal static class D04BForcedProcessRecoveryGate
                 interrupted.Kill(entireProcessTree: true);
                 await interrupted.WaitForExitAsync();
             }
+            // Do not leave a pending stderr reader (or leak process handles).
+            await childErrors.WaitAsync(TimeSpan.FromSeconds(10));
         }
 
         // No process memory survives. A different .NET process reconstructs

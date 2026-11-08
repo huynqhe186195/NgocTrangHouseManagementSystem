@@ -121,12 +121,21 @@ internal sealed class D04BDisposableProtectedEvidenceVault :
     {
         ThrowIfDisposed();
         if (intentId == Guid.Empty || reviewerId == Guid.Empty ||
-            documentSha256 is null || documentSha256.Length != 64 ||
-            !Convert.TryFromHexString(documentSha256, new byte[32], out var size) ||
-            size != 32)
+            documentSha256 is null || documentSha256.Length != 64)
             throw new InvalidDataException("Invalid reference digest.");
 
-        var hash = Convert.FromHexString(documentSha256);
+        // Convert.TryFromHexString does not exist in the .NET 10 API used
+        // by this project. Decode once with the supported FromHexString
+        // method; malformed input fails closed with a stable exception.
+        byte[] hash;
+        try
+        {
+            hash = Convert.FromHexString(documentSha256);
+        }
+        catch (FormatException error)
+        {
+            throw new InvalidDataException("Invalid reference digest.", error);
+        }
         var aad = BoundMetadata(intentId, reviewerId, hash);
         var expected = FilenameReference(aad);
         if (!string.Equals(reference, expected, StringComparison.Ordinal))
@@ -269,6 +278,11 @@ public sealed class D04BDisposableProtectedEvidenceVault_Tests
                     receipt.Reference, receipt.DocumentSha256));
             Assert.Throws<InvalidDataException>(() =>
                 vault.Read(intent, reviewer, "../escape", receipt.DocumentSha256));
+            Assert.Throws<InvalidDataException>(() =>
+                vault.Read(intent, reviewer, receipt.Reference,
+                    new string('z', 64)));
+            Assert.Throws<InvalidDataException>(() =>
+                vault.Read(intent, reviewer, receipt.Reference, "0f"));
 
             disk[^1] ^= 1;
             File.WriteAllBytes(file, disk);

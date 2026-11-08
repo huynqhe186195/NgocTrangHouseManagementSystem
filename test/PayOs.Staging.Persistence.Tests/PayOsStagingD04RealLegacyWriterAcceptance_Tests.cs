@@ -654,6 +654,13 @@ public sealed class D04RealLegacyWriterAcceptance_Tests
             "\"BuildingManagementPayOsD04Outbox\""));
         Assert.Single(await db.DepositSettlements.AsNoTracking()
             .Where(x => x.PaymentId == paymentId).ToListAsync());
+
+        // A THIRD independent deposit now crosses a real ASP.NET
+        // authenticated controller request and the REAL SQL-backed writer,
+        // independently persisted review/Owner/Payment/journal/outbox/ACK.
+        // Login remains synthetic test cookies, NOT native ABP/OpenIddict UAT.
+        await D04BHttpToRealPostgreSqlGateway.VerifyAsync(
+            db, staging, buildingId, tenantId, reviewerId, ownerId, authority);
     }
 
     private static async Task<long> CountAsync(

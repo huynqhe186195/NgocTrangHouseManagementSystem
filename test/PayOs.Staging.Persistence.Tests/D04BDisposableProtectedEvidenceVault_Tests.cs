@@ -286,7 +286,11 @@ public sealed class D04BDisposableProtectedEvidenceVault_Tests
 
             disk[^1] ^= 1;
             File.WriteAllBytes(file, disk);
-            Assert.Throws<CryptographicException>(() =>
+            // AES-GCM .NET 10 reports tag failures as the more specific
+            // AuthenticationTagMismatchException : CryptographicException.
+            // xUnit Throws<T> requires an EXACT type match; ThrowsAny<T>
+            // asserts the cryptographic failure and accepts derived types.
+            Assert.ThrowsAny<CryptographicException>(() =>
                 vault.Read(intent, reviewer,
                     receipt.Reference, receipt.DocumentSha256));
         }

@@ -1,8 +1,10 @@
 using System;
+using System.Data;
 using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
 using BuildingManagement.EntityFrameworkCore;
+using BuildingManagement.Payments;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using Volo.Abp.Authorization;
@@ -49,17 +51,23 @@ public sealed class PayOsD04ArchiveBackedManualEvidenceService :
     private readonly IPayOsD04ProtectedBankEvidenceArchive _archive;
     private readonly BuildingManagementDbContext _db;
     private readonly ICurrentUser _currentUser;
+    private readonly PayOsD04StagingDualAuthority _authority;
+    private readonly IPayOsD04TrustedStagingEvidenceReader _staging;
 
     public PayOsD04ArchiveBackedManualEvidenceService(
         IPayOsD04ManualEvidenceService inner,
         IPayOsD04ProtectedBankEvidenceArchive archive,
         BuildingManagementDbContext db,
-        ICurrentUser currentUser)
+        ICurrentUser currentUser,
+        PayOsD04StagingDualAuthority authority,
+        IPayOsD04TrustedStagingEvidenceReader staging)
     {
         _inner = inner ?? throw new ArgumentNullException(nameof(inner));
         _archive = archive ?? throw new ArgumentNullException(nameof(archive));
         _db = db ?? throw new ArgumentNullException(nameof(db));
         _currentUser = currentUser ?? throw new ArgumentNullException(nameof(currentUser));
+        _authority = authority ?? throw new ArgumentNullException(nameof(authority));
+        _staging = staging ?? throw new ArgumentNullException(nameof(staging));
     }
 
     public async Task<Guid> RecordIndependentBankReviewAsync(
@@ -72,6 +80,27 @@ public sealed class PayOsD04ArchiveBackedManualEvidenceService :
             evidence.StatementDocumentBytes is null ||
             evidence.StatementDocumentBytes.Length is < 256 or > 5_242_880)
             throw Denied();
+
+        // Before writing any private file, reject unrelated accounts and
+        // invalid provider references using the LIVE SQL financial reviewer
+        // authority, not the caller's cookie role claim. This precheck is
+        // NOT trusted at money commit: the inner SQL service reacquires and
+        // locks every permission and source again after archival completes.
+        var source = await _staging.ReadCurrentAsync(intentId, ct)
+            ?? throw Denied();
+        if (source.Intent.Status != PayOsPaymentIntentStatus.ConfirmedPendingPosting ||
+            evidence.AmountVnd != source.Intent.AmountVnd ||
+            evidence.BankReference != source.Intent.ProviderReference ||
+            source.Inbox.ProviderReference != source.Intent.ProviderReference)
+            throw Denied();
+
+        await using (var authorizationTx = await _db.Database.BeginTransactionAsync(
+            IsolationLevel.Serializable, ct))
+        {
+            await using var lease = await _authority.AcquireReviewLeaseAsync(
+                source.Intent.BuildingId, reviewer, ct);
+            await authorizationTx.CommitAsync(ct);
+        }
 
         // The request's ProtectedArchiveReference is explicitly IGNORED.
         // Never let callers supply a storage identifier or filesystem path.

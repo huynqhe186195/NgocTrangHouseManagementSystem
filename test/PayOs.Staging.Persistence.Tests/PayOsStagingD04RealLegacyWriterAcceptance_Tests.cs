@@ -626,11 +626,20 @@ public sealed class D04RealLegacyWriterAcceptance_Tests
             (await staging.PayOsPaymentIntents.AsNoTracking()
                 .SingleAsync(x => x.Id == intent.Id)).Status);
 
-        // Exercise real financial read-back -> staging PostgreSQL Posted
-        // transaction -> separate legacy PostgreSQL outbox ACK.
+        // Now test the real failure boundary, not simply a second call
+        // in this same xUnit process. A separate .NET process reads the
+        // committed legacy receipt (staging still Pending), is forcibly
+        // killed by its parent, then a NEW .NET process reconstructs the
+        // production acknowledger and commits ACK from durable SQL only.
+        // A third process must replay that ACK without writing money again.
+        await D04BForcedProcessRecoveryGate.VerifyAsync(intent.Id);
+        db.ChangeTracker.Clear();
+        staging.ChangeTracker.Clear();
+
         var acknowledger = new PayOsD04StagingReceiptAcknowledger(
             staging, new PayOsD04CommittedReceiptStore(db));
-        Assert.Equal(PayOsD04AckOutcome.PostedAndOutboxAcknowledged,
+        // The cross-process recovery already committed the two-DB ACK.
+        Assert.Equal(PayOsD04AckOutcome.RecoveredAlreadyPosted,
             await acknowledger.AcknowledgeAsync(intent.Id));
         staging.ChangeTracker.Clear();
         Assert.Equal(PayOsPaymentIntentStatus.Posted,

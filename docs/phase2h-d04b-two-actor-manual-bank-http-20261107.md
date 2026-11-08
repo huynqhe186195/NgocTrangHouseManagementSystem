@@ -86,3 +86,25 @@ D04-A: ACCEPTED at 1a82efe4 only.
 D04-B: SOURCE IMPLEMENTED / NEW BUILD + PG + HTTP SECURITY EVIDENCE PENDING.
 D04-C: DEFERRED, no production.
 PR #7 stays DRAFT; no merge or migration on operating DB.
+
+## 2026-11-08 — owner-executed isolated PASS at d56e324f (verified)
+
+**Source commit:** `d56e324f8274acec2991193ef4e0f245e29ad5be`.
+**Local evidence folder (owner's Windows PC, not uploaded):**
+`C:\Users\Huynq\NgocTrang-Test-Logs\payos-20261108-131934`.
+
+The owner supplied the terminal result of the one-command isolated runner:
+
+```text
+PASS: 27-legacy-proof-after-repeated-ack
+D04 TWO-DB PROTOCOL REHEARSAL PASS (not financial writer acceptance).
+=== PAYOS D04 LOCAL ISOLATED TEST BUNDLE PASS ===
+SOURCE_COMMIT=d56e324f8274acec2991193ef4e0f245e29ad5be
+LOG_DIRECTORY=C:\Users\Huynq\NgocTrang-Test-Logs\payos-20261108-131934
+No production DB, no live payOS payment, no official D04 posting.
+D04 BUSINESS ACCEPTANCE remains HOLD pending real HTTP/financial writer evidence.
+```
+
+This **supersedes the pre-run test-status wording above** for that precise source commit: isolated bundle PASS and staged three-DB finance writer exercise were invoked by the runner. It does **not** demonstrate full ABP-authenticated reviewer + distinct Owner sessions over HTTP, secure durable statement archive, a real independently verified bank settlement, forced process-kill replay across two workers, least-privilege runtime roles, or CI success. Those items remain OPEN. In particular the D04-B writer test currently uses synthetic in-process current actors and the rehearsed DB identity fixtures, so no business acceptance or operational money posting is authorized.
+
+**Disposition:** D04-A isolated PASS; D04-B disposable engineering checks PASS / BUSINESS HOLD; D04-C deferred. PR #7 stays draft, no production DB, no live payOS, no merge.

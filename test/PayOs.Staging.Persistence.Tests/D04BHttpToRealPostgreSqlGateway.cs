@@ -246,6 +246,18 @@ internal static class D04BHttpToRealPostgreSqlGateway
             Assert.NotEqual(Guid.Empty, bankReviewId);
         }
 
+        // A second, identical review with NO client-supplied archive
+        // reference must be idempotent: the server derives the same immutable
+        // reference from intent/reviewer/file, not from an HTTP field.
+        using (var withoutReference = await PostAsync(client,
+            $"{route}/review/{intentId:D}", reviewerCookie,
+            StatementForm(bankReference, amount, sendReference: false)))
+        {
+            Assert.Equal(HttpStatusCode.Accepted, withoutReference.StatusCode);
+            Assert.Equal(bankReviewId,
+                await ResponseIdAsync(withoutReference, "reviewId"));
+        }
+
         // The real SQL bank review MUST store the SERVER-ISSUED protected
         // reference, not the untrusted multipart form value.
         string storedReference;
@@ -398,7 +410,7 @@ internal static class D04BHttpToRealPostgreSqlGateway
     }
 
     private static MultipartFormDataContent StatementForm(
-        string bankReference, long amount)
+        string bankReference, long amount, bool sendReference = true)
     {
         var document = new byte[512];
         Encoding.ASCII.GetBytes("%PDF-1.7\n").CopyTo(document, 0);
@@ -406,9 +418,11 @@ internal static class D04BHttpToRealPostgreSqlGateway
         content.Add(new StringContent(bankReference), "BankReference");
         content.Add(new StringContent(amount.ToString(
             System.Globalization.CultureInfo.InvariantCulture)), "AmountVnd");
-        // This deliberately untrusted, path-like field MUST be ignored.
-        content.Add(new StringContent("../CLIENT-UNTRUSTED-IGNORE"),
-            "ProtectedArchiveReference");
+        // When present, this deliberately untrusted field MUST be ignored.
+        // Absence is also supported: only the server archive may issue it.
+        if (sendReference)
+            content.Add(new StringContent("../CLIENT-UNTRUSTED-IGNORE"),
+                "ProtectedArchiveReference");
         content.Add(new StringContent("true"),
             "ReviewerAttestsBankStatementMatched");
         var file = new ByteArrayContent(document);

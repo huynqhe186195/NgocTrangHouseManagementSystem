@@ -217,3 +217,19 @@ This confirms that the **new native ABP Identity EF schema / persisted grants / 
 **Test reporting correction only:** `c13b975604f627b355d04277b653b0a68924aca1` changes the `-WriterOnly` PASS caption from ambiguous 'synthetic authority' to 'native ABP Identity EF/SQL authority, synthetic HTTP cookies; NOT business accepted'. No application code, test logic, schema or database configuration changes. One **full guarded disposable bundle run** is now the next regression gate; do not call the full bundle PASS at `ac06f5dc` based solely on this `-WriterOnly` output.
 
 **Decision:** D04-B isolated writer engineering gate PASS at `ac06f5dc`; full isolated regression pending; D04-B BUSINESS ACCEPTANCE **HOLD**, PR #7 Draft, no production database, real payment, official posting or merge.
+
+## 2026-11-08 — owner-verified full D04 isolated bundle PASS at 7249c9f
+
+**Source commit:** `7249c9f20b88332f33fcd2dc91858654c71d6975`. **Owner-reported local Windows logs:** `C:\Users\Huynq\NgocTrang-Test-Logs\payos-20261108-170132` (not uploaded to GitHub). **Evidence supplied verbatim:**
+
+```text
+PASS: 27-legacy-proof-after-repeated-ack
+D04 TWO-DB PROTOCOL REHEARSAL PASS (not financial writer acceptance).
+=== PAYOS D04 LOCAL ISOLATED TEST BUNDLE PASS ===
+SOURCE_COMMIT=7249c9f20b88332f33fcd2dc91858654c71d6975
+LOG_DIRECTORY=C:\Users\Huynq\NgocTrang-Test-Logs\payos-20261108-170132
+No production DB, no live payOS payment, no official D04 posting.
+D04-B BUSINESS ACCEPTANCE remains HOLD: native ABP/OpenIddict login, protected durable independent bank proof, process-kill recovery and least-privilege runtime DB role remain unverified.
+```
+
+**Disposition:** all checks invoked by the guarded isolated local runner at the exact above SHA, including the previously separately confirmed real isolated HTTP-to-financial-writer/ACK and new native ABP Identity EF/SQL authority, completed successfully. This is a **full isolated engineering regression PASS**, not a proof of production ABP/OpenIddict username/password authentication, bank-independent settlement, secured archival retention, process-kill/restart recovery, or least-privilege DB roles. **D04-B business acceptance HOLD; PR #7 remains Draft; no production DB, live payOS, official money posting or merge.**

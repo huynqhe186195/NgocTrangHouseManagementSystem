@@ -635,6 +635,12 @@ public sealed class D04RealLegacyWriterAcceptance_Tests
             (await staging.PayOsPaymentIntents.AsNoTracking()
                 .SingleAsync(x => x.Id == intent.Id)).Status);
 
+        // The crash/recovery process must use purpose-scoped PostgreSQL
+        // accounts, NEVER the postgres superuser used for migrations/seeding.
+        // Those roles may read the immutable committed journal and update
+        // ONLY ACK fields, but cannot modify Payments or signed webhook inbox.
+        await D04BRestrictedAckDatabaseRolesGate.InstallAsync();
+
         // Now test the real failure boundary, not simply a second call
         // in this same xUnit process. A separate .NET process reads the
         // committed legacy receipt (staging still Pending), is forcibly

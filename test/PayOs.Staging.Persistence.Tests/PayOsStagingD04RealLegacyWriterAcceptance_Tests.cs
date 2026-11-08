@@ -772,27 +772,31 @@ public sealed class D04RealLegacyWriterAcceptanceTestModule : AbpModule
         // initializers before the test creates its isolated database.
         context.Services.AddAbpDbContext<NgocTrangHouseManagementSystemDbContext>(
             options => options.AddDefaultRepositories(includeAllEntities: true));
-        // Register the native Identity context using the SAME ABP options
-        // and UnitOfWorkDbContextProvider as production, but inject its
-        // property dependencies explicitly. The native DbContext's assembly
-        // is intentionally outside this narrow test module's DependsOn chain.
-        // ABP Autofac skips implicit property injection for such "orphaned"
-        // assemblies, which leaves LazyServiceProvider NULL and makes
-        // AbpDbContext.UnitOfWorkManager throw NullReferenceException when
-        // UnitOfWorkDbContextProvider<T>.Initialize() is called.
+        // The ABP Identity DbContext lives in a different assembly from
+        // this narrow, deliberately OpenIddict-free acceptance test module.
+        // Its convention-based property injection does NOT run here.
+        // In Volo.Abp.EntityFrameworkCore.AbpDbContext<T> (10.6.1),
+        // UnitOfWorkManager is exactly
+        //   LazyServiceProvider.LazyGetRequiredService<IUnitOfWorkManager>();
+        // IInjectPropertiesService.InjectProperties() did not initialize
+        // this property in the previous test run (NullReferenceException).
         //
-        // IInjectPropertiesService is ABP's supported mechanism for an
-        // object from outside its conventionally scanned module assemblies.
-        // Do NOT restore a full application EF module dependency: it boots
-        // OpenIddict/PermissionManagement before disposable Identity setup.
+        // Supply the REQUIRED public IAbpLazyServiceProvider property
+        // explicitly before ABP's UnitOfWorkDbContextProvider<T>.Initialize.
+        // We retain the real provider/options, DbContext model and UoW,
+        // without booting full OpenIddict/PermissionManagement or weakening
+        // the database/money acceptance assertions.
         context.Services.AddTransient<NgocTrangHouseManagementSystemDbContext>(sp =>
         {
             var identityDb = ActivatorUtilities.CreateInstance<
                 NgocTrangHouseManagementSystemDbContext>(sp);
             try
             {
-                sp.GetRequiredService<IInjectPropertiesService>()
-                    .InjectProperties(identityDb);
+                identityDb.LazyServiceProvider =
+                    sp.GetRequiredService<IAbpLazyServiceProvider>();
+                // Fail at construction with a meaningful dependency error
+                // instead of a delayed null reference inside ABP Initialize.
+                _ = identityDb.UnitOfWorkManager;
                 return identityDb;
             }
             catch

@@ -326,6 +326,30 @@ internal static class D04BHttpToRealPostgreSqlGateway
         }
         finally { File.Move(heldPath, encryptedPath); }
 
+        // A modified encrypted ciphertext/tag is just as unacceptable as a
+        // missing bank statement. This must fail BEFORE financial posting.
+        var intactEnvelope = File.ReadAllBytes(encryptedPath);
+        var corruptedEnvelope = (byte[])intactEnvelope.Clone();
+        corruptedEnvelope[^1] ^= 0x01;
+        File.WriteAllBytes(encryptedPath, corruptedEnvelope);
+        try
+        {
+            using var tamperedProofPost = await PostAsync(client,
+                $"{route}/post/{intentId:D}", ownerCookie);
+            Assert.Equal(HttpStatusCode.Forbidden,
+                tamperedProofPost.StatusCode);
+            db.ChangeTracker.Clear();
+            Assert.Equal(PaymentStatus.Pending,
+                (await db.Payments.AsNoTracking().SingleAsync(
+                    p => p.Id == paymentId)).Status);
+        }
+        finally
+        {
+            File.WriteAllBytes(encryptedPath, intactEnvelope);
+            CryptographicOperations.ZeroMemory(intactEnvelope);
+            CryptographicOperations.ZeroMemory(corruptedEnvelope);
+        }
+
         using (var wrongPost = await PostAsync(client,
             $"{route}/post/{intentId:D}", reviewerCookie))
             Assert.Equal(HttpStatusCode.Forbidden, wrongPost.StatusCode);

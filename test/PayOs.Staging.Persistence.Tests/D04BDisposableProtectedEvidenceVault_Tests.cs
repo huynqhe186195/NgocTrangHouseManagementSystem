@@ -250,7 +250,7 @@ public sealed class D04BDisposableProtectedEvidenceVault_Tests
 
             using (var wrongKey = new D04BDisposableProtectedEvidenceVault(
                 root, RandomNumberGenerator.GetBytes(32)))
-                Assert.Throws<FileNotFoundException>(() =>
+                Assert.Throws<InvalidDataException>(() =>
                     wrongKey.Read(id, reviewer,
                         receipt.Reference, receipt.DocumentSha256));
 

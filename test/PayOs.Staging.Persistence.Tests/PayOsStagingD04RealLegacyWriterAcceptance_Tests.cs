@@ -25,6 +25,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Moq;
 using NgocTrangHouseManagementSystem.Payments;
+using NgocTrangHouseManagementSystem.EntityFrameworkCore;
+using Volo.Abp.Identity;
 using Npgsql;
 using Volo.Abp.Authorization;
 using Volo.Abp;
@@ -293,7 +295,7 @@ public sealed class D04RealLegacyWriterAcceptance_Tests
 
         // D04-B checks actual SHARE locks against separate disposable
         // Identity and Building schemas (NOT mocked authorization).
-        await VerifyD04BIdentityLeaseAsync(db, b, t, actor, owner);
+        await VerifyD04BIdentityLeaseAsync(scope.ServiceProvider, db, b, t, actor, owner);
         await uow.CompleteAsync();
     }
 
@@ -303,42 +305,38 @@ public sealed class D04RealLegacyWriterAcceptance_Tests
         "Username=postgres;Password=disposable-only;Pooling=false;Timeout=5";
 
     private static async Task VerifyD04BIdentityLeaseAsync(
-        BuildingManagementDbContext db, Guid buildingId, Guid tenantId,
-        Guid bankReviewer, Guid owner)
+        IServiceProvider services, BuildingManagementDbContext db,
+        Guid buildingId, Guid tenantId, Guid bankReviewer, Guid owner)
     {
-        // These are isolated SQL-shaped ABP Identity fixture tables.
-        // They are NOT a substitute for native Identity migration/HTTP UAT.
+        // Native ABP Identity + Permission Management *EF model* creates
+        // the tables in its own disposable database, not a shortened
+        // hand-written schema. Seed real Identity aggregates under ABP DI
+        // so auditing/EF concurrency stamps and required fields are valid.
+        // Login sessions are still synthetic test cookies, so this does
+        // NOT prove native OpenIddict/ABP password authentication.
+        var identityDb = await services
+            .GetRequiredService<IDbContextProvider<NgocTrangHouseManagementSystemDbContext>>()
+            .GetDbContextAsync();
+        Assert.True(await identityDb.Database.EnsureCreatedAsync());
+        var role = Guid.NewGuid();
+        var reviewerAccount = new IdentityUser(bankReviewer,
+            "d04b-review-" + bankReviewer.ToString("N"),
+            "d04b-review-" + bankReviewer.ToString("N") + "@example.test");
+        var ownerAccount = new IdentityUser(owner,
+            "d04b-owner-" + owner.ToString("N"),
+            "d04b-owner-" + owner.ToString("N") + "@example.test");
+        identityDb.Users.AddRange(reviewerAccount, ownerAccount);
+        identityDb.Roles.Add(new IdentityRole(role, "Owner"));
+        await identityDb.SaveChangesAsync();
+
+        // Grant membership and two *direct* financial permissions against
+        // the REAL EF-generated AbpUserRoles / AbpPermissionGrants schema.
+        // Direct SQL keeps this test independent of any Admin permission
+        // seeding and avoids granting blanket privileges to a root user.
         await using (var identity = new NpgsqlConnection(IdentityConnection))
         {
             await identity.OpenAsync();
-            await using var schema = new NpgsqlCommand("""
-                CREATE TABLE "AbpUsers"(
-                    "Id" uuid PRIMARY KEY, "TenantId" uuid NULL,
-                    "IsDeleted" boolean NOT NULL, "IsActive" boolean NOT NULL,
-                    "LockoutEnabled" boolean NOT NULL,
-                    "LockoutEnd" timestamptz NULL);
-                CREATE TABLE "AbpPermissionGrants"(
-                    "Id" uuid PRIMARY KEY, "TenantId" uuid NULL,
-                    "ProviderName" text NOT NULL,
-                    "ProviderKey" text NOT NULL,
-                    "Name" text NOT NULL);
-                CREATE TABLE "AbpRoles"(
-                    "Id" uuid PRIMARY KEY, "TenantId" uuid NULL,
-                    "Name" text NOT NULL, "IsDeleted" boolean NOT NULL);
-                CREATE TABLE "AbpUserRoles"(
-                    "UserId" uuid NOT NULL, "RoleId" uuid NOT NULL,
-                    PRIMARY KEY("UserId","RoleId"));
-                """, identity);
-            await schema.ExecuteNonQueryAsync();
-
-            var role = Guid.NewGuid();
             await using var seed = new NpgsqlCommand("""
-                INSERT INTO "AbpUsers"(
-                    "Id","IsDeleted","IsActive","LockoutEnabled")
-                VALUES (@reviewer,FALSE,TRUE,TRUE),
-                       (@owner,FALSE,TRUE,TRUE);
-                INSERT INTO "AbpRoles"("Id","Name","IsDeleted")
-                VALUES(@role,'Owner',FALSE);
                 INSERT INTO "AbpUserRoles"("UserId","RoleId")
                 VALUES(@owner,@role);
                 INSERT INTO "AbpPermissionGrants"(
@@ -346,7 +344,6 @@ public sealed class D04RealLegacyWriterAcceptance_Tests
                 VALUES(@grant1,'U',@reviewerKey,@reviewPermission),
                       (@grant2,'U',@ownerKey,@ownerPermission);
                 """, identity);
-            seed.Parameters.AddWithValue("reviewer", bankReviewer);
             seed.Parameters.AddWithValue("owner", owner);
             seed.Parameters.AddWithValue("role", role);
             seed.Parameters.AddWithValue("grant1", Guid.NewGuid());
@@ -734,7 +731,7 @@ public sealed class D04RealLegacyWriterAcceptance_Tests
     }
 }
 
-[DependsOn(typeof(BuildingManagementEntityFrameworkCoreModule))]
+[DependsOn(typeof(NgocTrangHouseManagementSystemEntityFrameworkCoreModule))]
 public sealed class D04RealLegacyWriterAcceptanceTestModule : AbpModule
 {
     public override void ConfigureServices(ServiceConfigurationContext context)
@@ -751,10 +748,13 @@ public sealed class D04RealLegacyWriterAcceptanceTestModule : AbpModule
                 "D04 ABP integration fixture refuses non-disposable database.");
 
         var connection = D04RealLegacyWriterAcceptance_Tests.Connection;
+        var identityConnection =
+            "Host=127.0.0.1;Port=15432;Database=payos_d04_identity_test;" +
+            "Username=postgres;Password=disposable-only;Pooling=false;Timeout=5";
         Configure<AbpClockOptions>(options => options.Kind = DateTimeKind.Utc);
         Configure<AbpDbConnectionOptions>(options =>
         {
-            options.ConnectionStrings.Default = connection;
+            options.ConnectionStrings.Default = identityConnection;
             options.ConnectionStrings[BuildingManagementDbProperties.ConnectionStringName] =
                 connection;
         });

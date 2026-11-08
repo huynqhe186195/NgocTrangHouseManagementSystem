@@ -160,3 +160,13 @@ to ChatGPT/GitHub. No payment should be made yet.
   writer role and real independent bank evidence: **HOLD**.
 - Business acceptance: **HOLD**. No merge, no production deployment,
   no live merchant transactions.
+
+## 2026-11-08 20:29 local 19a crash-probe first failure — no child stderr previously captured
+
+Owner ran the single guarded local bundle on `feat/d04b-operational-gates-20261108`. The first failing step was `19a-real-legacy-writer-acceptance`, TRX `payos-20261108-202943\\payos-d04-real-writer.trx`, one failing test `D04A_REAL01_Approved_ContractDeposit_Writes_One_Payment_Allocation_Receipt_And_Outbox`. This failure reached `D04BForcedProcessRecoveryGate.VerifyAsync` line 34: xUnit expected `D04_PROCESS_BARRIER_COMMITTED_UNACKNOWLEDGED` but the child `Process.StandardOutput.ReadLineAsync` returned **null (EOF)**. The child process ended before the barrier; no child standard-error data or exit code was preserved by the old assertion. Earlier archive, compile, and restricted database-role setup gates had already progressed far enough to invoke this new crash probe, but neither subprocess ACK nor full suite PASS can be claimed.
+
+**Root cause is not yet proved.** The pre-barrier subprocess may fail when connecting as `d04_ack_legacy_test` / `d04_ack_staging_test`, when building its independent EF context, or when reading the committed journal; an empty standard-output line does not identify which. Do not assert a particular Npgsql/ABP exception without collecting standard-error and exit code.
+
+**Diagnostic test-harness fixes (not production changes):** commit `7256c2eb42c79fb8b4640b18b911659ba8767d1b` begins draining child standard-error at process start, reports its exit code and stderr if no exact committed barrier, and kills only the explicitly launched child; commit `0f1cf6f2c020d30b78fc0c43898f6edd8b99e32b` adds nonsecret child progress markers `READ_COMMITTED_JOURNAL`, `READ_STAGING_INTENT`, `ACKNOWLEDGE_FROM_FRESH_PROCESS` to stderr while preserving the exact stdout barrier requirement. On a repeat failure, the first `19a` xUnit error MUST now include the actual subprocess error/SQLSTATE or loader exception. This fixes lost diagnostic evidence; **it does not by itself prove the subprocess works**.
+
+Do not touch production, disable the forced-kill assertion, or bypass restricted roles to obtain green. The source `66a62dc1` remains the verified isolated baseline; new PR #9 is draft and **HOLD** until the independently started process proves committed-journal ACK recovery and idempotent replay. One guarded isolated run after `git pull --ff-only` is needed for updated evidence.

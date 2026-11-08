@@ -88,7 +88,13 @@ public sealed class PayOsStagingD04BAuthenticatedHttpBoundary_Tests
         builder.Services.AddAuthorization();
         // Register ONLY the guarded D04 controller; unrelated Host controllers
         // are not activated in this isolated middleware acceptance fixture.
-        builder.Services.AddControllers().ConfigureApplicationPartManager(parts =>
+        // This test assembly is the ASP.NET entry assembly. The actual D04
+        // controller is compiled in HttpApi.Host; without an explicit
+        // ApplicationPart MVC discovers zero D04 routes and every request
+        // returns 404 before [Authorize] can challenge an anonymous caller.
+        builder.Services.AddControllers()
+            .AddApplicationPart(typeof(PayOsD04StagingReviewController).Assembly)
+            .ConfigureApplicationPartManager(parts =>
         {
             foreach (var feature in parts.FeatureProviders
                 .OfType<ControllerFeatureProvider>().ToArray())

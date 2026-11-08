@@ -497,7 +497,7 @@ internal static class D04BHttpToRealPostgreSqlGateway
             var inner = new PayOsD04ManualEvidenceService(
                 _db, StagingReader(), _authority, actor);
             return new PayOsD04ArchiveBackedManualEvidenceService(
-                inner, _archive, _db, actor);
+                inner, _archive, _db, actor, _authority, StagingReader());
         }
 
         public Task<Guid> RecordIndependentBankReviewAsync(

@@ -15,6 +15,7 @@ using BuildingManagement.DepositSettlements;
 using BuildingManagement.EntityFrameworkCore;
 using BuildingManagement.EntityFrameworkCore.PayOsMigrations;
 using BuildingManagement.Payments;
+using BuildingManagement.Payments.BuildingManagement.Payments;
 using BuildingManagement.Rooms;
 using BuildingManagement.Tenants;
 using Microsoft.AspNetCore.Authentication;

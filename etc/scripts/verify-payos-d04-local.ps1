@@ -13,14 +13,16 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 # The second branch contains the archive-backed D04 acceptance suite.
 $allowedBranches = @(
     'feat/phase2h-payos-signature-foundation-20261106',
-    'feat/d04b-protected-bank-evidence-20261108'
+    'feat/d04b-protected-bank-evidence-20261108',
+    'feat/d04b-operational-gates-20261108'
 )
 $containerId = ''
 $logRoot = ''
 $oldEnv = @{}
 foreach ($name in @('BM_PAYOS_EF_TEST_DB', 'BM_PAYOS_EF_TEST_PASSWORD',
                     'BM_PAYOS_EF_TEST_PORT', 'BM_INVOICE_MIGRATION_OFFLINE',
-                    'BM_PAYOS_D04_REAL_WRITER_TEST_DB')) {
+                    'BM_PAYOS_D04_REAL_WRITER_TEST_DB',
+                    'BM_PAYOS_D04_PROCESS_PROBE_DLL')) {
     $oldEnv[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
 }
 
@@ -251,6 +253,8 @@ try {
     $efProject = 'modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/BuildingManagement.EntityFrameworkCore.csproj'
     $httpProject = 'src/NgocTrangHouseManagementSystem.HttpApi.Host/NgocTrangHouseManagementSystem.HttpApi.Host.csproj'
     $pgTests = 'test/PayOs.Staging.Persistence.Tests/PayOs.Staging.Persistence.Tests.csproj'
+    $probeProject = 'test/PayOs.D04.ProcessRecovery.Probe/PayOs.D04.ProcessRecovery.Probe.csproj'
+    $probeDll = Join-Path $root 'test/PayOs.D04.ProcessRecovery.Probe/bin/Release/net10.0/PayOs.D04.ProcessRecovery.Probe.dll'
 
     # The narrow build gate performs NO tests, EF migration or database work.
     # Compile each D04-involved project before requiring the full suite.
@@ -260,6 +264,8 @@ try {
         Invoke-Logged '03-ef-build' 'dotnet' @('build', $efProject, '-c', 'Release')
         Invoke-Logged '04-http-build' 'dotnet' @('build', $httpProject, '-c', 'Release')
         Invoke-Logged '04a-staging-test-compile' 'dotnet' @('build', $pgTests, '-c', 'Release')
+        Invoke-Logged '04c-process-recovery-probe-build' 'dotnet' @(
+            'build', $probeProject, '-c', 'Release')
         Write-Host '=== PAYOS D04 BUILD ONLY PASS: no tests, database, Docker or EF migration used ===' -ForegroundColor Green
         Write-Host "SOURCE_COMMIT=$sha"
         Write-Host "LOG_DIRECTORY=$logRoot"
@@ -319,6 +325,17 @@ try {
         '.\etc\scripts\review-payos-ef-migration.ps1')
     [Environment]::SetEnvironmentVariable('BM_INVOICE_MIGRATION_OFFLINE',$null,'Process')
     }
+
+    # Compile a standalone recovery PROCESS before touching any database.
+    # The 19a test kills only its own child and launches a fresh child
+    # using production ACK logic against the disposable PostgreSQL DBs.
+    Invoke-Logged '04c-process-recovery-probe-build' 'dotnet' @(
+        'build', $probeProject, '-c', 'Release')
+    if (-not (Test-Path -LiteralPath $probeDll)) {
+        throw "Missing compiled D04 recovery process probe: $probeDll"
+    }
+    [Environment]::SetEnvironmentVariable('BM_PAYOS_D04_PROCESS_PROBE_DLL',
+        $probeDll, 'Process')
 
     # A new isolated database container, not the existing NgocTrang postgres.
     # Loopback-only binding and different local port prevent touching 5432.

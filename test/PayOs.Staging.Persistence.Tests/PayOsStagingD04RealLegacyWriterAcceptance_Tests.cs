@@ -308,44 +308,57 @@ public sealed class D04RealLegacyWriterAcceptance_Tests
         IServiceProvider services, BuildingManagementDbContext db,
         Guid buildingId, Guid tenantId, Guid bankReviewer, Guid owner)
     {
-        // Native ABP Identity + Permission Management *EF model* creates
-        // the tables in its own disposable database, not a shortened
-        // hand-written schema. Seed real Identity aggregates under ABP DI
-        // so auditing/EF concurrency stamps and required fields are valid.
-        // Login sessions are still synthetic test cookies, so this does
-        // NOT prove native OpenIddict/ABP password authentication.
+        // Use the FULL native ABP Identity/Permission EF model on the
+        // separate disposable PostgreSQL database, not four hand-written
+        // tables. ABP Identity managers create normalized users and the
+        // persisted Owner role/membership under the real runtime model.
+        // Login sessions remain signed synthetic test cookies, so native
+        // OpenIddict/ABP interactive login is not yet proven.
         var identityDb = await services
             .GetRequiredService<IDbContextProvider<NgocTrangHouseManagementSystemDbContext>>()
             .GetDbContextAsync();
         Assert.True(await identityDb.Database.EnsureCreatedAsync());
         var role = Guid.NewGuid();
-        var reviewerAccount = new IdentityUser(bankReviewer,
-            "d04b-review-" + bankReviewer.ToString("N"),
-            "d04b-review-" + bankReviewer.ToString("N") + "@example.test");
-        var ownerAccount = new IdentityUser(owner,
-            "d04b-owner-" + owner.ToString("N"),
-            "d04b-owner-" + owner.ToString("N") + "@example.test");
-        identityDb.Users.AddRange(reviewerAccount, ownerAccount);
-        identityDb.Roles.Add(new IdentityRole(role, "Owner"));
-        await identityDb.SaveChangesAsync();
+        using (var identityUow = services.GetRequiredService<IUnitOfWorkManager>()
+            .Begin(requiresNew: true, isTransactional: true))
+        {
+            var users = services.GetRequiredService<IdentityUserManager>();
+            var roles = services.GetRequiredService<IdentityRoleManager>();
+            var reviewerAccount = new IdentityUser(bankReviewer,
+                "d04b-review-" + bankReviewer.ToString("N"),
+                "d04b-review-" + bankReviewer.ToString("N") + "@example.test");
+            var ownerAccount = new IdentityUser(owner,
+                "d04b-owner-" + owner.ToString("N"),
+                "d04b-owner-" + owner.ToString("N") + "@example.test");
+            var reviewerCreated = await users.CreateAsync(reviewerAccount);
+            Assert.True(reviewerCreated.Succeeded,
+                string.Join("; ", reviewerCreated.Errors.Select(e => e.Description)));
+            var ownerCreated = await users.CreateAsync(ownerAccount);
+            Assert.True(ownerCreated.Succeeded,
+                string.Join("; ", ownerCreated.Errors.Select(e => e.Description)));
+            var roleCreated = await roles.CreateAsync(
+                new IdentityRole(role, "Owner"));
+            Assert.True(roleCreated.Succeeded,
+                string.Join("; ", roleCreated.Errors.Select(e => e.Description)));
+            var joined = await users.AddToRoleAsync(ownerAccount, "Owner");
+            Assert.True(joined.Succeeded,
+                string.Join("; ", joined.Errors.Select(e => e.Description)));
+            await identityUow.CompleteAsync();
+        }
 
-        // Grant membership and two *direct* financial permissions against
-        // the REAL EF-generated AbpUserRoles / AbpPermissionGrants schema.
-        // Direct SQL keeps this test independent of any Admin permission
-        // seeding and avoids granting blanket privileges to a root user.
+        // Two direct-user financial grants are the only accepted permissions
+        // for this opt-in acceptance pilot; no root/admin/role fallback.
+        // Seed on the REAL EF-generated Permission Management table and
+        // independently exercise the commit-bound SQL SHARE locks.
         await using (var identity = new NpgsqlConnection(IdentityConnection))
         {
             await identity.OpenAsync();
             await using var seed = new NpgsqlCommand("""
-                INSERT INTO "AbpUserRoles"("UserId","RoleId")
-                VALUES(@owner,@role);
                 INSERT INTO "AbpPermissionGrants"(
                     "Id","ProviderName","ProviderKey","Name")
                 VALUES(@grant1,'U',@reviewerKey,@reviewPermission),
                       (@grant2,'U',@ownerKey,@ownerPermission);
                 """, identity);
-            seed.Parameters.AddWithValue("owner", owner);
-            seed.Parameters.AddWithValue("role", role);
             seed.Parameters.AddWithValue("grant1", Guid.NewGuid());
             seed.Parameters.AddWithValue("grant2", Guid.NewGuid());
             seed.Parameters.AddWithValue("reviewerKey", bankReviewer.ToString("D"));

@@ -4,6 +4,49 @@
 
 No real payOS funds, production database, production schema or auto-worker has been activated.
 
+## 2026-11-08 continuation -- integrated disposable three-DB test and controller guard
+
+- The **second** D04-B ContractDeposit test now persists the signed/reconciled
+  intent and inbox in `payos_ef_migration_test` using the reviewed isolated
+  payOS EF migration. It no longer supplies the second financial writer
+  with an in-memory staging reader.
+- The same D04-B test still uses only **synthetic** document bytes and mocked
+  `ICurrentUser` principals, but checks real PostgreSQL Identity grant/Owner
+  role/Building membership locks, actual legacy Payment and settlement, real
+  committed receipt/outbox readback, a separate staging `Posted` transaction,
+  durable outbox ACK, duplicate-safe replay and coordinator denial for the
+  wrong signed-in actor.
+- An independent GitHub Actions job
+  `d04b-three-database-posting` creates fresh isolated PostgreSQL 16
+  `payos_d04_identity_test`, `payos_d04_legacy_test` and
+  `payos_ef_migration_test` databases and attempts the same test. Its
+  `BM_PAYOS_*` variables are fixed to loopback port 15432 and
+  `disposable-only`; it cannot reach an operating database.
+- D04-B Controller now separately validates the exact triple-database names,
+  credentials and port before dispatch, in addition to the original Host
+  DI guard. Regression tests reject a wrong Building DB or enabled payOS
+  merchant mode even if a service was injected.
+- **Not yet verified**: no successful compile/TRX on this new source SHA is
+  available. GitHub Actions reports failures with missing job-step details
+  and unavailable job-log blobs, so the signal is **unusable for code-level
+  diagnosis**, not evidence that a specific test failed.
+- **Still HOLD**: actual ABP-authenticated two-session HTTP end-to-end UAT,
+  protected durable banking-document archival and audit readback, independent
+  process-kill recovery, and least-privilege DB security acceptance. No new
+  bank statement should be uploaded to this disposable pilot.
+
+**One-command full local bundle (after fast-forwarding this exact branch):**
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\etc\scripts\verify-payos-d04-local.ps1
+```
+
+The runner checks the branch/remote SHA and clean tracked source, compiles
+before launching its **own** temporary PG16 container and removes the
+container after the run. A green TRX for this HEAD is a prerequisite to
+claiming even isolated engineering acceptance; it is not authenticated
+HTTP business acceptance.
+
 ## Implemented source and fail-closed boundaries
 
 1. Two new independent permission constants: BuildingManagementPermissions.Payments.ReviewBankEvidence and ApproveD04Posting, translated in en/vi. No role assignment, seed, or blanket ManageContract/Building authority.

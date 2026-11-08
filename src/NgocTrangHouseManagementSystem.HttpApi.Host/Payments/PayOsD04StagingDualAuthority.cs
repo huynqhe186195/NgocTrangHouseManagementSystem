@@ -223,12 +223,31 @@ public sealed class PayOsD04StagingDualAuthority : IPayOsD04CurrentDualAuthority
         => cs.Host is ("127.0.0.1" or "localhost") &&
            cs.Port == 15432 &&
            string.Equals(cs.Database, name, StringComparison.Ordinal) &&
-           string.Equals(cs.Username, "postgres", StringComparison.Ordinal);
+           (string.Equals(cs.Username, "postgres", StringComparison.Ordinal) ||
+            (name == "payos_d04_identity_test" &&
+             string.Equals(cs.Username, "d04_identity_guard_test",
+                 StringComparison.Ordinal)));
+
+    private static bool IsTestFunctionOnlyIdentityRole(NpgsqlConnection conn) =>
+        string.Equals(
+            new NpgsqlConnectionStringBuilder(conn.ConnectionString).Username,
+            "d04_identity_guard_test", StringComparison.Ordinal);
 
     private static async Task LockActiveAccountAsync(
         NpgsqlConnection conn, NpgsqlTransaction tx, Guid actor,
         CancellationToken cancellationToken)
     {
+        if (IsTestFunctionOnlyIdentityRole(conn))
+        {
+            // SECURITY DEFINER function retains the same real SHARE lock
+            // but a restricted role gets no direct Identity table writes.
+            await using var secure = new NpgsqlCommand(
+                "SELECT public.d04_test_lock_active_account(@actor)", conn, tx);
+            secure.Parameters.AddWithValue("actor", actor);
+            if (await secure.ExecuteScalarAsync(cancellationToken) is not true)
+                throw Denied();
+            return;
+        }
         await using var cmd = new NpgsqlCommand("""
             SELECT "Id" FROM "AbpUsers"
              WHERE "Id"=@actor AND "IsDeleted"=FALSE AND "IsActive"=TRUE
@@ -245,6 +264,17 @@ public sealed class PayOsD04StagingDualAuthority : IPayOsD04CurrentDualAuthority
         NpgsqlConnection conn, NpgsqlTransaction tx, Guid actor,
         string permission, CancellationToken cancellationToken)
     {
+        if (IsTestFunctionOnlyIdentityRole(conn))
+        {
+            await using var secure = new NpgsqlCommand(
+                "SELECT public.d04_test_lock_direct_grant(@actor,@permission)",
+                conn, tx);
+            secure.Parameters.AddWithValue("actor", actor);
+            secure.Parameters.AddWithValue("permission", permission);
+            if (await secure.ExecuteScalarAsync(cancellationToken) is not true)
+                throw Denied();
+            return;
+        }
         // Direct 'U' grant only for this disposable acceptance pilot.
         // No broad Root/Admin/ManageContract permission fallback.
         await using var cmd = new NpgsqlCommand("""
@@ -268,6 +298,15 @@ public sealed class PayOsD04StagingDualAuthority : IPayOsD04CurrentDualAuthority
         NpgsqlConnection conn, NpgsqlTransaction tx, Guid owner,
         CancellationToken cancellationToken)
     {
+        if (IsTestFunctionOnlyIdentityRole(conn))
+        {
+            await using var secure = new NpgsqlCommand(
+                "SELECT public.d04_test_lock_owner_role(@owner)", conn, tx);
+            secure.Parameters.AddWithValue("owner", owner);
+            if (await secure.ExecuteScalarAsync(cancellationToken) is not true)
+                throw Denied();
+            return;
+        }
         // ABP Identity 10.6 maps AbpRoles WITHOUT an IsDeleted column.
         // Require an actual persisted Owner role and user-role membership,
         // plus matching tenant and SHARE locks; never trust a role claim.

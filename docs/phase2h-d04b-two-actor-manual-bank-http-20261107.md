@@ -114,3 +114,24 @@ This **supersedes the pre-run test-status wording above** for that precise sourc
 The latest branch changes add an in-memory `Microsoft.AspNetCore.TestHost` server, actual ASP.NET cookie authentication middleware with separate reviewer/Owner/unrelated synthetic **test** sessions, and HTTP POST calls to the real `PayOsD04StagingReviewController` actions. It asserts that unauthenticated requests are challenged; reviewer-only bank-review route succeeds; Owner may approve and post; reviewer self-approval, reviewer post and unrelated user post are forbidden; changing Building database to a non-disposable name shuts the endpoint with HTTP 404. An explicit TRX assertion in `verify-payos-d04-local.ps1` requires test `D04B_HTTP01_Distinct_authenticated_sessions_reach_only_their_allowed_routes` to PASS, not merely a green unrelated suite.
 
 **Strict scope:** the server is an isolated test-only cookie issuer, and the handler is backed by purpose-built fake downstream services. It neither logs into real ABP Identity nor creates an actual payment. The preceding `d56e324f` PASS remains valid **only for that earlier source commit**. The new HEAD must be compiled and tested with the same owner-executed isolated one-command suite. A pass of HTTP01 proves only controller routing/auth/session/flag behavior; it CANNOT close the required *native ABP-login + real 3-DB financial writer over HTTP* acceptance gate. A secured durable bank document store, process-kill ACK recovery, least privilege and independent bank verification also remain blocking. PR stays draft.
+
+## 2026-11-08 — owner-executed isolated PASS at adab9fcc
+
+**Source commit:** `adab9fcc558c9fad51c349c85530cbd2c43f22fc`.
+**Owner's Windows log folder:** `C:\Users\Huynq\NgocTrang-Test-Logs\payos-20261108-140919` (not uploaded to this PR).
+
+Owner reported the terminal acceptance marker:
+
+```text
+PASS: 27-legacy-proof-after-repeated-ack
+D04 TWO-DB PROTOCOL REHEARSAL PASS (not financial writer acceptance).
+=== PAYOS D04 LOCAL ISOLATED TEST BUNDLE PASS ===
+SOURCE_COMMIT=adab9fcc558c9fad51c349c85530cbd2c43f22fc
+LOG_DIRECTORY=C:\Users\Huynq\NgocTrang-Test-Logs\payos-20261108-140919
+No production DB, no live payOS payment, no official D04 posting.
+D04 BUSINESS ACCEPTANCE remains HOLD pending real HTTP/financial writer evidence.
+```
+
+This newer PASS supersedes the preceding *new HEAD not yet tested* statement for **that precise commit**: the early `04b-d04-authenticated-http-preflight` and the subsequent required D04B_HTTP01 TRX assertion are inside the script that completed. This is ASP.NET TestServer cookie-authenticated **synthetic downstream** evidence, not a production ABP password/OpenIddict login nor an authenticated HTTP request reaching the actual financial writer on three databases. The independently tested SQL-backed writer and real acknowledgement flow remain in separate tests. Combining the two suites into real multi-actor ABP HTTP/SQL UAT, secure bank archive, process-kill recovery and least-privilege roles remains OPEN.
+
+**Gate decision:** isolated engineering test bundle PASS for adab9fcc; D04-B BUSINESS HOLD, D04-C not activated, no real money, production migration or PR merge.

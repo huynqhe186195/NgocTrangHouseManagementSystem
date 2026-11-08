@@ -10,6 +10,7 @@ using BuildingManagement.Contracts;
 using BuildingManagement.DepositSettlements;
 using BuildingManagement.Permissions;
 using BuildingManagement.EntityFrameworkCore;
+using BuildingManagement.EntityFrameworkCore.PayOsMigrations;
 using BuildingManagement.Floors;
 using BuildingManagement.Migrations;
 using BuildingManagement.Payments;
@@ -462,6 +463,15 @@ public sealed class D04RealLegacyWriterAcceptance_Tests
         Guid reviewerId, Guid ownerId,
         PayOsD04StagingDualAuthority authority)
     {
+        // The second D04-B source is now persisted in the REAL third,
+        // disposable payOS PostgreSQL database, not a synthetic in-memory
+        // reader. WriterOnly starts with an empty staging DB, while the full
+        // bundle may already have applied the isolated payOS EF migration.
+        // MigrateAsync is idempotent and never targets the canonical DB.
+        await using var staging = new PayOsPaymentMigrationDbContextFactory()
+            .CreateDbContext(Array.Empty<string>());
+        await staging.Database.MigrateAsync();
+
         var floor = await db.Floors.AsNoTracking()
             .SingleAsync(x => x.BuildingId == buildingId);
         var roomId = Guid.NewGuid();
@@ -497,7 +507,12 @@ public sealed class D04RealLegacyWriterAcceptance_Tests
             Guid.NewGuid(), buildingId, intent.Id, intent.OrderCode,
             bankReference, new string('d', 64), now.AddMinutes(-4));
         inbox.MarkReconciled(now.AddMinutes(-3));
-        var staged = new SyntheticSignedStagingEvidenceReader(intent, inbox);
+        staging.PayOsPaymentIntents.Add(intent);
+        staging.PayOsWebhookInbox.Add(inbox);
+        await staging.SaveChangesAsync();
+        staging.ChangeTracker.Clear();
+        var staged = new PayOsD04TrustedStagingEvidenceReader(staging);
+        Assert.NotNull(await staged.ReadCurrentAsync(intent.Id, CancellationToken.None));
 
         var reviewer = new Mock<Volo.Abp.Users.ICurrentUser>();
         reviewer.SetupGet(x => x.IsAuthenticated).Returns(true);
@@ -586,8 +601,41 @@ public sealed class D04RealLegacyWriterAcceptance_Tests
             "\"BuildingManagementPayOsD04ReceiptJournal\""));
         Assert.Equal(2L, await CountAsync(db,
             "\"BuildingManagementPayOsD04Outbox\""));
+        // A committed legacy receipt alone MUST NOT mark the payOS intent
+        // Posted. This is a genuine separate-database read, not a field on
+        // the original in-memory PayOsPaymentIntent.
         Assert.Equal(PayOsPaymentIntentStatus.ConfirmedPendingPosting,
-            intent.Status);
+            (await staging.PayOsPaymentIntents.AsNoTracking()
+                .SingleAsync(x => x.Id == intent.Id)).Status);
+
+        // Exercise real financial read-back -> staging PostgreSQL Posted
+        // transaction -> separate legacy PostgreSQL outbox ACK.
+        var acknowledger = new PayOsD04StagingReceiptAcknowledger(
+            staging, new PayOsD04CommittedReceiptStore(db));
+        Assert.Equal(PayOsD04AckOutcome.PostedAndOutboxAcknowledged,
+            await acknowledger.AcknowledgeAsync(intent.Id));
+        staging.ChangeTracker.Clear();
+        Assert.Equal(PayOsPaymentIntentStatus.Posted,
+            (await staging.PayOsPaymentIntents.AsNoTracking()
+                .SingleAsync(x => x.Id == intent.Id)).Status);
+
+        var acknowledged = await new PayOsD04CommittedReceiptStore(db)
+            .ReadCommittedAsync(intent.Id, CancellationToken.None);
+        Assert.NotNull(acknowledged);
+        Assert.True(acknowledged.OutboxAcknowledged);
+        Assert.Equal(posted.ReceiptId, acknowledged.Proof.ReceiptId);
+
+        // A second real ACK is read-only with respect to payment,
+        // settlement, journal and outbox; there is no second money entry.
+        Assert.Equal(PayOsD04AckOutcome.RecoveredAlreadyPosted,
+            await acknowledger.AcknowledgeAsync(intent.Id));
+        db.ChangeTracker.Clear();
+        Assert.Equal(2L, await CountAsync(db,
+            "\"BuildingManagementPayOsD04ReceiptJournal\""));
+        Assert.Equal(2L, await CountAsync(db,
+            "\"BuildingManagementPayOsD04Outbox\""));
+        Assert.Single(await db.DepositSettlements.AsNoTracking()
+            .Where(x => x.PaymentId == paymentId).ToListAsync());
     }
 
     private static async Task<long> CountAsync(

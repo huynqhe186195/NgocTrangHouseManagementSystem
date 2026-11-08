@@ -197,8 +197,9 @@ internal sealed class D04BDisposableProtectedEvidenceVault :
             return Task.FromResult(true);
         }
         catch (Exception error) when (
-            error is IOException or UnauthorizedAccessException or
-            CryptographicException or ArgumentException)
+            error is IOException or InvalidDataException or
+            UnauthorizedAccessException or CryptographicException or
+            ArgumentException)
         {
             return Task.FromResult(false);
         }

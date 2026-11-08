@@ -2,6 +2,9 @@ using System;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+using NgocTrangHouseManagementSystem.Payments;
 using Xunit;
 
 namespace NgocTrangHouseManagementSystem.PayOs.Staging.Tests;
@@ -17,7 +20,8 @@ namespace NgocTrangHouseManagementSystem.PayOs.Staging.Tests;
 /// choosing a storage path. Files are immutable, atomically renamed inside
 /// one scratch directory, and verified on duplicate submission/readback.
 /// </summary>
-internal sealed class D04BDisposableProtectedEvidenceVault : IDisposable
+internal sealed class D04BDisposableProtectedEvidenceVault :
+    IPayOsD04ProtectedBankEvidenceArchive, IDisposable
 {
     private const string Prefix = "d04vault1:";
     private const int TagLength = 16;
@@ -159,6 +163,44 @@ internal sealed class D04BDisposableProtectedEvidenceVault : IDisposable
         {
             CryptographicOperations.ZeroMemory(document);
             throw;
+        }
+    }
+
+    // This is a local test adapter for the staging-only archive facade.
+    // A real production archive must implement durability, access control
+    // and managed key rotation separately; no Host DI binds this vault.
+    public Task<PayOsD04ProtectedBankEvidenceReceipt> StoreAndVerifyAsync(
+        Guid intentId, Guid reviewerId, byte[] document,
+        CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        var receipt = Write(intentId, reviewerId, document);
+        var stored = Read(intentId, reviewerId, receipt.Reference,
+            receipt.DocumentSha256);
+        if (!CryptographicOperations.FixedTimeEquals(stored, document))
+            throw new InvalidDataException("Archive readback bytes mismatch.");
+        CryptographicOperations.ZeroMemory(stored);
+        return Task.FromResult(new PayOsD04ProtectedBankEvidenceReceipt(
+            receipt.Reference, receipt.DocumentSha256));
+    }
+
+    public Task<bool> VerifyAsync(
+        Guid intentId, Guid reviewerId,
+        string reference, string documentSha256,
+        CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        try
+        {
+            var stored = Read(intentId, reviewerId, reference, documentSha256);
+            CryptographicOperations.ZeroMemory(stored);
+            return Task.FromResult(true);
+        }
+        catch (Exception error) when (
+            error is IOException or UnauthorizedAccessException or
+            CryptographicException or ArgumentException)
+        {
+            return Task.FromResult(false);
         }
     }
 

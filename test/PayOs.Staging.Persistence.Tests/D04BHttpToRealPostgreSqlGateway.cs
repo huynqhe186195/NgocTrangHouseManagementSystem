@@ -248,6 +248,7 @@ internal static class D04BHttpToRealPostgreSqlGateway
 
         // The real SQL bank review MUST store the SERVER-ISSUED protected
         // reference, not the untrusted multipart form value.
+        string storedReference;
         await using (var proofConn = new Npgsql.NpgsqlConnection(
             D04RealLegacyWriterAcceptance_Tests.Connection))
         {
@@ -262,6 +263,7 @@ internal static class D04BHttpToRealPostgreSqlGateway
             Assert.True(await reader.ReadAsync());
             var archiveReference = reader.GetString(0);
             var digest = reader.GetString(1);
+            storedReference = archiveReference;
             Assert.StartsWith("d04vault1:", archiveReference);
             Assert.NotEqual("../CLIENT-UNTRUSTED-IGNORE",
                 archiveReference);
@@ -274,6 +276,21 @@ internal static class D04BHttpToRealPostgreSqlGateway
             $"{route}/approve/{bankReviewId:D}", reviewerCookie))
             Assert.Equal(HttpStatusCode.Forbidden, denied.StatusCode);
 
+        // Missing physical archive must deny a real Owner approval, even
+        // though the immutable SQL hash/reference already exist.
+        var encryptedPath = Path.Combine(vaultDir,
+            storedReference["d04vault1:".Length..] + ".vault");
+        var heldPath = encryptedPath + ".held";
+        File.Move(encryptedPath, heldPath);
+        try
+        {
+            using var missingProofApproval = await PostAsync(client,
+                $"{route}/approve/{bankReviewId:D}", ownerCookie);
+            Assert.Equal(HttpStatusCode.Forbidden,
+                missingProofApproval.StatusCode);
+        }
+        finally { File.Move(heldPath, encryptedPath); }
+
         using (var approved = await PostAsync(client,
             $"{route}/approve/{bankReviewId:D}", ownerCookie))
         {
@@ -281,6 +298,21 @@ internal static class D04BHttpToRealPostgreSqlGateway
             Assert.NotEqual(Guid.Empty,
                 await ResponseIdAsync(approved, "approvalId"));
         }
+
+        // Deleting the bank file AFTER SQL approval must still block the
+        // actual financial writer. Restore it only for the positive lane.
+        File.Move(encryptedPath, heldPath);
+        try
+        {
+            using var missingProofPost = await PostAsync(client,
+                $"{route}/post/{intentId:D}", ownerCookie);
+            Assert.Equal(HttpStatusCode.Forbidden, missingProofPost.StatusCode);
+            db.ChangeTracker.Clear();
+            Assert.Equal(PaymentStatus.Pending,
+                (await db.Payments.AsNoTracking().SingleAsync(
+                    p => p.Id == paymentId)).Status);
+        }
+        finally { File.Move(heldPath, encryptedPath); }
 
         using (var wrongPost = await PostAsync(client,
             $"{route}/post/{intentId:D}", reviewerCookie))
@@ -486,8 +518,10 @@ internal static class D04BHttpToRealPostgreSqlGateway
             var writer = new PayOsD04LegacyPostingWriter(
                 _db, reader, _authority);
             var ack = new PayOsD04StagingReceiptAcknowledger(_staging, store);
-            return new PayOsD04ReviewedPostingCoordinator(
-                _db, writer, ack, CurrentActor())
+            var financial = new PayOsD04ReviewedPostingCoordinator(
+                _db, writer, ack, CurrentActor());
+            return new PayOsD04ArchiveVerifiedPostingCoordinator(
+                financial, _archive, _db)
                 .PostApprovedAsync(intentId, ct);
         }
     }

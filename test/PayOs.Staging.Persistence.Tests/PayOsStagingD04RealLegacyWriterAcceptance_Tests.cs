@@ -387,6 +387,15 @@ public sealed class D04RealLegacyWriterAcceptance_Tests
                     {now},{1},{"{}"},{Guid.NewGuid().ToString("N")})
             """);
 
+        // Exercise the actual restricted Identity-only SQL login before
+        // the regular reviewer/Owner negative and financial posting lanes.
+        // The role cannot SELECT/UPDATE native ABP tables directly and
+        // acquires the SAME row locks through tightly scoped SECURITY
+        // DEFINER functions. Building and payOS role gates remain separate.
+        db.ChangeTracker.Clear();
+        await D04BRestrictedIdentityAuthorityGate.VerifyAsync(
+            db, buildingId, bankReviewer, owner);
+
         var config = new ConfigurationBuilder().AddInMemoryCollection(
             new Dictionary<string, string?>
             {

@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
+using Npgsql;
 using Volo.Abp.Authorization;
 using Volo.Abp.Uow;
 
@@ -125,11 +126,36 @@ public sealed class PayOsD04StagingReviewController : ControllerBase
         catch (InvalidOperationException) { return Conflict(); }
     }
 
+    // Fail closed at the HTTP boundary too, not just when Host registers DI.
+    // A permissive/inadvertent controller service registration must never
+    // turn a configuration flag into a cash-posting endpoint on shared data.
     private bool Enabled() =>
         _host.IsStaging() &&
         _config.GetValue<bool>("BuildingManagement:PayOsD04B:Enabled") &&
         _config["BuildingManagement:PayOsD04B:Activation"] ==
-            "I_ACCEPT_DISPOSABLE_D04B_DUAL_AUTH_ONLY";
+            "I_ACCEPT_DISPOSABLE_D04B_DUAL_AUTH_ONLY" &&
+        !_config.GetValue<bool>("BuildingManagement:PayOsStaging:Enabled") &&
+        ExactDisposableDatabase(_config.GetConnectionString("Default"),
+            "payos_d04_identity_test") &&
+        ExactDisposableDatabase(_config.GetConnectionString("BuildingManagement"),
+            "payos_d04_legacy_test") &&
+        ExactDisposableDatabase(_config.GetConnectionString("PayOsD04BStaging"),
+            "payos_ef_migration_test");
+
+    private static bool ExactDisposableDatabase(string? input, string name)
+    {
+        if (string.IsNullOrWhiteSpace(input)) return false;
+        try
+        {
+            var db = new NpgsqlConnectionStringBuilder(input);
+            return db.Host is ("127.0.0.1" or "localhost") &&
+                   db.Port == 15432 &&
+                   string.Equals(db.Database, name, StringComparison.Ordinal) &&
+                   db.Username == "postgres" &&
+                   db.Password == "disposable-only";
+        }
+        catch (ArgumentException) { return false; }
+    }
 }
 
 public sealed class PayOsD04ReviewForm

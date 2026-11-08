@@ -771,6 +771,16 @@ public sealed class D04RealLegacyWriterAcceptanceTestModule : AbpModule
         // initializers before the test creates its isolated database.
         context.Services.AddAbpDbContext<NgocTrangHouseManagementSystemDbContext>(
             options => options.AddDefaultRepositories(includeAllEntities: true));
+        // AddAbpDbContext wires the ABP context PROVIDER and options, but
+        // this narrow test module does not depend on the application EF
+        // module (to avoid starting unrelated OpenIddict initializers).
+        // Unlike the application's own assembly-scanned module, the native
+        // Identity DbContext lives in a DIFFERENT assembly, so ABP's
+        // conventional DI scanner does not register that concrete class.
+        // UnitOfWorkDbContextProvider<T> resolves TDbContext from DI at
+        // runtime; explicitly register the concrete transient as well.
+        // Keep DbContextOptions/UnitOfWork/property injection ABP-owned.
+        context.Services.AddTransient<NgocTrangHouseManagementSystemDbContext>();
 
         var connection = D04RealLegacyWriterAcceptance_Tests.Connection;
         var identityConnection =

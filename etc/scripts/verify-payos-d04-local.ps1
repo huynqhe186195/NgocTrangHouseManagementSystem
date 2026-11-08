@@ -340,7 +340,7 @@ try {
 
     if ($WriterOnly) {
         Invoke-D04RealWriterAcceptance
-        Write-Host '=== PAYOS D04 WRITER-ONLY ACCEPTANCE PASS (synthetic authority, not business accepted) ===' -ForegroundColor Green
+        Write-Host '=== PAYOS D04 WRITER-ONLY ACCEPTANCE PASS (native ABP Identity EF/SQL authority, synthetic HTTP cookies; NOT business accepted) ===' -ForegroundColor Green
         Write-Host "SOURCE_COMMIT=$sha"
         Write-Host "LOG_DIRECTORY=$logRoot"
         return

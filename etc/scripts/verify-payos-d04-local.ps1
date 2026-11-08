@@ -142,6 +142,7 @@ function Invoke-D04RealWriterAcceptance {
         '--logger', 'trx;LogFileName=payos-d04-real-writer.trx',
         '--results-directory', $logRoot, '--verbosity', 'normal')
     Assert-Trx 'payos-d04-real-writer.trx' 1
+    Write-Host 'PASS: D04-B isolated HTTP -> real BuildingManagement Payment/DepositSettlement/receipt/outbox and payOS ACK (signed TEST cookies; no native ABP login).' -ForegroundColor Green
     [Environment]::SetEnvironmentVariable('BM_PAYOS_D04_REAL_WRITER_TEST_DB',
         $null, 'Process')
 }
@@ -650,7 +651,7 @@ END $d04$;
     Write-Host "SOURCE_COMMIT=$sha"
     Write-Host "LOG_DIRECTORY=$logRoot"
     Write-Host 'No production DB, no live payOS payment, no official D04 posting.'
-    Write-Host 'D04 BUSINESS ACCEPTANCE remains HOLD pending real HTTP/financial writer evidence.'
+    Write-Host 'D04-B BUSINESS ACCEPTANCE remains HOLD: native ABP/OpenIddict login, protected durable independent bank proof, process-kill recovery and least-privilege runtime DB role remain unverified.'
 }
 catch {
     Write-Host "=== PAYOS D04 LOCAL TEST FAILED: $($_.Exception.Message) ===" -ForegroundColor Red

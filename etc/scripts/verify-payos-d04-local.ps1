@@ -107,6 +107,22 @@ function Assert-Trx([string]$filename, [int]$expectedCount = 0) {
     Write-Host "TRX VERIFIED: $filename passed=$passed total=$total" -ForegroundColor Green
 }
 
+# Prevent a green general payOS suite from silently excluding the newly
+# required authenticated ASP.NET D04-B controller-boundary test.
+function Assert-TrxContainsPassed([string]$filename, [string]$testName) {
+    $path = Join-Path $logRoot $filename
+    [xml]$trx = Get-Content -LiteralPath $path -Raw
+    $nodes = @($trx.SelectNodes('//*[local-name()="UnitTestResult"]'))
+    $matched = @($nodes | Where-Object {
+        $_.GetAttribute('testName').Contains($testName)
+    })
+    if ($matched.Count -ne 1 -or
+        $matched[0].GetAttribute('outcome') -ne 'Passed') {
+        throw "Required D04 HTTP test not passed exactly once: $testName ($path)"
+    }
+    Write-Host "TRX VERIFIED: D04 authenticated ASP.NET HTTP boundary test PASS: $testName" -ForegroundColor Green
+}
+
 function Invoke-D04RealWriterAcceptance {
     # Two separate disposable DBs for REAL BuildingManagement and an ABP
     # Identity-shaped permission/role fixture. Neither is the user's 5432 DB.
@@ -390,6 +406,7 @@ try {
         '--logger', 'trx;LogFileName=payos-pg.trx',
         '--results-directory', $logRoot, '--verbosity', 'normal')
     Assert-Trx 'payos-pg.trx'
+    Assert-TrxContainsPassed 'payos-pg.trx' 'D04B_HTTP01_Distinct_authenticated_sessions_reach_only_their_allowed_routes'
 
     Invoke-Logged '16-ef-migration-rollback' $ef @(
         'database', 'update', '0',

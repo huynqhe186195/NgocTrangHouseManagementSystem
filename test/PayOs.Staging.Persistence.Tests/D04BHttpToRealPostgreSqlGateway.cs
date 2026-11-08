@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Security.Cryptography;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -108,6 +110,15 @@ internal static class D04BHttpToRealPostgreSqlGateway
         await staging.SaveChangesAsync();
         staging.ChangeTracker.Clear();
 
+        // Dedicated synthetic-only encrypted archive. No bank documents,
+        // externally reachable listener or production key/storage used.
+        var vaultDir = Path.Combine(Path.GetTempPath(),
+            "payos-d04-http-vault-" + Guid.NewGuid().ToString("N"));
+        using var vaultCleanup = new D04BDisposableVaultCleanup(vaultDir);
+        var vaultKey = RandomNumberGenerator.GetBytes(32);
+        using var vault = new D04BDisposableProtectedEvidenceVault(vaultDir, vaultKey);
+        CryptographicOperations.ZeroMemory(vaultKey);
+
         var builder = WebApplication.CreateBuilder(
             new WebApplicationOptions { EnvironmentName = Environments.Staging });
         builder.WebHost.UseTestServer();
@@ -155,10 +166,12 @@ internal static class D04BHttpToRealPostgreSqlGateway
                     parts.FeatureProviders.Remove(provider);
                 parts.FeatureProviders.Add(new D04RealSqlOnlyControllerProvider());
             });
+        builder.Services.AddSingleton<IPayOsD04ProtectedBankEvidenceArchive>(vault);
         builder.Services.AddSingleton<SqlBackedD04HttpAdapter>(sp =>
             new SqlBackedD04HttpAdapter(
                 db, staging, authority,
-                sp.GetRequiredService<IHttpContextAccessor>()));
+                sp.GetRequiredService<IHttpContextAccessor>(),
+                sp.GetRequiredService<IPayOsD04ProtectedBankEvidenceArchive>()));
         builder.Services.AddSingleton<IPayOsD04ManualEvidenceService>(
             sp => sp.GetRequiredService<SqlBackedD04HttpAdapter>());
         builder.Services.AddSingleton<IPayOsD04ReviewedPostingCoordinator>(
@@ -231,6 +244,29 @@ internal static class D04BHttpToRealPostgreSqlGateway
             Assert.Equal(HttpStatusCode.Accepted, review.StatusCode);
             bankReviewId = await ResponseIdAsync(review, "reviewId");
             Assert.NotEqual(Guid.Empty, bankReviewId);
+        }
+
+        // The real SQL bank review MUST store the SERVER-ISSUED protected
+        // reference, not the untrusted multipart form value.
+        await using (var proofConn = new Npgsql.NpgsqlConnection(
+            D04RealLegacyWriterAcceptance_Tests.Connection))
+        {
+            await proofConn.OpenAsync();
+            await using var statement = new Npgsql.NpgsqlCommand("""
+                SELECT "ExternalBankProofReference","DocumentSha256"
+                  FROM "BuildingManagementPayOsD04BankReviews"
+                 WHERE "Id"=@id
+                """, proofConn);
+            statement.Parameters.AddWithValue("id", bankReviewId);
+            await using var reader = await statement.ExecuteReaderAsync();
+            Assert.True(await reader.ReadAsync());
+            var archiveReference = reader.GetString(0);
+            var digest = reader.GetString(1);
+            Assert.StartsWith("d04vault1:", archiveReference);
+            Assert.NotEqual("../CLIENT-UNTRUSTED-IGNORE",
+                archiveReference);
+            Assert.True(await vault.VerifyAsync(
+                intentId, reviewerId, archiveReference, digest));
         }
 
         // The same reviewer cannot approve their own bank attestation.
@@ -338,7 +374,8 @@ internal static class D04BHttpToRealPostgreSqlGateway
         content.Add(new StringContent(bankReference), "BankReference");
         content.Add(new StringContent(amount.ToString(
             System.Globalization.CultureInfo.InvariantCulture)), "AmountVnd");
-        content.Add(new StringContent("SYNTHETIC-ONLY-NO-REAL-BANK-ARCHIVE"),
+        // This deliberately untrusted, path-like field MUST be ignored.
+        content.Add(new StringContent("../CLIENT-UNTRUSTED-IGNORE"),
             "ProtectedArchiveReference");
         content.Add(new StringContent("true"),
             "ReviewerAttestsBankStatementMatched");
@@ -354,6 +391,19 @@ internal static class D04BHttpToRealPostgreSqlGateway
         using var document = JsonDocument.Parse(
             await response.Content.ReadAsStringAsync());
         return document.RootElement.GetProperty(field).GetGuid();
+    }
+
+    private sealed class D04BDisposableVaultCleanup : IDisposable
+    {
+        private readonly string _path;
+        public D04BDisposableVaultCleanup(string path) => _path = path;
+        public void Dispose()
+        {
+            // Only our uniquely named, locally created synthetic scratch
+            // directory. The test never touches user or production files.
+            if (Directory.Exists(_path))
+                Directory.Delete(_path, recursive: true);
+        }
     }
 
     private sealed class D04RealSqlOnlyControllerProvider : ControllerFeatureProvider
@@ -373,17 +423,20 @@ internal static class D04BHttpToRealPostgreSqlGateway
         private readonly PayOsPaymentMigrationDbContext _staging;
         private readonly PayOsD04StagingDualAuthority _authority;
         private readonly IHttpContextAccessor _context;
+        private readonly IPayOsD04ProtectedBankEvidenceArchive _archive;
 
         public SqlBackedD04HttpAdapter(
             BuildingManagementDbContext db,
             PayOsPaymentMigrationDbContext staging,
             PayOsD04StagingDualAuthority authority,
-            IHttpContextAccessor context)
+            IHttpContextAccessor context,
+            IPayOsD04ProtectedBankEvidenceArchive archive)
         {
             _db = db;
             _staging = staging;
             _authority = authority;
             _context = context;
+            _archive = archive;
         }
 
         private ICurrentUser CurrentActor()
@@ -404,18 +457,26 @@ internal static class D04BHttpToRealPostgreSqlGateway
         private PayOsD04TrustedStagingEvidenceReader StagingReader() =>
             new(_staging);
 
+        // Every request is independently bound to the current signed
+        // test session; no cross-request cached reviewer/Owner identity.
+        private IPayOsD04ManualEvidenceService ArchiveBackedActor()
+        {
+            var actor = CurrentActor();
+            var inner = new PayOsD04ManualEvidenceService(
+                _db, StagingReader(), _authority, actor);
+            return new PayOsD04ArchiveBackedManualEvidenceService(
+                inner, _archive, _db, actor);
+        }
+
         public Task<Guid> RecordIndependentBankReviewAsync(
             Guid intentId, PayOsD04ManualBankStatementSubmission evidence,
             CancellationToken ct = default) =>
-            new PayOsD04ManualEvidenceService(
-                _db, StagingReader(), _authority, CurrentActor())
-                .RecordIndependentBankReviewAsync(intentId, evidence, ct);
+            ArchiveBackedActor().RecordIndependentBankReviewAsync(
+                intentId, evidence, ct);
 
         public Task<Guid> ApproveReviewedDepositAsync(
             Guid bankReviewId, CancellationToken ct = default) =>
-            new PayOsD04ManualEvidenceService(
-                _db, StagingReader(), _authority, CurrentActor())
-                .ApproveReviewedDepositAsync(bankReviewId, ct);
+            ArchiveBackedActor().ApproveReviewedDepositAsync(bankReviewId, ct);
 
         public Task<PayOsD04PostingOutcome> PostApprovedAsync(
             Guid intentId, CancellationToken ct = default)

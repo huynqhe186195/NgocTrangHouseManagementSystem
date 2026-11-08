@@ -25,17 +25,23 @@ public sealed class PayOsD04BStagingOrchestrator :
     private readonly IConfiguration _config;
     private readonly IHostEnvironment _host;
     private readonly ICurrentUser _actor;
+    private readonly IPayOsD04ProtectedBankEvidenceArchive _archive;
 
     public PayOsD04BStagingOrchestrator(
         IDbContextProvider<BuildingManagementDbContext> provider,
         PayOsPaymentMigrationDbContext staging,
-        IConfiguration config, IHostEnvironment host, ICurrentUser actor)
+        IConfiguration config, IHostEnvironment host, ICurrentUser actor,
+        IPayOsD04ProtectedBankEvidenceArchive archive)
     {
         _provider = provider ?? throw new ArgumentNullException(nameof(provider));
         _staging = staging ?? throw new ArgumentNullException(nameof(staging));
         _config = config ?? throw new ArgumentNullException(nameof(config));
         _host = host ?? throw new ArgumentNullException(nameof(host));
         _actor = actor ?? throw new ArgumentNullException(nameof(actor));
+        // No archive is registered in the normal Host. Enabling the D04-B
+        // test flag must fail closed rather than silently treating an
+        // unverified client archive reference as independent bank evidence.
+        _archive = archive ?? throw new ArgumentNullException(nameof(archive));
     }
 
     public async Task<Guid> RecordIndependentBankReviewAsync(
@@ -68,11 +74,21 @@ public sealed class PayOsD04BStagingOrchestrator :
         var ack = new PayOsD04StagingReceiptAcknowledger(_staging, committed);
         var coordinator = new PayOsD04ReviewedPostingCoordinator(
             db, writer, ack, _actor);
-        return await coordinator.PostApprovedAsync(intentId, ct);
+        // Even an already-approved SQL row cannot post money if its
+        // persisted physical bank statement is missing or tampered.
+        var verified = new PayOsD04ArchiveVerifiedPostingCoordinator(
+            coordinator, _archive, db);
+        return await verified.PostApprovedAsync(intentId, ct);
     }
 
-    private PayOsD04ManualEvidenceService ReviewService(
-        BuildingManagementDbContext db) =>
-        new(db, new PayOsD04TrustedStagingEvidenceReader(_staging),
-            new PayOsD04StagingDualAuthority(db, _config, _host), _actor);
+    private IPayOsD04ManualEvidenceService ReviewService(
+        BuildingManagementDbContext db)
+    {
+        var reader = new PayOsD04TrustedStagingEvidenceReader(_staging);
+        var authority = new PayOsD04StagingDualAuthority(db, _config, _host);
+        var canonical = new PayOsD04ManualEvidenceService(
+            db, reader, authority, _actor);
+        return new PayOsD04ArchiveBackedManualEvidenceService(
+            canonical, _archive, db, _actor, authority, reader);
+    }
 }

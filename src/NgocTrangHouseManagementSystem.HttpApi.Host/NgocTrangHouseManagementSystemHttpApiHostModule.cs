@@ -306,6 +306,17 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule // syst
                 throw new InvalidOperationException(
                     "D04-B rejects anything but three exact disposable PostgreSQL databases.");
 
+            // A configured database and ABP sign-in are insufficient:
+            // financial review previously accepted a CLIENT-PROVIDED archive
+            // label without retaining the bank file. Fail at startup if a
+            // separately reviewed, server-controlled archival backend has
+            // not been explicitly registered by an authorized staging module.
+            // No such backend is registered by default, even in staging.
+            if (!context.Services.Any(s =>
+                    s.ServiceType == typeof(IPayOsD04ProtectedBankEvidenceArchive)))
+                throw new InvalidOperationException(
+                    "D04-B activation DENIED: protected bank evidence archive is not registered.");
+
             context.Services.AddDbContext<PayOsPaymentMigrationDbContext>(
                 options => options.UseNpgsql(stagingD04,
                     db => db.MigrationsHistoryTable("__EFMigrationsHistory_PayOs")));

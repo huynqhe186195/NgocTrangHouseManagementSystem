@@ -128,8 +128,16 @@ internal sealed class D04BDisposableProtectedEvidenceVault : IDisposable
         if (!string.Equals(reference, expected, StringComparison.Ordinal))
             throw new InvalidDataException("Archive reference not bound to reviewer/intent.");
         var filename = Path.Combine(_root, expected[Prefix.Length..] + ".vault");
-        var record = File.ReadAllBytes(filename);
         var headerLength = Magic.Length + NonceLength + TagLength;
+        // Check metadata before allocating a byte array: a malicious file
+        // must not force an unbounded allocation. Production also requires
+        // protected directory ACLs and no filesystem/link tampering.
+        var info = new FileInfo(filename);
+        if (info.Length < headerLength + 256 ||
+            info.Length > headerLength + MaxDocumentBytes ||
+            (info.Attributes & FileAttributes.ReparsePoint) != 0)
+            throw new InvalidDataException("Invalid encrypted archive envelope.");
+        var record = File.ReadAllBytes(filename);
         if (record.Length < headerLength + 256 ||
             record.Length > headerLength + MaxDocumentBytes ||
             !record.AsSpan(0, Magic.Length).SequenceEqual(Magic))

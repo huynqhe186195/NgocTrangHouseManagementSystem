@@ -8,7 +8,13 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
-$expectedBranch = 'feat/phase2h-payos-signature-foundation-20261106'
+# Explicit allowlist. Never accept arbitrary branches, detached HEAD,
+# user-provided names, or a branch merely sharing a common prefix.
+# The second branch contains the archive-backed D04 acceptance suite.
+$allowedBranches = @(
+    'feat/phase2h-payos-signature-foundation-20261106',
+    'feat/d04b-protected-bank-evidence-20261108'
+)
 $containerId = ''
 $logRoot = ''
 $oldEnv = @{}
@@ -199,12 +205,14 @@ try {
     }
 
     $branch = Invoke-Capture 'git' @('branch', '--show-current')
-    if ($branch -ne $expectedBranch) {
-        throw "Safety stop: checkout branch $expectedBranch first (current='$branch')."
+    if ($branch -cnotin $allowedBranches) {
+        throw "Safety stop: checkout a reviewed D04 test branch first (current='$branch'; allowed=$($allowedBranches -join ', '))."
     }
     $sha = Invoke-Capture 'git' @('rev-parse', 'HEAD')
+    # Compare against the origin ref for the CURRENT explicitly allowed
+    # branch, not the previously hard-coded PR #7 baseline.
     $remoteLine = Invoke-Capture 'git' @('ls-remote', '--exit-code',
-        'origin', "refs/heads/$expectedBranch")
+        'origin', "refs/heads/$branch")
     if ($remoteLine -match '^([0-9a-fA-F]{40})\s+') {
         $remoteSha = $Matches[1]
     }

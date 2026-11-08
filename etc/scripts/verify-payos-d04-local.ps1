@@ -270,6 +270,16 @@ try {
     # container. This catches newly-added D04 test source/EF dependencies.
     Invoke-Logged '04a-staging-test-compile' 'dotnet' @(
         'build', $pgTests, '-c', 'Release')
+    # Catch HTTP controller discovery / auth middleware regressions BEFORE
+    # the disposable PostgreSQL container is created. The test itself uses
+    # an in-memory ASP.NET TestServer and requires no database or payOS API.
+    Invoke-Logged '04b-d04-authenticated-http-preflight' 'dotnet' @(
+        'test', $pgTests, '-c', 'Release', '--no-build',
+        '--filter', 'FullyQualifiedName~D04B_HTTP01_Distinct_authenticated_sessions_reach_only_their_allowed_routes',
+        '--logger', 'trx;LogFileName=payos-d04-http-preflight.trx',
+        '--results-directory', $logRoot, '--verbosity', 'normal')
+    Assert-Trx 'payos-d04-http-preflight.trx' 1
+    Assert-TrxContainsPassed 'payos-d04-http-preflight.trx' 'D04B_HTTP01_Distinct_authenticated_sessions_reach_only_their_allowed_routes'
     $toolDir = Join-Path $logRoot 'dotnet-ef'
     Invoke-Logged '05-install-isolated-ef-tool' 'dotnet' @(
         'tool', 'install', 'dotnet-ef', '--version', '10.0.9',

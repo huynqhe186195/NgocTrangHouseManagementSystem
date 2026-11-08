@@ -61,12 +61,13 @@ public sealed class PayOsD04StagingReviewController : ControllerBase
         if (intentId == Guid.Empty || form.Document is null ||
             form.Document.Length is < 256 or > 5_242_880 ||
             string.IsNullOrWhiteSpace(form.BankReference) ||
-            string.IsNullOrWhiteSpace(form.ProtectedArchiveReference) ||
             !form.ReviewerAttestsBankStatementMatched)
             return BadRequest();
 
-        // Memory cap + no logging. Actual durability is the separate
-        // protected archive referenced by the immutable bank review.
+        // Memory cap + no logging. The archive-backed application facade
+        // issues and verifies the reference SERVER-SIDE. The legacy form
+        // value is optional and NOT authoritative; a direct unwrapped
+        // manual service still fails closed on empty/missing proof.
         await using var stream = new MemoryStream();
         await form.Document.CopyToAsync(stream, HttpContext.RequestAborted);
         if (stream.Length != form.Document.Length ||

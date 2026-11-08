@@ -163,3 +163,21 @@ The owner ran the previously unverified native-Identity-manager candidate at the
 **Correction at `6ff15b42575e3f7efc7064f584b57996e988f42a`:** restore the proven narrow `[DependsOn(typeof(BuildingManagementEntityFrameworkCoreModule))]` boundary and register the application's real `NgocTrangHouseManagementSystemDbContext` EF model directly with `AddAbpDbContext`. Avoid inadvertently starting the *whole* application OpenIddict/PermissionManagement background initializers in the narrow D04 writer fixture before its disposable Identity database exists. The test still calls `EnsureCreatedAsync` against the exact disposable `payos_d04_identity_test` PostgreSQL database, creates native `IdentityUser`, `IdentityRole` and `PermissionGrant` EF entities with a true Owner role relationship, asserts that five Identity/role/permission rows persisted, and then exercises the existing real SQL identity locks, Building grants, Payment/settlement/outbox writer and signed-test-cookie HTTP/ACK sequence. `IdentityUserManager` and `IdentityRoleManager` are **not** being tested in this narrowly isolated fixture; that needs a separately configured native ABP application host. All operational activation stays disabled.
 
 The above fix has **not** been compiled or executed here; the previous `0118727a` full isolated PASS applies only to that earlier source. Owner must run the same guarded isolated suite and return the first error/stack + `LOG_DIRECTORY` or its success summary. D04-B BUSINESS HOLD remains pending native OpenIddict login, durable independent bank evidence, process-kill replay and least-privilege runtime DB role. PR #7 remains Draft and production is prohibited.
+
+## 2026-11-08 — narrow ABP Identity DbContext DI failure: 19a (new fix unverified)
+
+Owner reran the isolated bundle after the previous OpenIddict module fix. The *new* `19a-real-legacy-writer-acceptance` failure occurred at `PayOsStagingD04RealLegacyWriterAcceptance_Tests.cs:321`, before the native Identity EF data creation or D04-B financial scenario. Full evidence is in the owner's local Windows directory `C:\Users\Huynq\NgocTrang-Test-Logs\payos-20261108-152735`, especially `19a-real-legacy-writer-acceptance.log` and `payos-d04-real-writer.trx` (not uploaded here). Actual first exception:
+
+```text
+System.InvalidOperationException: The requested service
+'NgocTrangHouseManagementSystem.EntityFrameworkCore.NgocTrangHouseManagementSystemDbContext'
+has not been registered.
+ at Volo.Abp.Uow.EntityFrameworkCore.UnitOfWorkDbContextProvider<T>.CreateDbContextAsync(...)
+ at D04RealLegacyWriterAcceptance_Tests.VerifyD04BIdentityLeaseAsync(...):line 321
+```
+
+**Root cause:** `AddAbpDbContext<NgocTrangHouseManagementSystemDbContext>` configures ABP provider and options, but the narrow `D04RealLegacyWriterAcceptanceTestModule` does not include or convention-scan the application's EntityFrameworkCore assembly; therefore, the actual DbContext concrete class was absent from the Autofac container. The earlier whole-app EF module dependency caused OpenIddict permission initialization to fail and is intentionally NOT restored.
+
+**Correction in `9330cc129525fb9d53ba590499b046a110d3fa23`:** explicitly register `context.Services.AddTransient<NgocTrangHouseManagementSystemDbContext>()` immediately after the existing `AddAbpDbContext<...>` registration. Retain ABP-supplied DbContextOptions, UoW, Autofac property injection, exact 3 disposable PostgreSQL connection names and all SQL-based finance permission checks. No financial writer or production runtime code was modified.
+
+**Validation:** source-only change; no .NET SDK or Docker runner is accessible to the assistant. The new HEAD must be verified on the owner's disposable test container using the existing local runner. The earlier owner PASS at `0118727a` proves the old HTTP/real-PostgreSQL path only. A new local PASS is required before claiming native Identity EF model acceptance. Native login, secure bank file archive, process-kill recovery, and least-privilege runtime role are still HOLD.

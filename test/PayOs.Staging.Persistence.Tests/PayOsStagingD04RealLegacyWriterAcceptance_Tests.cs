@@ -629,6 +629,22 @@ public sealed class D04RealLegacyWriterAcceptance_Tests
         // settlement, journal and outbox; there is no second money entry.
         Assert.Equal(PayOsD04AckOutcome.RecoveredAlreadyPosted,
             await acknowledger.AcknowledgeAsync(intent.Id));
+
+        // Exercise the SAME coordinator used by the authenticated HTTP
+        // Owner-post route. An unrelated signed-in bank reviewer is denied
+        // even for an existing receipt; the approved Owner may replay only
+        // the existing immutable journal and perform a harmless ACK.
+        var wrongActor = new PayOsD04ReviewedPostingCoordinator(
+            db, writer, acknowledger, reviewer.Object);
+        await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+            wrongActor.PostApprovedAsync(intent.Id));
+        var approvedOwnerRoute = new PayOsD04ReviewedPostingCoordinator(
+            db, writer, acknowledger, owner.Object);
+        var idempotent = await approvedOwnerRoute.PostApprovedAsync(intent.Id);
+        Assert.False(idempotent.AckPending);
+        Assert.Equal(posted.ReceiptId, idempotent.ReceiptId);
+        Assert.Equal(posted.OutboxId, idempotent.OutboxId);
+
         db.ChangeTracker.Clear();
         Assert.Equal(2L, await CountAsync(db,
             "\"BuildingManagementPayOsD04ReceiptJournal\""));

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -66,6 +67,65 @@ public sealed class PayOsStagingD04BController_Tests
         };
         Assert.IsType<NotFoundResult>(await controller.ApproveAsync(Guid.NewGuid()));
         Assert.IsType<NotFoundResult>(await controller.PostAsync(Guid.NewGuid()));
+    }
+
+    [Fact]
+    public async Task Even_with_injected_service_D04B_must_refuse_wrong_database_or_merchant_mode()
+    {
+        // This tests only the controller activation boundary. It does NOT
+        // simulate ASP.NET authorization middleware or logged-in ABP users.
+        var host = new Mock<IHostEnvironment>();
+        host.SetupGet(x => x.EnvironmentName).Returns("Staging");
+        const string loopback =
+            "Host=127.0.0.1;Port=15432;Username=postgres;Password=disposable-only;Database=";
+        var config = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?>
+            {
+                ["BuildingManagement:PayOsD04B:Enabled"] = "true",
+                ["BuildingManagement:PayOsD04B:Activation"] =
+                    "I_ACCEPT_DISPOSABLE_D04B_DUAL_AUTH_ONLY",
+                ["BuildingManagement:PayOsStaging:Enabled"] = "false",
+                ["ConnectionStrings:Default"] =
+                    loopback + "payos_d04_identity_test",
+                ["ConnectionStrings:BuildingManagement"] =
+                    loopback + "payos_d04_legacy_test",
+                ["ConnectionStrings:PayOsD04BStaging"] =
+                    loopback + "payos_ef_migration_test"
+            }).Build();
+        var reviewer = new Mock<IPayOsD04ManualEvidenceService>();
+        reviewer.Setup(x => x.ApproveReviewedDepositAsync(
+                It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Guid.NewGuid());
+        var controller = new PayOsD04StagingReviewController(
+            host.Object, config, reviewer.Object)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext()
+            }
+        };
+        var id = Guid.NewGuid();
+
+        // Correct triple-DB location allows this controller to reach the
+        // injected service (the real service still enforces live SQL rights).
+        Assert.IsType<AcceptedResult>(await controller.ApproveAsync(id));
+        reviewer.Verify(x => x.ApproveReviewedDepositAsync(
+            id, It.IsAny<CancellationToken>()), Times.Once);
+
+        // Replace the Building DB with an actual user database name; even
+        // valid staging activation plus a registered service must fail closed.
+        config["ConnectionStrings:BuildingManagement"] =
+            loopback + "NgocTrangDb";
+        Assert.IsType<NotFoundResult>(await controller.ApproveAsync(id));
+        reviewer.Verify(x => x.ApproveReviewedDepositAsync(
+            id, It.IsAny<CancellationToken>()), Times.Once);
+
+        config["ConnectionStrings:BuildingManagement"] =
+            loopback + "payos_d04_legacy_test";
+        config["BuildingManagement:PayOsStaging:Enabled"] = "true";
+        Assert.IsType<NotFoundResult>(await controller.ApproveAsync(id));
+        reviewer.Verify(x => x.ApproveReviewedDepositAsync(
+            id, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

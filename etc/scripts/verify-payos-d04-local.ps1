@@ -124,8 +124,19 @@ function Assert-TrxContainsPassed([string]$filename, [string]$testName) {
 }
 
 function Invoke-D04RealWriterAcceptance {
+    # A small, isolated crypto rehearsal runs BEFORE provisioning financial
+    # databases. It never uses bank files, configured secrets or production.
+    # Both -WriterOnly and the full bundle must catch archive regressions.
+    Invoke-Logged '18a-d04-protected-archive-rehearsal' 'dotnet' @(
+        'test', $pgTests, '-c', 'Release',
+        '--no-build',
+        '--filter', 'FullyQualifiedName~D04BDisposableProtectedEvidenceVault_Tests',
+        '--logger', 'trx;LogFileName=payos-d04-protected-archive.trx',
+        '--results-directory', $logRoot, '--verbosity', 'normal')
+    Assert-Trx 'payos-d04-protected-archive.trx' 2
+
     # Two separate disposable DBs for REAL BuildingManagement and an ABP
-    # Identity-shaped permission/role fixture. Neither is the user's 5432 DB.
+    # native Identity EF permission/role fixture. Neither is the user's 5432 DB.
     Invoke-Logged '19-create-d04-legacy-test-db' 'docker' @(
         'exec', $containerId, 'createdb', '-U', 'postgres', 'payos_d04_legacy_test')
     Invoke-Logged '19a0-create-d04-identity-test-db' 'docker' @(

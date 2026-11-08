@@ -27,6 +27,7 @@ using Moq;
 using NgocTrangHouseManagementSystem.Payments;
 using NgocTrangHouseManagementSystem.EntityFrameworkCore;
 using Volo.Abp.Identity;
+using Volo.Abp.PermissionManagement;
 using Npgsql;
 using Volo.Abp.Authorization;
 using Volo.Abp;
@@ -308,66 +309,70 @@ public sealed class D04RealLegacyWriterAcceptance_Tests
         IServiceProvider services, BuildingManagementDbContext db,
         Guid buildingId, Guid tenantId, Guid bankReviewer, Guid owner)
     {
-        // Use the FULL native ABP Identity/Permission EF model on the
-        // separate disposable PostgreSQL database, not four hand-written
-        // tables. ABP Identity managers create normalized users and the
-        // persisted Owner role/membership under the real runtime model.
-        // Login sessions remain signed synthetic test cookies, so native
-        // OpenIddict/ABP interactive login is not yet proven.
+        // Use the *real* ABP Identity/Permission EF model, but not the full
+        // application's startup module. Bringing that module into a narrow
+        // AbpIntegratedTest starts OpenIddict permission initialization before
+        // any disposable Identity schema has been created (and requires a
+        // separate Autofac UoW interceptor registration).
+        //
+        // This fixture verifies persisted ABP entities, Owner membership and
+        // real SQL row leases. It does NOT claim IdentityUserManager lifecycle,
+        // native OpenIddict login or production business acceptance.
         var identityDb = await services
             .GetRequiredService<IDbContextProvider<NgocTrangHouseManagementSystemDbContext>>()
             .GetDbContextAsync();
         Assert.True(await identityDb.Database.EnsureCreatedAsync());
-        var role = Guid.NewGuid();
-        using (var identityUow = services.GetRequiredService<IUnitOfWorkManager>()
-            .Begin(requiresNew: true, isTransactional: true))
-        {
-            var users = services.GetRequiredService<IdentityUserManager>();
-            var roles = services.GetRequiredService<IdentityRoleManager>();
-            var reviewerAccount = new IdentityUser(bankReviewer,
-                "d04b-review-" + bankReviewer.ToString("N"),
-                "d04b-review-" + bankReviewer.ToString("N") + "@example.test");
-            var ownerAccount = new IdentityUser(owner,
-                "d04b-owner-" + owner.ToString("N"),
-                "d04b-owner-" + owner.ToString("N") + "@example.test");
-            var reviewerCreated = await users.CreateAsync(reviewerAccount);
-            Assert.True(reviewerCreated.Succeeded,
-                string.Join("; ", reviewerCreated.Errors.Select(e => e.Description)));
-            var ownerCreated = await users.CreateAsync(ownerAccount);
-            Assert.True(ownerCreated.Succeeded,
-                string.Join("; ", ownerCreated.Errors.Select(e => e.Description)));
-            var roleCreated = await roles.CreateAsync(
-                new IdentityRole(role, "Owner"));
-            Assert.True(roleCreated.Succeeded,
-                string.Join("; ", roleCreated.Errors.Select(e => e.Description)));
-            var joined = await users.AddToRoleAsync(ownerAccount, "Owner");
-            Assert.True(joined.Succeeded,
-                string.Join("; ", joined.Errors.Select(e => e.Description)));
-            await identityUow.CompleteAsync();
-        }
 
-        // Two direct-user financial grants are the only accepted permissions
-        // for this opt-in acceptance pilot; no root/admin/role fallback.
-        // Seed on the REAL EF-generated Permission Management table and
-        // independently exercise the commit-bound SQL SHARE locks.
+        var roleId = Guid.NewGuid();
+        var reviewerAccount = new IdentityUser(bankReviewer,
+            "d04b-review-" + bankReviewer.ToString("N"),
+            "d04b-review-" + bankReviewer.ToString("N") + "@example.test");
+        var ownerAccount = new IdentityUser(owner,
+            "d04b-owner-" + owner.ToString("N"),
+            "d04b-owner-" + owner.ToString("N") + "@example.test");
+        ownerAccount.AddRole(roleId);
+
+        // Seed through EF against the canonical ABP mapping, not handcrafted
+        // Identity tables or partial raw SQL that omits entity-required fields.
+        identityDb.Roles.Add(new IdentityRole(roleId, "Owner"));
+        identityDb.Users.AddRange(reviewerAccount, ownerAccount);
+        identityDb.Set<PermissionGrant>().AddRange(
+            new PermissionGrant(Guid.NewGuid(),
+                BuildingManagementPermissions.Payments.ReviewBankEvidence,
+                "U", bankReviewer.ToString("D")),
+            new PermissionGrant(Guid.NewGuid(),
+                BuildingManagementPermissions.Payments.ApproveD04Posting,
+                "U", owner.ToString("D")));
+        await identityDb.SaveChangesAsync();
+        identityDb.ChangeTracker.Clear();
+
+        // Independently verify durable native Identity/Permission rows before
+        // using the existing cross-DB SHARE-lock authority. This is evidence
+        // of actual persistence, not a seeded boolean permission mock.
         await using (var identity = new NpgsqlConnection(IdentityConnection))
         {
             await identity.OpenAsync();
-            await using var seed = new NpgsqlCommand("""
-                INSERT INTO "AbpPermissionGrants"(
-                    "Id","ProviderName","ProviderKey","Name")
-                VALUES(@grant1,'U',@reviewerKey,@reviewPermission),
-                      (@grant2,'U',@ownerKey,@ownerPermission);
+            await using var check = new NpgsqlCommand("""
+                SELECT
+                  (SELECT count(*) FROM "AbpUsers"
+                    WHERE "Id" IN (@reviewer,@owner) AND "IsActive"=TRUE)
+                  + (SELECT count(*) FROM "AbpUserRoles"
+                    WHERE "UserId"=@owner AND "RoleId"=@role)
+                  + (SELECT count(*) FROM "AbpPermissionGrants"
+                    WHERE ("ProviderKey"=@reviewerKey AND "Name"=@reviewPermission)
+                       OR ("ProviderKey"=@ownerKey AND "Name"=@ownerPermission))
                 """, identity);
-            seed.Parameters.AddWithValue("grant1", Guid.NewGuid());
-            seed.Parameters.AddWithValue("grant2", Guid.NewGuid());
-            seed.Parameters.AddWithValue("reviewerKey", bankReviewer.ToString("D"));
-            seed.Parameters.AddWithValue("ownerKey", owner.ToString("D"));
-            seed.Parameters.AddWithValue("reviewPermission",
+            check.Parameters.AddWithValue("reviewer", bankReviewer);
+            check.Parameters.AddWithValue("owner", owner);
+            check.Parameters.AddWithValue("role", roleId);
+            check.Parameters.AddWithValue("reviewerKey", bankReviewer.ToString("D"));
+            check.Parameters.AddWithValue("ownerKey", owner.ToString("D"));
+            check.Parameters.AddWithValue("reviewPermission",
                 BuildingManagementPermissions.Payments.ReviewBankEvidence);
-            seed.Parameters.AddWithValue("ownerPermission",
+            check.Parameters.AddWithValue("ownerPermission",
                 BuildingManagementPermissions.Payments.ApproveD04Posting);
-            await seed.ExecuteNonQueryAsync();
+            Assert.Equal(5L, (long)(await check.ExecuteScalarAsync() ??
+                throw new InvalidOperationException("No ABP Identity persistence evidence.")));
         }
 
         var now = DateTime.UtcNow.AddMinutes(-10);
@@ -744,7 +749,7 @@ public sealed class D04RealLegacyWriterAcceptance_Tests
     }
 }
 
-[DependsOn(typeof(NgocTrangHouseManagementSystemEntityFrameworkCoreModule))]
+[DependsOn(typeof(BuildingManagementEntityFrameworkCoreModule))]
 public sealed class D04RealLegacyWriterAcceptanceTestModule : AbpModule
 {
     public override void ConfigureServices(ServiceConfigurationContext context)
@@ -759,6 +764,13 @@ public sealed class D04RealLegacyWriterAcceptanceTestModule : AbpModule
             Environment.GetEnvironmentVariable("BM_PAYOS_EF_TEST_PORT") != "15432")
             throw new InvalidOperationException(
                 "D04 ABP integration fixture refuses non-disposable database.");
+
+        // Register only the application's native ABP EF model against the
+        // purpose-named disposable Identity DB. Do NOT depend on the entire
+        // application EF module here: that also boots OpenIddict/permission
+        // initializers before the test creates its isolated database.
+        context.Services.AddAbpDbContext<NgocTrangHouseManagementSystemDbContext>(
+            options => options.AddDefaultRepositories(includeAllEntities: true));
 
         var connection = D04RealLegacyWriterAcceptance_Tests.Connection;
         var identityConnection =

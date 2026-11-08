@@ -40,6 +40,9 @@ var stageOptions = new DbContextOptionsBuilder<PayOsPaymentMigrationDbContext>()
 await using var legacy = new BuildingManagementDbContext(legacyOptions);
 await using var staging = new PayOsPaymentMigrationDbContext(stageOptions);
 var receipts = new PayOsD04CommittedReceiptStore(legacy);
+// Progress markers are emitted to STDERR only so the parent still requires
+// the exact, exclusive COMMITTED barrier from STDOUT. No bank data or keys.
+Console.Error.WriteLine("D04_PROBE_STAGE=READ_COMMITTED_JOURNAL");
 var proof = await receipts.ReadCommittedAsync(intentId, CancellationToken.None);
 if (proof is null || proof.Proof.ReceiptId == Guid.Empty ||
     proof.Proof.OutboxId == Guid.Empty)
@@ -48,6 +51,7 @@ if (proof is null || proof.Proof.ReceiptId == Guid.Empty ||
     return 65;
 }
 
+Console.Error.WriteLine("D04_PROBE_STAGE=READ_STAGING_INTENT");
 var intent = await staging.PayOsPaymentIntents.AsNoTracking()
     .SingleOrDefaultAsync(x => x.Id == intentId);
 if (intent is null)
@@ -74,6 +78,7 @@ if (args[0] == "hold")
     return 68;
 }
 
+Console.Error.WriteLine("D04_PROBE_STAGE=ACKNOWLEDGE_FROM_FRESH_PROCESS");
 var acknowledger = new PayOsD04StagingReceiptAcknowledger(staging, receipts);
 var outcome = await acknowledger.AcknowledgeAsync(intentId);
 var expected = args[0] == "recover"

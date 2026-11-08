@@ -72,7 +72,7 @@ internal static class D04BHttpToRealPostgreSqlGateway
         var bankReference = "D04B-HTTP-SYNTH-" + Guid.NewGuid().ToString("N");
 
         // THIRD ContractDeposit, entirely independent of both earlier flows.
-        db.Rooms.Add(new Room(roomId, floor.Id, "D04B-HTTP-" +
+        db.Rooms.Add(new Room(roomId, floor.Id, "H" +
             Guid.NewGuid().ToString("N")[..8], "HTTP-only disposable", 20m, 2,
             RoomStatus.Occupied));
         var contract = new Contract(contractId,

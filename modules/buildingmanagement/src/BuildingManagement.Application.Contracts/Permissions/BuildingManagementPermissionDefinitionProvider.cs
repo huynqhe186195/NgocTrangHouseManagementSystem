@@ -33,6 +33,15 @@ public class BuildingManagementPermissionDefinitionProvider : PermissionDefiniti
         myGroup.AddPermission(BuildingManagementPermissions.Utilities.Read, L("Permission:Utilities.Read"));
         myGroup.AddPermission(BuildingManagementPermissions.Utilities.Manage, L("Permission:Utilities.Manage"));
 
+        // Distinct D04 two-person financial duties. No implicit grant to
+        // building management, contract management or a root identity.
+        myGroup.AddPermission(
+            BuildingManagementPermissions.Payments.ReviewBankEvidence,
+            L("Permission:Payments.ReviewBankEvidence"));
+        myGroup.AddPermission(
+            BuildingManagementPermissions.Payments.ApproveD04Posting,
+            L("Permission:Payments.ApproveD04Posting"));
+
         myGroup.AddPermission(
             BuildingManagementPermissions.Invoices.RebuildDraft,
             L("Permission:Invoices.RebuildDraft"));

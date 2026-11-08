@@ -111,6 +111,8 @@
     "BuildingManagement:ReservationDepositExceedsRemaining": "The payment exceeds the remaining reservation deposit.",
     "BuildingManagement:ReservationDepositAlreadyFullyPaid": "The reservation deposit has already been fully paid.",
     "BuildingManagement:ActiveRenewalHoldBlocksReservationDeposit": "The room currently has an active renewal hold and cannot accept a reservation deposit.",
+    "Permission:Payments.ReviewBankEvidence": "Independently review D04 bank evidence",
+    "Permission:Payments.ApproveD04Posting": "Owner approval for D04 financial posting",
     "BuildingManagement:InvalidTenantPhoneNumber": "The tenant phone number is invalid.",
     "BuildingManagement:TenantPhoneNumberAlreadyExists": "The phone number is already used by another tenant.",
     "BuildingManagement:InvalidTenantCitizenId": "The citizen ID number is invalid.",

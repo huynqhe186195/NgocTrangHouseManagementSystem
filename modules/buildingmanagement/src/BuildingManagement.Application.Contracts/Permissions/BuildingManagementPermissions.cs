@@ -41,6 +41,15 @@ public class BuildingManagementPermissions
         public const string Manage = GroupName + ".Contracts.Manage";
     }
 
+    // D04 money-movement permissions are intentionally NOT part of
+    // Contracts.Manage, Buildings.Manage or general operator CRUD grants.
+    // Defining them creates no role assignment.
+    public static class Payments
+    {
+        public const string ReviewBankEvidence = GroupName + ".Payments.ReviewBankEvidence";
+        public const string ApproveD04Posting = GroupName + ".Payments.ApproveD04Posting";
+    }
+
     public static class Utilities
     {
         public const string Read = GroupName + ".Utilities.Read";

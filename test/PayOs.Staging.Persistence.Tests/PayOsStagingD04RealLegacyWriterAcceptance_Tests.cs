@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
 using BuildingManagement;
@@ -500,7 +501,8 @@ public sealed class D04RealLegacyWriterAcceptance_Tests
         var bankReference = "D04B-SYNTH-BANK-" + Guid.NewGuid().ToString("N");
         var intent = new PayOsPaymentIntent(
             Guid.NewGuid(), buildingId, tenantId,
-            912345679, amount, now.AddDays(2), paymentId: paymentId);
+            RandomNumberGenerator.GetInt32(1, int.MaxValue), amount,
+            now.AddDays(2), paymentId: paymentId);
         intent.AttachProviderLink("SYNTH-B-LINK-" + intent.Id.ToString("N"));
         intent.MarkConfirmed(bankReference, now.AddMinutes(-5));
         var inbox = new PayOsWebhookInboxRecord(

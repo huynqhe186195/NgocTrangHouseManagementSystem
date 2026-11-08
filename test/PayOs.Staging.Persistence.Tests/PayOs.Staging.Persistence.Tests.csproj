@@ -10,6 +10,8 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Microsoft.AspNetCore.TestHost" Version="10.0.9" />
     <ProjectReference Include="..\..\src\NgocTrangHouseManagementSystem.HttpApi.Host\NgocTrangHouseManagementSystem.HttpApi.Host.csproj" />
     <ProjectReference Include="..\..\modules\buildingmanagement\src\BuildingManagement.EntityFrameworkCore\BuildingManagement.EntityFrameworkCore.csproj" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />

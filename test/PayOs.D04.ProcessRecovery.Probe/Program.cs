@@ -8,7 +8,8 @@ using Npgsql;
 // This is an actual separate OS process run ONLY under the guarded local
 // disposable PostgreSQL 16 test script. It can never invoke a live payOS API
 // or initiate any financial posting: read-only inspection + already-committed
-// receipt acknowledgement ONLY.
+// receipt acknowledgement ONLY. Both DB connections use role-restricted,
+// non-superuser ACK credentials provisioned by the disposable 19a test.
 if (Environment.GetEnvironmentVariable("BM_PAYOS_D04_REAL_WRITER_TEST_DB")
         != "I_ACCEPT_ONLY_DISPOSABLE_PAYOS_D04_DB" ||
     Environment.GetEnvironmentVariable("BM_PAYOS_EF_TEST_DB") != "1" ||
@@ -25,10 +26,10 @@ if (Environment.GetEnvironmentVariable("BM_PAYOS_D04_REAL_WRITER_TEST_DB")
 
 const string buildingConnection =
     "Host=127.0.0.1;Port=15432;Database=payos_d04_legacy_test;" +
-    "Username=postgres;Password=disposable-only;Pooling=false;Timeout=5";
+    "Username=d04_ack_legacy_test;Password=disposable-only;Pooling=false;Timeout=5";
 const string stagingConnection =
     "Host=127.0.0.1;Port=15432;Database=payos_ef_migration_test;" +
-    "Username=postgres;Password=disposable-only;Pooling=false;Timeout=5";
+    "Username=d04_ack_staging_test;Password=disposable-only;Pooling=false;Timeout=5";
 
 var legacyOptions = new DbContextOptionsBuilder<BuildingManagementDbContext>()
     .UseNpgsql(buildingConnection).Options;

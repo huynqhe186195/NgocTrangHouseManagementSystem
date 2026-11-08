@@ -268,13 +268,15 @@ public sealed class PayOsD04StagingDualAuthority : IPayOsD04CurrentDualAuthority
         NpgsqlConnection conn, NpgsqlTransaction tx, Guid owner,
         CancellationToken cancellationToken)
     {
+        // ABP Identity 10.6 maps AbpRoles WITHOUT an IsDeleted column.
+        // Require an actual persisted Owner role and user-role membership,
+        // plus matching tenant and SHARE locks; never trust a role claim.
         await using var cmd = new NpgsqlCommand("""
             SELECT ur."UserId"
               FROM "AbpUserRoles" ur
               JOIN "AbpUsers" u ON u."Id"=ur."UserId"
               JOIN "AbpRoles" r ON r."Id"=ur."RoleId"
              WHERE ur."UserId"=@owner AND r."Name"='Owner'
-               AND r."IsDeleted"=FALSE
                AND r."TenantId" IS NOT DISTINCT FROM u."TenantId"
              ORDER BY r."Id"
              LIMIT 1

@@ -118,7 +118,35 @@ try {
 }
 finally {
     try {
-        if ($containerId -match '^[0-9a-f]{64}) {
+        if ($containerId -match '^[0-9a-f]{64}
+            try {
+                $labelJson = & docker inspect --format '{{json .Config.Labels}}' $containerId 2>$null
+                if ($LASTEXITCODE -eq 0 -and $labelJson) {
+                    $labels = $labelJson | ConvertFrom-Json
+                    if ($labels.'nt.scope' -eq 'local-first-boot-20261109') {
+                        Write-Host 'Removing only the newly created first-boot container...'
+                        & docker rm --force $containerId *> $null
+                        if ($LASTEXITCODE -ne 0) {
+                            Write-Warning 'Could not stop dedicated first-boot container. Inspect Docker manually.'
+                        }
+                    }
+                }
+                else {
+                    Write-Warning 'Dedicated container not inspectable; no other Docker resource will be stopped.'
+                }
+            }
+            catch {
+                Write-Warning 'Dedicated first-boot cleanup did not complete; no other Docker resource was targeted.'
+            }
+        }
+    }
+    finally {
+        foreach ($key in $changed) {
+            [Environment]::SetEnvironmentVariable($key,$old[$key],'Process')
+        }
+    }
+}
+) {
             try {
                 $labelJson = & docker inspect --format '{{json .Config.Labels}}' $containerId 2>$null
                 if ($LASTEXITCODE -eq 0 -and $labelJson) {

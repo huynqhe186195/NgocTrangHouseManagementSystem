@@ -185,3 +185,65 @@ Source was fetched after write: exactly one JWT normalizer, one HTTP request
 function and one PASS marker. Quote/brace inspection passed, but the actual
 Windows PowerShell parser and runtime have **NOT** been executed by the assistant.
 Only nonsecret status lines may be shared.
+
+## Verified Windows PowerShell localhost Bearer acceptance — 2026-11-09
+
+Operator-provided output from Windows PowerShell on local disposable Host:
+
+```text
+NO_COOKIE_NO_TOKEN: HTTP=302 TYPE=none
+INVALID_BEARER: HTTP=401 TYPE=none
+TOKEN_LOCAL_FORMAT_PASS
+ADMIN_BEARER_ONLY: HTTP=200 TYPE=application/json
+AUTH_BEARER_ONLY_PASS
+```
+
+**ACCEPTED: native OpenIddict admin Bearer can authorize GET Identity.Users
+without a Chrome cookie, without following redirects and with the server
+rejecting missing/invalid Bearer.** This acceptance applies only to the
+local instance tested, not production or D04 financial posting.
+
+### Next: synthetic Owner/reviewer Identity separation
+
+On the CURRENT disposable local DB, create the following **two synthetic**
+ABP Identity users via authenticated Swagger UI/API:
+
+- `owner-uat`: enabled user, assigned **Owner** role (exact spelling).
+- `reviewer-uat`: enabled, assigned **BankReviewer** role, never Owner/admin.
+- Both roles must have NO ABP Identity Users management permission.
+- Both use different new local passwords; do not send passwords or tokens
+  to ChatGPT or put them in PowerShell command history.
+- Do not modify any production role or existing Identity data.
+
+Find Identity Roles POST and Identity Users POST in Swagger. Use a secure
+locally chosen unique password and synthetic local email addresses if ABP
+requires email. Do not assign financial permissions, connect a real bank,
+or enable PayOS/D04B as part of this test.
+
+Once the two accounts actually exist, authenticate **separately as each**
+through native OpenIddict/Swagger. Use new distinct Bearer tokens:
+
+```powershell
+$tokens = $null; $errors = $null
+[System.Management.Automation.Language.Parser]::ParseFile(
+    (Resolve-Path .\etc\scripts\verify-openiddict-actors-local.ps1).Path,
+    [ref]$tokens, [ref]$errors
+) | Out-Null
+if ($errors.Count) { throw ('PARSE_FAILED: ' + $errors) }
+'PARSE_PASS'
+powershell -NoProfile -ExecutionPolicy Bypass -File .\etc\scripts\verify-openiddict-actors-local.ps1
+```
+
+The read-only script prompts twice, with concealed token input. For each
+actor it requests GET `/api/account/my-profile` (should be 200 JSON) and
+GET `/api/identity/users?maxResultCount=1` (must be 403). It locally
+compares distinct JWT subjects/usernames and an Owner role claim for the
+Owner and absence of Owner/admin for the reviewer; final output is
+`IDENTITY_TWO_ACTOR_PASS`. No response body or token is printed.
+
+**Limitations:** The read-only script has not been runtime-tested on
+Windows and should not be marked PASS before operator evidence. Even
+after identity matrix PASS, persistent role membership and financial
+direct-user grants + building scope + cross-actor D04 posting must be
+verified separately. D04-B stays disabled due to unregistered protected
+bank-evidence archive. payOS remains OFF.

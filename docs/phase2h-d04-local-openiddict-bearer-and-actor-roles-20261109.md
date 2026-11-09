@@ -102,10 +102,16 @@ Swagger ABP Identity (no real personal names, emails, bank data):
 - Give neither actor `AbpIdentity.Users` nor administrative roles.
   Use unique local passwords; do not share them in chat.
 
-The **identity-only** negative matrix (reusing the cookie-free script with
-a fresh actor token, but without its admin-200 assertion) should demonstrate:
-admin may read `/api/identity/users` (200); Owner and reviewer must not
-read it (ideally 403, possibly redirect to access denied depending scheme).
+The **identity-only** negative matrix should demonstrate: admin may
+read `/api/identity/users` (200), while a distinct Owner and Reviewer
+who lack `AbpIdentity.Users` should be denied (normally 403). A positive
+Bearer-only `GET /api/account/my-profile` (200, matching each distinct
+username) is required first, or a redirect could be mistaken for denied
+permission. The current `verify-openiddict-bearer-local.ps1` intentionally
+supports **ADMIN ONLY**; do not run it with a reviewer/Owner token and
+claim 403 is a PASS. Implement and inspect a separate per-actor
+positive+negative gate before marking the actor matrix PASS.
+
 A denied identity-admin read does **not** itself prove that both actors can
 review/post finances.
 

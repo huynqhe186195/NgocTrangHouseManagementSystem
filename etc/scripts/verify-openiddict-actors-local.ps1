@@ -87,7 +87,7 @@ function Read-ActorToken([string]$label) {
     }
 }
 
-function Invoke-ActorGet([string]$path, [string]$token) {
+function Invoke-ActorGet([string]$path, [string]$token, [string]$expectedProfileUserName) {
     $request = [System.Net.Http.HttpRequestMessage]::new(
         [System.Net.Http.HttpMethod]::Get, ($base + $path))
     try {
@@ -104,9 +104,26 @@ function Invoke-ActorGet([string]$path, [string]$token) {
             $type = if ($response.Content.Headers.ContentType) {
                 $response.Content.Headers.ContentType.MediaType
             } else { 'none' }
+            $match = $true
+            if (-not [string]::IsNullOrWhiteSpace($expectedProfileUserName) -and
+                [int]$response.StatusCode -eq 200 -and $type -match 'json') {
+                # Profile response body stays in memory and is NEVER logged.
+                $raw = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+                $parsed = ConvertFrom-Json -InputObject $raw
+                $raw = $null
+                $profile = $parsed
+                if ($null -ne $parsed.PSObject.Properties['data']) {
+                    $profile = $parsed.data
+                }
+                elseif ($null -ne $parsed.PSObject.Properties['result']) {
+                    $profile = $parsed.result
+                }
+                $match = ([string]$profile.userName -ceq $expectedProfileUserName)
+            }
             return [pscustomobject]@{
                 Code = [int]$response.StatusCode
                 Type = $type
+                ProfileMatches = $match
             }
         }
         finally { $response.Dispose() }
@@ -125,9 +142,9 @@ try {
         if ($owner.Roles -cnotcontains 'Owner') {
             throw 'OWNER_ROLE_CLAIM_MISSING: Owner role must be granted before login'
         }
-        $ownerProfile = Invoke-ActorGet '/api/account/my-profile' $owner.Token
+        $ownerProfile = Invoke-ActorGet '/api/account/my-profile' $owner.Token 'owner-uat'
         Write-Host ("OWNER_PROFILE HTTP={0} TYPE={1}" -f $ownerProfile.Code, $ownerProfile.Type)
-        if ($ownerProfile.Code -ne 200 -or $ownerProfile.Type -notmatch 'json') {
+        if ($ownerProfile.Code -ne 200 -or $ownerProfile.Type -notmatch 'json' -or -not $ownerProfile.ProfileMatches) {
             throw 'OWNER_AUTH_NOT_PROVED: profile GET must be HTTP 200 JSON'
         }
         $ownerUsers = Invoke-ActorGet '/api/identity/users?maxResultCount=1' $owner.Token
@@ -150,9 +167,9 @@ try {
         if ($reviewer.Subject -ceq $ownerSubject) {
             throw 'ACTOR_SEPARATION_FAILED: Owner and reviewer use the same subject'
         }
-        $reviewerProfile = Invoke-ActorGet '/api/account/my-profile' $reviewer.Token
+        $reviewerProfile = Invoke-ActorGet '/api/account/my-profile' $reviewer.Token 'reviewer-uat'
         Write-Host ("REVIEWER_PROFILE HTTP={0} TYPE={1}" -f $reviewerProfile.Code, $reviewerProfile.Type)
-        if ($reviewerProfile.Code -ne 200 -or $reviewerProfile.Type -notmatch 'json') {
+        if ($reviewerProfile.Code -ne 200 -or $reviewerProfile.Type -notmatch 'json' -or -not $reviewerProfile.ProfileMatches) {
             throw 'REVIEWER_AUTH_NOT_PROVED: profile GET must be HTTP 200 JSON'
         }
         $reviewerUsers = Invoke-ActorGet '/api/identity/users?maxResultCount=1' $reviewer.Token

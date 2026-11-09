@@ -73,9 +73,16 @@ try {
     if ([string]::IsNullOrWhiteSpace($token)) {
         throw 'Missing access token.'
     }
-    # The browser clipboard must not retain a sensitive bearer token.
+    # Windows PowerShell 5.1 throws on Set-Clipboard -Value ''.
+    # Replace clipboard with a single space. Failure to clear it must NOT
+    # interrupt the independent bearer verification. Never echo the token.
     if (Get-Command Set-Clipboard -ErrorAction SilentlyContinue) {
-        Set-Clipboard -Value '' -ErrorAction SilentlyContinue
+        try {
+            Set-Clipboard -Value ' ' -ErrorAction Stop
+        }
+        catch {
+            Write-Warning 'Clipboard could not be cleared. Copy harmless text over it manually after testing.'
+        }
     }
     try {
         $valid = Invoke-ReadOnlyGet -name 'ADMIN_BEARER_ONLY' -bearer $token

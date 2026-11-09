@@ -114,3 +114,41 @@ for bootstrap/migrations. **This is NOT production runtime least privilege.**
 
 The local first-boot procedure neither authorizes production usage nor
 substitutes for those outstanding D04-B operational/business gates.
+
+## First-run parser incident and safe check before running
+
+The user's first invocation on Windows PowerShell reported a parser exception at
+`etc/scripts/start-ngoctrang-local-safe.ps1:123`. No script statement was executed,
+so there was no build, new Docker container, DB migration, or payOS API call.
+Inspection identified an unclosed regex string/condition at line 121 and a
+duplicate trailing cleanup block introduced by a previous file replacement.
+
+**Code fix `14bc268f00a42646f611c8371e5dc9c7c9c9827b`:**
+restore the full test-owned 64-hex container-id condition
+`if ($containerId -match '^[0-9a-f]{64}$') {` and remove the duplicate
+orphaned finally block. Static JavaScript lexical bracket and quotation
+inspection of the retrieved 148-line script found no remaining unbalanced
+code delimiters; this is not proof of PowerShell parsing or startup.
+
+**Run this side-effect-free parser check FIRST after fast-forwarding:**
+
+```powershell
+git pull --ff-only
+$scriptPath = (Resolve-Path .\etc\scripts\start-ngoctrang-local-safe.ps1).Path
+$tokens = $null
+$parseErrors = $null
+[System.Management.Automation.Language.Parser]::ParseFile(
+    $scriptPath, [ref]$tokens, [ref]$parseErrors) | Out-Null
+if ($parseErrors.Count -gt 0) {
+    $parseErrors | ForEach-Object { Write-Host $_.ToString() -ForegroundColor Red }
+    throw 'POWER_SHELL_PARSE_FAILED: do not launch backend.'
+}
+Write-Host 'POWER_SHELL_PARSE_PASS' -ForegroundColor Green
+```
+
+Only when `POWER_SHELL_PARSE_PASS` appears, execute
+`powershell -NoProfile -ExecutionPolicy Bypass -File
+.\etc\scripts\start-ngoctrang-local-safe.ps1`.
+The parser check reads source and never calls Docker, dotnet, DbMigrator,
+secrets, or payOS. If the first boot itself errors, share only the first
+error with any secrets/connection strings redacted.

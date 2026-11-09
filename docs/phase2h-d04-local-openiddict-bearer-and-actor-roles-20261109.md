@@ -247,3 +247,81 @@ after identity matrix PASS, persistent role membership and financial
 direct-user grants + building scope + cross-actor D04 posting must be
 verified separately. D04-B stays disabled due to unregistered protected
 bank-evidence archive. payOS remains OFF.
+
+## Two-actor Identity UAT: executable local-only fixture and role check (2026-11-09)
+
+The isolated first-boot Docker/PostgreSQL must still be **RUNNING**.
+Never use the script against production data, a different forwarded localhost
+backend or any public URL. The setup script refuses to start unless a **single**
+running PostgreSQL container has the test label
+`nt.scope=local-first-boot-20261109` and port `127.0.0.1:15433`.
+
+First, pull the latest PR #10 branch and parse BOTH scripts:
+
+```powershell
+cd D:\Dev\NgocTrangBuilding\Project\NgocTrangHouseManagementSystem
+git pull --ff-only
+$files = @('.\etc\scripts\setup-openiddict-actors-local.ps1', '.\etc\scripts\verify-openiddict-actors-local.ps1')
+foreach ($f in $files) {
+  $t = $null; $e = $null
+  [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $f).Path, [ref]$t, [ref]$e) | Out-Null
+  if ($e.Count) { $e | ForEach-Object { Write-Host $_ }; throw "PARSE_FAILED: $f" }
+}
+'PARSE_PASS'
+```
+
+Then execute the LOCAL fixture setup script while keeping the Host running:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\etc\scripts\setup-openiddict-actors-local.ps1
+```
+
+Paste your **current local admin Swagger access token** only in the script's
+masked prompt. If the script finds the synthetic accounts missing, it asks
+for separate **new 16+ character test-only passwords** in masked prompts.
+Passwords must contain upper/lower/digit/symbol and are used ONLY in local
+POST `/api/identity/users` requests. No passwords or token contents are
+printed or saved. Remember the test-only passwords privately for subsequent
+interactive native OpenIddict login. Do not send tokens/passwords in chat.
+
+The fixture creates exactly two non-default, non-public ABP Identity roles
+(`Owner`, `BankReviewer`) and users (`owner-uat`, `reviewer-uat`) if absent,
+using authenticated native Identity API. It queries the actual persisted
+user-role membership and refuses an existing conflicting/privileged mapping.
+All created emails use the fake `.invalid` TLD. It does not touch financial
+permissions, building grants, payment endpoints, the payOS merchant or any
+other database. Expected output:
+
+```text
+ADMIN_IDENTITY_MANAGEMENT_API_PASS
+ROLE_CREATED: Owner
+ROLE_CREATED: BankReviewer
+OWNER_ROLE_PERSISTED: Owner
+REVIEWER_ROLE_PERSISTED: BankReviewer
+IDENTITY_UAT_FIXTURES_PASS
+```
+
+Now get **two new OpenIddict authorization-code Swagger tokens**, one by
+logging in as `owner-uat` and the other as `reviewer-uat`. Use separate
+incognito browser sessions or fully sign out of the ABP login session before
+switching users, to prevent reusing `admin` cookies or identity. Retrieve
+each token privately via browser DevTools as for the admin acceptance.
+
+Run this read-only script:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\etc\scripts\verify-openiddict-actors-local.ps1
+```
+
+The first hidden prompt expects the Owner's access token; the second expects
+the Reviewer's. Script sends no cookies or Windows credentials and never
+follows redirects. It checks per-user JWT subject and role, GET profile
+(200 JSON with matching username), and GET Identity.Users (403). It must
+produce `IDENTITY_TWO_ACTOR_PASS` to accept the **Identity-only**
+separation gate. If OAuth redirects or users have unintended permissions,
+the script fails closed. Actual Windows runtime acceptance is still pending.
+
+Even if both gates PASS, D04 financial dual authorization remains **HOLD**
+because direct reviewer/approver permissions, scoped building membership,
+protected bank evidence archive and constrained financial DB writer role
+are separate concerns. Keep payOS OFF. Do not activate staging flags.

@@ -88,7 +88,25 @@ function Invoke-ReadOnlyGet([string]$name, [string]$bearer) {
                 [System.Net.Http.Headers.AuthenticationHeaderValue]::new(
                     'Bearer', $bearer)
         }
-        $response = $client.SendAsync($request).GetAwaiter().GetResult()
+        try {
+            $response = $client.SendAsync($request).GetAwaiter().GetResult()
+        }
+        catch {
+            # No response was received. This is NOT an OAuth/token rejection.
+            # The exception type is safe to report; never print request headers.
+            $failure = $_.Exception.GetBaseException()
+            $kind = $failure.GetType().Name
+            if ($kind -eq 'SocketException') {
+                throw 'AUTH_TRANSPORT_NO_SERVER: localhost:44311 refused the connection or is unreachable. Start start-ngoctrang-local-safe.ps1 in another terminal and keep it running.'
+            }
+            if ($kind -eq 'AuthenticationException') {
+                throw 'AUTH_TRANSPORT_TLS: localhost HTTPS certificate/trust problem. Check dotnet dev-certs https --check --trust; do not disable certificate validation.'
+            }
+            if ($kind -eq 'TaskCanceledException') {
+                throw 'AUTH_TRANSPORT_TIMEOUT: localhost:44311 did not respond before timeout.'
+            }
+            throw ("AUTH_TRANSPORT_FAILED: could not reach localhost:44311 via HTTPS. Cause={0}; check backend status, port 44311, proxy settings and local HTTPS certificate. Bearer has NOT been tested." -f $kind)
+        }
         try {
             $code = [int]$response.StatusCode
             $type = if ($response.Content.Headers.ContentType) {

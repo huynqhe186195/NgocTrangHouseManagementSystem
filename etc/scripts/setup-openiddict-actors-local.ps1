@@ -161,11 +161,19 @@ try {
     Write-Host 'Enter a CURRENT admin Swagger access token; never put it in chat or a command line.'
     $adminToken = Read-SecretText 'admin Bearer token (hidden input)'
     if ([string]::IsNullOrWhiteSpace($adminToken)) { throw 'UAT_ADMIN_TOKEN_MISSING' }
-    $adminToken = $adminToken.Trim()
+    $adminToken = $adminToken.Trim().Trim([char]0xFEFF)
+    $adminToken = [regex]::Replace($adminToken,
+        '^\s*Authorization\s*:\s*Bearer\s+', '',
+        [Text.RegularExpressions.RegexOptions]::IgnoreCase)
     $adminToken = [regex]::Replace($adminToken, '^\s*Bearer\s+', '',
         [Text.RegularExpressions.RegexOptions]::IgnoreCase)
     $adminToken = [regex]::Replace($adminToken, '\s+', '')
+    $adminToken = $adminToken.Trim([char[]]@('"', "'"))
     if ($adminToken.Split('.').Length -ne 3) { throw 'UAT_ADMIN_TOKEN_FORMAT_INVALID' }
+    if (Get-Command Set-Clipboard -ErrorAction SilentlyContinue) {
+        try { Set-Clipboard -Value ' ' -ErrorAction Stop }
+        catch { Write-Warning 'Could not clear clipboard. Overwrite with harmless text manually.' }
+    }
 
     # Guard: token must have real ABP management permissions, not just an active session.
     $check = Invoke-LocalIdentity 'GET' '/api/identity/users?maxResultCount=1' $null

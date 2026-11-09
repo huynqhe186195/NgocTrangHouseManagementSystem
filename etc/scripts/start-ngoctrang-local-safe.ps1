@@ -118,7 +118,7 @@ try {
 }
 finally {
     try {
-        if ($containerId -match '^[0-9a-f]{64}
+        if ($containerId -match '^[0-9a-f]{64}$') {
             try {
                 $labelJson = & docker inspect --format '{{json .Config.Labels}}' $containerId 2>$null
                 if ($LASTEXITCODE -eq 0 -and $labelJson) {

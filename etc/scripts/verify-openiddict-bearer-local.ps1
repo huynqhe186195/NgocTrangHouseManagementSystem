@@ -65,6 +65,7 @@ try {
         }
     }
     $secret = $null
+    if ([string]::IsNullOrWhiteSpace($token)) { throw 'Missing access token.' }
     $token = $token.Trim()
     if ($token.StartsWith('Bearer ', [StringComparison]::OrdinalIgnoreCase)) {
         $token = $token.Substring(7).Trim()

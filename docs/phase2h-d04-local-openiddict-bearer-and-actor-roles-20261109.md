@@ -136,3 +136,29 @@ available. No real payment is required for this identity verification.
 No automated test on actual Windows PowerShell has been performed by the
 assistant for this new read-only script; require syntax parser check before
 execution and record the independent result before calling it PASS.
+
+## Windows PowerShell 5.1 clipboard compatibility
+
+During a real Windows PowerShell 5.1 run, anonymous GET returned 302 and
+invalid Bearer returned 401. A valid token was successfully entered at
+`Read-Host -AsSecureString`, but the script stopped before the valid
+Bearer GET because `Set-Clipboard -Value ''` raised an
+`ArgumentNullException`. The positive Bearer acceptance was therefore
+**NOT EXECUTED / NOT ACCEPTED**.
+
+Code fix `4bfd1d6760edc887429e605f9780a4d904b4d8a1` replaces the
+clipboard with a non-empty single space and catches any clipboard command
+failure without preventing the subsequent read-only HTTP verification.
+The script still does not print or persist tokens.
+
+If any access token is unintentionally disclosed, treat it as compromised:
+stop the current local Host and remove its **dedicated disposable** DB
+rather than reusing the token. After pulling the fix, launch a fresh
+disposable localhost Host, seed a new local administrator password,
+complete OpenIddict login again, and use only a NEW OAuth token to test.
+Logout by itself does not guarantee immediate revocation. Never copy
+access tokens, cookie values, secret keys, or HTTP authorization headers
+into chats, screenshots, issue comments, or PRs.
+
+This fix is source-reviewed, NOT yet verified through a subsequent actual
+Windows PowerShell positive Bearer execution.

@@ -479,10 +479,7 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule // syst
                 bundle =>
                 {
                     bundle.AddFiles("/global-scripts.js");
-                    if (hostingEnvironment.IsDevelopment())
-                    {
-                        bundle.AddFiles("/dev-login-helper.js");
-                    }
+                    // Never publish or autofill administrator passwords in client assets.
                 }
             );
         });

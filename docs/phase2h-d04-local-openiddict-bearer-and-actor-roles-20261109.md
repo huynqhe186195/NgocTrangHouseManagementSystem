@@ -162,3 +162,26 @@ into chats, screenshots, issue comments, or PRs.
 
 This fix is source-reviewed, NOT yet verified through a subsequent actual
 Windows PowerShell positive Bearer execution.
+
+## JWT paste normalization and error classification (2026-11-09)
+
+The user sent a second local-only access token into chat. Treat it as compromised.
+Do not reuse it. A new disposable local first-boot Host/database plus a new
+Swagger OAuth authorization avoids reusing the compromised test identity.
+Logging out of Swagger alone does not guarantee token revocation.
+
+The token was structurally a three-part JWT. No evidence of formatting failure
+was presented; the original exact PowerShell error after paste was not supplied.
+
+Commit 5249594f3d1992ad4980037c4baae471e161a801 improves the local script:
+- Accepts plain JWT, `Bearer JWT`, and `Authorization: Bearer JWT`.
+- Trims copied quote marks, BOM, and whitespace; checks three Base64URL sections.
+- Decodes unverified JWT payload locally only to check expiry, local issuer and API audience.
+  Only the localhost Host performs cryptographic signature/auth checks.
+- Uses nonsecret error codes for expired, malformed, redirected, forbidden or rejected tokens.
+- Retains the Windows PowerShell 5.1 clipboard fix and no-cookie/no-redirect GET checks.
+
+Source was fetched after write: exactly one JWT normalizer, one HTTP request
+function and one PASS marker. Quote/brace inspection passed, but the actual
+Windows PowerShell parser and runtime have **NOT** been executed by the assistant.
+Only nonsecret status lines may be shared.

@@ -118,8 +118,9 @@ try {
 }
 finally {
     if ($containerId -match '^[0-9a-f]{64}$') {
-        $label = & docker inspect --format '{{ index .Config.Labels "nt.scope" }}' $containerId 2>$null
-        if ($label -eq 'local-first-boot-20261109') {
+        $labelJson = & docker inspect --format '{{json .Config.Labels}}' $containerId 2>$null
+        $labels = $labelJson | ConvertFrom-Json
+        if ($labels.'nt.scope' -eq 'local-first-boot-20261109') {
             Write-Host 'Removing only the newly created first-boot container...'
             & docker rm --force $containerId *> $null
         }

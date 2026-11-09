@@ -83,6 +83,7 @@ function Read-ActorToken([string]$label) {
         Token = $plain
         Subject = [string]$claims.sub
         UserName = [string]$claims.preferred_username
+        Roles = @($claims.role)
     }
 }
 
@@ -121,6 +122,9 @@ try {
         if ($owner.UserName -cne 'owner-uat') {
             throw 'OWNER_IDENTITY_MISMATCH: Owner token does not belong to owner-uat'
         }
+        if ($owner.Roles -cnotcontains 'Owner') {
+            throw 'OWNER_ROLE_CLAIM_MISSING: Owner role must be granted before login'
+        }
         $ownerProfile = Invoke-ActorGet '/api/account/my-profile' $owner.Token
         Write-Host ("OWNER_PROFILE HTTP={0} TYPE={1}" -f $ownerProfile.Code, $ownerProfile.Type)
         if ($ownerProfile.Code -ne 200 -or $ownerProfile.Type -notmatch 'json') {
@@ -139,6 +143,9 @@ try {
     try {
         if ($reviewer.UserName -cne 'reviewer-uat') {
             throw 'REVIEWER_IDENTITY_MISMATCH: Reviewer token does not belong to reviewer-uat'
+        }
+        if ($reviewer.Roles -ccontains 'Owner' -or $reviewer.Roles -ccontains 'admin') {
+            throw 'REVIEWER_ROLE_ESCALATION: reviewer must not have Owner or admin role'
         }
         if ($reviewer.Subject -ceq $ownerSubject) {
             throw 'ACTOR_SEPARATION_FAILED: Owner and reviewer use the same subject'

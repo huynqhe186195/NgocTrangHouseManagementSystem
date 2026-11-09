@@ -344,11 +344,10 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule // syst
         });
 
 
-        if (!configuration.GetValue<bool>("App:DisablePII"))
-        {
-            Microsoft.IdentityModel.Logging.IdentityModelEventSource.ShowPII = true;
-            Microsoft.IdentityModel.Logging.IdentityModelEventSource.LogCompleteSecurityArtifact = true;
-        }
+        // Never print complete JWTs or personally identifiable security artifacts.
+        // This is also required for localhost OAuth acceptance and staging.
+        Microsoft.IdentityModel.Logging.IdentityModelEventSource.ShowPII = false;
+        Microsoft.IdentityModel.Logging.IdentityModelEventSource.LogCompleteSecurityArtifact = false;
 
         if (!configuration.GetValue<bool>("AuthServer:RequireHttpsMetadata"))
         {

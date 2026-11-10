@@ -276,9 +276,18 @@ try {
     }
 
     if ($WriterOnly) {
-        # Compile tests BEFORE starting any disposable DB container.
+        # Compile and verify the authenticated HTTP route boundary BEFORE
+        # creating any disposable database. Existing firstboot DB 15433 is
+        # never used: this isolated D04 run creates only its own 15432 DBs.
         Invoke-Logged '04a-staging-test-compile' 'dotnet' @(
             'build', $pgTests, '-c', 'Release')
+        Invoke-Logged '04b-d04-authenticated-http-preflight' 'dotnet' @(
+            'test', $pgTests, '-c', 'Release', '--no-build',
+            '--filter', 'FullyQualifiedName~D04B_HTTP01_Distinct_authenticated_sessions_reach_only_their_allowed_routes',
+            '--logger', 'trx;LogFileName=payos-d04-http-preflight.trx',
+            '--results-directory', $logRoot, '--verbosity', 'normal')
+        Assert-Trx 'payos-d04-http-preflight.trx' 1
+        Assert-TrxContainsPassed 'payos-d04-http-preflight.trx' 'D04B_HTTP01_Distinct_authenticated_sessions_reach_only_their_allowed_routes'
     }
     else {
     Invoke-Logged '01-domain' 'dotnet' @('test', $domain,

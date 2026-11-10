@@ -107,10 +107,16 @@ public sealed class PayOsD04ReviewedPostingCoordinator : IPayOsD04ReviewedPostin
         }
         catch (Exception e) when (e is NpgsqlException or
             Microsoft.EntityFrameworkCore.DbUpdateException or
-            IOException or TimeoutException or OperationCanceledException)
+            IOException or TimeoutException or OperationCanceledException ||
+            IsTransientEfWrappedTransportFailure(e))
         {
             // Transport/DB timeout after a COMMITTED receipt is a retriable
             // ACK gap. NEVER create a new order or a second financial row.
+            // EF Core wraps transport failures (connection terminated,
+            // socket reset) in InvalidOperationException("...transient
+            // failure") with the Npgsql/IO transport exception only in the
+            // INNER chain; a direct-type filter alone would miss those and
+            // surface 409 instead of the designed retriable AckPending.
             return new PayOsD04PostingOutcome(write.ReceiptId,
                 write.DepositSettlementId, write.OutboxId,
                 AckPending: true);
@@ -118,6 +124,24 @@ public sealed class PayOsD04ReviewedPostingCoordinator : IPayOsD04ReviewedPostin
         // Integrity mismatch / unexpected exception MUST propagate for
         // investigation. Never advertise an inconsistent ledger as simply
         // "ACK pending"; the legacy source receipt remains immutable.
+    }
+
+    /// <summary>
+    /// EF Core (NpgsqlExecutionStrategy) reports transport failures as a
+    /// generic InvalidOperationException whose INNER exception chain still
+    /// carries the Npgsql/IO transport exception. Walk the chain to
+    /// recover the original transport classification; the EF wrapper
+    /// message text itself is not a stable contract.
+    /// </summary>
+    private static bool IsTransientEfWrappedTransportFailure(Exception e)
+    {
+        for (var current = e; current is not null; current = current.InnerException)
+        {
+            if (current is NpgsqlException or IOException or TimeoutException or
+                Microsoft.EntityFrameworkCore.DbUpdateException)
+                return true;
+        }
+        return false;
     }
 
     private static AbpAuthorizationException Denied()

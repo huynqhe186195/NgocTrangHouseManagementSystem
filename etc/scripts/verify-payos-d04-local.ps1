@@ -14,7 +14,10 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 $allowedBranches = @(
     'feat/phase2h-payos-signature-foundation-20261106',
     'feat/d04b-protected-bank-evidence-20261108',
-    'feat/d04b-operational-gates-20261108'
+    'feat/d04b-operational-gates-20261108',
+    # PR #10 carries the previous D04 fixture and isolated local-firstboot.
+    # D04 writer tests use port 15432, never the 15433 local identity DB.
+    'feat/local-safe-startup-20261109'
 )
 $containerId = ''
 $logRoot = ''

@@ -325,3 +325,61 @@ Even if both gates PASS, D04 financial dual authorization remains **HOLD**
 because direct reviewer/approver permissions, scoped building membership,
 protected bank evidence archive and constrained financial DB writer role
 are separate concerns. Keep payOS OFF. Do not activate staging flags.
+
+## Host offline while disposable PostgreSQL remains up — non-destructive recovery
+
+Observed on Windows PowerShell 2026-11-10:
+
+```text
+docker ps --filter publish=15433
+nt-safe-firstboot-7520-10455   127.0.0.1:15433->5432/tcp
+docker ps --filter label=nt.scope=local-first-boot-20261109
+nt-safe-firstboot-7520-10455   Up 22 minutes
+curl https://localhost:44311/api/identity/users -> HTTP=000
+```
+
+Root issue: user attempted a *second* first-boot script while original
+disposable DB container remained alive and HTTPS Host was down.
+Second docker run failed binding 15433. No migration or fresh DB was
+performed by the failed attempt. Previously created Owner and BankReviewer
+roles may still exist; do not delete the original container.
+
+Recovery script: `etc/scripts/resume-ngoctrang-local-host.ps1`
+
+1. Keep the existing labelled PostgreSQL container running.
+2. `git pull --ff-only` on branch `feat/local-safe-startup-20261109`.
+3. Run Windows PowerShell `Parser.ParseFile` for both resume and first-boot scripts.
+4. In a dedicated PowerShell window, execute:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\etc\scripts\resume-ngoctrang-local-host.ps1
+```
+
+Safety checks: expected repo branch, exactly one labelled running container,
+image `postgres:16`, loopback mapping `127.0.0.1:15433`, known Docker
+init DB name, both exact isolated databases available, existing Release
+Host DLL, and no other process already listening on TCP 44311.
+
+The resume runner derives the disposable DB password ONLY from the
+existing labelled Docker container config, in local memory. It does NOT
+print the secret, create/migrate/reset databases, run DbMigrator, remove
+containers, or rewrite persisted roles/users. It starts only the compiled
+Host with the original two DB connection strings, `Development` and
+both payOS feature flags set false. It does not set the admin-bootstrap
+password. Keep this host PowerShell window open throughout UAT.
+
+Verify in separate PowerShell: `curl.exe -sS -o NUL -w
+"HOST_HTTP=%{http_code}\n" https://localhost:44311/api/identity/users`
+should give 302. Then run `setup-openiddict-actors-local.ps1` with a
+**new local admin token**, which will reuse Owner/BankReviewer roles if
+present and create any remaining synthetic test accounts. Then run the
+two-actor GET-only verification script after their separate logins.
+
+The original first-boot script now fails EARLY with
+`LOCAL_FIRSTBOOT_ALREADY_EXISTS` or `LOCAL_FIRSTBOOT_PORT_BUSY`
+instead of asking for a new password and then failing Docker binding.
+
+Source reviewed after write with basic bracket/quote checks, but the
+new host-only runner's actual Windows PowerShell execution is NOT yet
+verified. A script success marker alone is not proof of two-actor or
+financial D04 acceptance. Keep payOS OFF.

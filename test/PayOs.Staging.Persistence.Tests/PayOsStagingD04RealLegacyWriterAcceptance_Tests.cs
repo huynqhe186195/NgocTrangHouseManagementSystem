@@ -459,12 +459,13 @@ public sealed class D04RealLegacyWriterAcceptance_Tests
         await using (var revokedBuilding = await db.Database.BeginTransactionAsync(
             IsolationLevel.Serializable))
         {
-            await db.Database.ExecuteSqlInterpolatedAsync($"""
+            var revokedRows = await db.Database.ExecuteSqlInterpolatedAsync($"""
                 UPDATE "BuildingManagementOperatorBuildingGrants"
                    SET "RevokedAtUtc"={DateTime.UtcNow}
                  WHERE "BuildingId"={buildingId}
                    AND "OperatorUserId"={bankReviewer}
                 """);
+            Assert.Equal(1, revokedRows);
             await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
                 authority.AcquireCommitLeaseAsync(buildingId, Guid.NewGuid(),
                     bankReviewer, owner, CancellationToken.None));

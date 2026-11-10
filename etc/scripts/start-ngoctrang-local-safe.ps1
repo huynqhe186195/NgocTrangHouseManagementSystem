@@ -37,6 +37,18 @@ try {
         if ($branch -cne 'feat/local-safe-startup-20261109') {
             throw "Safety stop: current branch $branch is not feat/local-safe-startup-20261109"
         }
+        # Avoid asking for a NEW admin password or compiling when the
+        # disposable database is already running. Restart ONLY the Host.
+        $prior = @(& docker ps --filter 'label=nt.scope=local-first-boot-20261109' --format '{{.ID}}')
+        Assert-Exit 'Existing isolated Docker container lookup'
+        if ($prior.Count -gt 0) {
+            throw 'LOCAL_FIRSTBOOT_ALREADY_EXISTS: do not restart first boot. Run etc/scripts/resume-ngoctrang-local-host.ps1 to preserve existing roles/users.'
+        }
+        $occupied = @(& docker ps --filter 'publish=15433' --format '{{.ID}}')
+        Assert-Exit 'Local test port lookup'
+        if ($occupied.Count -gt 0) {
+            throw 'LOCAL_FIRSTBOOT_PORT_BUSY: 15433 occupied. Inspect docker ps before creating any new test database; do not remove unrelated containers.'
+        }
         Write-Host '1/5 Compiling Host and Migrator; no DB changes yet...' -ForegroundColor Cyan
         & dotnet build 'src/NgocTrangHouseManagementSystem.HttpApi.Host/NgocTrangHouseManagementSystem.HttpApi.Host.csproj' -c Release
         Assert-Exit 'Host build'

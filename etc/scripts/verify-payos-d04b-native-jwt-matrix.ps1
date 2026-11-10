@@ -1,5 +1,10 @@
 [CmdletBinding()]
-param()
+param(
+    # Explicit pre-push verification: allow running at a local-only commit.
+    # The run log records a warning; evidence must be re-confirmed at the
+    # pushed SHA before any DONE marking.
+    [switch]$AllowUnpushedCommit
+)
 
 # P1.1 D04-B NATIVE OpenIddict JWT dual-actor HTTP acceptance matrix.
 # Real Host, real password-grant tokens, three disposable PostgreSQL 16 DBs
@@ -331,8 +336,11 @@ try {
     else {
         throw 'Cannot validate current origin HEAD. Do not run stale tests.'
     }
+    if ($sha -ne $remoteSha -and -not $AllowUnpushedCommit) {
+        throw "Local SHA $sha differs from origin $remoteSha. Push first, or pass -AllowUnpushedCommit for an explicit pre-push verification run (evidence must be re-verified after push)."
+    }
     if ($sha -ne $remoteSha) {
-        throw "Local SHA $sha differs from origin $remoteSha."
+        Write-Warning "PRE-PUSH VERIFICATION: local SHA $sha is NOT on origin yet. Re-run after pushing to confirm at the pushed SHA."
     }
     $tracked = Invoke-Capture 'git' @('status', '--porcelain', '--untracked-files=no')
     if (-not [string]::IsNullOrWhiteSpace($tracked)) {

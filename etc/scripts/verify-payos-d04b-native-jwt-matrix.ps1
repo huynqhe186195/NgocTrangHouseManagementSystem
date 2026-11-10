@@ -664,7 +664,10 @@ try {
     # ---------- MID-RUN GRANT REVOCATION (IntentA2 second lane) ----------
     # Review + approve first, then revoke Owner's ApproveD04Posting grant
     # via psql in the identity DB and prove post -> 403.
-    $r = Invoke-MatrixRequest 'R1-reviewer-review-intentA2' 'POST' "$base/review/$intentA2" $png 'multipart/form-data; boundary=d04nativeboundary1234567890' $reviewerToken
+    # IntentA2 carries its own fixture reference (D04NATIVEJWT-A2-REF):
+    # the A-lane form would be denied as provider-reference mismatch.
+    $pngA2 = New-ReviewMultipart 'D04NATIVEJWT-A2-REF' 175000 $boundary
+    $r = Invoke-MatrixRequest 'R1-reviewer-review-intentA2' 'POST' "$base/review/$intentA2" $pngA2 'multipart/form-data; boundary=d04nativeboundary1234567890' $reviewerToken
     Assert-Status 'R1-reviewer-review-intentA2' $r 201
     $reviewIdA2 = [regex]::Match($r.Body, '"reviewId":"([^"]+)"').Groups[1].Value
 

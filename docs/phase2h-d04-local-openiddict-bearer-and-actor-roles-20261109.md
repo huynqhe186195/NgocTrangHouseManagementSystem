@@ -433,3 +433,75 @@ for a *distinct native Owner + reviewer* positive and negative authorization
 matrix, ensure reviewer and Owner have separate direct-user permissions
 and building grants, and retain staging financial operations behind
 the protected durable independent bank evidence barrier. Keep PR Draft.
+
+## D04 next isolated financial authorization negative matrix — 2026-11-10
+
+The user has already provided genuine **local first-boot** ABP/OpenIddict
+evidence `IDENTITY_UAT_FIXTURES_PASS` and `IDENTITY_TWO_ACTOR_PASS`.
+These results are accepted and should not be repeated unnecessarily.
+
+**Different acceptance environment:** D04 financial writer acceptance
+uses *new, separate disposable* PostgreSQL 16 databases on loopback
+`127.0.0.1:15432` (`payos_d04_identity_test`,
+`payos_d04_legacy_test`, and `payos_ef_migration_test`).
+It must NEVER use/reconfigure the running firstboot Identity/Building
+databases on `127.0.0.1:15433`. The firstboot Native-Identity test
+accounts and their JWTs are NOT imported into these D04 databases.
+
+Expanded `PayOsStagingD04RealLegacyWriterAcceptance_Tests.cs`
+disposable PostgreSQL permission negative cases:
+
+- Bank reviewer and Owner are the **same GUID**: deny.
+- Genuine Owner presented as reviewer, genuine reviewer as approver: deny.
+- Owner token/identity cannot acquire review permission lease: deny.
+- Bank reviewer cannot acquire Owner approval lease: deny.
+- Revoke exactly one reviewer building grant in a SERIALIZABLE
+  transaction: deny financial commit; roll back synthetic mutation.
+- Wrong building: deny (pre-existing case).
+- Missing SERIALIZABLE transaction: deny (pre-existing case).
+- Owner disabled in the Identity database: deny (pre-existing case).
+- Distinct authorized reviewer+Owner: the existing real synthetic
+  ContractDeposit test must still post once with receipt/outbox,
+  ACK protection and replay idempotency. No real money is transferred.
+
+Run ONLY the isolated D04 **writer** rehearsal on reviewed current branch:
+
+```powershell
+cd D:\Dev\NgocTrangBuilding\Project\NgocTrangHouseManagementSystem
+git pull --ff-only
+$t = $null; $e = $null
+[System.Management.Automation.Language.Parser]::ParseFile(
+  (Resolve-Path .\etc\scripts\verify-payos-d04-local.ps1).Path,
+  [ref]$t, [ref]$e) | Out-Null
+if ($e.Count) { throw ('PARSE_FAILED: ' + $e) }
+powershell -NoProfile -ExecutionPolicy Bypass -File .\etc\scripts\verify-payos-d04-local.ps1 -WriterOnly
+```
+
+`-WriterOnly` requires a clean tracked working tree and matching origin
+head for the exact allowlisted branch. It compiles the D04 test project
+and now also checks the authenticated ASP.NET D04 HTTP route preflight
+before creating a **separate** Docker container at 15432, running
+protected archive rehearsal and the real PostgreSQL writer test.
+That HTTP preflight still uses synthetic session cookies, NOT
+the user's already-verified native Owner and Reviewer OpenIddict JWTs.
+
+Expected only **after actual Windows test results**:
+
+```text
+TRX VERIFIED: payos-d04-http-preflight.trx passed=1 total=1
+PASS: 18a-d04-protected-archive-rehearsal
+PASS: 19a-real-legacy-writer-acceptance
+=== PAYOS D04 WRITER-ONLY ACCEPTANCE PASS
+```
+
+Do not mark any of these PASS ahead of execution. Never transmit
+access tokens, DB passwords, personal bank evidence or production data
+into log files or chat. The process forcibly removes only its own labelled
+temporary D04 Docker container in `finally`. If 15432 is occupied,
+investigate before running; do not remove unrelated Docker containers.
+
+Even full isolated synthetic financial writer PASS does **not** close
+D04 BUSINESS HOLD. Native authenticated **financial POSTs** with
+direct-user grants and scope, live protected independent bank-proof
+archive and restricted financial DB login require separate verification
+and an explicit staged activation review. payOS remains OFF.

@@ -82,9 +82,10 @@ public sealed class PayOsD04DisposableEncryptedArchive : IPayOsD04ProtectedBankE
                 aes.Decrypt(blob.AsSpan(0, 12), blob.AsSpan(28),
                     blob.AsSpan(12, 16), plaintext, Binding(intentId, reviewerId));
                 var actual = SHA256.HashData(plaintext);
-                if (!Convert.TryFromHexString(documentSha256, new byte[32], out var written) || written != 32)
-                    return false;
-                var expected = Convert.FromHexString(documentSha256);
+                byte[] expected;
+                try { expected = Convert.FromHexString(documentSha256); }
+                catch (FormatException) { return false; }
+                if (expected.Length != 32) return false;
                 return CryptographicOperations.FixedTimeEquals(actual, expected);
             }
             finally { CryptographicOperations.ZeroMemory(plaintext); }

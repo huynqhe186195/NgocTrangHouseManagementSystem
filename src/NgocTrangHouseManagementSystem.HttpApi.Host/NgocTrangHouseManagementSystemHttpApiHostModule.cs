@@ -306,6 +306,27 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule // syst
                 throw new InvalidOperationException(
                     "D04-B rejects anything but three exact disposable PostgreSQL databases.");
 
+            // Explicit disposable-only encrypted archive for native OpenIddict UAT.
+            // The key and absolute storage path are operator-supplied; no defaults,
+            // no production registration, no real bank documents permitted.
+            if (configuration.GetValue<bool>("BuildingManagement:PayOsD04B:DisposableArchive:Enabled"))
+            {
+                var archiveRoot = configuration["BuildingManagement:PayOsD04B:DisposableArchive:Root"];
+                var archiveKey = configuration["BuildingManagement:PayOsD04B:DisposableArchive:KeyBase64"];
+                if (string.IsNullOrWhiteSpace(archiveRoot) ||
+                    !Path.IsPathFullyQualified(archiveRoot) ||
+                    string.IsNullOrWhiteSpace(archiveKey))
+                    throw new InvalidOperationException("D04-B disposable archive requires absolute root and operator key.");
+                byte[] key;
+                try { key = Convert.FromBase64String(archiveKey); }
+                catch (FormatException) { throw new InvalidOperationException("D04-B archive key format invalid."); }
+                if (key.Length != 32)
+                    throw new InvalidOperationException("D04-B archive requires a 256-bit key.");
+                context.Services.AddSingleton<IPayOsD04ProtectedBankEvidenceArchive>(
+                    new PayOsD04DisposableEncryptedArchive(archiveRoot, key));
+                System.Security.Cryptography.CryptographicOperations.ZeroMemory(key);
+            }
+
             // A configured database and ABP sign-in are insufficient:
             // financial review previously accepted a CLIENT-PROVIDED archive
             // label without retaining the bank file. Fail at startup if a

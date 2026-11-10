@@ -220,6 +220,26 @@ public sealed class PayOsStagingD04BAuthenticatedHttpBoundary_Tests
             $"{route}/post/{IntentId:D}", ownerCookie))
             Assert.Equal(HttpStatusCode.NotFound, refused.StatusCode);
         Assert.Equal(2, downstream.PostRequests);
+
+        // No financial action may remain reachable after the runtime
+        // activation is revoked, even with previously signed test sessions.
+        // Check all three verbs, not only posting: review and approval also
+        // mutate protected financial evidence/authorization state.
+        app.Configuration["ConnectionStrings:BuildingManagement"] =
+            DisposableConnection("payos_d04_legacy_test");
+        app.Configuration["BuildingManagement:PayOsD04B:Enabled"] = "false";
+        using (var deniedReview = await PostAsync(client,
+            $"{route}/review/{IntentId:D}", reviewerCookie, CreateReviewForm()))
+            Assert.Equal(HttpStatusCode.NotFound, deniedReview.StatusCode);
+        using (var deniedApproval = await PostAsync(client,
+            $"{route}/approve/{ReviewId:D}", ownerCookie))
+            Assert.Equal(HttpStatusCode.NotFound, deniedApproval.StatusCode);
+        using (var deniedPost = await PostAsync(client,
+            $"{route}/post/{IntentId:D}", ownerCookie))
+            Assert.Equal(HttpStatusCode.NotFound, deniedPost.StatusCode);
+        Assert.Equal(1, downstream.Reviews);
+        Assert.Equal(1, downstream.Approvals);
+        Assert.Equal(2, downstream.PostRequests);
     }
 
     private static string DisposableConnection(string database) =>

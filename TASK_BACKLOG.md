@@ -135,16 +135,25 @@
 **Blocker:** Architecture decision needed  
 **Dependency:** P1.1, P1.2
 
-### P1.4 ⏳ Crash/Recovery Regression (Maintain PR #9 PASS)
-**Status:** TODO  
+### P1.4 ✅ Crash/Recovery Regression (Maintain PR #9 PASS)
+**Status:** DONE — evidence at pushed SHA `682613d` (run 2, `payos-native-jwt-20261111-011917`)  
+**Evidence:** 34/34 matrix steps PASS + TRX `payos-native-jwt-provision.trx` 1/1, `SOURCE_COMMIT=682613d3c74ede9a36e19181aa75e09199c0003a` (== origin, no pre-push warning). Real Host killed and restarted in the native JWT lane (IntentB, Building B). Temp container + worktree removed; 15433/5432 untouched.  
+**What the crash lane proves:**
+- C0: reviewer+owner granted to Building B mid-run (after N7 proved it grants nobody) → full review → approve chain 201
+- C1: staging trigger terminates the ACK backend exactly at the MarkPosted UPDATE (2→3): the post returns `LegacyCommittedAckPendingRetrySameIntent` (retriable) with Payment+settlement+journal+outbox already committed; durable crash state `2|1|1|0` = completed Payment, exactly one settlement, exactly one journal, zero acknowledged outbox; staging intent still ConfirmedPendingPosting
+- C1b: whole Host process tree force-killed (taskkill /T /F) — genuine dead process with a committed, unacknowledged receipt
+- C2: real Host restarted; replay of the SAME intent returns the SAME receiptId with `LegacyCommittedAndStagingAcknowledged`; recovered state `2|1|1|1|1` (payment|settlement|journal|ackedOutbox|outboxRows) and staging `3|1|1` (intent Posted, inbox reconciled, exactly one inbox row)
+- C3: duplicate replay idempotent — same receiptId, no state growth, webhook inbox untouched
+- No second Payment/Allocation/Receipt/Outbox row ever appears across crash, restart and duplicate replay
+**Source bug found and fixed (commit `682613d`):** EF Core (NpgsqlExecutionStrategy) wraps PostgresException 57P01 and other transport failures in `InvalidOperationException("...transient failure")` with the transport exception only in the inner chain; the coordinator's direct-type catch filter missed it and the designed retriable AckPending outcome surfaced as 409. The filter now walks the inner exception chain; integrity mismatches still propagate.
 **Definition of Done:**
-- Re-run kill-after-legacy-commit-before-ACK test
-- Test restart/duplicate webhook/replay
-- Verify no double Payment/Allocation/Receipt/Outbox
-- Confirm results still PASS after PR #10 code additions
+- ✅ Re-run kill-after-legacy-commit-before-ACK test (C1/C1b, native JWT HTTP lane)
+- ✅ Test restart/duplicate webhook/replay (C2/C3)
+- ✅ Verify no double Payment/Allocation/Receipt/Outbox (durable-state psql assertions)
+- ✅ Confirm results still PASS after PR #10 code additions (all previous P1.1 steps re-passed in the same run)
 
-**Blocker:** P0 must be clean  
-**Dependency:** P0.5
+**Blocker:** None  
+**Dependency:** P0.5 ✅
 
 ### P1.5 ⏳ Webhook/Merchant Staging Readiness
 **Status:** TODO  
@@ -327,8 +336,8 @@
 
 **Backlog Status Summary:**
 - P0: 6/6 closed (P0.1–P0.3 done, P0.4 not needed, P0.5 startup gate at `7621d8a`, P0.6 full bundle at `7621d8a`)
-- P1: 2/5 done (P1.1 official at `f30e14d`; P1.2 rehearsal gate at `d085d02`)
+- P1: 3/5 done (P1.1 official at `f30e14d`; P1.2 rehearsal gate at `d085d02`; P1.4 crash/recovery at `682613d`)
 - P2: 0/6 done
 - P3: 0/4 done
 
-**Current Focus:** P1.4 — crash/recovery regression in the native JWT lane (no architecture decision needed); P1.3/P1.5 await the vault/webhook architecture decisions
+**Current Focus:** P1.3/P1.5 await the Owner architecture decisions (vault/KMS choice; public callback URL); no remaining P1 task is actionable without Owner input

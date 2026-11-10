@@ -1,12 +1,12 @@
 # CURRENT STATE — NgocTrangHouseManagementSystem
-**Snapshot:** 2026-11-11 (P1.1 native JWT matrix green)  
+**Snapshot:** 2026-11-11 (P1.4 crash/recovery green in native JWT lane)  
 **Verified by:** Claude Code audit  
 **Working Directory:** `D:\Dev\NgocTrangBuilding\Project\NgocTrangHouseManagementSystem`
 
 ## Git Status
 
 **Current Branch:** `feat/local-safe-startup-20261109`  
-**HEAD SHA:** `d085d02` (pushed to origin; branch in sync)  
+**HEAD SHA:** `682613d` (pushed to origin; branch in sync)  
 **Untracked Files:** `etc/phase-audits/Phase2G3A7_RevisionLedger_Generated_Review.sql`
 
 ### Branch Inventory
@@ -49,6 +49,7 @@
 | D04 FULL local bundle on PR #10 | Steps 01–27 all PASS: 8 TRX, 118 passed, 0 failed | `C:\Users\Huynq\NgocTrang-Test-Logs\payos-20261110-162625` | `7621d8a` | Synthetic cookies, NOT native OpenIddict |
 | **P1.1 Native D04 JWT matrix** | Real OpenIddict password-grant bearer tokens for `reviewer-uat`/`owner-uat`/`outsider-uat` on the real Host (https://localhost:44311, Staging): 25/25 matrix steps PASS — N1 anonymous (401/302), N2 forged bearer (401/302), N3 outsider review 403, N4 owner-as-reviewer 403, N5/N6 reviewer-as-owner 403, N7 cross-building 403, N8 self-approve 403; P1 review 201+reviewId, P2 idempotent re-review same reviewId, P3 approve 201+approvalId, P4 post 201+receiptId+LegacyCommittedAndStagingAcknowledged, P5 replay same receiptId; R1 review A2 201, T1 tampered archive blocks approve 403, R2 approve 201, R4 post after grant revoke 403; durable state psql: LEGACY `2\|1\|1\|1`, STAGING `3\|1\|2`; TRX `payos-native-jwt-provision.trx` 1/1 | **Official run 28 at pushed SHA**: `C:\Users\Huynq\NgocTrang-Test-Logs\payos-native-jwt-20261111-001125` (TRX inside), `SOURCE_COMMIT=f30e14d17a0859d35b7548c359b1db116efeea3b` (== origin, no pre-push warning). Pre-push run 27 at `6d3ff02`: `payos-native-jwt-20261111-000218` | `f30e14d` | Tokens were real OpenIddict Bearer (not synthetic cookies); token values never echoed/saved. Fix commits for three real source bugs live in `f14745f` (UseUnitOfWork removal, Forbid→403, idempotent re-review reference reuse); four follow-ups fixed harness-only bugs (`7dbda39`, `bf193a3`, `95053a3`, `6d3ff02`). Temp container + worktree removed; 15433/5432 untouched |
 | **P1.2 DB least privilege (money writer)** | `D04BRestrictedMoneyWriterRolesGate` in 19a: two non-superuser non-DDL runtime roles with grants matching the canonical writer SQL; SERIALIZABLE writer-pattern transaction commits under the role; CREATE TABLE/DROP/inserted Payment/journal UPDATE+DELETE/BankReviews UPDATE/CREATE FUNCTION/CREATE ROLE all denied SQLSTATE 42501; zero grantable rights on the immutable journal (catalog-asserted); staging webhook-inbox + intent INSERT denied; migration stays on separate superuser connection | `-WriterOnly` run 5: 6 TRX / 20 passed / 0 failed, `payos-d04-real-writer.trx` 1/1, LOG_DIRECTORY `C:\Users\Huynq\NgocTrang-Test-Logs\payos-20261111-003546`, `SOURCE_COMMIT=d085d0209f5775c495618c1a20c29556394dd944` (pushed) | `d085d02` | Scope limit recorded: P1.1 Host harness + this rehearsal still use the disposable superuser account for the running writer; switching Host connection strings to restricted runtime roles is an operational config change deferred to P1.3 |
+| **P1.4 crash/recovery in the native JWT lane** | Full crash/recovery regression in the real-Host native OpenIddict JWT lane (IntentB, Building B): C0 grants actors mid-run; C1 arms a staging trigger terminating the ACK backend exactly at the MarkPosted UPDATE (2→3) so the post returns `LegacyCommittedAckPendingRetrySameIntent` with Payment+settlement+journal+outbox committed and outbox unacknowledged (CRASH_LEGACY `2\|1\|1\|0`, intent still ConfirmedPendingPosting); C1b force-kills the whole Host process tree (taskkill /T /F); C2 restarts the real Host, replays the SAME intent → SAME receiptId + `LegacyCommittedAndStagingAcknowledged` (RECOVERED_LEGACY `2\|1\|1\|1\|1`, STAGING `3\|1\|1`); C3 duplicate replay idempotent; webhook inbox untouched (1 row, reconciled). No second Payment/Settlement/Receipt/Outbox row ever appears | Run 2 at pushed SHA: 34/34 matrix steps PASS + TRX `payos-native-jwt-provision.trx` 1/1, LOG_DIRECTORY `C:\Users\Huynq\NgocTrang-Test-Logs\payos-native-jwt-20261111-011917`, `SOURCE_COMMIT=682613d3c74ede9a36e19181aa75e09199c0003a` (== origin, no pre-push warning). Run 1 (`payos-native-jwt-20261111-011315`) exposed the EF-wrapped transport bug fixed at `682613d` | `682613d` | Tokens real OpenIddict Bearer (never echoed/saved); temp container + worktree removed; 15433/5432 untouched. Source fix: EF Core wraps PostgresException 57P01 in InvalidOperationException("transient failure") with the transport exception only in the inner chain — the coordinator's direct-type catch filter missed it and surfaced 409 instead of the designed retriable AckPending outcome; the filter now walks the inner exception chain (integrity mismatches still propagate) |
 | H4 + D01/D02 calendar | 118 ngày lịch, exact-head CI 4/4 PASS | PR #5 CI green at multiple commits | `0b8332e9` on PR #5 | PR #5 NOT in current branch |
 | D03/D06 staging | Service pricing per room, reject fake signatures, Owner-only DOCX | PR #5 bounded CI PASS | `0b8332e9` on PR #5 | PR #5 NOT in current branch |
 
@@ -57,7 +58,6 @@
 | Item | What's Done | What's Missing | Blocker |
 |------|-------------|----------------|---------|
 | Encrypted bank evidence vault | Disposable rehearsal vault with AES-GCM, tamper detection (T1 PASS) | KMS/production secrets, ACL/IAM, backup/restore, malware scan | P1.3 |
-| Crash/recovery regression | ACK recovery covered in operational gates (PR #9); process-kill recovery in 19a | Repeat crash/recovery in the native JWT HTTP lane (P1.4) | P1.4 |
 
 ### 🔴 HOLD / NOT STARTED
 
@@ -99,11 +99,11 @@
 ## Next Immediate Actions (P1)
 
 1. ✅ P1.1 native D04 financial HTTP auth matrix — 25/25 PASS, official evidence at pushed SHA `f30e14d` (run 28, `payos-native-jwt-20261111-001125`); branch pushed and in sync with origin
-2. ⏳ P1.2 DB financial writer least privilege (SQLSTATE 42501)
-3. ⏳ P1.4 crash/recovery regression in the native JWT lane
-4. ⏳ P1.3 operational vault, P1.5 webhook/merchant staging readiness
+2. ✅ P1.2 DB financial writer least privilege — rehearsal gate at `d085d02` (run 5, `payos-20261111-003546`)
+3. ✅ P1.4 crash/recovery regression in the native JWT lane — 34/34 at pushed `682613d` (run 2, `payos-native-jwt-20261111-011917`)
+4. ⏳ P1.3 operational vault, P1.5 webhook/merchant staging readiness — both blocked on Owner architecture decisions (KMS choice; public callback URL)
 
 ---
 **Last Updated:** 2026-11-11  
-**Verified Against:** local checkout + run 28 log/TRX evidence at pushed SHA  
-**Confidence:** High for git state (branch == origin at `f30e14d`), `-WriterOnly` (19/19), FULL bundle (118/118) on `7621d8a`, and the native JWT matrix (25/25) at pushed `f30e14d`; least-privilege writer and production vault remain HOLD
+**Verified Against:** local checkout + run 28 log/TRX evidence at pushed SHA `f30e14d` (P1.1), `-WriterOnly` run 5 at `d085d02` (P1.2), and native JWT crash/recovery run 2 at pushed `682613d` (P1.4)  
+**Confidence:** High for git state (branch == origin at `682613d`), the native JWT matrix + crash lane (34/34), least-privilege writer rehearsal, and the FULL/WriterOnly bundles on `7621d8a`; production vault and restricted-role Host wiring remain HOLD

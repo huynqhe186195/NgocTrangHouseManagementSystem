@@ -83,7 +83,7 @@ public sealed class PayOsD04StagingReviewController : ControllerBase
                 HttpContext.RequestAborted);
             return Accepted(new { ReviewId = id, Status = "RequiresDifferentOwnerApproval" });
         }
-        catch (AbpAuthorizationException) { return Forbid(); }
+        catch (AbpAuthorizationException) { return StatusCode(403); }
         catch (InvalidOperationException) { return Conflict(); }
     }
 
@@ -98,7 +98,7 @@ public sealed class PayOsD04StagingReviewController : ControllerBase
                 bankReviewId, HttpContext.RequestAborted);
             return Accepted(new { ApprovalId = id, Status = "ApprovedPendingFinancialPosting" });
         }
-        catch (AbpAuthorizationException) { return Forbid(); }
+        catch (AbpAuthorizationException) { return StatusCode(403); }
         catch (InvalidOperationException) { return Conflict(); }
     }
 
@@ -123,7 +123,7 @@ public sealed class PayOsD04StagingReviewController : ControllerBase
                 Status = "LegacyCommittedAndStagingAcknowledged"
             });
         }
-        catch (AbpAuthorizationException) { return Forbid(); }
+        catch (AbpAuthorizationException) { return StatusCode(403); }
         catch (InvalidOperationException) { return Conflict(); }
     }
 

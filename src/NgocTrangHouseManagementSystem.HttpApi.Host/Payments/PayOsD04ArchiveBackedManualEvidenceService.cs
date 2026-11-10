@@ -104,17 +104,60 @@ public sealed class PayOsD04ArchiveBackedManualEvidenceService :
 
         // The request's ProtectedArchiveReference is explicitly IGNORED.
         // Never let callers supply a storage identifier or filesystem path.
-        var receipt = await _archive.StoreAndVerifyAsync(
-            intentId, reviewer, evidence.StatementDocumentBytes, ct);
+        // Idempotent re-review: the canonical SQL writer returns the existing
+        // review row when the same reviewer re-submits the same document; it
+        // compares the stored ExternalBankProofReference, so the facade must
+        // REUSE the persisted reference (after re-verifying its bytes) instead
+        // of storing a fresh file whose reference would never match.
         var expected = Convert.ToHexString(
             SHA256.HashData(evidence.StatementDocumentBytes)).ToLowerInvariant();
-        if (!string.Equals(receipt.DocumentSha256, expected,
-                StringComparison.Ordinal) ||
-            string.IsNullOrWhiteSpace(receipt.Reference) ||
-            receipt.Reference.Length > 256 ||
-            !await _archive.VerifyAsync(intentId, reviewer,
-                receipt.Reference, expected, ct))
-            throw Denied();
+        await _db.Database.OpenConnectionAsync(ct);
+        string persistedReference;
+        try
+        {
+            await using var query = new NpgsqlCommand("""
+                SELECT "ExternalBankProofReference"
+                  FROM "BuildingManagementPayOsD04BankReviews"
+                 WHERE "PayOsIntentId"=@intent AND "ReviewerId"=@reviewer
+                """, (NpgsqlConnection)_db.Database.GetDbConnection());
+            query.Parameters.AddWithValue("intent", intentId);
+            query.Parameters.AddWithValue("reviewer", reviewer);
+            await using var row = await query.ExecuteReaderAsync(ct);
+            if (await row.ReadAsync(ct))
+            {
+                var stored = row.GetString(0);
+                if (string.IsNullOrWhiteSpace(stored) || stored.Length > 256)
+                    throw Denied();
+                persistedReference = stored;
+            }
+            else persistedReference = string.Empty;
+        }
+        finally
+        {
+            await _db.Database.CloseConnectionAsync();
+        }
+
+        PayOsD04ProtectedBankEvidenceReceipt receipt;
+        if (persistedReference.Length > 0)
+        {
+            if (!await _archive.VerifyAsync(intentId, reviewer,
+                    persistedReference, expected, ct))
+                throw Denied();
+            receipt = new PayOsD04ProtectedBankEvidenceReceipt(
+                persistedReference, expected);
+        }
+        else
+        {
+            receipt = await _archive.StoreAndVerifyAsync(
+                intentId, reviewer, evidence.StatementDocumentBytes, ct);
+            if (!string.Equals(receipt.DocumentSha256, expected,
+                    StringComparison.Ordinal) ||
+                string.IsNullOrWhiteSpace(receipt.Reference) ||
+                receipt.Reference.Length > 256 ||
+                !await _archive.VerifyAsync(intentId, reviewer,
+                    receipt.Reference, expected, ct))
+                throw Denied();
+        }
 
         // The protected, server-issued reference enters the canonical
         // immutable SQL review, not the untrusted HTTP form field.

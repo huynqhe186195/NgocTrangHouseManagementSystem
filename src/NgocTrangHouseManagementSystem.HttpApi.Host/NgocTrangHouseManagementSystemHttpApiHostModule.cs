@@ -1126,7 +1126,12 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule // syst
             app.UseMultiTenancy();
         }
 
-        app.UseUnitOfWork();
+        // No app.UseUnitOfWork(): its reserved ambient unit of work is begun
+        // with conventional (POST => transactional) options and silently
+        // overrides [UnitOfWork(isTransactional:false)] on controller actions.
+        // The D04-B financial writer MUST own its own SERIALIZABLE
+        // transactions, so MVC actions manage their units of work through
+        // AbpUowActionFilter only. See Payments/PayOsD04* acceptance tests.
         app.UseDynamicClaims();
         app.UseAuthorization();
 

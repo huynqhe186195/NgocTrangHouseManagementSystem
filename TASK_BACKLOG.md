@@ -94,17 +94,28 @@
 **Blocker:** None  
 **Dependency:** P0.5 ✅
 
-### P1.2 ⏳ DB Least Privilege for Money Writer
-**Status:** TODO  
+### P1.2 ✅ DB Least Privilege for Money Writer (rehearsal gate)
+**Status:** DONE — evidence at pushed SHA `d085d02` (run 5, `payos-20261111-003546`)  
+**Evidence:** `-WriterOnly` bundle 6 TRX / 20 passed / 0 failed; `payos-d04-real-writer.trx` 1/1 includes the new `D04BRestrictedMoneyWriterRolesGate` (commit `6437929`, fixes `b3d418f` + `d085d02`).  
+**What the gate proves (in the disposable `payos_d04_legacy_test`/`payos_ef_migration_test` DBs):**
+- Two runtime roles `d04_money_writer_legacy_test` / `d04_money_writer_staging_test`: NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOINHERIT
+- Grants match the canonical writer SQL exactly: SELECT on locked financial tables (contracts/payments/settlements/reviews/approvals/journal/outbox/rooms/floors), INSERT on journal/outbox/settlements, UPDATE on Payment/Settlement + the two outbox ACK columns, staging intent Status UPDATE only
+- Positive: a SERIALIZABLE transaction with the writer's exact `SELECT … FOR UPDATE` pattern COMMITS under the restricted role
+- Negative (SQLSTATE 42501): CREATE TABLE, DROP journal, INSERT invented Payment, UPDATE/DELETE immutable journal, UPDATE BankReviews, CREATE FUNCTION, CREATE ROLE (PG16: 42501)
+- `information_schema.role_table_grants`: zero is_grantable=YES rights on the immutable journal (a GRANT without options only warns, so this is asserted via catalog)
+- Staging role: read-back allowed; webhook inbox + intent INSERT denied 42501
+- Migration/seeding remain on the separate superuser connection, never handed to the application writer  
 **Definition of Done:**
-- Extend beyond Identity lease/ACK tests
-- Validate app cannot bypass approval or update SQL financial tables outside intended permissions
-- Test PostgreSQL permission enforcement with SQLSTATE 42501
-- Verify transactional commit behavior under restricted role
-- Keep migration role separate from runtime role
+- ✅ Extend beyond Identity lease/ACK tests
+- ✅ Validate app cannot bypass approval or update SQL financial tables outside intended permissions
+- ✅ Test PostgreSQL permission enforcement with SQLSTATE 42501
+- ✅ Verify transactional commit behavior under restricted role
+- ✅ Keep migration role separate from runtime role (separate connections; runtime roles created with no DDL/role-creation rights)
 
-**Blocker:** P0 must be clean  
-**Dependency:** P0.5
+**Known scope limit (recorded, not hidden):** the P1.1 native-JWT Host harness and this rehearsal still connect the running writer through the disposable postgres superuser account; switching the D04-B Host connection strings to the restricted runtime roles is an operational configuration change (Staging/Production secrets), deferred to P1.3 operational-vault work where the vault/role provisioning is decided.
+
+**Blocker:** None  
+**Dependency:** P0.5 ✅
 
 ### P1.3 ⏳ Operational Bank Evidence Vault
 **Status:** TODO (currently disposable rehearsal only)  
@@ -316,8 +327,8 @@
 
 **Backlog Status Summary:**
 - P0: 6/6 closed (P0.1–P0.3 done, P0.4 not needed, P0.5 startup gate at `7621d8a`, P0.6 full bundle at `7621d8a`)
-- P1: 1/5 done (P1.1 official evidence at pushed `f30e14d`, run 28)
+- P1: 2/5 done (P1.1 official at `f30e14d`; P1.2 rehearsal gate at `d085d02`)
 - P2: 0/6 done
 - P3: 0/4 done
 
-**Current Focus:** P1.2 — DB financial writer least privilege (SQLSTATE 42501)
+**Current Focus:** P1.4 — crash/recovery regression in the native JWT lane (no architecture decision needed); P1.3/P1.5 await the vault/webhook architecture decisions

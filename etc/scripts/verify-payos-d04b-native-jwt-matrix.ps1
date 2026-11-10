@@ -183,9 +183,11 @@ function Invoke-Scalar([string]$database, [string]$sql) {
     $sqlFile = Join-Path $logRoot ('scalar-' + [Guid]::NewGuid().ToString('N') + '.sql')
     Set-Content -LiteralPath $sqlFile -Encoding Ascii -Value $sql
     try {
-        Invoke-Capture 'docker' @(
+        # Suppress the cp call's return value: it would otherwise join the
+        # psql result in this function's output pipeline (array, not string).
+        $null = Invoke-Capture 'docker' @(
             'cp', $sqlFile, "$($containerId):/tmp/scalar.sql")
-        return (Invoke-Capture 'docker' @(
+        return [string](Invoke-Capture 'docker' @(
             'exec', $containerId, 'psql', '-U', 'postgres', '-d', $database,
             '-At', '-v', 'ON_ERROR_STOP=1', '-f', '/tmp/scalar.sql')).Trim()
     }

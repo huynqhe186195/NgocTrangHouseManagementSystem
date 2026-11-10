@@ -716,6 +716,215 @@ DELETE FROM "AbpPermissionGrants"
     Assert-Status 'R4-owner-post-intentA2-after-revoke' $r 403
     Write-Host 'MATRIX PASS: revoked owner grant blocks posting mid-run.' -ForegroundColor Green
 
+    # R5: re-grant the owner's ApproveD04Posting (the crash lane below needs
+    # a full review -> approve -> post chain; the grant row is restored the
+    # same way R3 revoked it — direct psql on the disposable identity DB).
+    Invoke-SqlFile 'payos_d04_identity_test' @"
+INSERT INTO "AbpPermissionGrants" ("Id","TenantId","Name","ProviderName","ProviderKey")
+VALUES (gen_random_uuid(),NULL,'BuildingManagement.Payments.ApproveD04Posting',
+        'U','$ownerId')
+ON CONFLICT DO NOTHING;
+"@ 'R5-re-grant-owner-grant'
+
+    # ---------- P1.4 CRASH/RECOVERY LANE (IntentB, Building B) ----------
+    # N7 above already proved Building B grants nobody. The crash lane now
+    # grants both actors to Building B mid-run (the same psql technique R3
+    # uses to revoke), runs the full review -> approve -> post chain, and
+    # kills the Host exactly BETWEEN the legacy financial commit and the
+    # staging ACK. Two independent crash mechanisms are combined:
+    #   C1:  a PostgreSQL trigger on the staging intent UPDATE 2->3
+    #        (the ACK's MarkPosted) terminates the ACK backend, so the
+    #        coordinator returns the retriable AckPending outcome while
+    #        Payment+settlement+journal+outbox are already durable.
+    #   C1b: the whole Host process tree is force-killed AFTER that
+    #        response, leaving a genuinely dead process with a committed
+    #        receipt and an unacknowledged outbox.
+    # C2 restarts the real Host, replays the SAME intent and proves the
+    # replay acknowledges the SAME receipt with no second financial row.
+    # C3 replays once more (duplicate) and proves counts never grow.
+    Invoke-SqlFile 'payos_d04_legacy_test' @'
+INSERT INTO "BuildingManagementOperatorBuildingGrants"
+  ("Id","OperatorUserId","BuildingId","GrantedByUserId",
+   "GrantedAtUtc","RevisionNumber","ExtraProperties","ConcurrencyStamp")
+VALUES (gen_random_uuid(),'0d04c000-0000-4000-8000-000000000001',
+          '0d04b000-0000-4000-8000-000000000001',
+          '0d04c000-0000-4000-8000-000000000002',
+        NOW() - interval '10 minutes',1,'{}',md5(random()::text)),
+       (gen_random_uuid(),'0d04c000-0000-4000-8000-000000000002',
+          '0d04b000-0000-4000-8000-000000000001',
+          '0d04c000-0000-4000-8000-000000000002',
+        NOW() - interval '10 minutes',1,'{}',md5(random()::text));
+'@ 'C0-grant-actors-building-b'
+
+    $r = Invoke-MatrixRequest 'C1-reviewer-review-intentB' 'POST' "$base/review/$intentB" $pngB 'multipart/form-data; boundary=d04nativeboundary1234567890' $reviewerToken
+    Assert-Status 'C1-reviewer-review-intentB' $r 201
+    $reviewIdB = [regex]::Match($r.Body, '"reviewId":"([^"]+)"').Groups[1].Value
+    if ([string]::IsNullOrWhiteSpace($reviewIdB)) { throw 'C1: no reviewId extracted for IntentB.' }
+
+    $r = Invoke-MatrixRequest 'C1-owner-approve-intentB' 'POST' "$base/approve/$reviewIdB" $null $null $ownerToken
+    Assert-Status 'C1-owner-approve-intentB' $r 201
+
+    # Arm the precise crash point: the ACK's MarkPosted UPDATE (2 -> 3) for
+    # IntentB terminates its own backend BEFORE the staging commit, so the
+    # coordinator must classify the already-committed receipt as AckPending.
+    # Single-quoted here-string: SQL dollar-quoting must NOT be expanded.
+    Invoke-SqlFile 'payos_ef_migration_test' @'
+CREATE OR REPLACE FUNCTION "BM_D04P14TerminateBeforeAck"()
+RETURNS trigger LANGUAGE plpgsql AS $d04p14$
+BEGIN
+  PERFORM pg_terminate_backend(pg_backend_pid());
+  RETURN NEW;
+END;
+$d04p14$;
+DROP TRIGGER IF EXISTS "TR_D04P14CrashBeforeAck"
+  ON "BuildingManagementPayOsPaymentIntents";
+CREATE TRIGGER "TR_D04P14CrashBeforeAck"
+  BEFORE UPDATE ON "BuildingManagementPayOsPaymentIntents"
+  FOR EACH ROW
+  WHEN (OLD."Id" = '0d04b000-0000-4000-8000-000000000007'
+        AND OLD."Status" = 2 AND NEW."Status" = 3)
+  EXECUTE FUNCTION "BM_D04P14TerminateBeforeAck"();
+'@ 'C1-arm-crash-trigger'
+
+    $r = Invoke-MatrixRequest 'C1-owner-post-intentB-crash-before-ack' 'POST' "$base/post/$intentB" $null $null $ownerToken
+    # Accepted(202) may be rewritten to 201 by the same global response
+    # filter that forced P4's Ok() to 201; both are "success, ACK pending".
+    if ($r.Status -ne 201 -and $r.Status -ne 202) {
+        throw "MATRIX FAILURE: C1 post expected HTTP 201/202 (AckPending), got $($r.Status). See C1-owner-post-intentB-crash-before-ack-body.txt"
+    }
+    Assert-BodyContains 'C1-owner-post-intentB-crash-before-ack' $r 'LegacyCommittedAckPendingRetrySameIntent'
+    $receiptIdB = [regex]::Match($r.Body, '"receiptId":"([^"]+)"').Groups[1].Value
+    if ([string]::IsNullOrWhiteSpace($receiptIdB)) { throw 'C1: no receiptId extracted for IntentB.' }
+    Write-Host 'MATRIX PASS: C1 legacy committed, ACK pending (retriable, no second financial row).' -ForegroundColor Green
+
+    # Durable state at the crash point: the irreversible legacy rows exist,
+    # but the outbox is NOT acknowledged and the staging intent is still
+    # ConfirmedPendingPosting (MarkPosted never committed).
+    $crashLegacy = @"
+SELECT
+  (SELECT "Status" FROM "BuildingManagementPayments" WHERE "Id"='0d04b000-0000-4000-8000-000000000006'),
+  (SELECT count(*) FROM "BuildingManagementDepositSettlements" WHERE "PaymentId"='0d04b000-0000-4000-8000-000000000006' AND "Type"=3 AND "Status"=2),
+  (SELECT count(*) FROM "BuildingManagementPayOsD04ReceiptJournal" WHERE "PayOsIntentId"='$intentB'),
+  (SELECT count(*) FROM "BuildingManagementPayOsD04Outbox" WHERE "ReceiptId"='$receiptIdB' AND "AcknowledgedAtUtc" IS NOT NULL);
+"@
+    $crashLegacyResult = (Invoke-Scalar 'payos_d04_legacy_test' $crashLegacy)
+    Write-Host "CRASH_LEGACY_STATE: $crashLegacyResult"
+    $cparts = @($crashLegacyResult -split '\|')
+    if ($cparts.Count -ne 4 -or $cparts[0].Trim() -ne '2' -or
+        $cparts[1].Trim() -ne '1' -or $cparts[2].Trim() -ne '1' -or
+        $cparts[3].Trim() -ne '0') {
+        throw "CRASH STATE FAILURE (legacy): expected 2|1|1|0, got '$crashLegacyResult'"
+    }
+    $crashStaging = "SELECT `"Status`" FROM `"BuildingManagementPayOsPaymentIntents`" WHERE `"Id`"='$intentB';"
+    $crashStagingStatus = (Invoke-Scalar 'payos_ef_migration_test' $crashStaging)
+    if ($crashStagingStatus.Trim() -ne '2') {
+        throw "CRASH STATE FAILURE (staging): intentB expected Status 2 (ConfirmedPendingPosting), got '$crashStagingStatus'"
+    }
+    Write-Host 'PASS: crash durable state = committed receipt, unacknowledged outbox, intent still ConfirmedPendingPosting.' -ForegroundColor Green
+
+    # ---------- C1b: FORCE-KILL the real Host process tree ----------
+    # The response above already proves the exact crash state; killing the
+    # process now makes the restart a genuine cold recovery, not a retry
+    # inside one process.
+    Write-Host '=== C1b-kill-host-after-legacy-commit-before-ack ===' -ForegroundColor Cyan
+    if ($hostProcess -and -not $hostProcess.HasExited) {
+        $null = Invoke-Capture 'taskkill' @('/PID', "$($hostProcess.Id)", '/T', '/F')
+    }
+    if ($hostProcess) { $hostProcess.WaitForExit(15000) | Out-Null }
+    $hostDown = $false
+    for ($i = 0; $i -lt 30; $i++) {
+        if (-not (Test-HostHealthy)) { $hostDown = $true; break }
+        Start-Sleep -Milliseconds 500
+    }
+    if (-not $hostDown) { throw 'C1b: Host still healthy after forced process-tree kill.' }
+    Write-Host 'PASS: real Host process tree killed (committed receipt, outbox unacknowledged).' -ForegroundColor Green
+
+    # ---------- C2: RESTART the real Host, disarm the trigger, replay ----------
+    Write-Host '=== C2-restart-real-staging-host ===' -ForegroundColor Cyan
+    $hostLog2 = Join-Path $logRoot '08-host-restart.log'
+    Push-Location $hostDir
+    try {
+        $hostProcess = Start-Process -FilePath 'dotnet' `
+            -ArgumentList @('run','--no-build','--no-launch-profile','-c','Release') `
+            -WorkingDirectory $hostDir -PassThru `
+            -RedirectStandardOutput $hostLog2 -RedirectStandardError (Join-Path $logRoot '08-host-restart-stderr.log')
+        $ready = $false
+        for ($i = 0; $i -lt 120; $i++) {
+            if ($hostProcess.HasExited) {
+                throw "Restarted Host exited early with code $($hostProcess.ExitCode). See 08-host-restart.log / 08-host-restart-stderr.log"
+            }
+            if (Test-HostHealthy) { $ready = $true; break }
+            Start-Sleep -Milliseconds 1000
+        }
+        if (-not $ready) {
+            throw 'Restarted Host did not become healthy on https://localhost:44311/health-status within 120s. See 08-host-restart.log'
+        }
+    }
+    finally { Pop-Location }
+    Write-Host 'PASS: real Host restarted and healthy after the crash.' -ForegroundColor Green
+
+    # The crash trigger is test scaffolding, not recovery behavior: disarm
+    # it so the replay's MarkPosted can commit normally.
+    Invoke-SqlFile 'payos_ef_migration_test' @'
+DROP TRIGGER IF EXISTS "TR_D04P14CrashBeforeAck"
+  ON "BuildingManagementPayOsPaymentIntents";
+DROP FUNCTION IF EXISTS "BM_D04P14TerminateBeforeAck"();
+'@ 'C2-disarm-crash-trigger'
+
+    # Same bearer tokens remain valid: the Host re-reads the same identity
+    # DB and re-verifies the same signing certificate from the worktree.
+    $r = Invoke-MatrixRequest 'C2-replay-post-intentB-after-restart' 'POST' "$base/post/$intentB" $null $null $ownerToken
+    Assert-Status 'C2-replay-post-intentB-after-restart' $r 201
+    Assert-BodyContains 'C2-replay-post-intentB-after-restart' $r 'LegacyCommittedAndStagingAcknowledged'
+    $receiptIdB2 = [regex]::Match($r.Body, '"receiptId":"([^"]+)"').Groups[1].Value
+    if ($receiptIdB2 -cne $receiptIdB) {
+        throw "MATRIX FAILURE: post-crash replay returned different receiptId ($receiptIdB2 vs $receiptIdB)."
+    }
+    Write-Host 'MATRIX PASS: C2 post-restart replay acknowledged the SAME receipt (no second financial row).' -ForegroundColor Green
+
+    # ---------- C3: duplicate replay after recovery ----------
+    $r = Invoke-MatrixRequest 'C3-duplicate-replay-post-intentB' 'POST' "$base/post/$intentB" $null $null $ownerToken
+    Assert-Status 'C3-duplicate-replay-post-intentB' $r 201
+    $receiptIdB3 = [regex]::Match($r.Body, '"receiptId":"([^"]+)"').Groups[1].Value
+    if ($receiptIdB3 -cne $receiptIdB) {
+        throw "MATRIX FAILURE: duplicate replay returned different receiptId ($receiptIdB3 vs $receiptIdB)."
+    }
+    Write-Host 'MATRIX PASS: C3 duplicate replay same receiptId (idempotent).' -ForegroundColor Green
+
+    # Recovered durable state after C2/C3: exactly one journal, one
+    # settlement, one acknowledged outbox row, intent Posted, and the
+    # webhook inbox untouched (still exactly one reconciled row).
+    $recoveredLegacy = @"
+SELECT
+  (SELECT "Status" FROM "BuildingManagementPayments" WHERE "Id"='0d04b000-0000-4000-8000-000000000006'),
+  (SELECT count(*) FROM "BuildingManagementDepositSettlements" WHERE "PaymentId"='0d04b000-0000-4000-8000-000000000006' AND "Type"=3 AND "Status"=2),
+  (SELECT count(*) FROM "BuildingManagementPayOsD04ReceiptJournal" WHERE "PayOsIntentId"='$intentB'),
+  (SELECT count(*) FROM "BuildingManagementPayOsD04Outbox" WHERE "ReceiptId"='$receiptIdB' AND "AcknowledgedAtUtc" IS NOT NULL),
+  (SELECT count(*) FROM "BuildingManagementPayOsD04Outbox" WHERE "ReceiptId"='$receiptIdB');
+"@
+    $recoveredLegacyResult = (Invoke-Scalar 'payos_d04_legacy_test' $recoveredLegacy)
+    Write-Host "RECOVERED_LEGACY_STATE: $recoveredLegacyResult"
+    $rparts = @($recoveredLegacyResult -split '\|')
+    if ($rparts.Count -ne 5 -or $rparts[0].Trim() -ne '2' -or
+        $rparts[1].Trim() -ne '1' -or $rparts[2].Trim() -ne '1' -or
+        $rparts[3].Trim() -ne '1' -or $rparts[4].Trim() -ne '1') {
+        throw "RECOVERY STATE FAILURE (legacy): expected 2|1|1|1|1 (payment|settlement|journal|ackedOutbox|outboxRows), got '$recoveredLegacyResult'"
+    }
+    $recoveredStaging = @"
+SELECT
+  (SELECT "Status" FROM "BuildingManagementPayOsPaymentIntents" WHERE "Id"='$intentB'),
+  (SELECT "Status" FROM "BuildingManagementPayOsWebhookInbox" WHERE "Id"='0d04b000-0000-4000-8000-000000000008'),
+  (SELECT count(*) FROM "BuildingManagementPayOsWebhookInbox" WHERE "PaymentIntentId"='$intentB');
+"@
+    $recoveredStagingResult = (Invoke-Scalar 'payos_ef_migration_test' $recoveredStaging)
+    Write-Host "RECOVERED_STAGING_STATE: $recoveredStagingResult"
+    $rsparts = @($recoveredStagingResult -split '\|')
+    if ($rsparts.Count -ne 3 -or $rsparts[0].Trim() -ne '3' -or
+        $rsparts[1].Trim() -ne '1' -or $rsparts[2].Trim() -ne '1') {
+        throw "RECOVERY STATE FAILURE (staging): expected 3|1|1 (intentPosted|inboxStatus|inboxRows), got '$recoveredStagingResult'"
+    }
+    Write-Host 'PASS: crash/recovery durable state verified — no double Payment/Settlement/Receipt/Outbox; webhook inbox untouched.' -ForegroundColor Green
+
     # ---------- DURABLE STATE ASSERTIONS (psql) ----------
     Write-Host '=== Durable state assertions ===' -ForegroundColor Cyan
     $legacyCheck = @"

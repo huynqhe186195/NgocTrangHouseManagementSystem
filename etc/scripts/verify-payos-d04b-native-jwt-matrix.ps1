@@ -675,10 +675,12 @@ try {
     # revoked, approve would 403 for the wrong reason and hide the tamper
     # check; also tamper the EXACT vault file bound to reviewIdA2, read
     # from the committed SQL review row, not an arbitrary *.d04vault). ----------
+    # PowerShell here-strings keep " literal (no "" collapsing), so these
+    # identifiers must be written with single quotes; $vars still expand.
     $reviewRefA2 = (Invoke-Scalar 'payos_d04_legacy_test' @"
-SELECT ""ExternalBankProofReference""::text
-  FROM ""BuildingManagementPayOsD04BankReviews""
- WHERE ""Id""='$reviewIdA2';
+SELECT "ExternalBankProofReference"::text
+  FROM "BuildingManagementPayOsD04BankReviews"
+ WHERE "Id"='$reviewIdA2';
 "@).Trim()
     if ([string]::IsNullOrWhiteSpace($reviewRefA2)) {
         throw 'T1: no ExternalBankProofReference for reviewIdA2.'
@@ -703,9 +705,9 @@ SELECT ""ExternalBankProofReference""::text
 
     # Revoke the owner's permission grant row.
     Invoke-SqlFile 'payos_d04_identity_test' @"
-DELETE FROM ""AbpPermissionGrants""
- WHERE ""ProviderName""='U' AND ""ProviderKey""='$ownerId'
-   AND ""Name""='BuildingManagement.Payments.ApproveD04Posting';
+DELETE FROM "AbpPermissionGrants"
+ WHERE "ProviderName"='U' AND "ProviderKey"='$ownerId'
+   AND "Name"='BuildingManagement.Payments.ApproveD04Posting';
 "@ 'R3-revoke-owner-grant'
 
     $r = Invoke-MatrixRequest 'R4-owner-post-intentA2-after-revoke' 'POST' "$base/post/$intentA2" $null $null $ownerToken
@@ -716,10 +718,10 @@ DELETE FROM ""AbpPermissionGrants""
     Write-Host '=== Durable state assertions ===' -ForegroundColor Cyan
     $legacyCheck = @"
 SELECT
-  (SELECT ""Status"" FROM ""BuildingManagementPayments"" WHERE ""Id""='0d04a000-0000-4000-8000-000000000006'),
-  (SELECT count(*) FROM ""DepositSettlements"" WHERE ""PaymentId""='0d04a000-0000-4000-8000-000000000006' AND ""Type""=3 AND ""Status""=2),
-  (SELECT count(*) FROM ""BuildingManagementPayOsD04ReceiptJournal"" WHERE ""PayOsIntentId""='$intentA'),
-  (SELECT count(*) FROM ""BuildingManagementPayOsD04Outbox"" WHERE ""ReceiptId""='$receiptId' AND ""AcknowledgedAtUtc"" IS NOT NULL);
+  (SELECT "Status" FROM "BuildingManagementPayments" WHERE "Id"='0d04a000-0000-4000-8000-000000000006'),
+  (SELECT count(*) FROM "DepositSettlements" WHERE "PaymentId"='0d04a000-0000-4000-8000-000000000006' AND "Type"=3 AND "Status"=2),
+  (SELECT count(*) FROM "BuildingManagementPayOsD04ReceiptJournal" WHERE "PayOsIntentId"='$intentA'),
+  (SELECT count(*) FROM "BuildingManagementPayOsD04Outbox" WHERE "ReceiptId"='$receiptId' AND "AcknowledgedAtUtc" IS NOT NULL);
 "@
     $legacyResult = (Invoke-Scalar 'payos_d04_legacy_test' $legacyCheck)
     Write-Host "LEGACY_STATE: $legacyResult"
@@ -732,9 +734,9 @@ SELECT
 
     $stagingCheck = @"
 SELECT
-  (SELECT ""Status"" FROM ""BuildingManagementPayOsPaymentIntents"" WHERE ""Id""='$intentA'),
-  (SELECT ""Status"" FROM ""BuildingManagementPayOsWebhookInbox"" WHERE ""Id""='0d04a000-0000-4000-8000-000000000008'),
-  (SELECT ""Status"" FROM ""BuildingManagementPayOsPaymentIntents"" WHERE ""Id""='$intentA2');
+  (SELECT "Status" FROM "BuildingManagementPayOsPaymentIntents" WHERE "Id"='$intentA'),
+  (SELECT "Status" FROM "BuildingManagementPayOsWebhookInbox" WHERE "Id"='0d04a000-0000-4000-8000-000000000008'),
+  (SELECT "Status" FROM "BuildingManagementPayOsPaymentIntents" WHERE "Id"='$intentA2');
 "@
     $stagingResult = (Invoke-Scalar 'payos_ef_migration_test' $stagingCheck)
     Write-Host "STAGING_STATE: $stagingResult"

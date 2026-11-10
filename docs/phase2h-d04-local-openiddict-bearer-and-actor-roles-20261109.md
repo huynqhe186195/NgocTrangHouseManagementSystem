@@ -383,3 +383,53 @@ Source reviewed after write with basic bracket/quote checks, but the
 new host-only runner's actual Windows PowerShell execution is NOT yet
 verified. A script success marker alone is not proof of two-actor or
 financial D04 acceptance. Keep payOS OFF.
+
+## Windows UAT accepted: independent Owner and BankReviewer Bearer authorization — 2026-11-10
+
+**Evidence provided directly by the local Windows operator** after creating synthetic
+`owner-uat` (persisted `Owner`) and `reviewer-uat` (persisted `BankReviewer`)
+through the real ABP Identity HTTP APIs:
+
+```text
+ADMIN_IDENTITY_MANAGEMENT_API_PASS
+ROLE_ALREADY_PRESENT: Owner
+ROLE_ALREADY_PRESENT: BankReviewer
+OWNER_PASSWORD_POLICY_PASS
+OWNER_ROLE_PERSISTED: Owner
+OWNER_USER_CREATED: owner-uat
+REVIEWER_PASSWORD_POLICY_PASS
+REVIEWER_ROLE_PERSISTED: BankReviewer
+REVIEWER_USER_CREATED: reviewer-uat
+IDENTITY_UAT_FIXTURES_PASS
+
+OWNER_PROFILE HTTP=200 TYPE=application/json
+OWNER_USERS HTTP=403 TYPE=none
+REVIEWER_PROFILE HTTP=200 TYPE=application/json
+REVIEWER_USERS HTTP=403 TYPE=none
+IDENTITY_TWO_ACTOR_PASS
+```
+
+ACCEPTED for **local Identity authorization only**: both distinct real
+OpenIddict-issued Bearer tokens were accepted by `GET /api/account/my-profile`
+and returned 200 JSON with matching profile username; neither actor
+could access `GET /api/identity/users?maxResultCount=1` (403).
+The checker used no cookies, did not follow redirects and asserted
+distinct JWT subjects, Owner role for owner, and absence of Owner/admin
+for reviewer. The operator did not disclose raw JWTs, passwords or
+identity response bodies. No secrets are recorded here.
+
+**NOT ACCEPTED:** any D04 financial permission, direct-user grant,
+building-specific operator scope, bank proof archive or bank reconciliation,
+least-privilege DB writer role, financial POST/ACK recovery, or production
+payment. The D04-B dual-authority code is explicitly gated to separate
+`payos_d04_identity_test` and `payos_d04_legacy_test` databases in Staging
+with special activation and transactional checks; the current
+`nt_firstboot_identity` / `nt_firstboot_building` Development databases
+are deliberately incompatible. Do not enable payOS or D04B on this
+local first-boot Host to force financial endpoints through the gate.
+
+Next technical work is to use an isolated D04-specific rehearsal harness
+for a *distinct native Owner + reviewer* positive and negative authorization
+matrix, ensure reviewer and Owner have separate direct-user permissions
+and building grants, and retain staging financial operations behind
+the protected durable independent bank evidence barrier. Keep PR Draft.

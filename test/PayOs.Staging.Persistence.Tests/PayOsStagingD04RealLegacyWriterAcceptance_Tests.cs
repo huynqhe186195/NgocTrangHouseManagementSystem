@@ -756,6 +756,14 @@ public sealed class D04RealLegacyWriterAcceptance_Tests
         // Login remains synthetic test cookies, NOT native ABP/OpenIddict UAT.
         await D04BHttpToRealPostgreSqlGateway.VerifyAsync(
             db, staging, buildingId, tenantId, reviewerId, ownerId, authority);
+
+        // P1.2: the money-writer run-time DB roles are least-privileged in
+        // these same disposable databases: writer grants match the canonical
+        // SQL exactly, and every bypass attempt (DDL, invented Payment,
+        // journal tamper, evidence forge, role escalation) is denied with
+        // SQLSTATE 42501. Migration/seeding stay on the separate superuser
+        // connection and are never handed to the application writer.
+        await D04BRestrictedMoneyWriterRolesGate.InstallAndVerifyAsync();
     }
 
     private static async Task<long> CountAsync(

@@ -238,11 +238,11 @@ internal static class D04BRestrictedMoneyWriterRolesGate
         // with 23502 not-null before the privilege check is observable).
         await AssertNoPrivilegeAsync(LegacyRuntime,
             "public.\"BuildingManagementPayOsD04OwnerApprovals\"", "INSERT");
-        // The role cannot escalate or create logins (CREATE ROLE under a
-        // NOCREATEROLE login fails with insufficient privilege 43101).
+        // The role cannot escalate or create logins. PostgreSQL 16 rejects
+        // CREATE ROLE from a NOCREATEROLE login with privilege error 42501.
         await AssertDeniedAsync(LegacyRuntime, """
             CREATE ROLE d04_escalation_test LOGIN PASSWORD 'x'
-            """, "43101");
+            """);
         // No privilege to re-grant what it does not own.
         await AssertDeniedAsync(LegacyRuntime, """
             GRANT UPDATE ON public."BuildingManagementPayOsD04ReceiptJournal"
@@ -315,13 +315,13 @@ internal static class D04BRestrictedMoneyWriterRolesGate
     }
 
     private static async Task AssertDeniedAsync(
-        string roleConnection, string sql, string expectedSqlState = "42501")
+        string roleConnection, string sql)
     {
         await using var conn = new NpgsqlConnection(roleConnection);
         await conn.OpenAsync();
         await using var cmd = new NpgsqlCommand(sql, conn);
         var ex = await Assert.ThrowsAsync<PostgresException>(
             () => cmd.ExecuteNonQueryAsync());
-        Assert.Equal(expectedSqlState, ex.SqlState);
+        Assert.Equal("42501", ex.SqlState);
     }
 }

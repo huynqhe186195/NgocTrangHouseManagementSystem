@@ -721,7 +721,7 @@ DELETE FROM "AbpPermissionGrants"
     $legacyCheck = @"
 SELECT
   (SELECT "Status" FROM "BuildingManagementPayments" WHERE "Id"='0d04a000-0000-4000-8000-000000000006'),
-  (SELECT count(*) FROM "DepositSettlements" WHERE "PaymentId"='0d04a000-0000-4000-8000-000000000006' AND "Type"=3 AND "Status"=2),
+  (SELECT count(*) FROM "BuildingManagementDepositSettlements" WHERE "PaymentId"='0d04a000-0000-4000-8000-000000000006' AND "Type"=3 AND "Status"=2),
   (SELECT count(*) FROM "BuildingManagementPayOsD04ReceiptJournal" WHERE "PayOsIntentId"='$intentA'),
   (SELECT count(*) FROM "BuildingManagementPayOsD04Outbox" WHERE "ReceiptId"='$receiptId' AND "AcknowledgedAtUtc" IS NOT NULL);
 "@

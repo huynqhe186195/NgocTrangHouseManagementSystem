@@ -42,12 +42,15 @@ function Read-SecretText([string]$prompt) {
         $s = $null
     }
 }
-function Check-Password([string]$candidate, [string]$label) {
-    if ($candidate.Length -lt 16 -or $candidate -cnotmatch '[A-Z]' -or
-        $candidate -cnotmatch '[a-z]' -or $candidate -notmatch '[0-9]' -or
-        $candidate -notmatch '[^A-Za-z0-9]') {
-        throw ("{0}_PASSWORD_POLICY: use 16+ chars including upper/lower/digit/symbol." -f $label)
-    }
+function Get-PasswordGaps([string]$candidate) {
+    # Report missing categories only. NEVER echo or persist passwords.
+    $gaps = @()
+    if ($candidate.Length -lt 16) { $gaps += 'minimum 16 characters' }
+    if ($candidate -cnotmatch '[A-Z]') { $gaps += 'uppercase A-Z' }
+    if ($candidate -cnotmatch '[a-z]') { $gaps += 'lowercase a-z' }
+    if ($candidate -notmatch '[0-9]') { $gaps += 'digit 0-9' }
+    if ($candidate -notmatch '[^A-Za-z0-9]') { $gaps += 'symbol such as @#!' }
+    return $gaps
 }
 function Unwrap-Data($reply) {
     if ($null -eq $reply) { throw 'UAT_API_RESPONSE_EMPTY' }
@@ -135,8 +138,16 @@ function Ensure-User([string]$name,[string]$role,[string]$label) {
         return $id
     }
 
-    $password = Read-SecretText ("New disposable {0} password (hidden, 16+ chars)" -f $name)
-    Check-Password $password $label
+    $password = $null
+    do {
+        $password = Read-SecretText ("New disposable {0} password (hidden, 16+ chars)" -f $name)
+        $gaps = @(Get-PasswordGaps $password)
+        if ($gaps.Count -gt 0) {
+            Write-Warning ("{0}_PASSWORD_POLICY: missing {1}. Re-enter a new test password." -f $label, ($gaps -join ', '))
+            $password = $null
+        }
+    } while ($gaps.Count -gt 0)
+    Write-Host ("{0}_PASSWORD_POLICY_PASS" -f $label) -ForegroundColor Green
     try {
         $newUser = Invoke-LocalIdentity 'POST' '/api/identity/users' @{
             userName=$name; name=$label; surname='LocalUAT'

@@ -222,6 +222,26 @@ internal static class D04BHttpToRealPostgreSqlGateway
             client, $"{route}/post/{intentId:D}", null))
             Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
 
+        // A forged Bearer token and actor headers must not cross the REAL
+        // SQL-backed financial gateway. The only registered auth scheme in
+        // this fixture is its signed test cookie; never accept caller-supplied
+        // role or actor claims as an alternative to server authentication.
+        using (var forged = new HttpRequestMessage(HttpMethod.Post,
+            $"{route}/post/{intentId:D}"))
+        {
+            forged.Headers.Authorization = new AuthenticationHeaderValue(
+                "Bearer", "not-a-signed-openiddict-token");
+            forged.Headers.TryAddWithoutValidation("X-Actor-Id",
+                ownerId.ToString("D"));
+            forged.Headers.TryAddWithoutValidation("X-Actor-Role", "Owner");
+            using var rejected = await client.SendAsync(forged);
+            Assert.Equal(HttpStatusCode.Unauthorized, rejected.StatusCode);
+        }
+        db.ChangeTracker.Clear();
+        Assert.Equal(PaymentStatus.Pending,
+            (await db.Payments.AsNoTracking().SingleAsync(
+                p => p.Id == paymentId)).Status);
+
         using (var unknownReview = await PostAsync(client,
             $"{route}/review/{intentId:D}", unknownCookie,
             StatementForm(bankReference, amount)))

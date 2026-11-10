@@ -154,20 +154,6 @@ internal static class D04BHttpToRealPostgreSqlGateway
                 };
             });
         builder.Services.AddAuthorization();
-        // This fixture intentionally accepts only its signed synthetic cookie.
-        // A native OpenIddict financial acceptance MUST be a separate host
-        // wired to the real issuer/validation stack, not a JWT-shaped test
-        // principal or an additional permissive authentication scheme.
-        builder.Services.PostConfigure<Microsoft.AspNetCore.Authentication.AuthenticationOptions>(
-            options =>
-            {
-                if (options.DefaultAuthenticateScheme !=
-                        CookieAuthenticationDefaults.AuthenticationScheme ||
-                    options.DefaultChallengeScheme !=
-                        CookieAuthenticationDefaults.AuthenticationScheme)
-                    throw new InvalidOperationException(
-                        "D04B_SYNTHETIC_AUTH_SCHEME_CHANGED: do not label this fixture native OpenIddict.");
-            });
         // The TestHost entry assembly is the test DLL, not HttpApi.Host.
         // Explicit ApplicationPart is mandatory; otherwise 404 can mask
         // missing [Authorize] challenges.

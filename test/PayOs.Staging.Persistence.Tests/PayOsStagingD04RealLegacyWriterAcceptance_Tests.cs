@@ -425,6 +425,53 @@ public sealed class D04RealLegacyWriterAcceptance_Tests
         }
         db.ChangeTracker.Clear();
 
+        // D04-B financial segregation negative matrix (real PostgreSQL
+        // user-grant, Owner-role and building-grant rows, no role mock).
+        // Self-approval must be denied even if an account owns a valid grant.
+        await using (var negative = await db.Database.BeginTransactionAsync(
+            IsolationLevel.Serializable))
+        {
+            await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+                authority.AcquireCommitLeaseAsync(buildingId, Guid.NewGuid(),
+                    bankReviewer, bankReviewer, CancellationToken.None));
+            await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+                authority.AcquireCommitLeaseAsync(buildingId, Guid.NewGuid(),
+                    owner, owner, CancellationToken.None));
+
+            // A genuine Owner cannot impersonate the independent reviewer,
+            // and a genuine reviewer cannot become the Owner approver.
+            await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+                authority.AcquireCommitLeaseAsync(buildingId, Guid.NewGuid(),
+                    owner, bankReviewer, CancellationToken.None));
+            await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+                authority.AcquireReviewLeaseAsync(
+                    buildingId, owner, CancellationToken.None));
+            await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+                authority.AcquireOwnerApprovalLeaseAsync(
+                    buildingId, bankReviewer, CancellationToken.None));
+            await negative.RollbackAsync();
+        }
+        db.ChangeTracker.Clear();
+
+        // A revoked building-specific membership must block an otherwise
+        // valid reviewer+Owner pair. Roll back ONLY the synthetic test
+        // mutation so the later positive financial writer lane can run.
+        await using (var revokedBuilding = await db.Database.BeginTransactionAsync(
+            IsolationLevel.Serializable))
+        {
+            await db.Database.ExecuteSqlInterpolatedAsync($"""
+                UPDATE "BuildingManagementOperatorBuildingGrants"
+                   SET "RevokedAtUtc"={DateTime.UtcNow}
+                 WHERE "BuildingId"={buildingId}
+                   AND "OperatorUserId"={bankReviewer}
+                """);
+            await Assert.ThrowsAsync<AbpAuthorizationException>(() =>
+                authority.AcquireCommitLeaseAsync(buildingId, Guid.NewGuid(),
+                    bankReviewer, owner, CancellationToken.None));
+            await revokedBuilding.RollbackAsync();
+        }
+        db.ChangeTracker.Clear();
+
         // Complete a SECOND actual ContractDeposit using the reviewer
         // service + different Owner approval + real two-actor authority.
         // This is a disposable test fixture, never a live bank receipt.

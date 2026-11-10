@@ -160,6 +160,18 @@ function Invoke-D04RealWriterAcceptance {
         '--results-directory', $logRoot, '--verbosity', 'normal')
     Assert-Trx 'payos-d04-host-archive.trx' 7
 
+    # 18c exercises the actual Host startup gate by reflection/in-memory DI:
+    # Staging + activation phrase, merchant off, three exact 15432 DBs,
+    # archive root/key validation, DENIED without a registered archive.
+    # No database, environment variables or provider build is involved.
+    Invoke-Logged '18c-d04-host-startup-gate' 'dotnet' @(
+        'test', $pgTests, '-c', 'Release',
+        '--no-build',
+        '--filter', 'FullyQualifiedName~D04BHostStartupGate_Tests',
+        '--logger', 'trx;LogFileName=payos-d04-host-startup-gate.trx',
+        '--results-directory', $logRoot, '--verbosity', 'normal')
+    Assert-Trx 'payos-d04-host-startup-gate.trx' 8
+
     # Two separate disposable DBs for REAL BuildingManagement and an ABP
     # native Identity EF permission/role fixture. Neither is the user's 5432 DB.
     Invoke-Logged '19-create-d04-legacy-test-db' 'docker' @(

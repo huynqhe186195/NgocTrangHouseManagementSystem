@@ -288,67 +288,9 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule // syst
         // It cannot enable the live merchant checkout, production Identity or
         // Building DBs, and grants no permission/role automatically.
         // This is the only way review/Owner/post HTTP services are registered.
-        if (configuration.GetValue<bool>("BuildingManagement:PayOsD04B:Enabled"))
-        {
-            if (!hostingEnvironment.IsStaging() ||
-                configuration["BuildingManagement:PayOsD04B:Activation"] !=
-                    "I_ACCEPT_DISPOSABLE_D04B_DUAL_AUTH_ONLY" ||
-                configuration.GetValue<bool>("BuildingManagement:PayOsStaging:Enabled"))
-                throw new InvalidOperationException(
-                    "D04-B requires dedicated no-merchant, three-DB disposable staging.");
-
-            var identityD04 = configuration.GetConnectionString("Default");
-            var legacyD04 = configuration.GetConnectionString("BuildingManagement");
-            var stagingD04 = configuration.GetConnectionString("PayOsD04BStaging");
-            if (!ExactD04BDisposableDatabase(identityD04, "payos_d04_identity_test") ||
-                !ExactD04BDisposableDatabase(legacyD04, "payos_d04_legacy_test") ||
-                !ExactD04BDisposableDatabase(stagingD04, "payos_ef_migration_test"))
-                throw new InvalidOperationException(
-                    "D04-B rejects anything but three exact disposable PostgreSQL databases.");
-
-            // Explicit disposable-only encrypted archive for native OpenIddict UAT.
-            // The key and absolute storage path are operator-supplied; no defaults,
-            // no production registration, no real bank documents permitted.
-            if (configuration.GetValue<bool>("BuildingManagement:PayOsD04B:DisposableArchive:Enabled"))
-            {
-                var archiveRoot = configuration["BuildingManagement:PayOsD04B:DisposableArchive:Root"];
-                var archiveKey = configuration["BuildingManagement:PayOsD04B:DisposableArchive:KeyBase64"];
-                if (string.IsNullOrWhiteSpace(archiveRoot) ||
-                    !Path.IsPathFullyQualified(archiveRoot) ||
-                    string.IsNullOrWhiteSpace(archiveKey))
-                    throw new InvalidOperationException("D04-B disposable archive requires absolute root and operator key.");
-                byte[] key;
-                try { key = Convert.FromBase64String(archiveKey); }
-                catch (FormatException) { throw new InvalidOperationException("D04-B archive key format invalid."); }
-                if (key.Length != 32)
-                    throw new InvalidOperationException("D04-B archive requires a 256-bit key.");
-                context.Services.AddSingleton<IPayOsD04ProtectedBankEvidenceArchive>(
-                    new PayOsD04DisposableEncryptedArchive(archiveRoot, key));
-                System.Security.Cryptography.CryptographicOperations.ZeroMemory(key);
-            }
-
-            // A configured database and ABP sign-in are insufficient:
-            // financial review previously accepted a CLIENT-PROVIDED archive
-            // label without retaining the bank file. Fail at startup if a
-            // separately reviewed, server-controlled archival backend has
-            // not been explicitly registered by an authorized staging module.
-            // No such backend is registered by default, even in staging.
-            if (!context.Services.Any(s =>
-                    s.ServiceType == typeof(IPayOsD04ProtectedBankEvidenceArchive)))
-                throw new InvalidOperationException(
-                    "D04-B activation DENIED: protected bank evidence archive is not registered.");
-
-            context.Services.AddDbContext<PayOsPaymentMigrationDbContext>(
-                options => options.UseNpgsql(stagingD04,
-                    db => db.MigrationsHistoryTable("__EFMigrationsHistory_PayOs")));
-            context.Services.AddScoped<PayOsD04BStagingOrchestrator>();
-            context.Services.AddScoped<IPayOsD04ManualEvidenceService>(services =>
-                services.GetRequiredService<PayOsD04BStagingOrchestrator>());
-            context.Services.AddScoped<IPayOsD04ReviewedPostingCoordinator>(services =>
-                services.GetRequiredService<PayOsD04BStagingOrchestrator>());
-            // No hosted worker, raw writer, permissive authority, live
-            // payOS API client, migration or tenant-facing endpoint is added.
-        }
+        // The checks live in an internal helper so the fail-closed gate stays
+        // directly regression-testable (D04B_GATE) without booting the Host.
+        ConfigurePayOsD04BIfEnabled(configuration, hostingEnvironment, context.Services);
 
         Configure<AbpMvcLibsOptions>(options =>
         {
@@ -401,6 +343,79 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule // syst
         ConfigureVirtualFileSystem(context);
         ConfigureCors(context, configuration);
         ConfigureErrorHttpStatusCodeMappings();
+    }
+
+    /// <summary>
+    /// D04-B startup gate, deliberately separate from Host boot so the
+    /// fail-closed checks are regression-testable without a real environment,
+    /// database or registered ABP module (D04B_GATE). Default OFF.
+    /// </summary>
+    internal static void ConfigurePayOsD04BIfEnabled(
+        IConfiguration configuration,
+        IHostEnvironment hostingEnvironment,
+        IServiceCollection services)
+    {
+        if (!configuration.GetValue<bool>("BuildingManagement:PayOsD04B:Enabled"))
+            return;
+
+        if (!hostingEnvironment.IsStaging() ||
+            configuration["BuildingManagement:PayOsD04B:Activation"] !=
+                "I_ACCEPT_DISPOSABLE_D04B_DUAL_AUTH_ONLY" ||
+            configuration.GetValue<bool>("BuildingManagement:PayOsStaging:Enabled"))
+            throw new InvalidOperationException(
+                "D04-B requires dedicated no-merchant, three-DB disposable staging.");
+
+        var identityD04 = configuration.GetConnectionString("Default");
+        var legacyD04 = configuration.GetConnectionString("BuildingManagement");
+        var stagingD04 = configuration.GetConnectionString("PayOsD04BStaging");
+        if (!ExactD04BDisposableDatabase(identityD04, "payos_d04_identity_test") ||
+            !ExactD04BDisposableDatabase(legacyD04, "payos_d04_legacy_test") ||
+            !ExactD04BDisposableDatabase(stagingD04, "payos_ef_migration_test"))
+            throw new InvalidOperationException(
+                "D04-B rejects anything but three exact disposable PostgreSQL databases.");
+
+        // Explicit disposable-only encrypted archive for native OpenIddict UAT.
+        // The key and absolute storage path are operator-supplied; no defaults,
+        // no production registration, no real bank documents permitted.
+        if (configuration.GetValue<bool>("BuildingManagement:PayOsD04B:DisposableArchive:Enabled"))
+        {
+            var archiveRoot = configuration["BuildingManagement:PayOsD04B:DisposableArchive:Root"];
+            var archiveKey = configuration["BuildingManagement:PayOsD04B:DisposableArchive:KeyBase64"];
+            if (string.IsNullOrWhiteSpace(archiveRoot) ||
+                !Path.IsPathFullyQualified(archiveRoot) ||
+                string.IsNullOrWhiteSpace(archiveKey))
+                throw new InvalidOperationException("D04-B disposable archive requires absolute root and operator key.");
+            byte[] key;
+            try { key = Convert.FromBase64String(archiveKey); }
+            catch (FormatException) { throw new InvalidOperationException("D04-B archive key format invalid."); }
+            if (key.Length != 32)
+                throw new InvalidOperationException("D04-B archive requires a 256-bit key.");
+            services.AddSingleton<IPayOsD04ProtectedBankEvidenceArchive>(
+                new PayOsD04DisposableEncryptedArchive(archiveRoot, key));
+            System.Security.Cryptography.CryptographicOperations.ZeroMemory(key);
+        }
+
+        // A configured database and ABP sign-in are insufficient:
+        // financial review previously accepted a CLIENT-PROVIDED archive
+        // label without retaining the bank file. Fail at startup if a
+        // separately reviewed, server-controlled archival backend has
+        // not been explicitly registered by an authorized staging module.
+        // No such backend is registered by default, even in staging.
+        if (!services.Any(s =>
+                s.ServiceType == typeof(IPayOsD04ProtectedBankEvidenceArchive)))
+            throw new InvalidOperationException(
+                "D04-B activation DENIED: protected bank evidence archive is not registered.");
+
+        services.AddDbContext<PayOsPaymentMigrationDbContext>(
+            options => options.UseNpgsql(stagingD04,
+                db => db.MigrationsHistoryTable("__EFMigrationsHistory_PayOs")));
+        services.AddScoped<PayOsD04BStagingOrchestrator>();
+        services.AddScoped<IPayOsD04ManualEvidenceService>(sp =>
+            sp.GetRequiredService<PayOsD04BStagingOrchestrator>());
+        services.AddScoped<IPayOsD04ReviewedPostingCoordinator>(sp =>
+            sp.GetRequiredService<PayOsD04BStagingOrchestrator>());
+        // No hosted worker, raw writer, permissive authority, live
+        // payOS API client, migration or tenant-facing endpoint is added.
     }
 
     private static bool ExactD04BDisposableDatabase(string? input, string name)

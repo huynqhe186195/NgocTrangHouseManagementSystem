@@ -459,11 +459,18 @@ public sealed class D04RealLegacyWriterAcceptance_Tests
         await using (var revokedBuilding = await db.Database.BeginTransactionAsync(
             IsolationLevel.Serializable))
         {
+            // The membership migration's immutable-history trigger allows
+            // exactly one audited revocation: timestamp + actor + revision.
+            // Updating only RevokedAtUtc is intentionally rejected (23514).
             var revokedRows = await db.Database.ExecuteSqlInterpolatedAsync($"""
                 UPDATE "BuildingManagementOperatorBuildingGrants"
-                   SET "RevokedAtUtc"={DateTime.UtcNow}
+                   SET "RevokedAtUtc"={DateTime.UtcNow},
+                       "RevokedByUserId"={owner},
+                       "RevisionNumber"="RevisionNumber" + 1
                  WHERE "BuildingId"={buildingId}
                    AND "OperatorUserId"={bankReviewer}
+                   AND "RevokedAtUtc" IS NULL
+                   AND "RevisionNumber"=1
                 """);
             Assert.Equal(1, revokedRows);
             await Assert.ThrowsAsync<AbpAuthorizationException>(() =>

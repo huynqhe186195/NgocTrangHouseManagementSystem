@@ -505,3 +505,48 @@ D04 BUSINESS HOLD. Native authenticated **financial POSTs** with
 direct-user grants and scope, live protected independent bank-proof
 archive and restricted financial DB login require separate verification
 and an explicit staged activation review. payOS remains OFF.
+
+## 2026-11-10 — D04 WriterOnly MSB3021/MSB3027 locked Release DLL remediation
+
+The Windows operator supplied `04a-staging-test-compile` failure from log
+`payos-20261110-114042`: MSBuild `MSB3027` / `MSB3021` when trying to
+overwrite `src/NgocTrangHouseManagementSystem.HttpApi.Host/bin/Release/net10.0/*.dll`.
+The locking process was the running local Host PID `15752`.
+These errors occurred before D04 HTTP or PostgreSQL financial tests started.
+This is a build output sharing conflict, **not** authorization rejection
+or a C# compiler error. Native admin/Owner/Reviewer Identity UAT remains PASS.
+
+**Fix:** `verify-payos-d04-local.ps1` now checks the approved branch, origin
+SHA and clean tracked source **before** creating a disposable detached Git
+worktree under that run's log directory. All D04 `dotnet build/test` calls
+execute from this separate source tree with its OWN `bin`/`obj`, so active
+localhost firstboot Host DLL files cannot be overwritten.
+The worktree is detached at the exact verified source commit and checked
+again before any build, then removed with `git worktree remove --force`
+from the original repo in `finally` (does NOT touch any other worktree).
+It still creates only the separate labelled disposable D04 PostgreSQL
+on `127.0.0.1:15432`, not the Identity firstboot DB on `15433`.
+
+**Retry safely while keeping the existing localhost Host and firstboot DB
+running:**
+
+```powershell
+cd D:\Dev\NgocTrangBuilding\Project\NgocTrangHouseManagementSystem
+git pull --ff-only
+$t = $null; $e = $null
+[System.Management.Automation.Language.Parser]::ParseFile(
+  (Resolve-Path .\etc\scripts\verify-payos-d04-local.ps1).Path,
+  [ref]$t, [ref]$e) | Out-Null
+if ($e.Count) { $e | ForEach-Object { Write-Host $_ }; throw 'PARSE_FAILED' }
+'PARSE_PASS'
+powershell -NoProfile -ExecutionPolicy Bypass -File .\etc\scripts\verify-payos-d04-local.ps1 -WriterOnly
+```
+
+Expected early message: `ISOLATED_SOURCE_READY: <verified commit sha>`,
+then D04 project build and tests. Do not report a PASS until actual
+Windows runtime/TRX results prove it. This run needs no Swagger token,
+Owner/reviewer password or real payOS/bank data.
+
+Earlier failed run never reached the D04 money-writer acceptance, so
+D04 finance remains HOLD. The running firstboot Host should not need
+to stop for this isolated compilation fix.

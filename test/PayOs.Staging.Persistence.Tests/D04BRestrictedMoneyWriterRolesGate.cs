@@ -243,11 +243,12 @@ internal static class D04BRestrictedMoneyWriterRolesGate
         await AssertDeniedAsync(LegacyRuntime, """
             CREATE ROLE d04_escalation_test LOGIN PASSWORD 'x'
             """);
-        // No privilege to re-grant what it does not own.
-        await AssertDeniedAsync(LegacyRuntime, """
-            GRANT UPDATE ON public."BuildingManagementPayOsD04ReceiptJournal"
-              TO d04_money_writer_legacy_test
-            """);
+        // A GRANT without grant options emits only a WARNING and reports
+        // success, so privilege transfer must be asserted via the privilege
+        // catalog: the role must hold no grantable (WITH GRANT OPTION)
+        // rights on the immutable journal.
+        await AssertNoGrantOptionAsync(LegacyRuntime,
+            "public.\"BuildingManagementPayOsD04ReceiptJournal\"");
         // No schema write access at all.
         await AssertDeniedAsync(LegacyRuntime, """
             CREATE FUNCTION public.d04_escape() RETURNS void AS $$ BEGIN END $$
@@ -293,6 +294,25 @@ internal static class D04BRestrictedMoneyWriterRolesGate
         cmd.Parameters.AddWithValue("table", table);
         cmd.Parameters.AddWithValue("privilege", privilege);
         Assert.False((bool)(await cmd.ExecuteScalarAsync() ?? true));
+    }
+
+    private static async Task AssertNoGrantOptionAsync(
+        string roleConnection, string table)
+    {
+        // The role must not be able to pass any privilege on the immutable
+        // journal to another role: no grantable rights, no grant option.
+        await using var conn = new NpgsqlConnection(roleConnection);
+        await conn.OpenAsync();
+        await using var cmd = new NpgsqlCommand("""
+            SELECT count(*) FROM information_schema.role_table_grants
+             WHERE grantee=current_user
+               AND table_schema='public' AND table_name=@table
+               AND is_grantable='YES'
+            """, conn);
+        cmd.Parameters.AddWithValue("table",
+            table.Replace("public.", string.Empty).Trim('"'));
+        var grants = (long)(await cmd.ExecuteScalarAsync() ?? 1L);
+        Assert.Equal(0L, grants);
     }
 
     private static async Task ExecuteAsync(

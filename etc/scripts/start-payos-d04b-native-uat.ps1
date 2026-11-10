@@ -31,7 +31,7 @@ try {
  if ($LASTEXITCODE -ne 0 -or $branch -cne 'feat/local-safe-startup-20261109') {
     throw 'D04B_BRANCH_DENIED: expected dedicated local-safe-startup branch.'
  }
- if (-not [IO.Path]::IsPathFullyQualified($ArchiveRoot)) {
+ if (-not [IO.Path]::IsPathRooted($ArchiveRoot) -or $ArchiveRoot -notmatch '^[A-Za-z]:[\\\\/]' ) {
     throw 'D04B_ARCHIVE_DENIED: absolute directory required.'
  }
  $fullArchive = [IO.Path]::GetFullPath($ArchiveRoot)

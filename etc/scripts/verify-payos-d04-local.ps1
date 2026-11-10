@@ -8,6 +8,10 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $root = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
+$originalRoot = $root
+$isolatedRoot = ''
+$isolatedCreated = $false
+$enteredIsolated = $false
 # Explicit allowlist. Never accept arbitrary branches, detached HEAD,
 # user-provided names, or a branch merely sharing a common prefix.
 # The second branch contains the archive-backed D04 acceptance suite.
@@ -250,6 +254,24 @@ try {
     $logRoot = Join-Path (Join-Path $HOME 'NgocTrang-Test-Logs') "payos-$stamp"
     New-Item -ItemType Directory -Path $logRoot -Force | Out-Null
     Set-Content -Path (Join-Path $logRoot 'source-commit.txt') -Value $sha
+
+    # Windows locks loaded DLLs in the running localhost Host (44311).
+    # Avoid MSB3021/MSB3027 without stopping the Host or touching its DB.
+    # Build/run only the reviewed, exact origin-validated source SHA from
+    # an isolated Git worktree with separate bin/obj outputs. The worktree
+    # exists under this run's log directory and is removed in finally.
+    $isolatedRoot = Join-Path $logRoot 'isolated-source'
+    Write-Host 'Creating temporary source worktree: builds never overwrite the running Host DLLs.' -ForegroundColor Cyan
+    Invoke-Capture 'git' @('worktree','add','--detach','--',$isolatedRoot,$sha) | Out-Null
+    $isolatedCreated = $true
+    Push-Location $isolatedRoot
+    $enteredIsolated = $true
+    $isolatedSha = Invoke-Capture 'git' @('rev-parse','HEAD')
+    if ($isolatedSha -cne $sha) {
+        throw 'ISOLATED_SOURCE_SHA_MISMATCH: refusing to build a different revision.'
+    }
+    $root = $isolatedRoot
+    Write-Host "ISOLATED_SOURCE_READY: $sha" -ForegroundColor Green
 
     $domain = 'modules/buildingmanagement/test/BuildingManagement.Domain.Tests/BuildingManagement.Domain.Tests.csproj'
     $application = 'modules/buildingmanagement/test/BuildingManagement.Application.Tests/BuildingManagement.Application.Tests.csproj'
@@ -735,6 +757,25 @@ finally {
         try {
             $ErrorActionPreference = 'Continue'
             & docker rm -f $containerId *> $null
+        }
+        finally { $ErrorActionPreference = $previous }
+    }
+    # Release the isolated worktree before asking Git to remove it.
+    if ($enteredIsolated) {
+        Pop-Location
+    }
+    if ($isolatedCreated) {
+        Write-Host 'Removing only this runs temporary Git worktree...' -ForegroundColor Cyan
+        $previous = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = 'Continue'
+            & git -C $originalRoot worktree remove --force -- $isolatedRoot *> $null
+            if ($LASTEXITCODE -ne 0) {
+                Write-Warning 'Temporary worktree cleanup failed; inspect only the reported log directory. No active Host/database was touched.'
+            }
+        }
+        catch {
+            Write-Warning 'Temporary worktree cleanup raised an error; no other worktree was targeted.'
         }
         finally { $ErrorActionPreference = $previous }
     }

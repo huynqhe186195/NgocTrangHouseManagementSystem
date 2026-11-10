@@ -76,9 +76,9 @@
 
 ## P1 — D04 Native Financial Security (UAT Prerequisites)
 
-### P1.1 ✅ Native Financial HTTP Auth with Real JWT (pre-push verification)
-**Status:** DONE (pre-push) — evidence at local SHA; MUST re-run without `-AllowUnpushedCommit` after the branch is pushed  
-**Evidence:** Run 27, SOURCE_COMMIT `6d3ff02271d74e3de1c17252d92938b4954e7fc4`, LOG_DIRECTORY `C:\Users\Huynq\NgocTrang-Test-Logs\payos-native-jwt-20261111-000218` — 25/25 matrix steps PASS + TRX `payos-native-jwt-provision.trx` 1/1 + durable psql state (LEGACY `2|1|1|1`, STAGING `3|1|2`). Real Host on https://localhost:44311 in Staging, real OpenIddict password-grant Bearer tokens for `reviewer-uat`/`owner-uat`/`outsider-uat` (token values never echoed/saved). Temp container + worktree removed; 15433/5432 untouched.  
+### P1.1 ✅ Native Financial HTTP Auth with Real JWT
+**Status:** DONE — official evidence at pushed SHA `f30e14d`  
+**Evidence:** Run 28 (no pre-push mode, SHA verified on origin), SOURCE_COMMIT `f30e14d17a0859d35b7548c359b1db116efeea3b`, LOG_DIRECTORY `C:\Users\Huynq\NgocTrang-Test-Logs\payos-native-jwt-20261111-001125` — 25/25 matrix steps PASS + TRX `payos-native-jwt-provision.trx` 1/1 + durable psql state (LEGACY `2|1|1|1`, STAGING `3|1|2`). Earlier pre-push run 27 at `6d3ff02`: `payos-native-jwt-20261111-000218`. Real Host on https://localhost:44311 in Staging, real OpenIddict password-grant Bearer tokens for `reviewer-uat`/`owner-uat`/`outsider-uat` (token values never echoed/saved). Temp container + worktree removed; 15433/5432 untouched.  
 **What was fixed (source, commit `f14745f`):** (1) removed `app.UseUnitOfWork()` whose reserved ambient transactional UoW silently overrode `[UnitOfWork(isTransactional:false)]` and made every review 409; (2) `Forbid()` → `StatusCode(403)` so denied actors get 403, not a 302 login redirect; (3) archive-backed facade reuses the persisted `ExternalBankProofReference` on idempotent re-review instead of minting a new file that could never match.  
 **Harness fixes:** `92076b2` `-AllowUnpushedCommit` mode, `7dbda39` R1 A2-reference, `bf193a3` here-string quotes, `95053a3` Invoke-Scalar array, `6d3ff02` settlement table name.  
 **Matrix covered:** N1 anonymous 401/302, N2 forged bearer 401/302, N3 outsider review 403, N4 owner-as-reviewer 403, N5/N6 reviewer-as-owner approve/post 403, N7 cross-building 403, N8 self-approve 403; P1 review 201, P2 idempotent re-review, P3 approve 201, P4 post 201+acknowledged, P5 replay no double money; R1 review A2, T1 tampered archive blocks approve, R2 approve, R4 post after mid-run grant revoke 403.  
@@ -89,9 +89,9 @@
 - ✅ Positive: reviewer review/approve/post chain 201 with ids
 - ✅ Negative: cross-building, owner-as-reviewer, reviewer-as-owner, self-approve, forged bearer, revoked grant mid-run — all denied
 - ✅ Real Host + real Bearer (NOT synthetic cookies)
-- ⏳ Re-confirm at pushed SHA after push (Owner authorization required)
+- ✅ Re-confirmed at pushed SHA (run 28, branch == origin at `f30e14d`)
 
-**Blocker:** None local; push needs Owner authorization  
+**Blocker:** None  
 **Dependency:** P0.5 ✅
 
 ### P1.2 ⏳ DB Least Privilege for Money Writer
@@ -316,8 +316,8 @@
 
 **Backlog Status Summary:**
 - P0: 6/6 closed (P0.1–P0.3 done, P0.4 not needed, P0.5 startup gate at `7621d8a`, P0.6 full bundle at `7621d8a`)
-- P1: 1/5 done (P1.1 at local `6d3ff02`, pre-push verification — re-run after push)
+- P1: 1/5 done (P1.1 official evidence at pushed `f30e14d`, run 28)
 - P2: 0/6 done
 - P3: 0/4 done
 
-**Current Focus:** Push authorization for `feat/local-safe-startup-20261109` (5 unpushed commits), then P1.1 re-confirmation at the pushed SHA; next: P1.2 DB least privilege
+**Current Focus:** P1.2 — DB financial writer least privilege (SQLSTATE 42501)

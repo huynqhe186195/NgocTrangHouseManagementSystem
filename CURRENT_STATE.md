@@ -6,14 +6,14 @@
 ## Git Status
 
 **Current Branch:** `feat/local-safe-startup-20261109`  
-**HEAD SHA:** `6d3ff02` (local only — NOT pushed; push requires explicit Owner authorization)  
-**Untracked Files:** `etc/phase-audits/Phase2G3A7_RevisionLedger_Generated_Review.sql`, `CURRENT_STATE.md`, `TASK_BACKLOG.md`
+**HEAD SHA:** `f30e14d` (pushed to origin; branch in sync)  
+**Untracked Files:** `etc/phase-audits/Phase2G3A7_RevisionLedger_Generated_Review.sql`
 
 ### Branch Inventory
 
 | Branch | HEAD SHA | Tracking | Status vs Handoff |
 |--------|----------|----------|-------------------|
-| `feat/local-safe-startup-20261109` | `6d3ff02` | local ahead of origin by 5 commits (`92076b2`…`6d3ff02`) | ⚠️ NOT PUSHED — evidence below was taken with `-AllowUnpushedCommit` (pre-push mode) |
+| `feat/local-safe-startup-20261109` | `f30e14d` | origin/feat/local-safe-startup-20261109 | ✅ CURRENT — in sync with origin |
 | `feat/d04b-operational-gates-20261108` | `705a481` | origin/feat/d04b-operational-gates-20261108 | ✅ Matches handoff |
 | `feat/d04b-protected-bank-evidence-20261108` | `66a62dc` | origin/feat/d04b-protected-bank-evidence-20261108 | ✅ Matches handoff |
 | `feat/phase2h-payos-signature-foundation-20261106` | `7249c9f` | origin (behind 1) | ⚠️ Behind, differs from handoff `2de0f7e` |
@@ -22,6 +22,7 @@
 
 ### Recent Commits on Current Branch (since handoff)
 
+- `f30e14d` — docs: P1.1 native D04 JWT matrix green at 6d3ff02 (25/25, pre-push)
 - `6d3ff02` — fix(d04b): durable-state settlement table is BuildingManagementDepositSettlements
 - `95053a3` — fix(d04b): suppress docker cp output in Invoke-Scalar (array, not string)
 - `bf193a3` — fix(d04b): single double-quotes in SQL here-strings (PS5.1 does not collapse "")
@@ -32,7 +33,7 @@
 - `fc322e8` — test(d04b): cover Host encrypted archive and gate it as verify step 18b
 - `6622b3a` — fix(d04b): support Windows PowerShell 5.1 absolute vault path check
 - `e246e8c` — test(d04b): add fail-closed native OpenIddict disposable Host launcher
-- `0702e0d` — fix(d04b): use supported Convert.FromHexString for archive digest verification **(handoff baseline, last pushed SHA)**
+- `0702e0d` — fix(d04b): use supported Convert.FromHexString for archive digest verification **(handoff baseline)**
 
 ## Implementation Matrix — PASS/PARTIAL/HOLD
 
@@ -46,7 +47,7 @@
 | D04 writer-only bundle on PR #10 | `-WriterOnly` on `7621d8a`: 19 passed / 0 failed | 5 TRX in `C:\Users\Huynq\NgocTrang-Test-Logs\payos-20261110-162113` | `7621d8a` | Synthetic signed test cookies, NOT native OpenIddict; NOT business accepted |
 | D04-B Host startup gate | Default OFF, environment/DB/archive fail-closed, 8/8 | TRX `payos-d04-host-startup-gate.trx` in `payos-20261110-162113` / `payos-20261110-162625` | `7621d8a` | Pure extraction of the previously inline gate |
 | D04 FULL local bundle on PR #10 | Steps 01–27 all PASS: 8 TRX, 118 passed, 0 failed | `C:\Users\Huynq\NgocTrang-Test-Logs\payos-20261110-162625` | `7621d8a` | Synthetic cookies, NOT native OpenIddict |
-| **P1.1 Native D04 JWT matrix** | Real OpenIddict password-grant bearer tokens for `reviewer-uat`/`owner-uat`/`outsider-uat` on the real Host (https://localhost:44311, Staging): 25/25 matrix steps PASS — N1 anonymous (401/302), N2 forged bearer (401/302), N3 outsider review 403, N4 owner-as-reviewer 403, N5/N6 reviewer-as-owner 403, N7 cross-building 403, N8 self-approve 403; P1 review 201+reviewId, P2 idempotent re-review same reviewId, P3 approve 201+approvalId, P4 post 201+receiptId+LegacyCommittedAndStagingAcknowledged, P5 replay same receiptId; R1 review A2 201, T1 tampered archive blocks approve 403, R2 approve 201, R4 post after grant revoke 403; durable state psql: LEGACY `2\|1\|1\|1`, STAGING `3\|1\|2`; TRX `payos-native-jwt-provision.trx` 1/1 | **Run 27**: `C:\Users\Huynq\NgocTrang-Test-Logs\payos-native-jwt-20261111-000218` (TRX inside), `SOURCE_COMMIT=6d3ff02271d74e3de1c17252d92938b4954e7fc4`, run log `payos-native-jwt-latest-run.log` | `6d3ff02` | **Pre-push verification** (branch run with `-AllowUnpushedCommit`): MUST re-run after pushing to re-confirm at the pushed SHA. Tokens were real OpenIddict Bearer (not synthetic cookies); token values never echoed/saved. Fix commits for three real source bugs live in `f14745f` (UseUnitOfWork removal, Forbid→403, idempotent re-review reference reuse); four follow-ups fixed harness-only bugs (`7dbda39`, `bf193a3`, `95053a3`, `6d3ff02`). Temp container + worktree removed; 15433/5432 untouched |
+| **P1.1 Native D04 JWT matrix** | Real OpenIddict password-grant bearer tokens for `reviewer-uat`/`owner-uat`/`outsider-uat` on the real Host (https://localhost:44311, Staging): 25/25 matrix steps PASS — N1 anonymous (401/302), N2 forged bearer (401/302), N3 outsider review 403, N4 owner-as-reviewer 403, N5/N6 reviewer-as-owner 403, N7 cross-building 403, N8 self-approve 403; P1 review 201+reviewId, P2 idempotent re-review same reviewId, P3 approve 201+approvalId, P4 post 201+receiptId+LegacyCommittedAndStagingAcknowledged, P5 replay same receiptId; R1 review A2 201, T1 tampered archive blocks approve 403, R2 approve 201, R4 post after grant revoke 403; durable state psql: LEGACY `2\|1\|1\|1`, STAGING `3\|1\|2`; TRX `payos-native-jwt-provision.trx` 1/1 | **Official run 28 at pushed SHA**: `C:\Users\Huynq\NgocTrang-Test-Logs\payos-native-jwt-20261111-001125` (TRX inside), `SOURCE_COMMIT=f30e14d17a0859d35b7548c359b1db116efeea3b` (== origin, no pre-push warning). Pre-push run 27 at `6d3ff02`: `payos-native-jwt-20261111-000218` | `f30e14d` | Tokens were real OpenIddict Bearer (not synthetic cookies); token values never echoed/saved. Fix commits for three real source bugs live in `f14745f` (UseUnitOfWork removal, Forbid→403, idempotent re-review reference reuse); four follow-ups fixed harness-only bugs (`7dbda39`, `bf193a3`, `95053a3`, `6d3ff02`). Temp container + worktree removed; 15433/5432 untouched |
 | H4 + D01/D02 calendar | 118 ngày lịch, exact-head CI 4/4 PASS | PR #5 CI green at multiple commits | `0b8332e9` on PR #5 | PR #5 NOT in current branch |
 | D03/D06 staging | Service pricing per room, reject fake signatures, Owner-only DOCX | PR #5 bounded CI PASS | `0b8332e9` on PR #5 | PR #5 NOT in current branch |
 
@@ -54,7 +55,6 @@
 
 | Item | What's Done | What's Missing | Blocker |
 |------|-------------|----------------|---------|
-| P1.1 evidence at pushed SHA | 25/25 matrix PASS at local `6d3ff02` (pre-push mode) | Push the branch and re-run the harness at the pushed SHA without `-AllowUnpushedCommit` | Owner authorization for push |
 | DB financial writer least privilege | Identity lease/ACK role tests exist | Full money-writer permission matrix, SQLSTATE 42501 tests | P1.2 |
 | Encrypted bank evidence vault | Disposable rehearsal vault with AES-GCM, tamper detection (T1 PASS) | KMS/production secrets, ACL/IAM, backup/restore, malware scan | P1.3 |
 | Crash/recovery regression | ACK recovery covered in operational gates | Repeat crash/recovery in native JWT harness lane | P1.4 |
@@ -98,13 +98,12 @@
 
 ## Next Immediate Actions (P1)
 
-1. ✅ P1.1 native D04 financial HTTP auth matrix — 25/25 PASS at `6d3ff02` (pre-push mode, run 27, `payos-20261111-000218`)
-2. ⏳ Push `feat/local-safe-startup-20261109` (needs explicit Owner authorization), then re-run the matrix WITHOUT `-AllowUnpushedCommit` to re-confirm evidence at the pushed SHA
-3. ⏳ P1.2 DB financial writer least privilege (SQLSTATE 42501)
-4. ⏳ P1.4 crash/recovery regression in the native JWT lane
-5. ⏳ P1.3 operational vault, P1.5 webhook/merchant staging readiness
+1. ✅ P1.1 native D04 financial HTTP auth matrix — 25/25 PASS, official evidence at pushed SHA `f30e14d` (run 28, `payos-native-jwt-20261111-001125`); branch pushed and in sync with origin
+2. ⏳ P1.2 DB financial writer least privilege (SQLSTATE 42501)
+3. ⏳ P1.4 crash/recovery regression in the native JWT lane
+4. ⏳ P1.3 operational vault, P1.5 webhook/merchant staging readiness
 
 ---
 **Last Updated:** 2026-11-11  
-**Verified Against:** local checkout + run 27 log/TRX evidence  
-**Confidence:** High for git state, `-WriterOnly` (19/19), FULL bundle (118/118) on `7621d8a`, and the native JWT matrix (25/25) at local `6d3ff02` (pre-push caveat noted above); least-privilege writer and production vault remain HOLD
+**Verified Against:** local checkout + run 28 log/TRX evidence at pushed SHA  
+**Confidence:** High for git state (branch == origin at `f30e14d`), `-WriterOnly` (19/19), FULL bundle (118/118) on `7621d8a`, and the native JWT matrix (25/25) at pushed `f30e14d`; least-privilege writer and production vault remain HOLD

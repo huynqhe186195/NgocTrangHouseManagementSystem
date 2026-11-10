@@ -155,6 +155,20 @@ public sealed class PayOsStagingD04BAuthenticatedHttpBoundary_Tests
             $"{route}/approve/{ReviewId:D}", null))
             Assert.Equal(HttpStatusCode.Unauthorized, anonymous.StatusCode);
 
+        // A caller-controlled Bearer string is NOT a native OpenIddict login.
+        // This fixture registers only signed test-cookie authentication, so
+        // forged bearer/actor headers must never activate financial routes.
+        using (var forgedBearer = new HttpRequestMessage(HttpMethod.Post,
+            $"{route}/post/{IntentId:D}"))
+        {
+            forgedBearer.Headers.Authorization =
+                new AuthenticationHeaderValue("Bearer", "forged-test-token");
+            forgedBearer.Headers.TryAddWithoutValidation("X-Actor-Id", OwnerId.ToString("D"));
+            forgedBearer.Headers.TryAddWithoutValidation("X-Actor-Role", "Owner");
+            using var rejected = await client.SendAsync(forgedBearer);
+            Assert.Equal(HttpStatusCode.Unauthorized, rejected.StatusCode);
+        }
+
         using (var ownerCannotReview = await PostAsync(client,
             $"{route}/review/{IntentId:D}", ownerCookie, CreateReviewForm()))
             Assert.Equal(HttpStatusCode.Forbidden, ownerCannotReview.StatusCode);

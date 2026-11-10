@@ -150,6 +150,16 @@ function Invoke-D04RealWriterAcceptance {
         '--results-directory', $logRoot, '--verbosity', 'normal')
     Assert-Trx 'payos-d04-protected-archive.trx' 2
 
+    # 18a covers only the test-side vault; this is the archive class the
+    # Host registers for native D04-B UAT. Scratch directory, no database.
+    Invoke-Logged '18b-d04-host-encrypted-archive' 'dotnet' @(
+        'test', $pgTests, '-c', 'Release',
+        '--no-build',
+        '--filter', 'FullyQualifiedName~D04BHostDisposableEncryptedArchive_Tests',
+        '--logger', 'trx;LogFileName=payos-d04-host-archive.trx',
+        '--results-directory', $logRoot, '--verbosity', 'normal')
+    Assert-Trx 'payos-d04-host-archive.trx' 7
+
     # Two separate disposable DBs for REAL BuildingManagement and an ABP
     # native Identity EF permission/role fixture. Neither is the user's 5432 DB.
     Invoke-Logged '19-create-d04-legacy-test-db' 'docker' @(

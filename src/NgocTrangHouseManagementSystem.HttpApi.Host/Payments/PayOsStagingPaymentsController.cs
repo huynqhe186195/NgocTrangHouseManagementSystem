@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
+using Volo.Abp.Authorization;
 
 namespace NgocTrangHouseManagementSystem.Payments;
 
@@ -55,6 +56,14 @@ public sealed class PayOsStagingPaymentsController : ControllerBase
                 paymentId, HttpContext.RequestAborted);
             return Ok(result);
         }
+        // Permission/membership/scope denials from the service layer surface
+        // as AbpAuthorizationException; the default exception handler would
+        // otherwise turn them into an opaque 500. Mirror the D04 controllers:
+        // denied is 403, never 500 (same fix as f14745f).
+        catch (AbpAuthorizationException)
+        {
+            return StatusCode(403);
+        }
         catch (HttpRequestException)
         {
             // Network ambiguity is NOT permission to reserve another order.
@@ -82,6 +91,10 @@ public sealed class PayOsStagingPaymentsController : ControllerBase
                 paymentId, HttpContext.RequestAborted);
             // A successful check is NOT payment completion.
             return Accepted(result);
+        }
+        catch (AbpAuthorizationException)
+        {
+            return StatusCode(403);
         }
         catch (HttpRequestException)
         {

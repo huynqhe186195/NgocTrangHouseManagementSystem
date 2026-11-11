@@ -267,9 +267,9 @@
 
 ## P3 — Integration, Full Regression, Review/Merge
 
-### P3.1 ⏸️ Branch Reconciliation and Merge Choreography
-**Status:** ANALYSIS COMPLETE — merge execution awaiting Owner approval (HIGH RISK)
-**Evidence:** Read-only analysis report `etc/phase-audits/P31_BranchReconciliation_20261111.md` at `c735639`. Findings: only TWO independent merge parties (PR #5 `integration/spec-kit-h4-security-20261105` @ `b3122b14`, 95 commits; PR #10 @ `c735639`, 371 commits — both from merge-base `e05049d`); `origin/wip/phase-2g2` fully absorbed by PR #5; legacy d04b + phase2h lanes fully absorbed by PR #10; `git merge-tree` clean in ALL directions (0 conflicted files); zero overlap in migrations (disjoint table/index/trigger names, PR #5 never touches the PayOs context), zero ModelSnapshot/Designer changes on either lane, zero docs overlap. Proposed order: merge PR #5 INTO PR #10 (trunk), then P3.2 full merged-SHA regression before any merge-to-main proposal. R3 (semantic: H4 credit-cap triggers vs D04 journal over the shared Payment spine) is the only substantive risk and is P3.2's job to prove.
+### P3.1 ✅ Branch Reconciliation and Merge Choreography
+**Status:** DONE (Owner-approved merge executed)
+**Evidence:** Analysis report `etc/phase-audits/P31_BranchReconciliation_20261111.md`; merge commit `01cba31` (pushed, PR #10 trunk now contains PR #5 + absorbed 2g2). Only two merge parties existed; merge-tree clean; disjoint migrations/snapshots/docs. Findings: only TWO independent merge parties (PR #5 `integration/spec-kit-h4-security-20261105` @ `b3122b14`, 95 commits; PR #10 @ `c735639`, 371 commits — both from merge-base `e05049d`); `origin/wip/phase-2g2` fully absorbed by PR #5; legacy d04b + phase2h lanes fully absorbed by PR #10; `git merge-tree` clean in ALL directions (0 conflicted files); zero overlap in migrations (disjoint table/index/trigger names, PR #5 never touches the PayOs context), zero ModelSnapshot/Designer changes on either lane, zero docs overlap. Proposed order: merge PR #5 INTO PR #10 (trunk), then P3.2 full merged-SHA regression before any merge-to-main proposal. R3 (semantic: H4 credit-cap triggers vs D04 journal over the shared Payment spine) is the only substantive risk and is P3.2's job to prove.
 **Definition of Done:**
 - ✅ Compare `wip/phase-2g2`, `integration/spec-kit-h4-security-20261105` (PR #5), and `feat/local-safe-startup-20261109` (PR #10)
 - ✅ Identify merge-base: `e05049d037a4299ca17c04d2dd3a3c25f9637bfd`
@@ -283,20 +283,28 @@
 **Blocker:** Owner approval of merge execution (choreography proposal in report §6)
 **Dependency:** P0 and P1 clean ✅ (all P0 6/6, P1 5/5 with pushed-SHA evidence)
 
-### P3.2 ⏳ Full Regression Test Suite
-**Status:** TODO  
+### P3.2 ⏸️ Full Regression Test Suite (local evidence COMPLETE at merged tree; 2 external items open)
+**Status:** LOCAL EVIDENCE COMPLETE at the P3.1-merged tree; two external-lane items remain open
+**Evidence (all at pushed SHAs, local disposable 15432, 15433/5432 untouched):**
+- Build whole solution (both lanes): 0 errors at merge commit `01cba31` (30 pre-existing style warnings)
+- Module suites at `01cba31`: Domain **720/720**, EF (SQLite) **447/447**, Application **231/231**, Host HTTP **76/76** — TRXs in `C:\Users\Huynq\NgocTrang-Test-Logs\p32-merged-01cba31`
+- P1.5 internal staging harness: 20/20 at `01cba31`, LOG_DIRECTORY `payos-p15-internal-20261111-230926`
+- D04-B native JWT matrix: PASS at `38f0037`, LOG_DIRECTORY `payos-native-jwt-20261111-231445`
+- D04 writer-only bundle: PASS at `7f48c59`, LOG_DIRECTORY `payos-20261111-232050`
+- D04 FULL bundle (steps 01–27): PASS at `7f48c59`, LOG_DIRECTORY `payos-20261111-232223`
+- **Two real merged-tree fixes exposed:** `38f0037` (D04 fixtures asserted the pre-merge terminal EF migration; the P3.1 merge legitimately adds `20261105150000_Phase2HD04H4SettlementJournal` — R3 predicted class), `7f48c59` (D04 bundle pinned host-archive count 7; P1.3 had grown the vault suite to 9)
 **Definition of Done:**
-- Per-SHA backend: Domain, Application, EF, HTTP tests
-- `verify-2g-security-batch.ps1 -Mode Full`
-- PostgreSQL scratch: full migrations → rollback → reapply
-- `verify-phase-2h-financial-foundations.ps1`
-- `verify-phase-2g5-staging.ps1`
-- D04 isolated bundle
-- Run on correct branches per test scope
-- Read all script guards before running
+- ✅ Per-SHA backend: Domain, Application, EF, HTTP tests (1474/1474 green at the merge commit)
+- ⏸️ `verify-2g-security-batch.ps1 -Mode Full` — its core 4 suites are exactly the ones already run green (Domain/App/EF/HostHTTP) but the script hard-pins branch `wip/phase-2g2` (guard read before any run, per DoD); running it on the trunk requires a branch-guard decision (relax pin or run on a temporary local branch) — Owner decision pending
+- ✅ PostgreSQL scratch: full migrations → rollback → reapply (covered per-lane: D04 FULL bundle 01–27 incl. migration chain; PayOs EF context up/down/reapply covered by CI lane which is currently blocked, and by P1.5 harness chain at `01cba31`)
+- ⏸️ `verify-phase-2h-financial-foundations.ps1` — hard-pins branch `wip/phase-2g2` + PG 5432 (`ngoctrang_integration_test`); port 5432 is FORBIDDEN by house rules for local runs, so the 2H PG suites need either a guard-relax commit (5432→15432 + branch pin) or CI evidence — Owner decision pending
+- ⏸️ `verify-phase-2g5-staging.ps1` — same 2g2 branch pin situation (script guard read; needs Owner decision)
+- ✅ D04 isolated bundle (writer-only + FULL, both green at `7f48c59`)
+- ✅ Run on correct branches per test scope (read-only analysis ran on trunk; each harness ran on its own reviewed branch state at pushed SHAs)
+- ✅ Read all script guards before running (guards of 2H/2g/2g5 scripts read and documented above; guards are the reason the 3 ⏸️ items are open, not skipped silently)
 
-**Blocker:** P3.1 merge must be planned  
-**Dependency:** P3.1
+**Blocker:** Two external lanes: (1) GitHub Actions account is locked for a **billing issue** — all CI jobs on the branch fail in ~5s at start (observed on 25+ runs incl. pre-merge commits, so unrelated to the P3.1 merge; Owner must resolve GitHub billing); (2) 2H/2g/2g5 script guards hard-pin `wip/phase-2g2` + local port 5432, both incompatible with the merged trunk and house safety rules — needs an Owner decision on how to adapt
+**Dependency:** P3.1 ✅ (merged at `01cba31`, Owner-approved)
 
 ### P3.3 ⏳ Acceptance Matrix
 **Status:** TODO  
@@ -348,6 +356,6 @@
 - P0: 6/6 closed (P0.1–P0.3 done, P0.4 not needed, P0.5 startup gate at `7621d8a`, P0.6 full bundle at `7621d8a`)
 - P1: 5/5 done (P1.1 official at `f30e14d`; P1.2 rehearsal gate at `d085d02`; P1.4 crash/recovery at `682613d`; P1.3 vault + restricted roles at `18fe521`, 64/64; P1.5 internal simulated payOS staging E2E at `e58b12c`, 20/20)
 - P2: 0/6 done
-- P3: 0/4 done
+- P3: 1.5/4 done (P3.1 merge at `01cba31`; P3.2 local evidence complete at `7f48c59` with two external items open)
 
-**Current Focus:** P3.1 analysis DONE (see `etc/phase-audits/P31_BranchReconciliation_20261111.md`) — merge execution awaiting Owner approval of the choreography: merge PR #5 (`integration/spec-kit-h4-security-20261105`) INTO PR #10 trunk, then P3.2 full merged-SHA regression. No merge to `main`, no force push, PRs stay open until Owner approves.
+**Current Focus:** P3.1 DONE (merge `01cba31`, Owner-approved). P3.2 local evidence COMPLETE at merged tree (build + 1474/1474 module tests + P1.5 harness 20/20 + D04-B native JWT matrix + D04 writer-only + D04 FULL bundles; two merged-tree fixes `38f0037` + `7f48c59`). Two external items open: GitHub Actions billing lock (Owner action) and 2H/2g/2g5 branch/5432 guard pins (Owner decision). P3.3 blocked on those items.

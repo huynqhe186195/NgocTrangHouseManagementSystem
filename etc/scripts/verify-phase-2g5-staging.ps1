@@ -9,9 +9,12 @@ Set-StrictMode -Version Latest
 $root = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 Push-Location $root
 try {
+    # P3.1 merged the spec-kit-h4-security lane (PR #5, which contained all
+    # of wip/phase-2g2) into the trunk branch; accept the merged trunk too.
+    $allowedBranches = @('wip/phase-2g2', 'feat/local-safe-startup-20261109')
     $branch = (& git branch --show-current | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0 -or $branch -ne 'wip/phase-2g2') {
-        throw "Safety stop: expected branch wip/phase-2g2, got '$branch'."
+    if ($LASTEXITCODE -ne 0 -or $branch -cnotin $allowedBranches) {
+        throw "Safety stop: expected a reviewed 2g/2h test branch ($($allowedBranches -join ' or ')), got '$branch'."
     }
     if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
         throw 'dotnet SDK is required.'
@@ -23,7 +26,9 @@ try {
     # The canonical safety guard is the NpgsqlConnectionStringBuilder in
     # BuildingManagementPostgreSqlTestModule.RequireSafeConnectionString().
     # Every invoked PostgreSQL test requires that guard BEFORE connecting:
-    # Database=ngoctrang_integration_test, localhost/127.0.0.1, port 5432.
+    # Database=ngoctrang_integration_test, localhost/127.0.0.1, port 5432
+    # (CI) or 15432 (local disposable container; port allowlist widened in
+    # the same P3.2 guard-adapt commit).
     # Do not reimplement the Npgsql parser with generic PowerShell string
     # parsing: it can misclassify otherwise valid PostgreSQL connection strings.
     # The migration and Phase 2G.5 cases use that canonical C# guard.

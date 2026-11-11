@@ -6,9 +6,13 @@ Set-StrictMode -Version Latest
 $root = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 Push-Location $root
 try {
+    # P3.1 merged the spec-kit-h4-security lane (PR #5, which contained all
+    # of wip/phase-2g2) into the trunk branch. The remote-sync check below
+    # follows the ACTIVE branch: trunk checks against its own origin ref.
+    $allowedBranches = @('wip/phase-2g2', 'feat/local-safe-startup-20261109')
     $branch = (& git branch --show-current | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0 -or $branch -ne 'wip/phase-2g2') {
-        throw "Safety stop: expected branch wip/phase-2g2; actual '$branch'."
+    if ($LASTEXITCODE -ne 0 -or $branch -cnotin $allowedBranches) {
+        throw "Safety stop: expected a reviewed 2g/2h test branch ($($allowedBranches -join ' or ')); actual '$branch'."
     }
     if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
         throw 'dotnet SDK is required.'
@@ -17,7 +21,9 @@ try {
         throw 'BM_PG_TEST_CONNECTION must target the dedicated local test database.'
     }
     # The invoked PG test assemblies independently enforce the Npgsql
-    # allowlist: localhost:5432, database ngoctrang_integration_test.
+    # allowlist: localhost, port 5432 (CI) or 15432 (local disposable
+    # container; widened in the P3.2 guard-adapt commit), database
+    # ngoctrang_integration_test.
     # The authenticated HTTP fixture enforces the same rules before connection.
     $sha = (& git rev-parse HEAD | Out-String).Trim()
     if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($sha)) {
@@ -26,24 +32,28 @@ try {
 
     # Stale working trees reproduce already-fixed authorization failures
     # after the expensive migration and integration tests. Stop before work.
+    # The sync target follows the ACTIVE branch (see allowlist above): the
+    # historical 2g2 branch syncs against origin/wip/phase-2g2; the P3.1
+    # merged trunk syncs against its own origin ref.
+    $remoteRef = "refs/heads/$branch"
     $previousPreference = $ErrorActionPreference
     try {
         $ErrorActionPreference = 'Continue'
-        $remoteLine = (& git ls-remote --exit-code origin 'refs/heads/wip/phase-2g2' | Out-String).Trim()
+        $remoteLine = (& git ls-remote --exit-code origin $remoteRef | Out-String).Trim()
         $remoteExit = $LASTEXITCODE
     }
     finally { $ErrorActionPreference = $previousPreference }
     if ($remoteExit -ne 0) {
-        throw 'Safety stop: cannot contact origin/wip/phase-2g2. Check origin/network and retry; no tests were started.'
+        throw "Safety stop: cannot contact origin/$branch. Check origin/network and retry; no tests were started."
     }
-    if ($remoteLine -match '^([0-9a-fA-F]{40})\s+refs/heads/wip/phase-2g2$') {
+    if ($remoteLine -match ('^([0-9a-fA-F]{40})\s+' + [regex]::Escape($remoteRef) + '$')) {
         $remoteSha = $Matches[1]
     }
     else {
-        throw 'Safety stop: cannot parse origin/wip/phase-2g2 commit. No tests were started.'
+        throw "Safety stop: cannot parse origin/$branch commit. No tests were started."
     }
     if ($sha -ne $remoteSha) {
-        throw "Safety stop: local HEAD=$sha differs from origin/wip/phase-2g2=$remoteSha. Review 'git status --short', then use 'git pull --ff-only origin wip/phase-2g2' when safe. No tests were started."
+        throw "Safety stop: local HEAD=$sha differs from origin/$branch=$remoteSha. Review 'git status --short', then use 'git pull --ff-only origin $branch' when safe. No tests were started."
     }
     $trackedChanges = (& git status --porcelain --untracked-files=no | Out-String).Trim()
     if ($LASTEXITCODE -ne 0 -or -not [string]::IsNullOrWhiteSpace($trackedChanges)) {

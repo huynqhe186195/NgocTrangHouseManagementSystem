@@ -13,9 +13,14 @@ Set-StrictMode -Version Latest
 $root = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 Push-Location $root
 try {
+    # P3.1 merged the spec-kit-h4-security lane (PR #5, which contained all
+    # of wip/phase-2g2) into this trunk branch, so the historical single-
+    # branch pin now accepts both: the legacy 2g2 development branch and the
+    # merged trunk that carries the identical test source.
+    $allowedBranches = @('wip/phase-2g2', 'feat/local-safe-startup-20261109')
     $branch = (& git branch --show-current | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0 -or $branch -ne 'wip/phase-2g2') {
-        throw "Safety stop: expected wip/phase-2g2, got '$branch'."
+    if ($LASTEXITCODE -ne 0 -or $branch -cnotin $allowedBranches) {
+        throw "Safety stop: expected a reviewed 2g/2h test branch ($($allowedBranches -join ' or ')), got '$branch'."
     }
     if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
         throw 'dotnet SDK is required.'

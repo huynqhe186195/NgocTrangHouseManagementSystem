@@ -31,14 +31,22 @@ public sealed class BuildingManagementPostgreSqlTestModule : AbpModule
         }
 
         var builder = new NpgsqlConnectionStringBuilder(input);
+        // P3.2 guard-adapt: CI keeps port 5432 (GitHub-hosted service
+        // container); the local Windows rehearsal runs the identical
+        // disposable postgres:16 container on loopback 15432, the same
+        // port the payOS harnesses already use. The database name stays
+        // pinned so no other database can ever be selected.
+        var portAllowed =
+            builder.Port == 5432 ||
+            builder.Port == 15432;
         if (!string.Equals(builder.Database, DatabaseName, StringComparison.Ordinal) ||
             !(string.Equals(builder.Host, "localhost", StringComparison.OrdinalIgnoreCase) ||
               string.Equals(builder.Host, "127.0.0.1", StringComparison.OrdinalIgnoreCase)) ||
-            builder.Port != 5432)
+            !portAllowed)
         {
             throw new InvalidOperationException(
                 "Safety stop: tests require local PostgreSQL port 5432 " +
-                "and database " + DatabaseName);
+                "(CI) or 15432 (local disposable) and database " + DatabaseName);
         }
 
         return builder.ConnectionString;

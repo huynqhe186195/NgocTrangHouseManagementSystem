@@ -80,7 +80,10 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             Pooling = false,
             CommandTimeout = 90
         };
-        if (adminCs.Port != 5432 ||
+        // P3.2 guard-adapt: CI keeps port 5432 (GitHub service container);
+        // the local Windows rehearsal runs the same disposable postgres:16
+        // container on loopback 15432. Database name stays pinned.
+        if ((adminCs.Port != 5432 && adminCs.Port != 15432) ||
             adminCs.Database != "ngoctrang_integration_test" ||
             adminCs.Host is not ("127.0.0.1" or "localhost"))
             throw new InvalidOperationException("Refusing non-local PostgreSQL test server.");

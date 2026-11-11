@@ -283,8 +283,8 @@
 **Blocker:** Owner approval of merge execution (choreography proposal in report §6)
 **Dependency:** P0 and P1 clean ✅ (all P0 6/6, P1 5/5 with pushed-SHA evidence)
 
-### P3.2 ⏸️ Full Regression Test Suite (local evidence COMPLETE at merged tree; 2 external items open)
-**Status:** LOCAL EVIDENCE COMPLETE at the P3.1-merged tree; two external-lane items remain open
+### P3.2 ✅ DONE (Full Regression Test Suite — local evidence complete at merged tree; only GitHub CI evidence remains HOLD)
+**Status:** DONE at the P3.1-merged tree, HEAD `1ddf2e6` (pushed; branch in sync). Owner choice (a) executed: guard-adapt the 2H/2g/2g5 verify lanes and run them on the merged trunk locally. Sole open external item: GitHub Actions billing lock (Owner action; CI evidence column of P3.3 stays HOLD)
 **Evidence (all at pushed SHAs, local disposable 15432, 15433/5432 untouched):**
 - Build whole solution (both lanes): 0 errors at merge commit `01cba31` (30 pre-existing style warnings)
 - Module suites at `01cba31`: Domain **720/720**, EF (SQLite) **447/447**, Application **231/231**, Host HTTP **76/76** — TRXs in `C:\Users\Huynq\NgocTrang-Test-Logs\p32-merged-01cba31`
@@ -292,18 +292,21 @@
 - D04-B native JWT matrix: PASS at `38f0037`, LOG_DIRECTORY `payos-native-jwt-20261111-231445`
 - D04 writer-only bundle: PASS at `7f48c59`, LOG_DIRECTORY `payos-20261111-232050`
 - D04 FULL bundle (steps 01–27): PASS at `7f48c59`, LOG_DIRECTORY `payos-20261111-232223`
-- **Two real merged-tree fixes exposed:** `38f0037` (D04 fixtures asserted the pre-merge terminal EF migration; the P3.1 merge legitimately adds `20261105150000_Phase2HD04H4SettlementJournal` — R3 predicted class), `7f48c59` (D04 bundle pinned host-archive count 7; P1.3 had grown the vault suite to 9)
+- 2H financial foundations: **5/5 groups PASS** at `1ddf2e6` — domain **165/165** (`15-2h-financial-domain.trx`), PG **103/103** (`16-2h-postgresql.trx`), full migration chain (`17-2h-full-migration.trx`), auth HTTP **1/1** (`18-2h-auth-http.trx`, STAGEPGHTTP01), group 5 = full 2g regression batch **76/76** (`19-2h-full-regression.log`); all TRXs stamp `PHASE2H_COMMIT=1ddf2e6...`; LOG_DIRECTORY `C:\Users\Huynq\NgocTrang-Test-Logs`
+- 2g5 staging: **4/4 groups PASS** at `1ddf2e6` — PG archive **58/58** (`11-2g5-archive-pg.log`), full migration chain **1/1** (`12-2g5-full-migration.log`), auth HTTP **1/1** (`13-2g5-http-pg.log`), full regression **76/76** (`14-2g5-full-regression.log`); script banner: ALL FOUR GROUPS PASSED
+- 2g security batch: run inside both 2H group 5 and 2g5 group 4 (both 76/76, incl. 3 source gates + compile-only PG lane)
+- **Four real merged-tree fixes:** `38f0037` (D04 fixtures asserted the pre-merge terminal EF migration; the P3.1 merge legitimately adds `20261105150000_Phase2HD04H4SettlementJournal` — R3 predicted class), `7f48c59` (D04 bundle pinned host-archive count 7; P1.3 had grown the vault suite to 9), `127f5d4` (guard-adapt: 2-branch allowlists in 6 verify scripts + C# port guards widened to 5432 (CI) or 15432 (local disposable); DB name `ngoctrang_integration_test` and loopback-host checks unchanged), `1ddf2e6` (four STAGEPGHTTP fixtures hard-coded due dates 2026-11-07/12-07 that the wall clock (2026-11-12) had expired — domain `MonthlyInvoiceCandidateLedgerRecord.Validate` requires DueDate ≥ the VN-local review day, so the freeze legitimately rejected them; time-bomb fixture, NOT a merge defect; replaced with the file's established VN-local today+7 pattern)
 **Definition of Done:**
 - ✅ Per-SHA backend: Domain, Application, EF, HTTP tests (1474/1474 green at the merge commit)
-- ⏸️ `verify-2g-security-batch.ps1 -Mode Full` — its core 4 suites are exactly the ones already run green (Domain/App/EF/HostHTTP) but the script hard-pins branch `wip/phase-2g2` (guard read before any run, per DoD); running it on the trunk requires a branch-guard decision (relax pin or run on a temporary local branch) — Owner decision pending
-- ✅ PostgreSQL scratch: full migrations → rollback → reapply (covered per-lane: D04 FULL bundle 01–27 incl. migration chain; PayOs EF context up/down/reapply covered by CI lane which is currently blocked, and by P1.5 harness chain at `01cba31`)
-- ⏸️ `verify-phase-2h-financial-foundations.ps1` — hard-pins branch `wip/phase-2g2` + PG 5432 (`ngoctrang_integration_test`); port 5432 is FORBIDDEN by house rules for local runs, so the 2H PG suites need either a guard-relax commit (5432→15432 + branch pin) or CI evidence — Owner decision pending
-- ⏸️ `verify-phase-2g5-staging.ps1` — same 2g2 branch pin situation (script guard read; needs Owner decision)
+- ✅ `verify-2g-security-batch.ps1 -Mode Full` — ran green at `1ddf2e6` inside both the 2H lane (group 5) and the 2g5 lane (group 4), 76/76 both times, after Owner-approved guard-adapt `127f5d4` (branch allowlist now accepts the merged trunk)
+- ✅ PostgreSQL scratch: full migrations → rollback → reapply (covered per-lane: D04 FULL bundle 01–27 incl. migration chain; 2H/2g5 full migration chain groups; P1.5 harness chain at `01cba31`; PayOs EF context up/down/reapply CI lane remains billing-blocked)
+- ✅ `verify-phase-2h-financial-foundations.ps1` — 5/5 groups PASS at `1ddf2e6` on disposable PG 15432 (guard-adapt `127f5d4`; port 5432 stays allowed for CI only)
+- ✅ `verify-phase-2g5-staging.ps1` — 4/4 groups PASS at `1ddf2e6` on disposable PG 15432
 - ✅ D04 isolated bundle (writer-only + FULL, both green at `7f48c59`)
-- ✅ Run on correct branches per test scope (read-only analysis ran on trunk; each harness ran on its own reviewed branch state at pushed SHAs)
-- ✅ Read all script guards before running (guards of 2H/2g/2g5 scripts read and documented above; guards are the reason the 3 ⏸️ items are open, not skipped silently)
+- ✅ Run on correct branches per test scope (all harnesses ran on the merged trunk at pushed SHAs)
+- ✅ Read all script guards before running (guards read; the guard-adapt commit `127f5d4` was the Owner-approved path, executed and re-verified)
 
-**Blocker:** Two external lanes: (1) GitHub Actions account is locked for a **billing issue** — all CI jobs on the branch fail in ~5s at start (observed on 25+ runs incl. pre-merge commits, so unrelated to the P3.1 merge; Owner must resolve GitHub billing); (2) 2H/2g/2g5 script guards hard-pin `wip/phase-2g2` + local port 5432, both incompatible with the merged trunk and house safety rules — needs an Owner decision on how to adapt
+**Blocker:** None for local evidence. Remaining HOLD: GitHub Actions account locked for a **billing issue** — all CI jobs on the branch fail in ~5s at start (observed on 25+ runs incl. pre-merge commits, so unrelated to the P3.1 merge; Owner must resolve GitHub billing). P3.3 may start on local evidence; its CI-evidence column stays HOLD until billing is resolved.
 **Dependency:** P3.1 ✅ (merged at `01cba31`, Owner-approved)
 
 ### P3.3 ⏳ Acceptance Matrix
@@ -314,8 +317,8 @@
 - Review auth invariants
 - Review accounting invariants
 
-**Blocker:** P3.2 must complete  
-**Dependency:** P3.2
+**Blocker:** None for local start — P3.3 may proceed on the complete local evidence; the CI-evidence column of the matrix stays HOLD until GitHub billing is resolved (Owner action)  
+**Dependency:** P3.2 ✅ (local evidence complete at `1ddf2e6`)
 
 ### P3.4 ⏳ Final Review and Release Proposal
 **Status:** TODO  
@@ -356,6 +359,6 @@
 - P0: 6/6 closed (P0.1–P0.3 done, P0.4 not needed, P0.5 startup gate at `7621d8a`, P0.6 full bundle at `7621d8a`)
 - P1: 5/5 done (P1.1 official at `f30e14d`; P1.2 rehearsal gate at `d085d02`; P1.4 crash/recovery at `682613d`; P1.3 vault + restricted roles at `18fe521`, 64/64; P1.5 internal simulated payOS staging E2E at `e58b12c`, 20/20)
 - P2: 0/6 done
-- P3: 1.5/4 done (P3.1 merge at `01cba31`; P3.2 local evidence complete at `7f48c59` with two external items open)
+- P3: 2/4 done (P3.1 merge at `01cba31`; P3.2 DONE at `1ddf2e6` — all local lanes green incl. 2H/2g/2g5; only GitHub CI evidence remains HOLD, Owner billing action)
 
-**Current Focus:** P3.1 DONE (merge `01cba31`, Owner-approved). P3.2 local evidence COMPLETE at merged tree (build + 1474/1474 module tests + P1.5 harness 20/20 + D04-B native JWT matrix + D04 writer-only + D04 FULL bundles; two merged-tree fixes `38f0037` + `7f48c59`). Two external items open: GitHub Actions billing lock (Owner action) and 2H/2g/2g5 branch/5432 guard pins (Owner decision). P3.3 blocked on those items.
+**Current Focus:** P3.2 DONE (Owner choice (a) executed: guard-adapt `127f5d4` + time-bomb fixture fix `1ddf2e6`; 2H foundations 5/5 groups + 2g5 staging 4/4 groups + 2g batch 76/76 ×2 all green at pushed `1ddf2e6`). Sole open item: GitHub Actions billing lock (Owner action; CI evidence column of P3.3 stays HOLD). Next: P3.3 Acceptance Matrix on local evidence.

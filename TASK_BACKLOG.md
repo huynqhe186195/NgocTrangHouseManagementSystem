@@ -161,20 +161,23 @@
 **Blocker:** None  
 **Dependency:** P0.5 ✅
 
-### P1.5 ⏳ Webhook/Merchant Staging Readiness
-**Status:** TODO  
+### P1.5 ✅ Webhook/Merchant Staging Readiness (internal simulated lane)
+**Status:** DONE (internal staging scope per Owner decisions; TLS public callback = HOLD)  
+**Evidence:** Official run 3 at pushed SHA `e58b12c` (== origin): 20/20 matrix steps PASS, TRX `payos-p15-internal-provision.trx` 1/1, LOG_DIRECTORY `C:\Users\Huynq\NgocTrang-Test-Logs\payos-p15-internal-20261111-153928`. Real Host (Staging, https://localhost:44311) with native OpenIddict password-grant tokens, config-only `ProviderMode=InternalSimulated`, loopback checkout → signed webhook → reconcile, ZERO real payOS traffic. Durable state: CHECKOUT `1|1|t|1`, WEBHOOK `0|1`, FINAL `2|1|2|2`, legacy Payment stays Pending.
+**Owner decisions:** (a) internal lane provider = in-process simulator (deterministic `SIM-P15-<orderCode>` links; the real payOS client stays the default registration and remains hard-gated); (b) timeout/outbox DoD item closed with a new staging outbox table (`BuildingManagementPayOsStagingOutbox`, dispatcher with bounded backoff → RequiresReview); (c) internal staging only — no public callback URL.
+**Fixes exposed by the verification runs:** `eb8074b` (.NET config arrays bind only from indexed child keys — `BuildingManagement__Bootstrap__RootUserIds__0`, not a comma-separated scalar), `e58b12c` (payOS staging controller: `AbpAuthorizationException` → 403, never an opaque 500; same fix class as `f14745f`).
 **Definition of Done:**
-- QR checkout creates intent with correct permissions
-- Signature verification on raw body
-- `paymentLinkId` and `orderCode` handling
-- Idempotent webhook inbox/reconciliation
-- Timeout handling with outbox pattern
-- TLS HTTPS public callback URL
-- Server-side secrets (never client-side)
-- Staging test WITHOUT calling real payOS
+- ✅ QR checkout creates intent with correct permissions (P1/P2 via real Host; N3 outsider 403, N4 cross-building 403)
+- ✅ Signature verification on raw body (W3 tampered HMAC → 400, inbox unchanged)
+- ✅ `paymentLinkId` and `orderCode` handling (deterministic `SIM-P15-<orderCode>` link id, same-orderCode replay idempotent, orderCode-scoped webhook→intent matching)
+- ✅ Idempotent webhook inbox/reconciliation (W2 duplicate, R2 replay — exactly one inbox row, no state growth)
+- ✅ Timeout handling with outbox pattern (new staging outbox table; attach + reconcile kinds, `2|1|2|2` final state; dispatcher backoff → RequiresReview covered by unit tests)
+- ⏸️ TLS HTTPS public callback URL — **HOLD per Owner decision** (internal staging only, no public callback; loopback URLs on the isolated Host)
+- ✅ Server-side secrets (never client-side) (checksum/API keys server-side env only; synthetic values, tokens never echoed/saved)
+- ✅ Staging test WITHOUT calling real payOS (in-process simulator; zero real payOS traffic — loopback only)
 
-**Blocker:** Architecture decision needed  
-**Dependency:** P1.1, P1.4
+**Blocker:** None (TLS public callback remains HOLD until Owner authorizes public ingress)
+**Dependency:** P1.1 ✅, P1.4 ✅
 
 ---
 
@@ -342,8 +345,8 @@
 
 **Backlog Status Summary:**
 - P0: 6/6 closed (P0.1–P0.3 done, P0.4 not needed, P0.5 startup gate at `7621d8a`, P0.6 full bundle at `7621d8a`)
-- P1: 4/5 done (P1.1 official at `f30e14d`; P1.2 rehearsal gate at `d085d02`; P1.4 crash/recovery at `682613d`; P1.3 vault + restricted roles at `18fe521`, 64/64)
+- P1: 5/5 done (P1.1 official at `f30e14d`; P1.2 rehearsal gate at `d085d02`; P1.4 crash/recovery at `682613d`; P1.3 vault + restricted roles at `18fe521`, 64/64; P1.5 internal simulated payOS staging E2E at `e58b12c`, 20/20)
 - P2: 0/6 done
 - P3: 0/4 done
 
-**Current Focus:** P1.5 internal webhook/merchant staging readiness (Owner decision: internal staging only, no public callback) — the last open P1 task
+**Current Focus:** P1 closed — all five P1 items DONE with pushed-SHA evidence. Remaining HOLD gates: TLS public payOS callback (P1.5, Owner decision), production vault/roles (P1.3, Owner decision). Next major work is P2/P3, both blocked on P3.1 branch reconciliation at merge-base `e05049d`.

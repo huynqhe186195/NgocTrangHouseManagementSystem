@@ -309,15 +309,16 @@
 **Blocker:** None for local evidence. Remaining HOLD: GitHub Actions account locked for a **billing issue** — all CI jobs on the branch fail in ~5s at start (observed on 25+ runs incl. pre-merge commits, so unrelated to the P3.1 merge; Owner must resolve GitHub billing). P3.3 may start on local evidence; its CI-evidence column stays HOLD until billing is resolved.
 **Dependency:** P3.1 ✅ (merged at `01cba31`, Owner-approved)
 
-### P3.3 ⏳ Acceptance Matrix
-**Status:** TODO  
+### P3.3 ✅ Acceptance Matrix
+**Status:** DONE — matrix at `etc/phase-audits/P33_AcceptanceMatrix_20261112.md`  
+**Evidence:** 26 requirement rows across 5 sections (A safety, B auth, C accounting, D merge-integrity, E historical CI-only): every local-verifiable invariant PASS at pushed SHA `1ddf2e6` with per-row SHA+TRX/LOG citations; R3 closed with the four documented fix classes; 4 Owner HOLD groups (GitHub billing, production vault/roles/secrets, TLS public callback, merge-to-main). No previous-run PASS copied onto a new SHA.  
 **Definition of Done:**
-- Create table: Requirement ID | Source File/Commit | Test Name | Environment | Evidence Log/URL | PASS/PARTIAL/HOLD | Blocker | Owner Action Needed
-- Review threat model
-- Review auth invariants
-- Review accounting invariants
+- ✅ Create table: Requirement ID | Source File/Commit | Test Name | Environment | Evidence Log/URL | PASS/PARTIAL/HOLD | Blocker | Owner Action Needed (sections A–E + overall disposition)
+- ✅ Review threat model (section A: prod-DB/real-money/secret-leakage/fail-closed/billing boundary)
+- ✅ Review auth invariants (section B: bearer authenticity, negative matrix, DB least privilege, deny-all membership, scoped reads)
+- ✅ Review accounting invariants (section C: exactly-once, idempotency, credit caps, conservation, append-only journal, calendar parity, provider gate)
 
-**Blocker:** None for local start — P3.3 may proceed on the complete local evidence; the CI-evidence column of the matrix stays HOLD until GitHub billing is resolved (Owner action)  
+**Blocker:** None for P3.4 preparation; the matrix's HOLD items (GitHub billing, production vault/roles, TLS public callback, merge-to-main authorization) are all Owner actions  
 **Dependency:** P3.2 ✅ (local evidence complete at `1ddf2e6`)
 
 ### P3.4 ⏳ Final Review and Release Proposal
@@ -359,6 +360,6 @@
 - P0: 6/6 closed (P0.1–P0.3 done, P0.4 not needed, P0.5 startup gate at `7621d8a`, P0.6 full bundle at `7621d8a`)
 - P1: 5/5 done (P1.1 official at `f30e14d`; P1.2 rehearsal gate at `d085d02`; P1.4 crash/recovery at `682613d`; P1.3 vault + restricted roles at `18fe521`, 64/64; P1.5 internal simulated payOS staging E2E at `e58b12c`, 20/20)
 - P2: 0/6 done
-- P3: 2/4 done (P3.1 merge at `01cba31`; P3.2 DONE at `1ddf2e6` — all local lanes green incl. 2H/2g/2g5; only GitHub CI evidence remains HOLD, Owner billing action)
+- P3: 3/4 done (P3.1 merge at `01cba31`; P3.2 DONE at `1ddf2e6`; P3.3 acceptance matrix at `2f0a949`+; only GitHub CI evidence remains HOLD, Owner billing action)
 
-**Current Focus:** P3.2 DONE (Owner choice (a) executed: guard-adapt `127f5d4` + time-bomb fixture fix `1ddf2e6`; 2H foundations 5/5 groups + 2g5 staging 4/4 groups + 2g batch 76/76 ×2 all green at pushed `1ddf2e6`). Sole open item: GitHub Actions billing lock (Owner action; CI evidence column of P3.3 stays HOLD). Next: P3.3 Acceptance Matrix on local evidence.
+**Current Focus:** P3.3 DONE (matrix `etc/phase-audits/P33_AcceptanceMatrix_20261112.md`: all local-verifiable invariants PASS at `1ddf2e6`; R3 closed; 4 Owner HOLD groups). Next: P3.4 Final Review + Release Proposal — requires Owner review of the matrix and the remaining HOLD decisions (GitHub billing, production vault/roles, TLS callback, merge-to-main).

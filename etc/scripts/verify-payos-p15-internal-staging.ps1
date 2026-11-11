@@ -74,7 +74,7 @@ $envNames = @(
     'DOTNET_ENVIRONMENT','ASPNETCORE_URLS','AuthServer__CertificatePassPhrase',
     'BuildingManagement__SliceAStaging__Enabled',
     'BuildingManagement__SliceAStaging__Activation',
-    'BuildingManagement__Bootstrap__RootUserIds',
+    'BuildingManagement__Bootstrap__RootUserIds__0',
     'BuildingManagement__PayOsStaging__Enabled',
     'BuildingManagement__PayOsStaging__Activation',
     'BuildingManagement__PayOsStaging__ProviderMode',
@@ -530,7 +530,10 @@ try {
     [Environment]::SetEnvironmentVariable('BuildingManagement__SliceAStaging__Enabled', 'true', 'Process')
     [Environment]::SetEnvironmentVariable('BuildingManagement__SliceAStaging__Activation',
         'I_ACCEPT_ISOLATED_SLICE_A_STAGING_WRITES', 'Process')
-    [Environment]::SetEnvironmentVariable('BuildingManagement__Bootstrap__RootUserIds',
+    # Array binding: .NET configuration binds Guid[] from an INDEXED child
+    # key (RootUserIds:0), not a comma-scalar, so the env var must be
+    # BuildingManagement__Bootstrap__RootUserIds__0.
+    [Environment]::SetEnvironmentVariable('BuildingManagement__Bootstrap__RootUserIds__0',
         '0150c000-0000-4000-8000-000000000001', 'Process')
     [Environment]::SetEnvironmentVariable('BuildingManagement__PayOsStaging__Enabled', 'true', 'Process')
     [Environment]::SetEnvironmentVariable('BuildingManagement__PayOsStaging__Activation',
@@ -788,7 +791,8 @@ finally {
         'BuildingManagement__PayOsStaging__ApiKey',
         'BuildingManagement__PayOsStaging__ChecksumKey',
         'BuildingManagement__PayOsStaging__ReturnUrl',
-        'BuildingManagement__PayOsStaging__CancelUrl')) {
+        'BuildingManagement__PayOsStaging__CancelUrl',
+        'BuildingManagement__Bootstrap__RootUserIds__0')) {
         [Environment]::SetEnvironmentVariable($extra, $null, 'Process')
     }
     if ($hostProcess -and -not $hostProcess.HasExited) {

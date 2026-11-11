@@ -99,7 +99,11 @@ public sealed class D04RealLegacyWriterAcceptance_Tests
         // short schema. The draft D04 SQL must NOT join this migration chain.
         var canonical = migrationDb.Database.GetMigrations().ToArray();
         Assert.NotEmpty(canonical);
-        Assert.Equal("20261104220000_Phase2HTypedH4DeferredCommitIntent",
+        // After the P3.1 merge of the spec-kit-h4-security lane (PR #5),
+        // the canonical EF chain legitimately ends with that lane's H4
+        // settlement journal migration instead of the 2H deferred-commit
+        // intent. Both are known, reviewed migrations on this branch.
+        Assert.Equal("20261105150000_Phase2HD04H4SettlementJournal",
             canonical[^1]);
         Assert.DoesNotContain(canonical, name =>
             name.Contains("StagePayOsD04LegacySourceJournal",

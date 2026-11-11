@@ -116,6 +116,13 @@ public sealed class PayOsStagingCheckoutService
                 amount, DateTime.UtcNow.AddMinutes(20),
                 paymentId: paymentId);
             _db.PayOsPaymentIntents.Add(intent);
+            // Outbox pattern (P1.5): reserve the follow-up work for the
+            // provider-link attach in the SAME transaction as the intent.
+            // An ambiguous provider timeout can then never lose the
+            // recovery obligation for the reserved orderCode.
+            _db.PayOsStagingOutbox.Add(new PayOsStagingOutboxRecord(
+                Guid.NewGuid(), intent.Id, buildingId, intent.OrderCode,
+                PayOsStagingOutboxKind.AttachProviderLink, DateTime.UtcNow));
             try
             {
                 await _db.SaveChangesAsync(cancellationToken);
@@ -126,6 +133,8 @@ public sealed class PayOsStagingCheckoutService
                 pg.SqlState == PostgresErrorCodes.UniqueViolation)
             {
                 _db.Entry(intent).State = EntityState.Detached;
+                foreach (var entry in _db.ChangeTracker.Entries<PayOsStagingOutboxRecord>())
+                    entry.State = EntityState.Detached;
                 intent = await _db.PayOsPaymentIntents.SingleOrDefaultAsync(
                     x => x.PaymentId == paymentId, cancellationToken);
                 if (intent is null) throw new InvalidOperationException(
@@ -237,10 +246,33 @@ public sealed class PayOsStagingCheckoutService
         if (locked.PaymentLinkId is null)
         {
             locked.AttachProviderLink(linkId);
+            // Outbox pattern (P1.5): the attach work is durably finished in
+            // the SAME transaction that persists the provider link, so a
+            // crash after the provider create can never re-queue it.
+            var outbox = await _db.PayOsStagingOutbox.SingleOrDefaultAsync(
+                x => x.PaymentIntentId == locked.Id &&
+                     x.Kind == PayOsStagingOutboxKind.AttachProviderLink,
+                cancellationToken);
+            if (outbox is not null && outbox.Status == PayOsStagingOutboxStatus.Pending)
+                outbox.MarkAttachCompleted(DateTime.UtcNow);
             await _db.SaveChangesAsync(cancellationToken);
         }
         else if (!string.Equals(locked.PaymentLinkId, linkId, StringComparison.Ordinal))
             throw new InvalidOperationException("Provider link conflict requires review.");
+        else
+        {
+            // Idempotent re-attach: the link is already durable; finish any
+            // still-pending outbox work for it in the same transaction.
+            var outbox = await _db.PayOsStagingOutbox.SingleOrDefaultAsync(
+                x => x.PaymentIntentId == locked.Id &&
+                     x.Kind == PayOsStagingOutboxKind.AttachProviderLink,
+                cancellationToken);
+            if (outbox is not null && outbox.Status == PayOsStagingOutboxStatus.Pending)
+            {
+                outbox.MarkAttachCompleted(DateTime.UtcNow);
+                await _db.SaveChangesAsync(cancellationToken);
+            }
+        }
 
         await transaction.CommitAsync(cancellationToken);
     }

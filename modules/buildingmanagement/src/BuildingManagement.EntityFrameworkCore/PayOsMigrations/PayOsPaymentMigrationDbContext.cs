@@ -16,6 +16,7 @@ public sealed class PayOsPaymentMigrationDbContext : DbContext
 {
     public DbSet<PayOsPaymentIntent> PayOsPaymentIntents => Set<PayOsPaymentIntent>();
     public DbSet<PayOsWebhookInboxRecord> PayOsWebhookInbox => Set<PayOsWebhookInboxRecord>();
+    public DbSet<PayOsStagingOutboxRecord> PayOsStagingOutbox => Set<PayOsStagingOutboxRecord>();
 
     public PayOsPaymentMigrationDbContext(
         DbContextOptions<PayOsPaymentMigrationDbContext> options) : base(options)
@@ -27,5 +28,6 @@ public sealed class PayOsPaymentMigrationDbContext : DbContext
         base.OnModelCreating(builder);
         builder.ApplyConfiguration(new PayOsPaymentIntentConfiguration());
         builder.ApplyConfiguration(new PayOsWebhookInboxRecordConfiguration());
+        builder.ApplyConfiguration(new PayOsStagingOutboxRecordConfiguration());
     }
 }

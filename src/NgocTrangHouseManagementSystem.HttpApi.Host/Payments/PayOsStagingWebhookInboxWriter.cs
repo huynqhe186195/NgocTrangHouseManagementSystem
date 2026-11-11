@@ -106,6 +106,14 @@ public sealed class PayOsStagingWebhookInboxWriter
             intent.OrderCode, validated.ProviderReference, validated.PayloadSha256,
             DateTime.UtcNow);
 
+        // Outbox pattern (P1.5): the operator reconciliation obligation for
+        // this accepted webhook is queued in the SAME transaction as the
+        // inbox insert. A crash after the provider sent the notification can
+        // never lose the reconciliation work item.
+        var outbox = new PayOsStagingOutboxRecord(
+            Guid.NewGuid(), intent.Id, intent.BuildingId, intent.OrderCode,
+            PayOsStagingOutboxKind.ReconcileIntent, DateTime.UtcNow);
+
         // Funds received after cancellation, or after any already-confirmed
         // status, MUST enter independent manual review, not automatic posting.
         var manual = intent.Status != PayOsPaymentIntentStatus.AwaitingPayment;
@@ -113,6 +121,7 @@ public sealed class PayOsStagingWebhookInboxWriter
             record.RequireManualReview(DateTime.UtcNow);
 
         _db.PayOsWebhookInbox.Add(record);
+        _db.PayOsStagingOutbox.Add(outbox);
         try
         {
             await _db.SaveChangesAsync(cancellationToken);
@@ -128,6 +137,7 @@ public sealed class PayOsStagingWebhookInboxWriter
             await transaction.RollbackAsync(cancellationToken);
             // Do not leave a failed Added entity pending on this DbContext.
             _db.Entry(record).State = EntityState.Detached;
+            _db.Entry(outbox).State = EntityState.Detached;
             // Let a retry with a fresh context distinguish an exact duplicate
             // from a conflicting reference after a concurrent unique violation.
             return PayOsWebhookIngestResult.ConcurrentConflictRetry;

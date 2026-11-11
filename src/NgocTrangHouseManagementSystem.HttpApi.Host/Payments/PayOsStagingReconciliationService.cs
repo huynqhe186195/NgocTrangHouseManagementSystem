@@ -150,6 +150,15 @@ public sealed class PayOsStagingReconciliationService
         // evidence and financial review before any Payment/ledger mutation.
         locked.MarkConfirmed(events[0].ProviderReference, DateTime.UtcNow);
         events[0].MarkReconciled(DateTime.UtcNow);
+        // Outbox pattern (P1.5): the reconciliation work item queued with
+        // the accepted webhook is finished in the SAME transaction that
+        // confirms the intent, so it can never be queued or lost twice.
+        var outbox = await _db.PayOsStagingOutbox.SingleOrDefaultAsync(
+            x => x.PaymentIntentId == locked.Id &&
+                 x.Kind == PayOsStagingOutboxKind.ReconcileIntent,
+            cancellationToken);
+        if (outbox is not null && outbox.Status == PayOsStagingOutboxStatus.Pending)
+            outbox.MarkReconcileCompleted(DateTime.UtcNow);
         await _db.SaveChangesAsync(cancellationToken);
         await tx.CommitAsync(cancellationToken);
         return new PayOsReconciliationView(locked.OrderCode,

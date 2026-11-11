@@ -103,6 +103,77 @@ namespace BuildingManagement.Migrations.PayOs
                         });
                 });
 
+            modelBuilder.Entity("BuildingManagement.Payments.PayOsStagingOutboxRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("AttemptCount")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("BuildingId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("CompletedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ConcurrencyStamp")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasColumnName("ConcurrencyStamp");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ExtraProperties")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("ExtraProperties");
+
+                    b.Property<int>("Kind")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("LastAttemptedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("LastObservedProviderStatus")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<DateTime>("NextAttemptAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("OrderCode")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("PaymentIntentId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BuildingId", "Status");
+
+                    b.HasIndex("PaymentIntentId", "Kind")
+                        .IsUnique();
+
+                    b.HasIndex("Status", "NextAttemptAtUtc");
+
+                    b.HasIndex("PaymentIntentId", "BuildingId", "OrderCode");
+
+                    b.ToTable("BuildingManagementPayOsStagingOutbox", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_PayOsOutbox_CompletedOnlyWhenCompleted", "(\"Status\" = 1 AND \"CompletedAtUtc\" IS NOT NULL) OR (\"Status\" <> 1 AND \"CompletedAtUtc\" IS NULL)");
+
+                            t.HasCheckConstraint("CK_PayOsOutbox_OrderCodePositive", "\"OrderCode\" > 0");
+                        });
+                });
+
             modelBuilder.Entity("BuildingManagement.Payments.PayOsWebhookInboxRecord", b =>
                 {
                     b.Property<Guid>("Id")
@@ -169,6 +240,16 @@ namespace BuildingManagement.Migrations.PayOs
 
                             t.HasCheckConstraint("CK_PayOsInbox_OrderCodePositive", "\"OrderCode\" > 0");
                         });
+                });
+
+            modelBuilder.Entity("BuildingManagement.Payments.PayOsStagingOutboxRecord", b =>
+                {
+                    b.HasOne("BuildingManagement.Payments.PayOsPaymentIntent", null)
+                        .WithMany()
+                        .HasForeignKey("PaymentIntentId", "BuildingId", "OrderCode")
+                        .HasPrincipalKey("Id", "BuildingId", "OrderCode")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("BuildingManagement.Payments.PayOsWebhookInboxRecord", b =>

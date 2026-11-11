@@ -265,15 +265,43 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule // syst
                 throw new InvalidOperationException(
                     "payOS return/cancel callback URLs must be server-configured HTTPS URLs.");
 
+            // P1.5 (Owner decision 2026-11-11): internal staging ONLY, no
+            // real payOS calls. ProviderMode=InternalSimulated swaps the
+            // live payOS HTTP client for an in-process provider that is
+            // driven entirely by the persisted staging DB state; the
+            // default (unset or "Live") keeps the real client. In this
+            // internal lane the merchant credentials above are still
+            // REQUIRED to be present from server-side secrets but are
+            // never transmitted anywhere.
+            var providerMode = configuration["BuildingManagement:PayOsStaging:ProviderMode"];
+            var internalSimulated =
+                string.Equals(providerMode, "InternalSimulated", StringComparison.Ordinal);
+            if (!internalSimulated && !string.IsNullOrWhiteSpace(providerMode) &&
+                !string.Equals(providerMode, "Live", StringComparison.Ordinal))
+                throw new InvalidOperationException(
+                    "BuildingManagement:PayOsStaging:ProviderMode must be 'Live' or 'InternalSimulated'.");
+
             context.Services.AddDbContext<PayOsPaymentMigrationDbContext>(
                 options => options.UseNpgsql(payOsConnection,
                     db => db.MigrationsHistoryTable("__EFMigrationsHistory_PayOs")));
             context.Services.AddHttpClient("PayOsStaging");
             context.Services.AddSingleton(new PayOsStagingCheckoutOptions(returnUri, cancelUri));
-            context.Services.AddScoped<IPayOsPaymentLinkProvider>(services =>
-                new PayOsPaymentLinkClient(
-                    services.GetRequiredService<IHttpClientFactory>().CreateClient("PayOsStaging"),
-                    clientId, apiKey, checksumKey));
+            if (internalSimulated)
+            {
+                context.Services.AddScoped<IPayOsPaymentLinkProvider>(services =>
+                    new PayOsStagingInternalSimulatedProvider(
+                        services.CreateScope()));
+                // Outbox dispatcher only exists in the simulated lane: it
+                // must never generate autonomous live-provider traffic.
+                context.Services.AddHostedService<PayOsStagingOutboxDispatcher>();
+            }
+            else
+            {
+                context.Services.AddScoped<IPayOsPaymentLinkProvider>(services =>
+                    new PayOsPaymentLinkClient(
+                        services.GetRequiredService<IHttpClientFactory>().CreateClient("PayOsStaging"),
+                        clientId, apiKey, checksumKey));
+            }
             context.Services.AddScoped<PayOsStagingCheckoutService>();
             context.Services.AddScoped<PayOsStagingReconciliationService>();
             context.Services.AddScoped<PayOsStagingWebhookInboxWriter>(services =>

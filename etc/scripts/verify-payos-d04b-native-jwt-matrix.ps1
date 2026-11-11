@@ -513,20 +513,13 @@ END
 $d04hr$;
 GRANT CONNECT ON DATABASE payos_d04_legacy_test TO d04_d04b_host_legacy_test;
 GRANT USAGE ON SCHEMA public TO d04_d04b_host_legacy_test;
-GRANT SELECT ON
-  public."BuildingManagementContracts",
-  public."BuildingManagementPayments",
-  public."BuildingManagementDepositSettlements",
-  public."BuildingManagementPayOsD04BankReviews",
-  public."BuildingManagementPayOsD04OwnerApprovals",
-  public."BuildingManagementPayOsD04ReceiptJournal",
-  public."BuildingManagementPayOsD04Outbox",
-  public."BuildingManagementRooms",
-  public."BuildingManagementFloors",
-  public."Buildings",
-  public."BuildingManagementOperatorBuildingGrants",
-  public."BuildingManagementContractTenants",
-  public."BuildingManagementBankEvidenceClaims"
+-- Read scope: ALL tables in the legacy schema. The integrity triggers on
+-- the writable tables (BM_GuardClosedContractSource, BM_Freeze*, the
+-- D04 validate trigger...) legitimately query cross-domain tables under
+-- the INVOKING role privileges (no SECURITY DEFINER), so an enumerated
+-- read list cannot work. Reading is not the privilege boundary here:
+-- INSERT/UPDATE below stay narrow and DDL/role-creation is denied.
+GRANT SELECT ON ALL TABLES IN SCHEMA public
 TO d04_d04b_host_legacy_test;
 GRANT INSERT ON
   public."BuildingManagementPayOsD04BankReviews",

@@ -83,26 +83,14 @@ internal static class D04BHostRuntimeRolesGate
             """
             GRANT USAGE ON SCHEMA public TO d04_d04b_host_legacy_test;
             """,
-            // Reads + row locks the Host D04-B lane actually takes:
-            // review/approval SELECT FOR SHARE, ResolveBuildingAsync
-            // payments/contracts/rooms/floors, DualAuthority
-            // OperatorBuildingGrants/Buildings FOR SHARE, deposit-coverage
-            // check on settlements, writer lock order, receipt store joins.
+            // Read scope: ALL tables in the legacy schema. The integrity
+            // triggers on the writable tables legitimately query
+            // cross-domain tables under the invoking role privileges (no
+            // SECURITY DEFINER), so an enumerated read list cannot work.
+            // Reading is not the privilege boundary: INSERT/UPDATE stay
+            // narrow below and DDL/role-creation is denied.
             """
-            GRANT SELECT ON
-              public."BuildingManagementContracts",
-              public."BuildingManagementPayments",
-              public."BuildingManagementDepositSettlements",
-              public."BuildingManagementPayOsD04BankReviews",
-              public."BuildingManagementPayOsD04OwnerApprovals",
-              public."BuildingManagementPayOsD04ReceiptJournal",
-              public."BuildingManagementPayOsD04Outbox",
-              public."BuildingManagementRooms",
-              public."BuildingManagementFloors",
-              public."Buildings",
-              public."BuildingManagementOperatorBuildingGrants",
-              public."BuildingManagementContractTenants",
-              public."BuildingManagementBankEvidenceClaims"
+            GRANT SELECT ON ALL TABLES IN SCHEMA public
             TO d04_d04b_host_legacy_test;
             """,
             // Review + Owner-approval evidence INSERTs (the dual-actor

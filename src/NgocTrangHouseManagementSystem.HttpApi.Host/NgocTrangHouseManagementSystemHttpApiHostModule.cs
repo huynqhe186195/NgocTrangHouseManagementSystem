@@ -390,9 +390,28 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule // syst
             catch (FormatException) { throw new InvalidOperationException("D04-B archive key format invalid."); }
             if (key.Length != 32)
                 throw new InvalidOperationException("D04-B archive requires a 256-bit key.");
+            // P1.3: optional previous-key generation for rotation. When
+            // present, existing evidence written under the previous key
+            // still verifies; new files always encrypt under the current key.
+            byte[]? previousKey = null;
+            var archivePreviousKey =
+                configuration["BuildingManagement:PayOsD4B:DisposableArchive:PreviousKeyBase64"];
+            if (!string.IsNullOrWhiteSpace(archivePreviousKey))
+            {
+                try { previousKey = Convert.FromBase64String(archivePreviousKey); }
+                catch (FormatException) { throw new InvalidOperationException("D04-B archive previous key format invalid."); }
+                if (previousKey.Length != 32)
+                    throw new InvalidOperationException("D04-B archive previous key must be a 256-bit key.");
+                if (System.Security.Cryptography.CryptographicOperations
+                        .FixedTimeEquals(previousKey, key))
+                    throw new InvalidOperationException(
+                        "D04-B archive previous key must differ from the current key.");
+            }
             services.AddSingleton<IPayOsD04ProtectedBankEvidenceArchive>(
-                new PayOsD04DisposableEncryptedArchive(archiveRoot, key));
+                new PayOsD04DisposableEncryptedArchive(archiveRoot, key, previousKey));
             System.Security.Cryptography.CryptographicOperations.ZeroMemory(key);
+            if (previousKey is not null)
+                System.Security.Cryptography.CryptographicOperations.ZeroMemory(previousKey);
         }
 
         // A configured database and ABP sign-in are insufficient:
@@ -427,7 +446,17 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule // syst
             return db.Host is ("localhost" or "127.0.0.1") &&
                    db.Port == 15432 &&
                    string.Equals(db.Database, name, StringComparison.Ordinal) &&
-                   db.Username == "postgres" &&
+                   (db.Username == "postgres" ||
+                    // P1.3: the legacy money-writer and staging-ACK slots may
+                    // run under the restricted least-privilege HOST runtime
+                    // roles (no DDL, no superuser) whose grants match the
+                    // full canonical Host D04-B SQL (review + approval +
+                    // writer + ACK). Distinct from the narrower P1.2
+                    // d04_money_writer_* rehearsal roles by design.
+                    (name == "payos_d04_legacy_test" &&
+                     db.Username == "d04_d04b_host_legacy_test") ||
+                    (name == "payos_ef_migration_test" &&
+                     db.Username == "d04_d04b_host_staging_test")) &&
                    db.Password == "disposable-only";
         }
         catch (ArgumentException) { return false; }

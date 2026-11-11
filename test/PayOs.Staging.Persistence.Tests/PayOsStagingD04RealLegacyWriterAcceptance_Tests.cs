@@ -764,6 +764,13 @@ public sealed class D04RealLegacyWriterAcceptance_Tests
         // SQLSTATE 42501. Migration/seeding stay on the separate superuser
         // connection and are never handed to the application writer.
         await D04BRestrictedMoneyWriterRolesGate.InstallAndVerifyAsync();
+
+        // P1.3: the HOST runtime roles (review + approval evidence INSERT
+        // included, by design distinct from the P1.2 money-writer rehearsal
+        // role) prove the Host D04-B connection can run without the
+        // disposable superuser; the identity slot stays superuser for the
+        // ABP/OpenIddict stack, migrations stay on the separate connection.
+        await D04BHostRuntimeRolesGate.InstallAndVerifyAsync();
     }
 
     private static async Task<long> CountAsync(

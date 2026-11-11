@@ -77,6 +77,7 @@ $envNames = @(
     'BuildingManagement__PayOsD04B__DisposableArchive__Enabled',
     'BuildingManagement__PayOsD04B__DisposableArchive__Root',
     'BuildingManagement__PayOsD04B__DisposableArchive__KeyBase64',
+    'BuildingManagement__PayOsD4B__DisposableArchive__PreviousKeyBase64',
     'NgocTrang__LocalBootstrap__AdminPassword'
 )
 $oldEnv = @{}
@@ -491,6 +492,99 @@ try {
         [Environment]::SetEnvironmentVariable($name, $null, 'Process')
     }
 
+    # P1.3 step 06c: create the restricted HOST runtime roles on the legacy
+    # and staging databases (superuser provisioning). The Host below then
+    # runs the whole native JWT matrix WITHOUT the disposable superuser on
+    # those two slots; the identity slot stays superuser for the ABP /
+    # OpenIddict stack, and migrations/fixture already ran as superuser on
+    # separate connections. Grants match the canonical Host D04-B SQL
+    # (review + approval evidence INSERT included, by design distinct from
+    # the P1.2 d04_money_writer_* rehearsal roles whose gate denies those).
+    Invoke-SqlFile 'payos_d04_legacy_test' @'
+DO $d04hr$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles
+                 WHERE rolname='d04_d04b_host_legacy_test') THEN
+    CREATE ROLE d04_d04b_host_legacy_test LOGIN
+      PASSWORD 'disposable-only' NOSUPERUSER NOCREATEDB
+      NOCREATEROLE NOREPLICATION NOINHERIT;
+  END IF;
+END
+$d04hr$;
+GRANT CONNECT ON DATABASE payos_d04_legacy_test TO d04_d04b_host_legacy_test;
+GRANT USAGE ON SCHEMA public TO d04_d04b_host_legacy_test;
+GRANT SELECT ON
+  public."BuildingManagementContracts",
+  public."BuildingManagementPayments",
+  public."BuildingManagementDepositSettlements",
+  public."BuildingManagementPayOsD04BankReviews",
+  public."BuildingManagementPayOsD04OwnerApprovals",
+  public."BuildingManagementPayOsD04ReceiptJournal",
+  public."BuildingManagementPayOsD04Outbox",
+  public."BuildingManagementRooms",
+  public."BuildingManagementFloors",
+  public."Buildings",
+  public."BuildingManagementOperatorBuildingGrants",
+  public."BuildingManagementContractTenants",
+  public."BuildingManagementBankEvidenceClaims"
+TO d04_d04b_host_legacy_test;
+GRANT INSERT ON
+  public."BuildingManagementPayOsD04BankReviews",
+  public."BuildingManagementPayOsD04OwnerApprovals",
+  public."BuildingManagementDepositSettlements",
+  public."BuildingManagementPayOsD04ReceiptJournal",
+  public."BuildingManagementPayOsD04Outbox"
+TO d04_d04b_host_legacy_test;
+GRANT UPDATE ON
+  public."BuildingManagementPayments",
+  public."BuildingManagementDepositSettlements"
+TO d04_d04b_host_legacy_test;
+-- SELECT FOR SHARE/FOR UPDATE requires the UPDATE privilege in PG16
+-- (probed empirically). The Host locks BankReviews/OwnerApprovals
+-- (review), OperatorBuildingGrants/Buildings (DualAuthority), and
+-- BM_PayOsD04ValidateReceipt FOR SHAREs Contracts/Rooms/Floors during
+-- journal INSERT. Actual mutation of immutable evidence stays blocked
+-- by the 23514 reject-triggers.
+GRANT UPDATE ON
+  public."BuildingManagementPayOsD04BankReviews",
+  public."BuildingManagementPayOsD04OwnerApprovals",
+  public."BuildingManagementOperatorBuildingGrants",
+  public."Buildings",
+  public."BuildingManagementContracts",
+  public."BuildingManagementRooms",
+  public."BuildingManagementFloors"
+TO d04_d04b_host_legacy_test;
+GRANT UPDATE ("AcknowledgedAtUtc","AttemptCount")
+  ON public."BuildingManagementPayOsD04Outbox"
+  TO d04_d04b_host_legacy_test;
+REVOKE ALL ON DATABASE payos_d04_identity_test FROM d04_d04b_host_legacy_test;
+REVOKE ALL ON DATABASE payos_ef_migration_test FROM d04_d04b_host_legacy_test;
+'@ '06c-create-host-legacy-runtime-role'
+
+    Invoke-SqlFile 'payos_ef_migration_test' @'
+DO $d04hs$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles
+                 WHERE rolname='d04_d04b_host_staging_test') THEN
+    CREATE ROLE d04_d04b_host_staging_test LOGIN
+      PASSWORD 'disposable-only' NOSUPERUSER NOCREATEDB
+      NOCREATEROLE NOREPLICATION NOINHERIT;
+  END IF;
+END
+$d04hs$;
+GRANT CONNECT ON DATABASE payos_ef_migration_test TO d04_d04b_host_staging_test;
+GRANT USAGE ON SCHEMA public TO d04_d04b_host_staging_test;
+GRANT SELECT ON
+  public."BuildingManagementPayOsPaymentIntents",
+  public."BuildingManagementPayOsWebhookInbox"
+TO d04_d04b_host_staging_test;
+GRANT UPDATE ("Status","ConcurrencyStamp","ExtraProperties")
+  ON public."BuildingManagementPayOsPaymentIntents"
+  TO d04_d04b_host_staging_test;
+REVOKE ALL ON DATABASE payos_d04_legacy_test FROM d04_d04b_host_staging_test;
+REVOKE ALL ON DATABASE payos_d04_identity_test FROM d04_d04b_host_staging_test;
+'@ '06c-create-host-staging-runtime-role'
+
     # Ephemeral self-signed signing certificate for the non-Development Host.
     # Lives only in the isolated worktree Host content root.
     $certPassPhrase = [Guid]::NewGuid().ToString('N')
@@ -507,10 +601,25 @@ try {
     $archiveKey = [Convert]::ToBase64String($keyBytes)
     [Array]::Clear($keyBytes, 0, $keyBytes.Length)
 
+    # P1.3: previous key generation for rotation rehearsal. The run has no
+    # pre-rotation files, so the ring proves only that the Host accepts the
+    # optional PreviousKeyBase64 configuration and stays fail-closed on a
+    # missing current key. (Rotation behavior itself is covered by
+    # D04B_HOSTARCHIVE08.)
+    $prevKeyBytes = New-Object byte[] 32
+    $rng2 = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try { $rng2.GetBytes($prevKeyBytes) } finally { $rng2.Dispose() }
+    $archivePreviousKey = [Convert]::ToBase64String($prevKeyBytes)
+    [Array]::Clear($prevKeyBytes, 0, $prevKeyBytes.Length)
+
     # Launch the real Host in Staging with the full D04-B gate configuration.
+    # P1.3: legacy + staging slots run as the restricted HOST runtime roles
+    # (created in step 06c); only the identity slot stays superuser because
+    # the whole ABP/OpenIddict stack (sign-in, tokens, permission checks)
+    # operates on it in this disposable lane.
     $identityCs = 'Host=127.0.0.1;Port=15432;Database=payos_d04_identity_test;Username=postgres;Password=disposable-only'
-    $legacyCs = 'Host=127.0.0.1;Port=15432;Database=payos_d04_legacy_test;Username=postgres;Password=disposable-only'
-    $stagingCs = 'Host=127.0.0.1;Port=15432;Database=payos_ef_migration_test;Username=postgres;Password=disposable-only'
+    $legacyCs = 'Host=127.0.0.1;Port=15432;Database=payos_d04_legacy_test;Username=d04_d04b_host_legacy_test;Password=disposable-only'
+    $stagingCs = 'Host=127.0.0.1;Port=15432;Database=payos_ef_migration_test;Username=d04_d04b_host_staging_test;Password=disposable-only'
     [Environment]::SetEnvironmentVariable('ASPNETCORE_ENVIRONMENT', 'Staging', 'Process')
     [Environment]::SetEnvironmentVariable('DOTNET_ENVIRONMENT', 'Staging', 'Process')
     [Environment]::SetEnvironmentVariable('ASPNETCORE_URLS', 'https://localhost:44311', 'Process')
@@ -524,6 +633,7 @@ try {
     [Environment]::SetEnvironmentVariable('BuildingManagement__PayOsD04B__DisposableArchive__Enabled', 'true', 'Process')
     [Environment]::SetEnvironmentVariable('BuildingManagement__PayOsD04B__DisposableArchive__Root', $archiveRoot, 'Process')
     [Environment]::SetEnvironmentVariable('BuildingManagement__PayOsD04B__DisposableArchive__KeyBase64', $archiveKey, 'Process')
+    [Environment]::SetEnvironmentVariable('BuildingManagement__PayOsD4B__DisposableArchive__PreviousKeyBase64', $archivePreviousKey, 'Process')
     [Environment]::SetEnvironmentVariable('AuthServer__CertificatePassPhrase', $certPassPhrase, 'Process')
 
     Write-Host '=== 08-start-real-staging-host ===' -ForegroundColor Cyan

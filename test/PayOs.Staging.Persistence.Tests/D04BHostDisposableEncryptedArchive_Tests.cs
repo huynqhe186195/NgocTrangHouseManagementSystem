@@ -316,12 +316,17 @@ public sealed class D04BHostDisposableEncryptedArchive_Tests
                 archive.StoreAndVerifyAsync(intent, reviewer, new byte[5_242_881]));
             Assert.Empty(Directory.GetFiles(root));
 
+            // P1.3: the size boundary cases must still carry a valid
+            // PNG/JPEG/PDF magic signature — magic validation runs inside
+            // the same size-bounded StoreAndVerify path now.
             var smallest = new byte[256];
+            new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A }.CopyTo(smallest, 0);
             var smallestReceipt = await archive.StoreAndVerifyAsync(intent, reviewer, smallest);
             Assert.True(await archive.VerifyAsync(
                 intent, reviewer, smallestReceipt.Reference, smallestReceipt.DocumentSha256));
 
             var largest = new byte[5_242_880];
+            new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A }.CopyTo(largest, 0);
             var largestReceipt = await archive.StoreAndVerifyAsync(intent, reviewer, largest);
             Assert.True(await archive.VerifyAsync(
                 intent, reviewer, largestReceipt.Reference, largestReceipt.DocumentSha256));
@@ -354,5 +359,97 @@ public sealed class D04BHostDisposableEncryptedArchive_Tests
     {
         CryptographicOperations.ZeroMemory(key);
         if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+    }
+
+    [Fact]
+    public async Task D04B_HOSTARCHIVE08_Key_Rotation_Verifies_Old_And_New_Generations()
+    {
+        // P1.3: a rotated key ring keeps old evidence readable while new
+        // files encrypt under the current key; the previous generation
+        // alone can never forge current-key evidence (and vice versa).
+        var root = NewRoot();
+        var generation1 = RandomNumberGenerator.GetBytes(32);
+        var generation2 = RandomNumberGenerator.GetBytes(32);
+        var generation3 = RandomNumberGenerator.GetBytes(32);
+        var intent = Guid.NewGuid();
+        var reviewer = Guid.NewGuid();
+        try
+        {
+            var v1 = new PayOsD04DisposableEncryptedArchive(root, generation1);
+            var oldReceipt = await v1.StoreAndVerifyAsync(
+                intent, reviewer, SyntheticProof(1));
+
+            // Rotate: current=generation2, previous=generation1.
+            var v2 = new PayOsD04DisposableEncryptedArchive(
+                root, generation2, generation1);
+            Assert.True(await v2.VerifyAsync(
+                intent, reviewer, oldReceipt.Reference, oldReceipt.DocumentSha256));
+            var newReceipt = await v2.StoreAndVerifyAsync(
+                intent, reviewer, SyntheticProof(2));
+            Assert.True(await v2.VerifyAsync(
+                intent, reviewer, newReceipt.Reference, newReceipt.DocumentSha256));
+
+            // Both files exist; the new one decrypts under generation2 only.
+            Assert.Equal(2, Directory.GetFiles(root).Length);
+
+            // Full rotation to generation3 (previous=generation2): the
+            // generation1 file must stop verifying — only ONE previous
+            // generation is retained by design.
+            var v3 = new PayOsD04DisposableEncryptedArchive(
+                root, generation3, generation2);
+            Assert.False(await v3.VerifyAsync(
+                intent, reviewer, oldReceipt.Reference, oldReceipt.DocumentSha256));
+            Assert.True(await v3.VerifyAsync(
+                intent, reviewer, newReceipt.Reference, newReceipt.DocumentSha256));
+
+            // Equal current/previous keys are rejected at construction.
+            Assert.Throws<ArgumentException>(() =>
+                new PayOsD04DisposableEncryptedArchive(root, generation2, generation2));
+        }
+        finally
+        {
+            Cleanup(root, generation1);
+            CryptographicOperations.ZeroMemory(generation2);
+            CryptographicOperations.ZeroMemory(generation3);
+        }
+    }
+
+    [Fact]
+    public async Task D04B_HOSTARCHIVE09_Rejects_Non_Png_Jpeg_Pdf_Magic_Bytes()
+    {
+        // P1.3 built-in file validation: only PNG/JPEG/PDF statements are
+        // accepted; extension names and client claims are irrelevant.
+        var root = NewRoot();
+        var key = RandomNumberGenerator.GetBytes(32);
+        var intent = Guid.NewGuid();
+        var reviewer = Guid.NewGuid();
+        try
+        {
+            var archive = new PayOsD04DisposableEncryptedArchive(root, key);
+
+            var text = new byte[512];
+            Encoding.ASCII.GetBytes("REALLY NOT A BANK STATEMENT. Or an executable.").CopyTo(text, 0);
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                archive.StoreAndVerifyAsync(intent, reviewer, text));
+
+            var elf = new byte[512];
+            elf[0] = 0x7F; elf[1] = 0x45; elf[2] = 0x4C; elf[3] = 0x46;
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                archive.StoreAndVerifyAsync(intent, reviewer, elf));
+
+            // Accepted magic families still store + verify.
+            var png = new byte[512];
+            new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A }.CopyTo(png, 0);
+            var pngReceipt = await archive.StoreAndVerifyAsync(intent, reviewer, png);
+            Assert.True(await archive.VerifyAsync(
+                intent, reviewer, pngReceipt.Reference, pngReceipt.DocumentSha256));
+
+            var jpeg = new byte[512];
+            new byte[] { 0xFF, 0xD8, 0xFF, 0xE0 }.CopyTo(jpeg, 0);
+            var jpegReceipt = await archive.StoreAndVerifyAsync(intent, reviewer, jpeg);
+            Assert.True(await archive.VerifyAsync(
+                intent, reviewer, jpegReceipt.Reference, jpegReceipt.DocumentSha256));
+        }
+        finally { Cleanup(root, key); }
     }
 }

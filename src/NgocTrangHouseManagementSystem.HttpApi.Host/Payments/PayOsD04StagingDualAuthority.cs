@@ -226,6 +226,13 @@ public sealed class PayOsD04StagingDualAuthority : IPayOsD04CurrentDualAuthority
            (string.Equals(cs.Username, "postgres", StringComparison.Ordinal) ||
             (name == "payos_d04_identity_test" &&
              string.Equals(cs.Username, "d04_identity_guard_test",
+                 StringComparison.Ordinal)) ||
+            // P1.3: the legacy money-writer slot may run under the restricted
+            // least-privilege HOST runtime role (no DDL, no superuser) whose
+            // grants match the full canonical Host D04-B SQL; distinct from
+            // the narrower P1.2 d04_money_writer_* rehearsal roles by design.
+            (name == "payos_d04_legacy_test" &&
+             string.Equals(cs.Username, "d04_d04b_host_legacy_test",
                  StringComparison.Ordinal)));
 
     private static bool IsTestFunctionOnlyIdentityRole(NpgsqlConnection conn) =>

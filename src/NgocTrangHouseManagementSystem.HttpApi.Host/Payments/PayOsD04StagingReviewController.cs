@@ -152,7 +152,17 @@ public sealed class PayOsD04StagingReviewController : ControllerBase
             return db.Host is ("127.0.0.1" or "localhost") &&
                    db.Port == 15432 &&
                    string.Equals(db.Database, name, StringComparison.Ordinal) &&
-                   db.Username == "postgres" &&
+                   (db.Username == "postgres" ||
+                    // P1.3: the legacy money-writer and staging-ACK slots may
+                    // run under the restricted least-privilege HOST runtime
+                    // roles (no DDL, no superuser) whose grants match the
+                    // full canonical Host D04-B SQL (review + approval +
+                    // writer + ACK). Distinct from the narrower P1.2
+                    // d04_money_writer_* rehearsal roles by design.
+                    (name == "payos_d04_legacy_test" &&
+                     db.Username == "d04_d04b_host_legacy_test") ||
+                    (name == "payos_ef_migration_test" &&
+                     db.Username == "d04_d04b_host_staging_test")) &&
                    db.Password == "disposable-only";
         }
         catch (ArgumentException) { return false; }

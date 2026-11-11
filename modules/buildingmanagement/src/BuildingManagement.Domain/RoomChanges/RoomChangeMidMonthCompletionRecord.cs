@@ -320,9 +320,20 @@ public sealed class RoomChangeMidMonthCompletionRecord : Entity<Guid>
             CompletedAtUtc.Kind != DateTimeKind.Utc ||
             DispositionEvidenceReference.Length is < 12 or > 500 ||
             CompletionReference.Length is < 12 or > 500 ||
+            // Legacy same-deposit completions have no H4 extension in their
+            // hash. Reject stray H4 fields instead of silently accepting
+            // metadata that the original fingerprint never covered.
+            (H4DispositionIntentId is null &&
+              (H4IntentSha256 is not null ||
+               H4OriginalHeldDepositVnd != 0m ||
+               H4TargetRequiredDepositVnd != 0m ||
+               H4UnpaidTopUpVnd != 0m ||
+               H4TopUpDueDateVietnam is not null ||
+               H4NextMonthRentCreditVnd != 0m ||
+               H4ManualRefundLiabilityVnd != 0m)) ||
             (H4DispositionIntentId.HasValue &&
               (H4DispositionIntentId.Value == Guid.Empty ||
-               H4IntentSha256?.Length != 64 ||
+               !IsLowerHexSha256(H4IntentSha256) ||
                H4OriginalHeldDepositVnd <= 0m ||
                H4TargetRequiredDepositVnd <= 0m ||
                H4UnpaidTopUpVnd < 0m ||
@@ -338,6 +349,16 @@ public sealed class RoomChangeMidMonthCompletionRecord : Entity<Guid>
                    H4ManualRefundLiabilityVnd > 0m)) ||
             EvidenceSha256 != Hash())
             throw new InvalidDataException("Mid-month completion snapshot fingerprint is inconsistent.");
+    }
+
+    private static bool IsLowerHexSha256(string? value)
+    {
+        if (value is not { Length: 64 })
+            return false;
+        foreach (var c in value)
+            if ((c < '0' || c > '9') && (c < 'a' || c > 'f'))
+                return false;
+        return true;
     }
 
     private string Hash()

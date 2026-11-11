@@ -157,4 +157,51 @@ public sealed class RoomChangeDepositDispositionIntent_Tests
             row.ProposedManualRefundVnd);
         row.VerifyFingerprint();
     }
+
+    // For adversarial tests only: rehash a forged record to prove that a
+    // checksum by itself cannot authorize an economically invalid H4 split.
+    private static RoomChangeDepositDispositionIntentRecord Rehash(
+        RoomChangeDepositDispositionIntentRecord row)
+    {
+        var method = typeof(RoomChangeDepositDispositionIntentRecord)
+            .GetMethod("Fingerprint",
+                System.Reflection.BindingFlags.NonPublic |
+                System.Reflection.BindingFlags.Instance);
+        Assert.NotNull(method);
+        return row with { EvidenceSha256 = (string)method!.Invoke(row, null)! };
+    }
+
+    [Fact]
+    public void TRF_H4INT09_Rehashed_Contradictory_TopUp_And_Credit_Fail_Closed()
+    {
+        var (request, facts, owner) = Source(3_000_000m, 4_000_000m);
+        var original = Capture(request, facts, Plan(request, facts), owner);
+        original.VerifyFingerprint();
+
+        var forged = Rehash(original with {
+            ProposedUnpaidTopUpVnd = 0m,
+            ProposedFutureRentCreditVnd = 1_000_000m
+        });
+        Assert.Throws<System.IO.InvalidDataException>(
+            () => forged.VerifyFingerprint());
+    }
+
+    [Fact]
+    public void TRF_H4INT10_Rehashed_Invalid_Due_And_Phantom_Deduction_Fail()
+    {
+        var (request, facts, owner) = Source(3_000_000m, 4_000_000m);
+        var original = Capture(request, facts, Plan(request, facts), owner);
+
+        var late = Rehash(original with {
+            ProposedTopUpDueDateVietnam = new DateOnly(2026, 12, 16)
+        });
+        Assert.Throws<System.IO.InvalidDataException>(
+            () => late.VerifyFingerprint());
+
+        var phantom = Rehash(original with {
+            SignedDeductionReference = "PHANTOM-SIGNED-DEDUCTION-001"
+        });
+        Assert.Throws<System.IO.InvalidDataException>(
+            () => phantom.VerifyFingerprint());
+    }
 }

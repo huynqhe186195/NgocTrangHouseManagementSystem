@@ -68,6 +68,9 @@ public sealed partial class SliceBStagingRoomChangeRequests
             var recordedAt = reader.GetDateTime(8);
             var signedReference = reader.GetString(9);
             if (await reader.ReadAsync()) throw Denied();
+            // Release the Npgsql reader before querying the journal on the
+            // same transaction/connection (NpgsqlOperationInProgress otherwise).
+            await reader.DisposeAsync();
 
             var expectedKind = completion.H4UnpaidTopUpVnd > 0m ? 1 :
                 completion.H4NextMonthRentCreditVnd > 0m ? 2 : 3;
@@ -90,6 +93,22 @@ public sealed partial class SliceBStagingRoomChangeRequests
                     signedReference, intent.OwnerSignedDispositionReference))
                 throw Denied();
 
+            // D04 is append-only. Reconcile settled amount from the
+            // independently reviewed posting journal; never overwrite the
+            // signed original obligation or infer a bank API confirmation.
+            decimal posted;
+            await using (var accounting = Command(db, """
+                SELECT COALESCE(sum("AmountVnd"),0)
+                  FROM "BuildingManagementRoomChangeH4SettlementPostings"
+                 WHERE "ObligationId"=@obligation
+                """))
+            {
+                Add(accounting, "obligation", id);
+                posted = Convert.ToDecimal(await accounting.ExecuteScalarAsync());
+            }
+            if (posted < 0m || posted > amount) throw Denied();
+            var remaining = amount - posted;
+
             return new SliceBRoomChangeH4ObligationRead(
                 id, requestId, completion.Id, contractId, targetContractId,
                 intent.Id, kind, amount, due,
@@ -100,9 +119,14 @@ public sealed partial class SliceBStagingRoomChangeRequests
                 completion.H4NextMonthRentCreditVnd,
                 completion.H4ManualRefundLiabilityVnd,
                 owner, recordedAt, signedReference,
-                IsOutstanding: true, IsExternallyCollected: false,
-                IsRefundPaid: false, IsRentCreditApplied: false,
-                CanSettleDeposit: false);
+                IsOutstanding: remaining > 0m,
+                IsExternallyCollected: kind == 1 && remaining == 0m,
+                IsRefundPaid: kind == 3 && remaining == 0m,
+                // The D04 rent-only ledger posting is included in the
+                // official receivable debt projection, never treated as cash.
+                IsRentCreditApplied: kind == 2 && remaining == 0m,
+                CanSettleDeposit: false,
+                RemainingAmountVnd: remaining);
         }, permitEndedContract: true);
 }
 
@@ -122,4 +146,5 @@ public sealed record SliceBRoomChangeH4ObligationRead(
     Guid RecordedByOwnerId, DateTime RecordedAtUtc,
     string OwnerSignedReference, bool IsOutstanding,
     bool IsExternallyCollected, bool IsRefundPaid,
-    bool IsRentCreditApplied, bool CanSettleDeposit);
+    bool IsRentCreditApplied, bool CanSettleDeposit,
+    decimal RemainingAmountVnd);

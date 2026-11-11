@@ -108,10 +108,10 @@ try {
     }
 
     Write-Host "=== PHASE 2H FINANCIAL FOUNDATIONS / COMMIT $sha ==="
-    Write-Host '== 1/5: H2-H6 D01-D04/D06 160 dossier and archival source cases =='
-    $domainExit = Invoke-DotNetTestLogged $domain 'FullyQualifiedName~RoomChangeMidMonthRentReconciliation_Tests|FullyQualifiedName~RoomChangeDepositDifferencePreview_Tests|FullyQualifiedName~TRF_HAND|FullyQualifiedName~RoomChangeMidMonthFinancialReconciliationPacket_Tests|FullyQualifiedName~RoomChangeDayPricingRuleCandidate_Tests|FullyQualifiedName~RoomChangeOfficialSourceRentEvidenceBridge_Tests|FullyQualifiedName~RoomChangeFinalIndependentSignoffs_Tests|FullyQualifiedName~RoomChangeApprovedH2H3ExecutionPolicy_Tests|FullyQualifiedName~RoomChangeDeferredDepositDisposition_Tests|FullyQualifiedName~RoomScopedServiceTariffPolicy_Tests|FullyQualifiedName~RoomScopedServiceInvoiceSourceBinding_Tests|FullyQualifiedName~RoomChangeDepositDispositionIntent_Tests' 'console;verbosity=normal' '15-2h-financial-domain.log'
+    Write-Host '== 1/5: H2-H6 D01-D04/D06 165 dossier, H4 digest and archival source cases =='
+    $domainExit = Invoke-DotNetTestLogged $domain 'FullyQualifiedName~RoomChangeMidMonthRentReconciliation_Tests|FullyQualifiedName~RoomChangeDepositDifferencePreview_Tests|FullyQualifiedName~TRF_HAND|FullyQualifiedName~RoomChangeMidMonthFinancialReconciliationPacket_Tests|FullyQualifiedName~RoomChangeDayPricingRuleCandidate_Tests|FullyQualifiedName~RoomChangeOfficialSourceRentEvidenceBridge_Tests|FullyQualifiedName~RoomChangeFinalIndependentSignoffs_Tests|FullyQualifiedName~RoomChangeApprovedH2H3ExecutionPolicy_Tests|FullyQualifiedName~RoomChangeDeferredDepositDisposition_Tests|FullyQualifiedName~RoomScopedServiceTariffPolicy_Tests|FullyQualifiedName~RoomScopedServiceInvoiceSourceBinding_Tests|FullyQualifiedName~RoomChangeDepositDispositionIntent_Tests|FullyQualifiedName~RoomChangeMidMonthH4FingerprintBoundary_Tests' 'console;verbosity=normal' '15-2h-financial-domain.log'
     if ($domainExit -ne 0) { Throw-WithTestLog '2H rent/deposit domain tests FAILED.' '15-2h-financial-domain.log' }
-    Assert-LoggedTestCount '15-2h-financial-domain.log' 160
+    Assert-LoggedTestCount '15-2h-financial-domain.log' 165
 
     Write-Host '== 2/5: Phase 2H PostgreSQL concurrency and atomic transfer =='
     $pgExit = Invoke-DotNetTestLogged $pg 'FullyQualifiedName~RoomChangeRequestsPostgreSql_Tests|FullyQualifiedName~RoomChangeTenantRosterPostgreSql_Tests|FullyQualifiedName~RoomChangeSourceDispositionPostgreSql_Tests|FullyQualifiedName~RoomChangeHandoverDigestPostgreSql_Tests|FullyQualifiedName~RoomChangeDayPricingRulePostgreSql_Tests|FullyQualifiedName~RoomChangeEvidenceArchivePostgreSql_Tests|FullyQualifiedName~RoomChangeMidMonthFinancialPostingPostgreSql_Tests|FullyQualifiedName~RoomChangeMidMonthCompletionPostgreSql_Tests|FullyQualifiedName~RoomScopedServiceTariffPostgreSql_Tests|FullyQualifiedName~RoomServiceInvoiceSourceBindingsPostgreSql_Tests|FullyQualifiedName~RoomChangeDepositDispositionIntentPostgreSql_Tests' 'console;verbosity=normal' '16-2h-postgresql.log'
@@ -146,7 +146,7 @@ try {
 
     Write-Host '=== PHASE 2H FINANCIAL FOUNDATIONS: ALL FIVE GROUPS PASSED ==='
     Write-Host "COMMIT=$sha"
-    Write-Host 'Restricted same-rent/same-deposit mid-month lane requires positive authenticated execution acceptance; H4 top-up/refund and production remain HOLD.'
+    Write-Host 'H4 deferred top-up, rent-credit liability and manual-refund liability are staged and authenticated. Actual bank collection/refund, future rent-credit application and production remain HOLD.'
 }
 finally {
     Remove-Item Env:\BM_ALLOW_FULL_MIGRATION_REHEARSAL -ErrorAction SilentlyContinue

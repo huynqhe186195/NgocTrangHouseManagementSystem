@@ -295,17 +295,17 @@ jobs:
             --logger "console;verbosity=normal"
 
 
-      # Run the EXACT user-facing Phase 2H 160/92 filtered suites in CI.
+      # Run the EXACT Phase 2H 162 Domain / 103 PostgreSQL filtered suites in CI.
       # These are in addition to the broader source-only safe regression.
       # Isolated PostgreSQL is a fresh GitHub Actions service, never user data.
-      - name: Phase 2H all 160 domain acceptance cases
+      - name: Phase 2H all 162 domain acceptance cases
         run: |
           set -euo pipefail
           dotnet test modules/buildingmanagement/test/BuildingManagement.Domain.Tests/BuildingManagement.Domain.Tests.csproj \
             --filter "FullyQualifiedName~RoomChangeMidMonthRentReconciliation_Tests|FullyQualifiedName~RoomChangeDepositDifferencePreview_Tests|FullyQualifiedName~TRF_HAND|FullyQualifiedName~RoomChangeMidMonthFinancialReconciliationPacket_Tests|FullyQualifiedName~RoomChangeDayPricingRuleCandidate_Tests|FullyQualifiedName~RoomChangeOfficialSourceRentEvidenceBridge_Tests|FullyQualifiedName~RoomChangeFinalIndependentSignoffs_Tests|FullyQualifiedName~RoomChangeApprovedH2H3ExecutionPolicy_Tests|FullyQualifiedName~RoomChangeDeferredDepositDisposition_Tests|FullyQualifiedName~RoomScopedServiceTariffPolicy_Tests|FullyQualifiedName~RoomScopedServiceInvoiceSourceBinding_Tests|FullyQualifiedName~RoomChangeDepositDispositionIntent_Tests" --logger "console;verbosity=normal" \
             2>&1 | tee phase-2h-domain-ci.log
-          grep -Eq 'Total tests:[[:space:]]*160\b' phase-2h-domain-ci.log
-          grep -Eq 'Passed:[[:space:]]*160\b' phase-2h-domain-ci.log
+          grep -Eq 'Total tests:[[:space:]]*162\b' phase-2h-domain-ci.log
+          grep -Eq 'Passed:[[:space:]]*162\b' phase-2h-domain-ci.log
 
       - name: Phase 2H all 103 PostgreSQL transfer, financial and H4 canonical digest cases
         run: |

@@ -1,5 +1,5 @@
 param()
-# H4 candidate one-shot isolated tests. NO production and NO existing DB migration.
+# Merged H4 one-shot isolated tests on the active work branch. No production database.
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $root = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
@@ -8,8 +8,8 @@ $oldMigration = [Environment]::GetEnvironmentVariable('BM_ALLOW_FULL_MIGRATION_R
 $oldHttp = [Environment]::GetEnvironmentVariable('BM_PG_SLICE_A_HTTP_OPT_IN','Process')
 try {
     $branch = (& git branch --show-current | Out-String).Trim()
-    if ($LASTEXITCODE -ne 0 -or $branch -ne 'wip/phase-2h-h4-execution') {
-        throw "Expected wip/phase-2h-h4-execution, got $branch"
+    if ($LASTEXITCODE -ne 0 -or $branch -ne 'wip/phase-2g2') {
+        throw "Expected merged work branch wip/phase-2g2, got $branch"
     }
     if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
         throw 'dotnet SDK not found'
@@ -25,12 +25,12 @@ try {
     $previousErrorAction = $ErrorActionPreference
     try {
         $ErrorActionPreference = 'Continue'
-        $remote = (& git ls-remote --exit-code origin 'refs/heads/wip/phase-2h-h4-execution' | Out-String).Trim()
+        $remote = (& git ls-remote --exit-code origin 'refs/heads/wip/phase-2g2' | Out-String).Trim()
         $remoteExit = $LASTEXITCODE
     }
     finally { $ErrorActionPreference = $previousErrorAction }
-    if ($remoteExit -ne 0 -or $remote -notmatch '^([0-9a-fA-F]{40})\s+refs/heads/wip/phase-2h-h4-execution$') {
-        throw 'Cannot verify exact remote H4 branch head'
+    if ($remoteExit -ne 0 -or $remote -notmatch '^([0-9a-fA-F]{40})\s+refs/heads/wip/phase-2g2$') {
+        throw 'Cannot verify exact merged work branch head'
     }
     $remoteSha = $Matches[1]
     if ($sha -ne $remoteSha) { throw "Local SHA $sha differs from origin $remoteSha" }
@@ -104,7 +104,7 @@ try {
     $http = '.\test\NgocTrangHouseManagementSystem.HttpApi.Host.Tests\NgocTrangHouseManagementSystem.HttpApi.Host.Tests.csproj'
     $filter = 'FullyQualifiedName~RoomChangeRequestsPostgreSql_Tests|FullyQualifiedName~RoomChangeTenantRosterPostgreSql_Tests|FullyQualifiedName~RoomChangeSourceDispositionPostgreSql_Tests|FullyQualifiedName~RoomChangeHandoverDigestPostgreSql_Tests|FullyQualifiedName~RoomChangeDayPricingRulePostgreSql_Tests|FullyQualifiedName~RoomChangeEvidenceArchivePostgreSql_Tests|FullyQualifiedName~RoomChangeMidMonthFinancialPostingPostgreSql_Tests|FullyQualifiedName~RoomChangeMidMonthCompletionPostgreSql_Tests|FullyQualifiedName~RoomScopedServiceTariffPostgreSql_Tests|FullyQualifiedName~RoomServiceInvoiceSourceBindingsPostgreSql_Tests|FullyQualifiedName~RoomChangeDepositDispositionIntentPostgreSql_Tests'
 
-    Write-Host "=== PHASE 2H H4 TEST CANDIDATE SHA=$sha ==="
+    Write-Host "=== PHASE 2H H4 MERGED-BRANCH ACCEPTANCE SHA=$sha ==="
     Run-Group 'h4-01-domain-full' $domain '' 0 700
     Run-Group 'h4-02-application-full' $app '' 0 1
     Run-Group 'h4-03-ef-full' $ef '' 0 1
@@ -116,8 +116,8 @@ try {
     [Environment]::SetEnvironmentVariable('BM_PG_SLICE_A_HTTP_OPT_IN',
         'I_ACCEPT_DISPOSABLE_PG_STAGING_HTTP','Process')
     Run-Group 'h4-06-authenticated-http' $http '' 0 75
-    Write-Host "=== H4 CANDIDATE EXISTING TESTS PASS AT SHA=$sha ===" -ForegroundColor Green
-    Write-Host 'H4 positive transfer/rollback evidence is STILL REQUIRED before PR merge.'
+    Write-Host "=== H4 MERGED-BRANCH EXISTING TESTS PASS AT SHA=$sha ===" -ForegroundColor Green
+    Write-Host 'H4 staged transfer/rollback was accepted in isolated CI; actual bank refund and applying the future rent credit remain HOLD. No production.'
 }
 finally {
     [Environment]::SetEnvironmentVariable('BM_ALLOW_FULL_MIGRATION_REHEARSAL',$oldMigration,'Process')

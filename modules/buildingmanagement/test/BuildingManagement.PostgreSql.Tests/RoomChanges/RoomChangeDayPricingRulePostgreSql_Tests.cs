@@ -75,11 +75,14 @@ public sealed class RoomChangeDayPricingRulePostgreSql_Tests
         RoomChangeTransferDayChargeOwner owner =
             RoomChangeTransferDayChargeOwner.TargetRoom,
         RoomChangeRentRoundingRule rounding =
-            RoomChangeRentRoundingRule.NearestVndAwayFromZero)
+            RoomChangeRentRoundingRule.NearestVndAwayFromZero,
+        decimal sourceMonthlyRentVnd = 3_000_000m,
+        decimal targetMonthlyRentVnd = 4_000_000m)
     {
         var d = date ?? new DateOnly(2026, 11, 15);
         var source = new Contract(Guid.NewGuid(), "SRC-SQL",
-            Guid.NewGuid(), new DateTime(2026, 10, 1), null, 3_000_000m);
+            Guid.NewGuid(), new DateTime(2026, 10, 1), null,
+            sourceMonthlyRentVnd);
         source.Activate();
         var req = RoomChangeRequest.Submit(Guid.NewGuid(),
             source.Id, source.RoomId, Guid.NewGuid(), Guid.NewGuid(), d,
@@ -104,7 +107,7 @@ public sealed class RoomChangeDayPricingRulePostgreSql_Tests
             true, "ROOT-ACCEPTED-TRANSFER-PRICING-2026",
             "Reviewed source and target financial rule");
         var quote = RoomChangeDailyRentQuoteCalculator.Calculate(
-            d, source.MonthlyRent, 4_000_000m, owner, rounding,
+            d, source.MonthlyRent, targetMonthlyRentVnd, owner, rounding,
             policy.PricingPolicyReference);
         var rule = RoomChangeDayPricingRuleCandidate.Prepare(Guid.NewGuid(),
             req, source, roster, policy, review, quote, Guid.NewGuid(),
@@ -117,16 +120,44 @@ public sealed class RoomChangeDayPricingRulePostgreSql_Tests
     {
         await Scratch(IsolationLevel.Serializable, async (db, tx) =>
         {
-            var f = Fixture();
-            await Seed(db, tx, f);
-            await Insert(db, tx, f.Rule);
+            var original = Fixture();
+            await Seed(db, tx, original);
+            await Insert(db, tx, original.Rule);
             var digest = await StringScalar(db, tx, $"""
                 SELECT "BM_CalculateRoomChangeDayPricingRuleSha"(r)
                 FROM "BuildingManagementRoomChangeDayPricingRuleCandidates" r
-                WHERE r."Id"='{f.Rule.Id:D}'
+                WHERE r."Id"='{original.Rule.Id:D}'
                 """);
-            Assert.Equal(f.Rule.EvidenceSha256, digest);
-            Assert.Equal(1L, await Scalar(db, tx,
+            Assert.Equal(original.Rule.EvidenceSha256, digest);
+
+            // Exact 0.5 VND must round UP on each independently priced line.
+            // These are persisted PostgreSQL rows, not a calculator preview.
+            foreach (var transfer in new[] {
+                new DateOnly(2027, 2, 15), // 14/28 + 14/28
+                new DateOnly(2027, 4, 16)  // 15/30 + 15/30
+            })
+            {
+                var half = Fixture(transfer,
+                    sourceMonthlyRentVnd: 45m, targetMonthlyRentVnd: 45m);
+                await Seed(db, tx, half);
+                await Insert(db, tx, half.Rule);
+                await using var check = new NpgsqlCommand("""
+                    SELECT "ProposedSourceRentVnd",
+                           "ProposedTargetRentVnd", "EvidenceSha256",
+                           "BM_CalculateRoomChangeDayPricingRuleSha"(r)
+                    FROM "BuildingManagementRoomChangeDayPricingRuleCandidates" r
+                    WHERE r."Id"=@id
+                    """, db, tx);
+                check.Parameters.AddWithValue("id", half.Rule.Id);
+                await using var saved = await check.ExecuteReaderAsync();
+                Assert.True(await saved.ReadAsync());
+                Assert.Equal(23m, saved.GetDecimal(0));
+                Assert.Equal(23m, saved.GetDecimal(1));
+                Assert.Equal(half.Rule.EvidenceSha256, saved.GetString(2));
+                Assert.Equal(half.Rule.EvidenceSha256, saved.GetString(3));
+                Assert.False(await saved.ReadAsync());
+            }
+            Assert.Equal(3L, await Scalar(db, tx,
                 """SELECT count(*) FROM "BuildingManagementRoomChangeDayPricingRuleCandidates" """));
         });
     }
@@ -140,10 +171,53 @@ public sealed class RoomChangeDayPricingRulePostgreSql_Tests
             await Seed(db, tx, f);
             await Denied(db, tx, () => Insert(db, tx, f.Rule,
                 sourceCharge: 1m), "23514");
+            // Reject tampering with either signed rent line independently.
+            // A valid combined total cannot excuse a forged target line.
+            await Denied(db, tx, () => Insert(db, tx, f.Rule,
+                targetCharge: 1m), "23514");
+            // Source D-1 and target D must partition the calendar month.
+            await Denied(db, tx, () => Insert(db, tx, f.Rule,
+                targetDays: f.Rule.TargetChargeableDays + 1), "23514");
+            // Neither the old-room partition nor calendar denominator
+            // can be independently rewritten by a direct SQL client.
+            await Denied(db, tx, () => Insert(db, tx, f.Rule,
+                sourceDays: f.Rule.SourceChargeableDays + 1), "23514");
+            await Denied(db, tx, () => Insert(db, tx, f.Rule,
+                calendarDays: f.Rule.CalendarDays + 1), "23514");
+            // Signed date, day owner and rounding are also protected.
+            // Keep authentic amounts and hash, altering exactly one field.
+            await Denied(db, tx, () => Insert(db, tx, f.Rule,
+                transferDate: f.Rule.TransferDate.AddDays(1)), "23514");
+            await Denied(db, tx, () => Insert(db, tx, f.Rule,
+                transferDayOwner: RoomChangeTransferDayChargeOwner.SourceRoom), "23514");
+            await Denied(db, tx, () => Insert(db, tx, f.Rule,
+                roundingRule: RoomChangeRentRoundingRule.TruncateToWholeVnd), "23514");
+            // Neither room's signed monthly rent may be changed directly,
+            // even when the proposed daily charge and all dates stay put.
+            await Denied(db, tx, () => Insert(db, tx, f.Rule,
+                sourceMonthlyRent: f.Rule.SourceMonthlyRentVnd + 1m), "23514");
+            await Denied(db, tx, () => Insert(db, tx, f.Rule,
+                targetMonthlyRent: f.Rule.TargetMonthlyRentVnd + 1m), "23514");
             await Denied(db, tx, () => Insert(db, tx, f.Rule,
                 pricingRef: "FORGED-D01-D02-TARIFF-DOCUMENT-2026"), "23514");
             await Denied(db, tx, () => Insert(db, tx, f.Rule,
                 hash: new string('0', 64)), "23514");
+            // Every denied write must leave the append-only table empty.
+            // A SQLSTATE alone is insufficient evidence of atomic rollback.
+            Assert.Equal(0L, await Scalar(db, tx,
+                """SELECT count(*) FROM "BuildingManagementRoomChangeDayPricingRuleCandidates" """));
+            // A genuine signed candidate may be stored once. An exact
+            // replay must fail on the persisted identity and must not
+            // replace or add a second financial pricing candidate.
+            await Insert(db, tx, f.Rule);
+            var originalDigest = await StringScalar(db, tx,
+                $"""SELECT "EvidenceSha256" FROM "BuildingManagementRoomChangeDayPricingRuleCandidates" WHERE "Id"='{f.Rule.Id:D}'""");
+            Assert.Equal(f.Rule.EvidenceSha256, originalDigest);
+            await Denied(db, tx, () => Insert(db, tx, f.Rule), "23505");
+            Assert.Equal(1L, await Scalar(db, tx,
+                """SELECT count(*) FROM "BuildingManagementRoomChangeDayPricingRuleCandidates" """));
+            Assert.Equal(originalDigest, await StringScalar(db, tx,
+                $"""SELECT "EvidenceSha256" FROM "BuildingManagementRoomChangeDayPricingRuleCandidates" WHERE "Id"='{f.Rule.Id:D}'"""));
         });
     }
 
@@ -174,6 +248,9 @@ public sealed class RoomChangeDayPricingRulePostgreSql_Tests
     [Fact]
     public async Task TRFPG34_Day_And_Leap_Month_Are_Validated_By_SQL()
     {
+        // Preserve the historical negative SQL probes for unapproved
+        // source-day/truncation candidates; signed D01/D02 execution uses
+        // the TARGET day and whole-VND midpoint-away-from-zero instead.
         foreach (var date in new[] { new DateOnly(2028, 2, 29),
                     new DateOnly(2026, 12, 15) })
         {
@@ -187,6 +264,78 @@ public sealed class RoomChangeDayPricingRulePostgreSql_Tests
                     f.Rule, targetDays: f.Rule.TargetChargeableDays + 1), "23514");
             });
         }
+
+        // 118 genuine, signed, reviewed and SQL-persisted candidate rows,
+        // sharing one throwaway SERIALIZABLE scratch schema/transaction.
+        // This tests source-day/target-day ownership and SQL rounding for
+        // every date in real 28/29/30/31-day months. It does NOT issue
+        // an invoice, commit an H4 transfer or settle a deposit.
+        await Scratch(IsolationLevel.Serializable, async (db, tx) =>
+        {
+            var persisted = 0;
+            foreach (var first in new[] {
+                new DateOnly(2027, 2, 1), // nonleap: 28 days
+                new DateOnly(2028, 2, 1), // leap: 29 days
+                new DateOnly(2027, 4, 1), // 30 days
+                new DateOnly(2027, 1, 1)  // 31 days
+            })
+            {
+                var days = DateTime.DaysInMonth(first.Year, first.Month);
+                for (var day = 1; day <= days; day++)
+                {
+                    var transfer = new DateOnly(first.Year, first.Month, day);
+                    var f = Fixture(transfer);
+                    await Seed(db, tx, f);
+                    await Insert(db, tx, f.Rule);
+
+                    // Independent oracle: each room is rounded separately.
+                    // Never use the production calculator to form expected
+                    // numeric amounts or the expected day partition.
+                    var sourceDays = day - 1;
+                    var targetDays = days - day + 1;
+                    var sourceVnd = decimal.Round(
+                        3_000_000m * sourceDays / days, 0,
+                        MidpointRounding.AwayFromZero);
+                    var targetVnd = decimal.Round(
+                        4_000_000m * targetDays / days, 0,
+                        MidpointRounding.AwayFromZero);
+
+                    await using var sql = new NpgsqlCommand("""
+                        SELECT "TransferDate", "TransferDayOwner", "Rounding",
+                               "CalendarDays", "SourceChargeableDays",
+                               "TargetChargeableDays", "SourceMonthlyRentVnd",
+                               "TargetMonthlyRentVnd", "ProposedSourceRentVnd",
+                               "ProposedTargetRentVnd", "EvidenceSha256",
+                               "BM_CalculateRoomChangeDayPricingRuleSha"(r)
+                        FROM "BuildingManagementRoomChangeDayPricingRuleCandidates" r
+                        WHERE r."Id"=@id
+                        """, db, tx);
+                    sql.Parameters.AddWithValue("id", f.Rule.Id);
+                    await using var saved = await sql.ExecuteReaderAsync();
+                    Assert.True(await saved.ReadAsync());
+                    Assert.Equal(transfer, saved.GetFieldValue<DateOnly>(0));
+                    Assert.Equal((int)RoomChangeTransferDayChargeOwner.TargetRoom,
+                        saved.GetInt32(1));
+                    Assert.Equal((int)RoomChangeRentRoundingRule.NearestVndAwayFromZero,
+                        saved.GetInt32(2));
+                    Assert.Equal(days, saved.GetInt32(3));
+                    Assert.Equal(sourceDays, saved.GetInt32(4));
+                    Assert.Equal(targetDays, saved.GetInt32(5));
+                    Assert.Equal(days, saved.GetInt32(4) + saved.GetInt32(5));
+                    Assert.Equal(3_000_000m, saved.GetDecimal(6));
+                    Assert.Equal(4_000_000m, saved.GetDecimal(7));
+                    Assert.Equal(sourceVnd, saved.GetDecimal(8));
+                    Assert.Equal(targetVnd, saved.GetDecimal(9));
+                    Assert.Equal(f.Rule.EvidenceSha256, saved.GetString(10));
+                    Assert.Equal(f.Rule.EvidenceSha256, saved.GetString(11));
+                    Assert.False(await saved.ReadAsync());
+                    persisted++;
+                }
+            }
+            Assert.Equal(118, persisted);
+            Assert.Equal(118L, await Scalar(db, tx,
+                """SELECT count(*) FROM "BuildingManagementRoomChangeDayPricingRuleCandidates" """));
+        });
     }
 
     [Fact]
@@ -277,7 +426,13 @@ public sealed class RoomChangeDayPricingRulePostgreSql_Tests
 
     private static async Task Insert(NpgsqlConnection db, NpgsqlTransaction tx,
         RoomChangeDayPricingRuleCandidate r, decimal? sourceCharge = null,
-        string? pricingRef = null, string? hash = null, int? targetDays = null)
+        string? pricingRef = null, string? hash = null, int? targetDays = null,
+        decimal? targetCharge = null, int? sourceDays = null,
+        int? calendarDays = null, decimal? sourceMonthlyRent = null,
+        decimal? targetMonthlyRent = null,
+        DateOnly? transferDate = null,
+        RoomChangeTransferDayChargeOwner? transferDayOwner = null,
+        RoomChangeRentRoundingRule? roundingRule = null)
     {
         await using var cmd = new NpgsqlCommand("""
             INSERT INTO "BuildingManagementRoomChangeDayPricingRuleCandidates"
@@ -302,16 +457,16 @@ public sealed class RoomChangeDayPricingRulePostgreSql_Tests
         cmd.Parameters.AddWithValue("roster",r.RosterSnapshotId);
         cmd.Parameters.AddWithValue("policy",r.PolicyId);
         cmd.Parameters.AddWithValue("review",r.PolicyReviewId);
-        cmd.Parameters.AddWithValue("date",r.TransferDate);
-        cmd.Parameters.AddWithValue("owner",(int)r.TransferDayOwner);
-        cmd.Parameters.AddWithValue("rounding",(int)r.Rounding);
-        cmd.Parameters.AddWithValue("days",r.CalendarDays);
-        cmd.Parameters.AddWithValue("oldDays",r.SourceChargeableDays);
+        cmd.Parameters.AddWithValue("date",transferDate??r.TransferDate);
+        cmd.Parameters.AddWithValue("owner",(int)(transferDayOwner??r.TransferDayOwner));
+        cmd.Parameters.AddWithValue("rounding",(int)(roundingRule??r.Rounding));
+        cmd.Parameters.AddWithValue("days",calendarDays??r.CalendarDays);
+        cmd.Parameters.AddWithValue("oldDays",sourceDays??r.SourceChargeableDays);
         cmd.Parameters.AddWithValue("newDays",targetDays??r.TargetChargeableDays);
-        cmd.Parameters.AddWithValue("oldRent",r.SourceMonthlyRentVnd);
-        cmd.Parameters.AddWithValue("newRent",r.TargetMonthlyRentVnd);
+        cmd.Parameters.AddWithValue("oldRent",sourceMonthlyRent??r.SourceMonthlyRentVnd);
+        cmd.Parameters.AddWithValue("newRent",targetMonthlyRent??r.TargetMonthlyRentVnd);
         cmd.Parameters.AddWithValue("oldPrice",sourceCharge??r.ProposedSourceRentVnd);
-        cmd.Parameters.AddWithValue("newPrice",r.ProposedTargetRentVnd);
+        cmd.Parameters.AddWithValue("newPrice",targetCharge??r.ProposedTargetRentVnd);
         cmd.Parameters.AddWithValue("rule",pricingRef??r.SignedPricingRuleReference);
         cmd.Parameters.AddWithValue("actor",r.PreparedByUserId);
         cmd.Parameters.AddWithValue("time",r.PreparedAtUtc);

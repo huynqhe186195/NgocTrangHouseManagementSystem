@@ -1,9 +1,9 @@
-# H4 candidate only. Disposable GitHub Actions PostgreSQL 16. No production DB.
+# Merged H4 branch acceptance. Disposable GitHub Actions PostgreSQL 16. No production DB.
 name: Phase 2H H4 authenticated disposable acceptance
 
 on:
   push:
-    branches: [wip/phase-2h-h4-execution]
+    branches: [wip/phase-2g2, wip/phase-2h-h4-execution]
   pull_request:
     branches: [wip/phase-2g2]
   workflow_dispatch:
@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: h4-atomic-candidate
+  group: h4-disposable-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

@@ -526,7 +526,11 @@ GRANT INSERT ON
   public."BuildingManagementPayOsD04OwnerApprovals",
   public."BuildingManagementDepositSettlements",
   public."BuildingManagementPayOsD04ReceiptJournal",
-  public."BuildingManagementPayOsD04Outbox"
+  public."BuildingManagementPayOsD04Outbox",
+  -- BM_ClaimGlobalBankEvidence (trigger on Payments UPDATE of
+  -- TransactionReference) INSERTs the global bank-reference claim
+  -- under the invoking role privileges; rows stay immutable (23514).
+  public."BuildingManagementBankEvidenceClaims"
 TO d04_d04b_host_legacy_test;
 GRANT UPDATE ON
   public."BuildingManagementPayments",

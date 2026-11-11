@@ -98,7 +98,11 @@ internal static class D04BHostRuntimeRolesGate
             """
             GRANT INSERT ON
               public."BuildingManagementPayOsD04BankReviews",
-              public."BuildingManagementPayOsD04OwnerApprovals"
+              public."BuildingManagementPayOsD04OwnerApprovals",
+              -- BM_ClaimGlobalBankEvidence (trigger on Payments UPDATE
+              -- of TransactionReference) INSERTs the global bank-claim
+              -- under the invoking role; rows stay immutable (23514).
+              public."BuildingManagementBankEvidenceClaims"
             TO d04_d04b_host_legacy_test;
             """,
             // Writer money rows: settlement/journal/outbox INSERT and

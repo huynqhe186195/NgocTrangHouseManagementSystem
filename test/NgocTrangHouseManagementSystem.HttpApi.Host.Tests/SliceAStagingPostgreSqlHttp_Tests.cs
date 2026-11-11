@@ -2214,7 +2214,13 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     new BuildingManagement.Invoices.MonthlyInvoiceCandidateSnapshot(
                         oi04DraftId, oi04ContractId, oi04RoomId, b,
                         2026, 10, root, oi04At,
-                        new DateOnly(2026, 11, 7),
+                        // Dynamic due date: the domain freeze validates that
+                        // DueDate is not in the past (Asia/Ho_Chi_Minh), so a
+                        // hard-coded calendar date would expire with the wall
+                        // clock and time-bomb the fixture.
+                        DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(
+                            DateTime.UtcNow, TimeZoneInfo.FindSystemTimeZoneById(
+                                "Asia/Ho_Chi_Minh"))).AddDays(7),
                         "SIGNED-OI04-MONTHLY-DUE-DATE-POLICY",
                         oi04MonthlyRent, 35_000m, 48_000m,
                         BuildingManagement.Invoices.AuxiliaryFeeAssessmentDecision
@@ -6588,7 +6594,13 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     roomId = h4SourceRoom,
                     billingYear = 2026,
                     billingMonth = 10,
-                    paymentDueDate = new DateOnly(2026, 11, 7),
+                    // Dynamic due date: domain validation rejects a due date
+                    // in the past (Asia/Ho_Chi_Minh business day), so this
+                    // fixture must never pin a fixed calendar date.
+                    paymentDueDate = DateOnly.FromDateTime(
+                        TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow,
+                            TimeZoneInfo.FindSystemTimeZoneById(
+                                "Asia/Ho_Chi_Minh"))).AddDays(7),
                     dueDatePolicyReference =
                         "ROOT-SIGNED-H4-MONTHLY-DUE-2026",
                     auxiliaryFeeDecision = 1,
@@ -7448,7 +7460,13 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                             roomId = h4TargetRoom,
                             billingYear = 2026,
                             billingMonth = 11,
-                            paymentDueDate = new DateOnly(2026, 12, 7),
+                            // Dynamic due date: domain freeze validation
+                            // rejects a past due date, so a fixed calendar
+                            // date would time-bomb this fixture.
+                            paymentDueDate = DateOnly.FromDateTime(
+                                TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow,
+                                    TimeZoneInfo.FindSystemTimeZoneById(
+                                        "Asia/Ho_Chi_Minh"))).AddDays(7),
                             dueDatePolicyReference =
                                 "D04-OWNER-SIGNED-NOVEMBER-DUE-POLICY-2026",
                             auxiliaryFeeDecision = 1,
@@ -7780,7 +7798,13 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 new {
                     contractId = transferContract, roomId = transferSourceRoom,
                     billingYear = 2026, billingMonth = 10,
-                    paymentDueDate = new DateOnly(2026, 11, 7),
+                    // Dynamic due date: domain freeze validation rejects a
+                    // past due date (Asia/Ho_Chi_Minh business day), so this
+                    // fixture must never pin a fixed calendar date.
+                    paymentDueDate = DateOnly.FromDateTime(
+                        TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow,
+                            TimeZoneInfo.FindSystemTimeZoneById(
+                                "Asia/Ho_Chi_Minh"))).AddDays(7),
                     dueDatePolicyReference = "SIGNED-TRF-MONTH-DUE-001",
                     auxiliaryFeeDecision = 1,
                     auxiliaryFeePolicyReference = "SIGNED-TRF-NO-EXTRAS-001",

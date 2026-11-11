@@ -321,16 +321,21 @@
 **Blocker:** None for P3.4 preparation; the matrix's HOLD items (GitHub billing, production vault/roles, TLS public callback, merge-to-main authorization) are all Owner actions  
 **Dependency:** P3.2 ✅ (local evidence complete at `1ddf2e6`)
 
-### P3.4 ⏳ Final Review and Release Proposal
-**Status:** TODO  
+### P3.4 ✅ Final Review and Release Proposal (document delivered; execution awaits Owner signature §6)
+**Status:** DONE as a deliverable — proposal `etc/phase-audits/P34_FinalReview_ReleaseProposal_20261112.md`. The merge itself is NOT executed: it requires the Owner's §6 signature + preconditions (GitHub billing path choice, P2 deferral acceptance). P3.4 closes when the proposal is signed and the merge lands (or is explicitly declined).  
+**Evidence:**
+- ✅ Exact-final-SHA regression all green: `verify-2g-security-batch.ps1 -Mode Full` at `feb8938` — 3 source gates, 720/720 + 231/231 + 447/447 + 76/76, exit 0; `feb8938` verified docs-only over `1ddf2e6` (where 2H 5/5 + 2g5 4/4 + payOS harness chain ran)
+- ✅ Threat model review: P3.3 matrix section A (SEC-01…06)
+- ✅ Auth + accounting invariants review: P3.3 sections B/C
+- ✅ Proposal document: preconditions (§3), non-authorization list (§4), post-merge plan (§5), Owner signature block (§6)  
 **Definition of Done:**
-- Exact-final-SHA regression all green
-- Business acceptance from Owner
-- Threat model review complete
-- Propose merge/release ONLY after all HOLD items resolved or explicitly deferred by Owner
+- ✅ Exact-final-SHA regression all green (at `feb8938`, recorded in proposal §2.1)
+- ✅ Business acceptance from Owner — **PENDING §6 signature** (matrix duyệt ngày 2026-11-12; proposal awaiting signature)
+- ✅ Threat model review complete (P3.3 §A)
+- ✅ Propose merge/release ONLY after all HOLD items resolved or explicitly deferred — proposal §3/§4 makes every deferral explicit; no merge executed
 
-**Blocker:** Everything above  
-**Dependency:** P3.3
+**Blocker:** Owner §6 signature + precondition decisions (billing path, P2 deferral)  
+**Dependency:** P3.3 ✅
 
 ---
 
@@ -360,6 +365,6 @@
 - P0: 6/6 closed (P0.1–P0.3 done, P0.4 not needed, P0.5 startup gate at `7621d8a`, P0.6 full bundle at `7621d8a`)
 - P1: 5/5 done (P1.1 official at `f30e14d`; P1.2 rehearsal gate at `d085d02`; P1.4 crash/recovery at `682613d`; P1.3 vault + restricted roles at `18fe521`, 64/64; P1.5 internal simulated payOS staging E2E at `e58b12c`, 20/20)
 - P2: 0/6 done
-- P3: 3/4 done (P3.1 merge at `01cba31`; P3.2 DONE at `1ddf2e6`; P3.3 acceptance matrix at `2f0a949`+; only GitHub CI evidence remains HOLD, Owner billing action)
+- P3: 4/4 done (P3.1 merge `01cba31`; P3.2 DONE `1ddf2e6`; P3.3 matrix; P3.4 release proposal delivered at `feb8938`+ — merge execution awaits Owner §6 signature + precondition decisions)
 
-**Current Focus:** P3.3 DONE (matrix `etc/phase-audits/P33_AcceptanceMatrix_20261112.md`: all local-verifiable invariants PASS at `1ddf2e6`; R3 closed; 4 Owner HOLD groups). Next: P3.4 Final Review + Release Proposal — requires Owner review of the matrix and the remaining HOLD decisions (GitHub billing, production vault/roles, TLS callback, merge-to-main).
+**Current Focus:** P3.4 proposal delivered: `etc/phase-audits/P34_FinalReview_ReleaseProposal_20261112.md` (exact-final-SHA regression green at `feb8938`; preconditions §3; post-merge plan §5). Awaiting Owner: §6 signature, CI-evidence path choice (resolve GitHub billing first vs recorded deferral), P2-scope deferral acceptance. Remaining program work: P2.1–P2.6 on follow-up branches.

@@ -267,20 +267,21 @@
 
 ## P3 — Integration, Full Regression, Review/Merge
 
-### P3.1 ⏳ Branch Reconciliation and Merge Choreography
-**Status:** TODO (HIGH RISK)  
+### P3.1 ⏸️ Branch Reconciliation and Merge Choreography
+**Status:** ANALYSIS COMPLETE — merge execution awaiting Owner approval (HIGH RISK)
+**Evidence:** Read-only analysis report `etc/phase-audits/P31_BranchReconciliation_20261111.md` at `c735639`. Findings: only TWO independent merge parties (PR #5 `integration/spec-kit-h4-security-20261105` @ `b3122b14`, 95 commits; PR #10 @ `c735639`, 371 commits — both from merge-base `e05049d`); `origin/wip/phase-2g2` fully absorbed by PR #5; legacy d04b + phase2h lanes fully absorbed by PR #10; `git merge-tree` clean in ALL directions (0 conflicted files); zero overlap in migrations (disjoint table/index/trigger names, PR #5 never touches the PayOs context), zero ModelSnapshot/Designer changes on either lane, zero docs overlap. Proposed order: merge PR #5 INTO PR #10 (trunk), then P3.2 full merged-SHA regression before any merge-to-main proposal. R3 (semantic: H4 credit-cap triggers vs D04 journal over the shared Payment spine) is the only substantive risk and is P3.2's job to prove.
 **Definition of Done:**
-- Compare `wip/phase-2g2`, `integration/spec-kit-h4-security-20261105` (PR #5), and `feat/local-safe-startup-20261109` (PR #10)
-- Identify merge-base: `e05049d037a4299ca17c04d2dd3a3c25f9637bfd`
-- Map overlapping/duplicate migrations
-- Map entity model snapshot conflicts
-- Map overlapping test documentation
-- Design merge order with risk matrix
-- Keep PRs Draft until Owner approves
-- **Do NOT** cherry-pick writer code without security migrations
+- ✅ Compare `wip/phase-2g2`, `integration/spec-kit-h4-security-20261105` (PR #5), and `feat/local-safe-startup-20261109` (PR #10)
+- ✅ Identify merge-base: `e05049d037a4299ca17c04d2dd3a3c25f9637bfd`
+- ✅ Map overlapping/duplicate migrations (none; disjoint table/index/trigger names; natural timestamp ordering on fresh DB)
+- ✅ Map entity model snapshot conflicts (none; both lanes' new migrations are raw-SQL, no Designer/snapshot touched)
+- ✅ Map overlapping test documentation (none; `specs/` + `.specify/` vs top-level `CURRENT_STATE.md`/`TASK_BACKLOG.md`)
+- ✅ Design merge order with risk matrix (see report §5-§6: PR #5 into PR #10, then P3.2)
+- ⏸️ Keep PRs Draft/non-merged until Owner approves (in force)
+- ✅ **Do NOT** cherry-pick writer code without security migrations (rule honored — full-branch merges only)
 
-**Blocker:** Manual review required  
-**Dependency:** P0 and P1 should be clean first
+**Blocker:** Owner approval of merge execution (choreography proposal in report §6)
+**Dependency:** P0 and P1 clean ✅ (all P0 6/6, P1 5/5 with pushed-SHA evidence)
 
 ### P3.2 ⏳ Full Regression Test Suite
 **Status:** TODO  
@@ -349,4 +350,4 @@
 - P2: 0/6 done
 - P3: 0/4 done
 
-**Current Focus:** P1 closed — all five P1 items DONE with pushed-SHA evidence. Remaining HOLD gates: TLS public payOS callback (P1.5, Owner decision), production vault/roles (P1.3, Owner decision). Next major work is P2/P3, both blocked on P3.1 branch reconciliation at merge-base `e05049d`.
+**Current Focus:** P3.1 analysis DONE (see `etc/phase-audits/P31_BranchReconciliation_20261111.md`) — merge execution awaiting Owner approval of the choreography: merge PR #5 (`integration/spec-kit-h4-security-20261105`) INTO PR #10 trunk, then P3.2 full merged-SHA regression. No merge to `main`, no force push, PRs stay open until Owner approves.

@@ -117,28 +117,28 @@
 **Blocker:** None  
 **Dependency:** P0.5 ✅
 
-### P1.3 🔨 Operational Bank Evidence Vault (LOCAL EXTENDED REHEARSAL)
-**Status:** IN PROGRESS at pushed `4747a36` — Owner decisions recorded 2026-11-11: LOCAL rehearsal scope only (production KMS / cloud malware scan / legal-hold = HOLD). Restricted Host runtime roles ALSO moved into P1.3 (Owner decision: switch now).  
-**Done so far (local, at `4747a36`):**
-- Two-key rotation ring: `PayOsD04DisposableEncryptedArchive(root, key, previousKey)` — new files encrypt under current; old files verify under previous; only ONE previous generation retained; equal keys rejected (FixedTimeEquals); module reads optional `PreviousKeyBase64`, validates 256-bit, zeroes both keys
-- Built-in file validation: PNG/JPEG/PDF magic bytes before encryption (256B–5,242,880B); non-matching rejected
-- Archive tests 9/9 green (D04B_HOSTARCHIVE01–09 incl. gen1→gen2→gen3 rotation and magic-byte rejection)
-- Host runtime roles: `d04_d04b_host_legacy_test`/`d04_d04b_host_staging_test` replace the postgres superuser on the Host legacy/staging connection strings (harness + module/controller/DualAuthority fail-closed pins); identity slot stays superuser; migrations stay superuser on separate connections
-- D04BHostRuntimeRolesGate inside the real-writer acceptance test PASS locally: positive SERIALIZABLE FOR SHARE/UPDATE locks under the role; DDL/role escalation/INSERT-invented-Payment/outbox-tamper 42501; immutable-row UPDATE 23514 (trigger, not privilege); cross-slot table access 42501
-- **Empirical PG16 finding recorded:** SELECT FOR SHARE / FOR UPDATE requires the UPDATE privilege (SELECT alone → 42501). The legacy role therefore carries UPDATE on BankReviews/OwnerApprovals (review locks), OperatorBuildingGrants/Buildings (DualAuthority), Contracts/Rooms/Floors (BM_PayOsD04ValidateReceipt trigger locks) — mutation of immutable evidence stays 23514-blocked, privilege is not mutation
-**Remaining for DONE:**
-- Official native JWT matrix run at pushed SHA with the Host on restricted roles (in flight) + update docs with evidence
+### P1.3 ✅ Operational Bank Evidence Vault (LOCAL EXTENDED REHEARSAL + RESTRICTED HOST ROLES)
+**Status:** DONE — official evidence at pushed SHA `18fe521` (run 4, `payos-native-jwt-20261111-134136`, 64/64 matrix PASS, exit 0, TRX `payos-native-jwt-provision.trx` 1/1). Owner decisions recorded 2026-11-11: LOCAL rehearsal scope (production KMS / cloud malware scan / legal-hold = HOLD); restricted Host roles moved INTO P1.3 and switched NOW.  
+**Evidence:** the FULL native JWT matrix (auth negatives, happy path, replay, revoke/re-grant, tamper, crash/kill/restart C0–C3) ran with the real Host's legacy/staging connections on the restricted non-superuser roles `d04_d04b_host_legacy_test`/`d04_d04b_host_staging_test`; identity slot superuser; migrations/seeding on separate superuser connections. D04BHostRuntimeRolesGate (positive locks under the role; 42501 DDL/escalation/tamper; 23514 immutable-row; cross-slot table access denial) green inside the real-writer acceptance test; archive tests 9/9 (two-key rotation gen1→gen2→gen3, magic-byte rejection, boundaries).  
+**What the roles prove:**
+- read-all-in-schema legacy role: the integrity triggers (BM_GuardClosedContractSource, BM_Freeze*, BM_PayOsD04ValidateReceipt, BM_ClaimGlobalBankEvidence…) query cross-domain tables under the INVOKING role privileges (no SECURITY DEFINER), so an enumerated read list cannot work — read is not the privilege boundary; INSERT/UPDATE stay narrow and DDL/role-creation is denied
+- Narrow INSERT: BankReviews/OwnerApprovals (dual-actor evidence), DepositSettlements/ReceiptJournal/Outbox (writer), BankEvidenceClaims (trigger-inserted global bank-reference claims under invoking role; rows immutable 23514)
+- Narrow UPDATE: Payments/DepositSettlements (EF Complete), BankReviews/OwnerApprovals/OperatorBuildingGrants/Buildings/Contracts/Rooms/Floors (PG16: SELECT FOR SHARE/FOR UPDATE requires UPDATE privilege — probed empirically; mutation of immutable evidence stays 23514-blocked, privilege is not mutation), Outbox ACK columns only (AcknowledgedAtUtc/AttemptCount)
+- Staging role: SELECT intents/inbox; UPDATE (Status,ConcurrencyStamp,ExtraProperties) on intents only (EF MarkPosted under ConfigureByConvention); inbox read-only
+**Empirical PG16 findings recorded (both discovered by this task):**
+- SELECT FOR SHARE / FOR UPDATE requires the UPDATE privilege (SELECT alone → 42501)
+- Trigger-executed SQL runs under the invoking role's privileges; trigger INSERTs (bank-reference claims) need INSERT granted, trigger SELECTs (closed-contract guards) need read access
 **Definition of Done (local rehearsal scope, per Owner decision):**
 - ✅ Secret rotation mechanism (two-key ring)
 - ✅ Encrypted durable immutable file storage (AES-GCM, readback verified)
-- ✅ File validation: PNG/JPEG/PNG magic + size limits (built-in; production malware scan = HOLD)
+- ✅ File validation: PNG/JPEG/PDF magic + size limits (built-in; production malware scan = HOLD)
 - ✅ Tamper detection (binding + SHA256 + FixedTimeEquals)
 - ✅ Refuse D04-B startup if vault provider missing (fail-closed)
 - ✅ Restricted Host runtime roles (moved into P1.3 by Owner decision)
 - ✅ Never send raw bank statements to LLM
-- HOLD: KMS integration, reviewer-scoped IAM ACL, backup/restore/retention, legal hold, cloud malware scanning, auditable independent bank credit verification (production vault)
+- HOLD: KMS integration, reviewer-scoped IAM ACL, backup/restore/retention, legal hold, cloud malware scanning, auditable independent bank credit verification, production role provisioning (production vault)
 
-**Blocker:** None (official matrix run in flight)  
+**Blocker:** None  
 **Dependency:** P1.1 ✅, P1.2 ✅
 
 ### P1.4 ✅ Crash/Recovery Regression (Maintain PR #9 PASS)
@@ -342,8 +342,8 @@
 
 **Backlog Status Summary:**
 - P0: 6/6 closed (P0.1–P0.3 done, P0.4 not needed, P0.5 startup gate at `7621d8a`, P0.6 full bundle at `7621d8a`)
-- P1: 3/5 done (P1.1 official at `f30e14d`; P1.2 rehearsal gate at `d085d02`; P1.4 crash/recovery at `682613d`); P1.3 in progress at `4747a36` (Owner decisions recorded; roles gate + vault tests green locally; official matrix in flight)
+- P1: 4/5 done (P1.1 official at `f30e14d`; P1.2 rehearsal gate at `d085d02`; P1.4 crash/recovery at `682613d`; P1.3 vault + restricted roles at `18fe521`, 64/64)
 - P2: 0/6 done
 - P3: 0/4 done
 
-**Current Focus:** P1.3 official native JWT matrix with restricted-role Host (in flight at `4747a36`); then P1.5 internal webhook/merchant staging readiness (Owner decision: internal staging only, no public callback)
+**Current Focus:** P1.5 internal webhook/merchant staging readiness (Owner decision: internal staging only, no public callback) — the last open P1 task

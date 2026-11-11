@@ -158,7 +158,12 @@ function Invoke-D04RealWriterAcceptance {
         '--filter', 'FullyQualifiedName~D04BHostDisposableEncryptedArchive_Tests',
         '--logger', 'trx;LogFileName=payos-d04-host-archive.trx',
         '--results-directory', $logRoot, '--verbosity', 'normal')
-    Assert-Trx 'payos-d04-host-archive.trx' 7
+    # P1.3 grew the vault suite from 7 to 9 tests (key rotation with
+    # previous-generation verification HOSTARCHIVE08, magic-byte format
+    # validation HOSTARCHIVE09); the official P1.3 evidence lane
+    # (native JWT harness) already ran them, but this bundle's pinned
+    # count was never updated. Align with the current suite.
+    Assert-Trx 'payos-d04-host-archive.trx' 9
 
     # 18c exercises the actual Host startup gate by reflection/in-memory DI:
     # Staging + activation phrase, merchant off, three exact 15432 DBs,

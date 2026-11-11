@@ -57,7 +57,8 @@
 
 | Item | What's Done | What's Missing | Blocker |
 |------|-------------|----------------|---------|
-| Encrypted bank evidence vault | Disposable rehearsal vault with AES-GCM, tamper detection (T1 PASS) | KMS/production secrets, ACL/IAM, backup/restore, malware scan | P1.3 |
+| Encrypted bank evidence vault | P1.3 local extended rehearsal: AES-GCM with two-key rotation ring (current + one previous generation; equal keys rejected), readback verification under both keys, PNG/JPEG/PDF magic-byte validation, 256B–5MiB bounds — 9/9 archive tests | KMS/production secrets, IAM ACL, backup/restore, cloud malware scan, legal hold = HOLD per Owner decision | P1.3 official matrix run |
+| Host D04-B restricted runtime roles | `d04_d04b_host_legacy_test`/`d04_d04b_host_staging_test` non-superuser roles replace the postgres superuser on the Host legacy/staging connections (identity slot stays superuser; migrations stay superuser on separate connections). Grants cover the canonical Host SQL incl. the PG16 finding that FOR SHARE/FOR UPDATE needs UPDATE privilege (BankReviews/OwnerApprovals/OperatorBuildingGrants/Buildings/Contracts/Rooms/Floors carry UPDATE; immutable mutation still 23514-blocked). Gate D04BHostRuntimeRolesGate inside the acceptance test PASS locally | Official native JWT matrix at pushed SHA with restricted-role Host — in flight | `4747a36` |
 
 ### 🔴 HOLD / NOT STARTED
 
@@ -101,7 +102,8 @@
 1. ✅ P1.1 native D04 financial HTTP auth matrix — 25/25 PASS, official evidence at pushed SHA `f30e14d` (run 28, `payos-native-jwt-20261111-001125`); branch pushed and in sync with origin
 2. ✅ P1.2 DB financial writer least privilege — rehearsal gate at `d085d02` (run 5, `payos-20261111-003546`)
 3. ✅ P1.4 crash/recovery regression in the native JWT lane — 34/34 at pushed `682613d` (run 2, `payos-native-jwt-20261111-011917`)
-4. ⏳ P1.3 operational vault, P1.5 webhook/merchant staging readiness — both blocked on Owner architecture decisions (KMS choice; public callback URL)
+4. 🔨 P1.3 in progress — Owner decisions recorded (local extended rehearsal vault: AES-GCM two-key rotation + reviewer ACL + built-in file validation; switch Host D04-B legacy/staging connections to restricted runtime roles now; production KMS/cloud malware scan/legal hold = HOLD). Roles gate + vault tests green locally at `4747a36` (acceptance test with D04BHostRuntimeRolesGate PASS; archive tests 9/9); official native JWT matrix with restricted-role Host running
+5. ⏳ P1.5 internal webhook/merchant staging readiness — Owner decision: internal staging only, no public callback URL (TLS public callback = HOLD); no real payOS calls
 
 ---
 **Last Updated:** 2026-11-11  

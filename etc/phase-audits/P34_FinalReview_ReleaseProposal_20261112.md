@@ -61,9 +61,14 @@ Combined with the `1ddf2e6` runs (identical executable code, verified by `git di
 
 **2026-11-12 (later) update — precondition §3.1 evidence COMPLETE:** CI run 384 at `c63d370` (ID 43240562191) — **all 5 jobs of `payos-foundation-isolated.yml` SUCCESS** (offline EF preview, D04-B three-DB writer/ACK, isolated payOS tests, disposable PG16 schema/concurrency/rollback, EF migration up/down/reapply). Two CI-only workflow/fixture gaps surfaced during re-arming (runs 382–383) and were fixed with locally-verified commits `80e3c00` + `c63d370` before the green run; no acceptance or security gate was weakened. The remaining merge preconditions are §3.2 (P2 deferral decision) and §6 (Owner signature).
 
-**Merge execution:** ______________________ (Owner signature/date)
-**P2 deferral acceptance (precondition §3.2):** ______________________
-**CI-evidence path: ☐ resolve billing first ☐ defer with recorded decision** (precondition §3.1) — ✅ resolved 2026-11-12: billing unlock, CI-first path
+**2026-11-12 (final) — Owner authorization EXECUTED:** the Owner approved BOTH remaining decisions in one instruction ("Làm cả 2 đi", 2026-11-12):
+- **§3.2 P2 deferral: ACCEPTED** — `main` = tested-staging-scope (P0/P1 + P2 staging evidence); P2.1–P2.6 continue on follow-up feature branches off `main`.
+- **§6 merge-to-main: SIGNED** — merge of `feat/local-safe-startup-20261109` → `main` (PR #10) authorized for execution per §5 (merge commit, no force, no squash; local regression re-run at post-merge SHA; CI evidence on `main`).
+All four preconditions (§3.1 billing/CI ✅, §3.2 ✅, §3.3 scope-limits carried ✅, §3.4 signature ✅) now hold.
+
+**Merge execution:** ✅ Owner authorized 2026-11-12 ("Làm cả 2 đi" — explicit instruction recorded in conversation)
+**P2 deferral acceptance (precondition §3.2):** ✅ Owner accepted 2026-11-12 (same instruction) — main = tested-staging-scope; P2.1–P2.6 on follow-up branches
+**CI-evidence path: ☐ resolve billing first ☐ defer with recorded decision** (precondition §3.1) — ✅ resolved 2026-11-12: billing unlock (card-free), CI-first path; run 384 at `c63d370` green 5/5 (ID 43240562191)
 
 ---
 **Prepared by:** Claude Code (program evidence chain 2026-11-10 → 2026-11-12, commits `0702e0d` → `feb8938`)

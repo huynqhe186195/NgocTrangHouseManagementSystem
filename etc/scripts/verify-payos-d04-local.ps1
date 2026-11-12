@@ -203,7 +203,7 @@ function Invoke-D04RealWriterAcceptance {
 function Assert-EfTableCount([string]$database, [int]$expected) {
     $sql = 'SELECT count(*) FROM pg_tables WHERE schemaname = ' +
            "'public'" + ' AND tablename IN (' +
-           "'BuildingManagementPayOsPaymentIntents','BuildingManagementPayOsWebhookInbox');"
+           "'BuildingManagementPayOsPaymentIntents','BuildingManagementPayOsWebhookInbox','BuildingManagementPayOsStagingOutbox');"
     $count = Invoke-Capture 'docker' @('exec', $containerId, 'psql', '-U',
         'postgres', '-d', $database, '-At', '-v', 'ON_ERROR_STOP=1', '-c', $sql)
     if ($count.Trim() -ne [string]$expected) {
@@ -495,7 +495,7 @@ try {
     [Environment]::SetEnvironmentVariable('BM_PAYOS_EF_TEST_PORT','15432','Process')
 
     Invoke-Logged '12-ef-migration-apply' $ef @(
-        'database', 'update', 'StagePayOsPaymentIntentsAndWebhookInbox',
+        'database', 'update', 'StagePayOsStagingOutbox',
         '--context', 'PayOsPaymentMigrationDbContext',
         '--project', $efProject, '--startup-project', $efProject)
 
@@ -506,7 +506,7 @@ try {
         'exec', $containerId, 'psql', '-U', 'postgres', '-d',
         'payos_ef_migration_test', '-v', 'ON_ERROR_STOP=1',
         '-f', '/tmp/ef-acceptance.sql')
-    Assert-EfTableCount 'payos_ef_migration_test' 2
+    Assert-EfTableCount 'payos_ef_migration_test' 3
 
     Invoke-Logged '15-pg-checkout-webhook-http-controller-tests' 'dotnet' @(
         'test', $pgTests, '-c', 'Release',
@@ -523,7 +523,7 @@ try {
     Assert-EfTableCount 'payos_ef_migration_test' 0
 
     Invoke-Logged '17-ef-migration-reapply' $ef @(
-        'database', 'update', 'StagePayOsPaymentIntentsAndWebhookInbox',
+        'database', 'update', 'StagePayOsStagingOutbox',
         '--context', 'PayOsPaymentMigrationDbContext',
         '--project', $efProject, '--startup-project', $efProject)
     Assert-EfTableCount 'payos_ef_migration_test' 2
@@ -541,10 +541,10 @@ SELECT count(*) FROM public."__EFMigrationsHistory_PayOs";
     $history = Invoke-Capture 'docker' @('exec', $containerId, 'psql',
         '-U', 'postgres', '-d', 'payos_ef_migration_test', '-At',
         '-v', 'ON_ERROR_STOP=1', '-f', '/tmp/ef-history.sql')
-    if ($history.Trim() -ne '1') {
-        throw "Expected exactly one payOS migration history row; got $history."
+    if ($history.Trim() -ne '2') {
+        throw "Expected exactly two payOS migration history rows; got $history."
     }
-    Write-Host 'PASS: exactly one case-sensitive payOS EF migration history row.' -ForegroundColor Green
+    Write-Host 'PASS: exactly two case-sensitive payOS EF migration history rows.' -ForegroundColor Green
 
     # Two actual databases in one disposable PG16 container. These are
     # protocol rehearsal schemas and synthetic receipts, never the live writer.

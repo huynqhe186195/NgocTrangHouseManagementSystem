@@ -158,6 +158,19 @@ jobs:
           docker exec "$pg_container" createdb -U postgres payos_d04_identity_test
           docker exec "$pg_container" createdb -U postgres payos_d04_legacy_test
           docker exec "$pg_container" psql -U postgres -d payos_ef_migration_test -At -c 'SELECT current_database()'
+      # The D04-B forced process recovery gate launches a SEPARATE .NET
+      # process (the recovery probe) to prove cross-process crash recovery.
+      # Mirrors the local harness verify-payos-d04-local.ps1 (probe build +
+      # BM_PAYOS_D04_PROCESS_PROBE_DLL export). The gate fails closed when
+      # the env var is missing, so CI must provide the same wiring.
+      - name: Build D04 forced process recovery probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet build test/PayOs.D04.ProcessRecovery.Probe/PayOs.D04.ProcessRecovery.Probe.csproj --configuration Release
+          probe_dll="$PWD/test/PayOs.D04.ProcessRecovery.Probe/bin/Release/net10.0/PayOs.D04.ProcessRecovery.Probe.dll"
+          test -f "$probe_dll"
+          echo "BM_PAYOS_D04_PROCESS_PROBE_DLL=$probe_dll" >> "$GITHUB_ENV"
       - name: Real Building writer, locked Identity grants, persisted staging proof, durable ACK and replay
         shell: bash
         run: |
@@ -269,7 +282,10 @@ jobs:
           project=modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/BuildingManagement.EntityFrameworkCore.csproj
           dotnet tool install --global dotnet-ef --version 10.0.9
           dotnet restore "$project"
-          dotnet ef database update StagePayOsPaymentIntentsAndWebhookInbox --context PayOsPaymentMigrationDbContext --project "$project" --startup-project "$project" --verbose
+          # Apply the FULL committed payOS EF chain. The webhook/checkout
+          # acceptance tests require the P1.5 staging outbox table; stopping
+          # at the first migration left 42P01 errors in CI run 382.
+          dotnet ef database update StagePayOsStagingOutbox --context PayOsPaymentMigrationDbContext --project "$project" --startup-project "$project" --verbose
       - name: Assert real EF-created tables, scoped FK and rollback from invalid rows
         shell: bash
         run: |
@@ -278,7 +294,7 @@ jobs:
           test -n "$pg_container"
           docker exec -i "$pg_container" psql -U postgres -d payos_ef_migration_test -v ON_ERROR_STOP=1 < etc/phase-audits/payos-generated-ef-migration-acceptance.sql
           history="$(docker exec "$pg_container" psql -U postgres -d payos_ef_migration_test -A -t -c 'SELECT count(*) FROM public."__EFMigrationsHistory_PayOs"')"
-          test "$history" = "1"
+          test "$history" = "2"
       - name: Signed webhook inbox writer acceptance on real EF tables
         shell: bash
         run: |
@@ -299,11 +315,11 @@ jobs:
           project=modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/BuildingManagement.EntityFrameworkCore.csproj
           dotnet ef database update 0 --context PayOsPaymentMigrationDbContext --project "$project" --startup-project "$project"
           pg_container="$(docker ps --filter ancestor=postgres:16 --format '{{.ID}}' | head -n 1)"
-          remaining="$(docker exec "$pg_container" psql -U postgres -d payos_ef_migration_test -A -t -c "SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename IN ('BuildingManagementPayOsPaymentIntents','BuildingManagementPayOsWebhookInbox')")"
+          remaining="$(docker exec "$pg_container" psql -U postgres -d payos_ef_migration_test -A -t -c "SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename IN ('BuildingManagementPayOsPaymentIntents','BuildingManagementPayOsWebhookInbox','BuildingManagementPayOsStagingOutbox')")"
           test "$remaining" = "0"
-          dotnet ef database update StagePayOsPaymentIntentsAndWebhookInbox --context PayOsPaymentMigrationDbContext --project "$project" --startup-project "$project"
-          restored="$(docker exec "$pg_container" psql -U postgres -d payos_ef_migration_test -A -t -c "SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename IN ('BuildingManagementPayOsPaymentIntents','BuildingManagementPayOsWebhookInbox')")"
-          test "$restored" = "2"
+          dotnet ef database update StagePayOsStagingOutbox --context PayOsPaymentMigrationDbContext --project "$project" --startup-project "$project"
+          restored="$(docker exec "$pg_container" psql -U postgres -d payos_ef_migration_test -A -t -c "SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename IN ('BuildingManagementPayOsPaymentIntents','BuildingManagementPayOsWebhookInbox','BuildingManagementPayOsStagingOutbox')")"
+          test "$restored" = "3"
           history="$(docker exec "$pg_container" psql -U postgres -d payos_ef_migration_test -A -t -c 'SELECT count(*) FROM public."__EFMigrationsHistory_PayOs"')"
-          test "$history" = "1"
+          test "$history" = "2"
           echo "PAYOS REAL EF MIGRATION: APPLY/ROLLBACK/REAPPLY PASS"

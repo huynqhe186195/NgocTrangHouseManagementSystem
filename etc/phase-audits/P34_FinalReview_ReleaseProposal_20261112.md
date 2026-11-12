@@ -59,6 +59,8 @@ Combined with the `1ddf2e6` runs (identical executable code, verified by `git di
 
 **2026-11-12 update — precondition §3.1 resolved:** the Owner unlocked the GitHub Actions account (no payment method added; free-tier public-repo usage). CI is re-armed: the workflows will run on the next push; CI evidence retro-fill for SEC-06 begins immediately (see CURRENT_STATE.md). The CI-first path (option a) is in effect.
 
+**2026-11-12 (later) update — precondition §3.1 evidence COMPLETE:** CI run 384 at `c63d370` (ID 43240562191) — **all 5 jobs of `payos-foundation-isolated.yml` SUCCESS** (offline EF preview, D04-B three-DB writer/ACK, isolated payOS tests, disposable PG16 schema/concurrency/rollback, EF migration up/down/reapply). Two CI-only workflow/fixture gaps surfaced during re-arming (runs 382–383) and were fixed with locally-verified commits `80e3c00` + `c63d370` before the green run; no acceptance or security gate was weakened. The remaining merge preconditions are §3.2 (P2 deferral decision) and §6 (Owner signature).
+
 **Merge execution:** ______________________ (Owner signature/date)
 **P2 deferral acceptance (precondition §3.2):** ______________________
 **CI-evidence path: ☐ resolve billing first ☐ defer with recorded decision** (precondition §3.1) — ✅ resolved 2026-11-12: billing unlock, CI-first path

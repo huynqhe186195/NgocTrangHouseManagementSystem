@@ -18,7 +18,7 @@
 | SEC-03 | No raw JWT/secrets/bank statements echoed, saved or committed | House rules | Tokens minted by harnesses are never echoed/saved (recorded in every run log preamble) | All runs | Run logs 27–28 (P1.1), crash run 2 (P1.4), run 4 (P1.3), run 3 (P1.5) | **PASS** | None |
 | SEC-04 | Fail-closed financial code: missing env/DB/archive/key ⇒ refuse start or refuse write | `ConfigurePayOsD04BIfEnabled` (extracted `7621d8a`) | `D04BHostStartupGate_Tests` 8/8: default OFF; wrong phrase/slot/host/role/DB name/key refused | In-memory DI + real Host `ConfigureServices` | `payos-20261110-162113` (18c) at `7621d8a` | **PASS** | None |
 | SEC-05 | Archive/vault tamper, truncation, replay, wrong-key detection | AES-GCM two-key rotation ring (P1.3) | Host archive 9/9 (incl. HOSTARCHIVE08 rotation, 09 magic bytes) | Loopback Host + file vault | `payos-20261110-162113` at `7621d8a` growth to 9 re-verified at `7f48c59` | **PASS** | Production KMS/IAM/backup/malware-scan/legal-hold = HOLD (Owner) |
-| SEC-06 | GitHub Actions CI evidence at current trunk | `.github/workflows/*` (7 workflows) | — | GitHub-hosted | All runs fail ~5s: "account is locked due to a billing issue" (25+ runs incl. pre-merge) | **HOLD** | **Owner: resolve GitHub billing (Settings → Billing)** |
+| SEC-06 | GitHub Actions CI evidence at current trunk | `.github/workflows/*` (7 workflows) | — | GitHub-hosted | **2026-11-12 update:** billing unlocked by Owner (no payment method; free-tier public repo). Run 382 (`bd2a11e`) = first real run: 3/5 jobs, 2 workflow-gap failures (missing D04-B probe env; EF chain stopped before P1.5 StagingOutbox migration). Fixed `80e3c00` (workflow + extended acceptance SQL) + `c63d370` (guard-adapt port 15432→{5432,15432}); each verified locally on disposable PG16 15432 before push (57/57 + 1/1 TRX). **Run 384 (`c63d370`, ID 43240562191): 5/5 jobs SUCCESS** — the first fully green CI run of the program | **PASS** (CI-first path; run 382/383 failures were workflow/fixture pins, both documented) | Real-payOS lane stays HOLD regardless of CI (ACC-08) |
 
 ## B. Authentication \& authorization invariants
 
@@ -68,7 +68,7 @@
 1. **All local-verifiable invariants PASS at pushed SHA `1ddf2e6`** (safety, auth, accounting, merge-integrity), with exact SHA+TRX evidence. No local blocker remains for P3.4 preparation.
 2. **R3 (the P3.1-predicted semantic merge risk) is closed with evidence**: every manifested failure was a fixture/guard pin (migration name, vault count, branch/port guard, hard-coded due date), never a semantic conflict between the H4 and D04 lanes over the Payment spine; all four merged-tree fixes documented above.
 3. **Sole program-wide HOLD items (all Owner actions, none code):**
-   - GitHub Actions billing lock (SEC-06) — blocks the CI-evidence column until resolved.
+   - ~~GitHub Actions billing lock (SEC-06)~~ — **RESOLVED 2026-11-12**: Owner unlocked the account (no payment method); run 384 at `c63d370` green 5/5. CI evidence retro-filled above.
    - Production vault/roles/secrets (SEC-05 residue, AUTH-02/03 residue) — production scope decisions.
    - TLS public payOS callback (AUTH-05 residue, ACC-08 real-money residue) — explicit Owner authorization; internal staging only.
    - Merge-to-main / release (REG-07) — the P3.4 proposal, after this matrix is reviewed.

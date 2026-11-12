@@ -283,8 +283,8 @@
 **Blocker:** Owner approval of merge execution (choreography proposal in report §6)
 **Dependency:** P0 and P1 clean ✅ (all P0 6/6, P1 5/5 with pushed-SHA evidence)
 
-### P3.2 ✅ DONE (Full Regression Test Suite — local evidence complete at merged tree; only GitHub CI evidence remains HOLD)
-**Status:** DONE at the P3.1-merged tree, HEAD `1ddf2e6` (pushed; branch in sync). Owner choice (a) executed: guard-adapt the 2H/2g/2g5 verify lanes and run them on the merged trunk locally. Sole open external item: GitHub Actions billing lock (Owner action; CI evidence column of P3.3 stays HOLD)
+### P3.2 ✅ DONE (Full Regression Test Suite — local evidence complete at merged tree; CI evidence GREEN as of 2026-11-12)
+**Status:** DONE at the P3.1-merged tree, HEAD `1ddf2e6` (pushed; branch in sync). Owner choice (a) executed: guard-adapt the 2H/2g/2g5 verify lanes and run them on the merged trunk locally. ~~Sole open external item: GitHub Actions billing lock~~ **RESOLVED 2026-11-12:** Owner unlocked billing (card-free); CI re-armed; runs 382/383 surfaced two workflow/fixture gaps fixed at `80e3c00` + `c63d370` (locally verified first); **run 384 at `c63d370` green 5/5** — CI evidence column of P3.3 retro-filled PASS
 **Evidence (all at pushed SHAs, local disposable 15432, 15433/5432 untouched):**
 - Build whole solution (both lanes): 0 errors at merge commit `01cba31` (30 pre-existing style warnings)
 - Module suites at `01cba31`: Domain **720/720**, EF (SQLite) **447/447**, Application **231/231**, Host HTTP **76/76** — TRXs in `C:\Users\Huynq\NgocTrang-Test-Logs\p32-merged-01cba31`
@@ -306,7 +306,7 @@
 - ✅ Run on correct branches per test scope (all harnesses ran on the merged trunk at pushed SHAs)
 - ✅ Read all script guards before running (guards read; the guard-adapt commit `127f5d4` was the Owner-approved path, executed and re-verified)
 
-**Blocker:** None for local evidence. Remaining HOLD: GitHub Actions account locked for a **billing issue** — all CI jobs on the branch fail in ~5s at start (observed on 25+ runs incl. pre-merge commits, so unrelated to the P3.1 merge; Owner must resolve GitHub billing). P3.3 may start on local evidence; its CI-evidence column stays HOLD until billing is resolved.
+**Blocker:** None. ~~Remaining HOLD: GitHub Actions billing lock~~ **RESOLVED 2026-11-12:** billing unlocked (card-free); CI runs 382→383→384 at `bd2a11e`→`80e3c00`→`c63d370`: two workflow/fixture gaps fixed with locally-verified commits (probe env + full EF chain + extended acceptance SQL; port guard-adapt), **run 384 green 5/5 (ID 43240562191)**. P3.3 CI-evidence column retro-filled PASS.
 **Dependency:** P3.1 ✅ (merged at `01cba31`, Owner-approved)
 
 ### P3.3 ✅ Acceptance Matrix
@@ -367,4 +367,4 @@
 - P2: 0/6 done
 - P3: 4/4 done (P3.1 merge `01cba31`; P3.2 DONE `1ddf2e6`; P3.3 matrix; P3.4 release proposal delivered at `feb8938`+ — merge execution awaits Owner §6 signature + precondition decisions)
 
-**Current Focus:** P3.4 proposal delivered: `etc/phase-audits/P34_FinalReview_ReleaseProposal_20261112.md` (exact-final-SHA regression green at `feb8938`; preconditions §3; post-merge plan §5). Awaiting Owner: §6 signature, CI-evidence path choice (resolve GitHub billing first vs recorded deferral), P2-scope deferral acceptance. Remaining program work: P2.1–P2.6 on follow-up branches.
+**Current Focus:** P3.4 proposal delivered: `etc/phase-audits/P34_FinalReview_ReleaseProposal_20261112.md` (exact-final-SHA regression green at `feb8938`; preconditions §3; post-merge plan §5). **2026-11-12 update: precondition §3.1 CI-first evidence COMPLETE — CI run 384 at `c63d370` green 5/5 (ID 43240562191), first fully green program CI run, after Owner's card-free billing unlock + two locally-verified CI-fix commits (`80e3c00` workflow probe/EF-chain, `c63d370` port guard-adapt).** Awaiting Owner: §6 signature, P2-scope deferral acceptance. Remaining program work: P2.1–P2.6 on follow-up branches.

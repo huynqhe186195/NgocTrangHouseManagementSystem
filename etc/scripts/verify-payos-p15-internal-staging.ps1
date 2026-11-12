@@ -63,7 +63,7 @@ $operatorToken = ''
 $outsiderToken = ''
 $script:checksumKey = ''
 
-$allowedBranches = @('feat/local-safe-startup-20261109')
+$allowedBranches = @('feat/local-safe-startup-20261109', 'main')
 $envNames = @(
     'BM_PAYOS_EF_TEST_DB','BM_PAYOS_EF_TEST_PASSWORD','BM_PAYOS_EF_TEST_PORT',
     'BM_PAYOS_P15_INTERNAL',

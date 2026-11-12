@@ -21,7 +21,10 @@ $allowedBranches = @(
     'feat/d04b-operational-gates-20261108',
     # PR #10 carries the previous D04 fixture and isolated local-firstboot.
     # D04 writer tests use port 15432, never the 15433 local identity DB.
-    'feat/local-safe-startup-20261109'
+    'feat/local-safe-startup-20261109',
+    # Post-merge (P3.4, 2026-11-12): the trunk is main; local harnesses
+    # re-run the regression at the merged main SHA.
+    'main'
 )
 $containerId = ''
 $logRoot = ''

@@ -40,14 +40,20 @@ public sealed class PayOsStagingD04LegacyJournalSchema_Tests
     [Fact]
     public async Task Real_legacy_schema_enforces_immutable_review_approval_unique_receipt_and_outbox()
     {
+        // Guard-adapt (CI parity): the dedicated disposable port is resolved
+        // from BM_PAYOS_EF_TEST_PORT exactly like PayOsPaymentMigrationDbContextFactory.
+        // Both 5432 (CI GitHub service container) and 15432 (local disposable
+        // container) are single-tenant disposable test ports; the real
+        // persistent database is never reachable through this guard.
+        var disposablePort = Environment.GetEnvironmentVariable("BM_PAYOS_EF_TEST_PORT") ?? "5432";
         if (Environment.GetEnvironmentVariable("BM_PAYOS_EF_TEST_DB") != "1" ||
             Environment.GetEnvironmentVariable("BM_PAYOS_EF_TEST_PASSWORD") != "disposable-only" ||
-            Environment.GetEnvironmentVariable("BM_PAYOS_EF_TEST_PORT") != "15432")
+            (disposablePort != "15432" && disposablePort != "5432"))
             throw new InvalidOperationException(
                 "D04 ledger rehearsal MUST use the dedicated disposable PostgreSQL 16 test container.");
 
-        const string connectionString =
-            "Host=127.0.0.1;Port=15432;Database=payos_ef_migration_test;" +
+        var connectionString =
+            $"Host=127.0.0.1;Port={disposablePort};Database=payos_ef_migration_test;" +
             "Username=postgres;Password=disposable-only;Pooling=false;Timeout=5;Command Timeout=45";
         await using var db = new NpgsqlConnection(connectionString);
         await db.OpenAsync();

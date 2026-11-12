@@ -1,0 +1,125 @@
+# Phase 2H / D04 — payOS independent posting and cross-database recovery
+
+Date: **2026-11-07**  
+Scope: **source-only, isolated payOS staging PR #7; not production/business accepted**.
+
+## Current exact boundary
+
+The existing staging checkout, signed webhook inbox and provider reconciliation do **not** complete legacy `Payment` or insert a D04 financial journal. In particular, `ConfirmedPendingPosting` means *pending independent financial review*, **not a posted receipt**. Keep payOS staging default OFF.
+
+The code under `BuildingManagement.Application/Payments/PayOsD04PostingHandoffPolicy.cs` adds **a pure, non-exposed decision gate**, not an approved cash-writing API:
+
+- The immutable payOS intent must target exactly the expected existing pending `ContractDeposit` Payment, tenant, building, amount and payOS order.
+- The previously signed webhook inbox must already be durably reconciled and identify the same reference as the intent.
+- Independent bank evidence **separate from provider PAID / webhook** must match the full VND amount and bank reference. A verified document digest and UTC review instant are required.
+- A currently authorized bank reviewer and a **different** currently authorized Owner posting approver must both be present; source contract/building/deposit coverage and legacy Payment must still match.
+- The legacy Payment must be locked and its globally unique bank reference must be unused, as asserted by a trusted legacy-D04 reader. **No caller-supplied flags may satisfy these assertions**.
+- The result `ReadyForLockedD04Writer` means *eligible for an independently secured, transactional writer*, not that the policy itself authorizes or executes any posting.
+
+`PlanAfterLegacyCommit` is also pure: if Payment is already Completed with the identical reference **and the authoritative existing legacy D04 cash/settlement journal is verified**, it yields `MarkPayOsPostedAfterLegacyProof`; a second retry yields `AlreadyAcknowledged`. Every other inconsistent combination is `StopAndInvestigate`.
+
+### Explicit missing implementation — must be finished before payment acceptance
+
+**The above flags are not wired to real readers yet, the approval is not durable, and no cross-database financial writer/outbox exists.** Do not treat source-only policies, simulated test inputs, a bank-reference hash, payOS merchant status or a webhook as independent bank-settlement evidence.
+
+The remaining transactional protocol should be:
+
+1. In the *payOS staging DB*, retain unique PaymentIntent, signed inbox and provider reconciliation evidence. Stage an immutable independent bank review and Owner approval with actor IDs, proof references, timestamp, scope, amount, hash and expiry. Hold the transaction when manual bank evidence is unavailable.
+2. Use an authenticated *internal-only* legacy D04 command, not the public webhook and not generic `PaymentAppService.CompleteAsync`. Acquire Identity/Building grant at commit time; enforce least privilege for an independent Owner approver.
+3. In the **BuildingManagement DB** SERIALIZABLE transaction, lock Contract then Payment/affected deposit sources in the established order; verify amount due after prior cash/allocations and source reference uniqueness, including soft-deleted historical receipts and journal entries. Insert exactly one audited source receipt/settlement and the deterministic `PAYOS:D04:<intentId>` key (uniquely indexed) plus outbox in this **same** legacy DB transaction. Any conflict rolls back all legacy changes. Do not mark the external payOS intent Posted in this transaction.
+4. After the legacy transaction commits, the coordinator may mark `PayOsPaymentIntent` Posted under a separate locked payOS transaction **only after reading back the exact committed Payment + receipt journal**. This is an acknowledgment of an existing financial posting, not a second receipt.
+5. If the coordinator crashes *before* legacy commit, nothing has been posted: repeat the exact idempotency key after re-authorization/review. If it crashes *after* legacy commit but before the payOS status update, the next pass must detect the exact legacy journal and only acknowledge it. If provider/webhook/legacy evidence conflicts, STOP for manual investigation; never "fix" the gap by crediting the tenant again.
+6. Reject/hold expired, canceled, posted, cross-building or revoked-role flows. Handle bank refund/payout separately; it remains HOLD.
+
+A real two-database integration test must induce process termination at BOTH commit boundaries, test duplicate coordinators, bank reference collisions across buildings, stale permission grants, stale debt/deposit coverage, ambiguous provider timeout, and repeated ACK. PostgreSQL unique constraints must remain the ultimate guard, not read-before-write alone.
+
+## Changes staged in this session
+
+| Item | Source or test | Status |
+|---|---|---|
+| Checkout/reconciliation provider timeout => HTTP 503 on server-side timeout, client disconnect still propagates | `PayOsStagingPaymentsController.cs` | Committed; not executed at new HEAD |
+| Retry keeps one reserved order after POST or recovery GET timeout | `PayOsStagingCheckoutService_Tests.cs` | 2 new source tests |
+| Independent bank review / Owner approval / exact source and scope gate | `PayOsD04PostingHandoffPolicy.cs` | Pure policy only |
+| Correct post-crash recovery classification and stable `PAYOS:D04:<intentId>` key | `PayOsD04PostingHandoffPolicy.cs` | Pure plan/key, no writer |
+| Missing bank evidence, same reviewer/approver, changed amount/scope, legacy conflict, crash/replay and stable idempotency key | `PayOsD04PostingHandoffPolicy_Tests.cs` | 11 new source tests |
+
+## 2026-11-07 Windows baseline and two-database D04 rehearsal
+
+**Owner-executed Windows baseline at 06218343df6b1f995e603ce4db9b70b11444f093: PASS.** The user reported the exact-source success marker, real disposable PG16 checkout/webhook 23/23 PASS, and EF migration rollback/reapply and history verification. The earlier G1/G2 isolated foundation gates passed locally, not through GitHub Actions.
+
+**New source after that baseline has NOT YET been executed on the owner PC.** The expanded Windows script now rehearses two distinct PostgreSQL databases inside its dedicated temporary postgres:16 container:
+
+- Staging database payos_ef_migration_test: synthetic ConfirmedPendingPosting intent and reconciled inbox in real EF tables, a TEST-ONLY append-only independent bank review, separate Owner approval, FK-bound immutable evidence digest, different reviewer and approver.
+- Synthetic legacy database payos_d04_legacy_test: Payment and unique PAYOS:D04:<intentId> source receipt, deposit settlement and outbox. A pre-commit ROLLBACK must leave no money rows. A later SERIALIZABLE commit must create exactly one set.
+- Two concurrent synthetic writers compete on one source key; only one full receipt/settlement/outbox bundle may commit. A duplicate bank reference across simulated buildings is rejected.
+- After the synthetic legacy commit but before payOS acknowledgment, staging must remain ConfirmedPendingPosting. The runner separately verifies the exact committed legacy Payment/receipt/settlement/outbox, then performs ACK and a repeated read-only ACK.
+- The new source-only PayOsD04LegacyCommitProtocol and six Application unit tests validate typed receipt/settlement/outbox read-back rather than only a caller-supplied boolean.
+
+**Release boundary:** The d04_acceptance SQL tables are temporary protocol fixtures, NOT production EF migrations or a real authorized financial writer. Independent bank verification, durable authenticated Owner approval, the actual canonical BuildingManagement D04 writer and cross-database outbox coordinator are STILL MISSING. No live payOS call, automatic posting or production deployment is authorized. Do not mark BUSINESS ACCEPTED.
+## 2026-11-07 D04 BuildingManagement-side real ledger source slice
+
+**Implemented as source; NOT compiled/executed at latest HEAD.** The previously owner-confirmed passing Windows suite remains commit `66d5ac561f68bac0d72d63f8b12e934c3b2a94c2`. These new commits require a separate local build and fresh disposable PostgreSQL evidence before promotion.
+
+- `StagePayOsD04LegacySourceJournal` is a **draft BuildingManagement EF migration** (not applied to any database here). It adds four real legacy-side tables: `BuildingManagementPayOsD04BankReviews`, `BuildingManagementPayOsD04OwnerApprovals`, `BuildingManagementPayOsD04ReceiptJournal` and `BuildingManagementPayOsD04Outbox`. Global unique intent/payment/settlement/bank reference/source key indices, immutable review and Owner approval, matched evidence SHA FK, separate actors, SERIALIZABLE receipt trigger validating the actual completed Payment + completed ContractDeposit allocation, and guarded outbox acknowledgment are enforced. The existing Payment and DepositSettlement domain types are reused; no parallel fictional cash balance is introduced.
+- `PayOsD04LegacyPostingWriter` in EntityFrameworkCore is a **non-exposed, unregistered** writer for an actual BuildingManagement DbContext. It locks Contract then Payment in one SERIALIZABLE transaction, rechecks building scope, primary tenant, unpaid deposit coverage, bank reference globally including soft-deleted history, and reads an existing immutable bank review and different Owner approval. It uses `Payment.Complete`, inserts a completed `DepositSettlement(AllocateToContractDeposit)`, then the unique receipt journal and outbox **in the same BuildingManagement DB transaction**. Any failure rolls the money mutation back. A matching existing committed receipt is an idempotent read, never a second allocation.
+- For a new commit, the writer returns `NewlyCommittedPendingReadBack`, **not** permission to mark payOS `Posted`; an independently verified read-back/ACK coordinator is still needed. Recovery requires full live Payment+settlement+outbox matching, and no stale role is permitted to authorize a NEW posting.
+- `PayOsD04TrustedStagingEvidenceReader` reads the real isolated staging EF context and requires a persisted reconciled intent AND a single matching previously signed/reconciled inbox; no provider/webhook DTO is treated as bank proof.
+- Four new PostgreSQL staging reader cases and a rollback-only isolated PostgreSQL schema test are included in the existing `PayOsStaging` test filter. They cover missing/mismatched signed inbox, posted-read replay, migration constraints, immutable evidence, receipt guard and outbox ACK. They have **not been executed at current HEAD**; the old Windows PASS is not evidence for these changes.
+
+### Deliberate authorization hold
+
+**No public API has been enabled or changed.** The actual `IPayOsD04CurrentDualAuthority.AcquireCommitLeaseAsync` implementation MUST hold fresh ABP Identity active/lockout/role and Building membership/permission checks against revocation races until the Building DB transaction commits. The authoritative durable bank-statement reviewer/Owner approval creation workflows and credentials/least-privilege DB role are also missing. Neither interface is registered or implemented as AllowAll. Therefore the new writer is **not activatable through HTTP or the payOS webhook** and no live funds can be recorded with this source alone. A real outbox worker and staging ACK recovery are still pending; do not claim D04 BUSINESS ACCEPTED.
+
+**Production guard:** This draft migration is committed as source only. DO NOT run general BuildingManagement `database update` against production or any shared account. This PR remains DRAFT; no production migration/registration is authorized.
+## 2026-11-07 source-only D04 cross-database ACK/outbox recovery continuation
+
+**Latest changes in this continuation are committed but NOT YET COMPILED OR RUN on .NET/Windows/PostgreSQL.** The most recent owner-confirmed fully passing local bundle remains `66d5ac561f68bac0d72d63f8b12e934c3b2a94c2`. Never attribute that PASS to the current HEAD.
+
+- **Correct layering:** the pure `PayOsD04PostingHandoffPolicy` and `PayOsD04LegacyCommitProtocol` were relocated unchanged from `Application/Payments` to `Domain/Payments`. `BuildingManagement.EntityFrameworkCore` references Domain, not Application, and must not acquire a circular project dependency.
+- **Immutable OrderCode provenance:** BuildingManagement bank review and receipt journal now retain the exact payOS `OrderCode` as a positive bigint. Receipt INSERT requires it match the independently stored review; the legacy ACK reader obtains it from real journal/approval rows, never from a caller or staging-only projection.
+- **Commit anomaly hold:** an existing journal whose Payment, completed contract-deposit allocation, independent approval or outbox no longer matches is classified as a conflict, not an unposted payment. A contract may have ended after a legitimate legacy commit; that may still be ACKed after full proof but never authorizes another payment.
+- **Authoritative read-back:** `PayOsD04CommittedReceiptStore` reads a consistent legacy MVCC snapshot joining actual completed Payment, completed DepositSettlement, bank review, Owner approval, immutable journal and outbox, and rejects broken joins. Legacy outbox ACK is idempotent and occurs only after a separately committed payOS `Posted` marker.
+- **Staging ACK:** `PayOsD04StagingReceiptAcknowledger` locks the real payOS intent, checks one reconciled signed inbox, calls `PayOsD04LegacyCommitProtocol.ClassifyCommittedReceipt` with the independently read legacy proof, commits `Posted`, then separately acknowledges the legacy outbox. Retrying after a crash between commits is safe: never create another Payment/settlement/receipt.
+- **Durable bounded replay:** unregistered `PayOsD04PendingOutboxScanner` finds at most 50 unacknowledged immutable intent IDs; `PayOsD04OutboxRecoveryPass` runs one explicit bounded pass and reports conflicts without marking them successful. There is NO automatic hosted service, schedule, public endpoint or DI registration.
+- **New test source:** 5 PostgreSQL-backed stage ACK tests cover no legacy proof, exact commit, mismatched journal, crash after Posted before outbox ACK, and inconsistent early ACK. Two additional batch-recovery tests cover a valid source next to a broken source, and missing committed proof. The real legacy journal schema test is aligned with the newly mandatory OrderCode fields. **These have not been run**; the legacy authoritative reader is also not yet validated against a full canonical Building DB migration chain.
+
+### Remaining blocking gates
+
+- Independently authenticated/verified bank-statement source and durable reviewer capture, verified Owner approval workflow, stale-evidence invalidation, revocation-safe current Identity/Building permission lease implementation (required by `PayOsD04LegacyPostingWriter`), and explicit least-privilege runtime activation.
+- Real Building DB migration-chain acceptance and authenticated two-DB HTTP/PG recovery, actual dual-worker crashes; operator staging with payOS only after manual review. Do not enable any webhook ledger mutation, auto-start worker, production migration or merge.
+## 2026-11-07 D04 bank-claim and building-scope hardening (source only)
+
+- Corrected the **legacy receipt insertion guard** to require the pre-existing `BuildingManagementBankEvidenceClaims` row for the **same Payment ID** and case-folded, trimmed bank reference. This deliberately reuses Phase 2G.4's globally unique incoming Payment/outgoing RefundReview claim instead of inventing a second reference ledger. Bank-review and D04 receipt unique-reference indexes normalize `lower(btrim(reference))`.
+- Hardened trigger verification of `Contract -> Room -> Floor -> BuildingId` from actual legacy tables and the **current PrimaryTenant** contract link (`Role=1`), not merely the `BuildingId` supplied in an evidence row. Reviews must be verified before separate Owner approval and receipt creation.
+- Expanded rollback-only isolated PG schema fixture with minimal canonical table columns for Floor, Room, ContractTenant and the existing global bank claims; added rejected-case tests for missing global claim, case-variant duplicate bank references, cross-building contract moves, and missing primary-tenant link.
+- **Safer Windows test staging:** `verify-payos-d04-local.ps1 -BuildOnly` compiles Domain, Application, EF, Host and the newly-added PayOs staging test assembly and exits **before EF migration tool, Docker container, PostgreSQL, or any database actions**. Full script first compiles the test assembly and only then proceeds to expensive Docker/PG stages. The old `-PreflightOnly` option remains.
+- **No new code has been executed in this assistant environment.** Treat current HEAD as **UNVERIFIED** until `-BuildOnly` and the full isolated PostgreSQL suite both pass on the owner's Windows machine. The only confirmed full local PASS is source `66d5ac561f68bac0d72d63f8b12e934c3b2a94c2`. PR stays Draft, no runtime writer DI, no production migration or live payment. Independent bank verification and authenticated Owner/Reviewer intake remain the missing business acceptance gates.
+
+## Test and release gates
+
+| Gate | Evidence requirement | State |
+|---|---|---|
+| G1 | Exact-head .NET Domain/Application/Host build and source tests | Windows baseline 06218343 PASS; new HEAD needs rerun |
+| G2 | EF migration model drift, actual apply/rollback/reapply, scoped FK and unique indices on disposable PG16 | Windows baseline 06218343 PASS; new HEAD needs rerun |
+| G3 | Authenticated HTTP + PostgreSQL checkout, anonymous signed webhook, scope/revoke, duplicate concurrency, provider timeout/5xx, recheck after revoke | PARTIAL source tests; exact-head acceptance needed |
+| G4 | Real independently authorized bank evidence / Owner permission / durable approval and append-only audit | Disposable SQL model rehearsal; runtime NOT IMPLEMENTED |
+| G5 | Unique legacy D04 receipt/outbox, cross-DB coordinator and two crash-point recovery | Two-DB SQL rehearsal and typed proof added; actual writer/coordinator NOT IMPLEMENTED |
+| G6 | Full D01–D04 regression, bank/provider controlled acceptance, no double journal under concurrent writers | NOT ACCEPTED |
+| G7 | Production keys, live callbacks, real money, refund and release | **HOLD**, explicitly not authorized |
+
+### CI blockage, do not bypass
+
+The latest observed PR workflow failures (including 2026-11-07) ended in seconds with **zero job steps** and no runner assignment. This cannot be honestly classified as a failed .NET assertion. GitHub repository Owner should inspect **Actions usage/billing/limits, workflow permissions and runner availability** in the GitHub UI. Do not silence failed jobs, skip security checks, or call this green.
+
+When runners become available, run these before considering merge:
+
+```powershell
+dotnet test modules/buildingmanagement/test/BuildingManagement.Domain.Tests/BuildingManagement.Domain.Tests.csproj -c Release --filter 'FullyQualifiedName~PayOs'
+dotnet test modules/buildingmanagement/test/BuildingManagement.Application.Tests/BuildingManagement.Application.Tests.csproj -c Release --filter 'FullyQualifiedName~PayOs'
+dotnet build src/NgocTrangHouseManagementSystem.HttpApi.Host/NgocTrangHouseManagementSystem.HttpApi.Host.csproj -c Release
+# Then use the existing payOS isolated workflow's dedicated PostgreSQL 16
+# disposable-db migration and signed-inbox/checkout tests.
+# Never point those tests at a customer/production DB.
+```
+
+Do not merge PR #7, invoke provider APIs with merchant credentials, migrate production, or mark D04 BUSINESS ACCEPTED until all evidence is independently checked.

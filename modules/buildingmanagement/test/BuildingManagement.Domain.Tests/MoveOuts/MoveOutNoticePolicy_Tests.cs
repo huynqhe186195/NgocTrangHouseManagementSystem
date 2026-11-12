@@ -11,6 +11,11 @@ public sealed class MoveOutNoticePolicy_Tests
     [InlineData(2026, 1, 31, 2026, 2, 28)]
     [InlineData(2028, 1, 31, 2028, 2, 29)]
     [InlineData(2026, 2, 28, 2026, 3, 31)]
+    [InlineData(2026, 4, 30, 2026, 5, 31)]
+    [InlineData(2026, 5, 31, 2026, 6, 30)]
+    [InlineData(2028, 2, 29, 2028, 3, 31)]
+    [InlineData(2028, 3, 31, 2028, 4, 30)]
+    [InlineData(2027, 12, 31, 2028, 1, 31)]
     public void Earliest_Is_One_Calendar_Month_Then_MonthEnd(
         int y, int m, int d, int ey, int em, int ed)
     {
@@ -26,6 +31,22 @@ public sealed class MoveOutNoticePolicy_Tests
         Assert.False(MoveOutNoticePolicy.IsValid(submitted, new DateOnly(2026, 11, 15)));
         Assert.True(MoveOutNoticePolicy.IsValid(submitted, new DateOnly(2026, 11, 30)));
         Assert.True(MoveOutNoticePolicy.IsValid(submitted, new DateOnly(2026, 12, 31)));
+    }
+
+    [Theory]
+    [InlineData(2026, 1, 31, 2026, 2, 27, 2026, 2, 28)]
+    [InlineData(2028, 1, 31, 2028, 2, 28, 2028, 2, 29)]
+    [InlineData(2026, 4, 30, 2026, 5, 30, 2026, 5, 31)]
+    public void OI01_NoticeBoundary_Rejects_PreviousDay_But_Accepts_ExactMonthEnd(
+        int year, int month, int day,
+        int earlyYear, int earlyMonth, int tooEarlyDay,
+        int acceptedYear, int acceptedMonth, int acceptedDay)
+    {
+        var submitted = new DateOnly(year, month, day);
+        Assert.False(MoveOutNoticePolicy.IsValid(
+            submitted, new DateOnly(earlyYear, earlyMonth, tooEarlyDay)));
+        Assert.True(MoveOutNoticePolicy.IsValid(
+            submitted, new DateOnly(acceptedYear, acceptedMonth, acceptedDay)));
     }
 
     [Fact]

@@ -35,6 +35,8 @@ namespace BuildingManagement.Contracts
 
         private readonly IClock _clock;
 
+        private readonly IDirectContractTerminationGate _directEndGate;
+
         private readonly IRepository<RoomReservation, Guid> _roomReservationRepository;
 
         public ContractAppService(
@@ -46,7 +48,8 @@ namespace BuildingManagement.Contracts
             IRepository<ContractRenewalHold, Guid> contractRenewalHoldRepository,
             IClock clock,
             IRepository<RoomReservation, Guid> roomReservationRepository,
-            IContractRepository contractLockRepository)
+            IContractRepository contractLockRepository,
+            IDirectContractTerminationGate directEndGate)
         {
             _contractRepository = contractRepository;
             _contractTenantRepository = contractTenantRepository;
@@ -57,6 +60,7 @@ namespace BuildingManagement.Contracts
             _clock = clock;
             _roomReservationRepository = roomReservationRepository;
             _contractLockRepository = contractLockRepository;
+            _directEndGate = directEndGate;
         }
 
         public async Task<ContractDto> GetAsync(
@@ -646,8 +650,14 @@ namespace BuildingManagement.Contracts
             >(contract);
         }
 
+        // Public direct termination is disabled until CompleteMoveOut is
+        // implemented as a fully audited, atomic financial close-out.
+        // The test-only legacy fixture can exercise the historical room
+        // transition rules, but no live role or permission bypass exists.
+        [RemoteService(IsEnabled = false)]
         public async Task<ContractDto> EndAsync(Guid id)
         {
+            await _directEndGate.EnsureDirectTerminationAllowedAsync();
             var contract =
                 await GetExistingContractAsync(id);
 

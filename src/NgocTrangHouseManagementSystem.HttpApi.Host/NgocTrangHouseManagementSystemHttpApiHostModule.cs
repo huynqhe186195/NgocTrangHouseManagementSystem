@@ -8,7 +8,16 @@ using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using NgocTrangHouseManagementSystem.Security;
+using BuildingManagement.Security;
+using Npgsql;
 using Microsoft.Extensions.Hosting;
+using Microsoft.EntityFrameworkCore;
+using System.Net.Http;
+using BuildingManagement.EntityFrameworkCore.PayOsMigrations;
+using BuildingManagement.Payments;
+using NgocTrangHouseManagementSystem.Payments;
 using Microsoft.OpenApi;
 using NgocTrangHouseManagementSystem.EntityFrameworkCore;
 using NgocTrangHouseManagementSystem.HealthChecks;
@@ -117,16 +126,219 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule // syst
         var configuration = context.Services.GetConfiguration();
         var hostingEnvironment = context.Services.GetHostingEnvironment();
 
+        // Server-controlled root IDs; default EMPTY, no permission/role seed.
+        context.Services.Configure<BuildingManagement.Security.BuildingOwnerBootstrapSecurityOptions>(
+            configuration.GetSection("BuildingManagement:Bootstrap"));
+
+        // STAGING OPT-IN ONLY. Both the environment and the isolated PG
+        // DATABASE NAMES are checked independently of the activation token.
+        // No production instance can enable this with a flag or role.
+        if (configuration.GetValue<bool>("BuildingManagement:SliceAStaging:Enabled"))
+        {
+            if (!hostingEnvironment.IsStaging() ||
+                configuration["BuildingManagement:SliceAStaging:Activation"] !=
+                    "I_ACCEPT_ISOLATED_SLICE_A_STAGING_WRITES")
+                throw new InvalidOperationException(
+                    "Slice A cannot be enabled outside reviewed isolated staging.");
+
+            var buildingCs = configuration.GetConnectionString("BuildingManagement");
+            var identityCs = configuration.GetConnectionString("Default");
+            if (!HaveTwoIsolatedSliceADatabases(buildingCs, identityCs))
+                throw new InvalidOperationException(
+                    "Slice A requires TWO distinct isolated PostgreSQL Identity and Building databases.");
+
+            var roots = configuration.GetSection(
+                "BuildingManagement:Bootstrap:RootUserIds").Get<Guid[]>() ?? Array.Empty<Guid>();
+            if (roots.Length != 1 || roots[0] == Guid.Empty)
+                throw new InvalidOperationException(
+                    "One explicitly designated root account is required for staging bootstrap.");
+
+            context.Services.Replace(ServiceDescriptor.Transient<
+                IBuildingOperatorActiveAccountReader>(sp =>
+                    new AbpIdentityBuildingOperatorAccountProbe(
+                        sp.GetRequiredService<Volo.Abp.Identity.IIdentityUserRepository>(),
+                        sp.GetRequiredService<Volo.Abp.Identity.IdentityUserManager>())));
+            context.Services.Replace(ServiceDescriptor.Transient<
+                IBuildingOperatorGrantReader, SliceAStagingGrantReader>());
+            context.Services.Replace(ServiceDescriptor.Transient<
+                IBuildingOwnerBootstrapWriter, SliceAStagingFirstOwnerWriter>());
+            context.Services.Replace(ServiceDescriptor.Transient<
+                IBuildingOperatorGrantMutationWriter, SliceAStagingGrantMutationWriter>());
+            context.Services.AddTransient<SliceAStagingIdentityCommitLease>();
+            context.Services.AddTransient<SliceAStagingOperatorGrantQuery>();
+            context.Services.AddTransient<SliceBStagingContractQuery>();
+            context.Services.AddTransient<SliceBStagingReservationQuery>();
+            context.Services.AddTransient<SliceBStagingContractMutation>();
+            context.Services.AddTransient<SliceBStagingFinalInvoiceMutation>();
+            context.Services.AddTransient<SliceBStagingRoomChangeRequests>();
+            context.Services.AddTransient<SliceBStagingRoomScopedServiceTariffs>();
+            context.Services.AddTransient<SliceCStagingUtilityRates>();
+            context.Services.AddTransient<SliceCStagingMeterReadings>();
+            context.Services.AddTransient<SliceCStagingUtilityMeters>();
+            context.Services.Replace(ServiceDescriptor.Transient<
+                IBuildingScopedWriteBoundary, SliceAStagingWriteBoundary>());
+
+            // Recovery is a SECOND, independent opt-in. A co-signer NEVER
+            // joins the BootstrapOwner allowlist and cannot create buildings.
+            // No remote recovery endpoints are registered.
+            if (configuration.GetValue<bool>(
+                    "BuildingManagement:OwnerRecovery:Enabled"))
+            {
+                var signers = configuration.GetSection(
+                    "BuildingManagement:OwnerRecovery:CoSignerUserIds")
+                    .Get<Guid[]>() ?? Array.Empty<Guid>();
+                if (signers.Length != 1 || signers[0] == Guid.Empty ||
+                    signers[0] == roots[0])
+                    throw new InvalidOperationException(
+                        "Owner recovery requires one separate designated co-signer.");
+                Configure<BuildingOwnerRecoverySecurityOptions>(options =>
+                    options.CoSignerUserIds = new HashSet<Guid>(signers));
+                context.Services.AddTransient<SliceAStagingOwnerRecoveryEvidenceStore>();
+                context.Services.Replace(ServiceDescriptor.Transient<
+                    IBuildingOwnerRecoveryApprovalReader>(sp =>
+                        sp.GetRequiredService<SliceAStagingOwnerRecoveryEvidenceStore>()));
+                context.Services.Replace(ServiceDescriptor.Transient<
+                    IBuildingOwnerRecoveryFounderReader>(sp =>
+                        sp.GetRequiredService<SliceAStagingOwnerRecoveryEvidenceStore>()));
+                context.Services.Replace(ServiceDescriptor.Transient<
+                    IBuildingOwnerRecoveryWriter, SliceAStagingOwnerRecoveryWriter>());
+            }
+        }
+
+        // Separate payOS staging activation. NEVER enabled by a regular
+        // development/production flag or by an unrelated admin permission.
+        // A direct provider API call may move real money even in staging;
+        // registration therefore requires explicit operator consent and a
+        // dedicated loopback-only disposable PostgreSQL database.
+        if (configuration.GetValue<bool>("BuildingManagement:PayOsStaging:Enabled"))
+        {
+            if (!hostingEnvironment.IsStaging() ||
+                configuration["BuildingManagement:PayOsStaging:Activation"] !=
+                    "I_ACCEPT_ISOLATED_PAYOS_STAGING_ONLY")
+                throw new InvalidOperationException(
+                    "payOS integration may only activate in explicitly approved isolated staging.");
+
+            var payOsConnection = configuration.GetConnectionString("PayOsStaging");
+            if (string.IsNullOrWhiteSpace(payOsConnection))
+                throw new InvalidOperationException("Dedicated payOS staging database missing.");
+
+            var payOsDb = new NpgsqlConnectionStringBuilder(payOsConnection);
+            var host = payOsDb.Host?.ToLowerInvariant();
+            if (host is not ("127.0.0.1" or "localhost") ||
+                payOsDb.Database is null ||
+                !payOsDb.Database.StartsWith("bm_payos_staging_", StringComparison.OrdinalIgnoreCase) ||
+                payOsDb.Database.Length <= "bm_payos_staging_".Length)
+                throw new InvalidOperationException(
+                    "payOS staging must use an explicitly named loopback-only disposable database.");
+
+            // BuildingManagement must be a separate DB; do not allow an
+            // accidental payment migration in its legacy snapshot/drifted DB.
+            var buildingConnection = configuration.GetConnectionString("BuildingManagement");
+            var identityConnection = configuration.GetConnectionString("Default");
+            foreach (var other in new[] { buildingConnection, identityConnection })
+            {
+                if (string.IsNullOrWhiteSpace(other)) continue;
+                var otherDb = new NpgsqlConnectionStringBuilder(other);
+                if (string.Equals(otherDb.Database, payOsDb.Database,
+                    StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException(
+                        "payOS staging database must not be shared with Building or Identity.");
+            }
+
+            var clientId = configuration["BuildingManagement:PayOsStaging:ClientId"];
+            var apiKey = configuration["BuildingManagement:PayOsStaging:ApiKey"];
+            var checksumKey = configuration["BuildingManagement:PayOsStaging:ChecksumKey"];
+            if (string.IsNullOrWhiteSpace(clientId) ||
+                string.IsNullOrWhiteSpace(apiKey) ||
+                string.IsNullOrWhiteSpace(checksumKey))
+                throw new InvalidOperationException(
+                    "payOS credentials must be provisioned from server-side secrets.");
+
+            var returnUrl = configuration["BuildingManagement:PayOsStaging:ReturnUrl"];
+            var cancelUrl = configuration["BuildingManagement:PayOsStaging:CancelUrl"];
+            if (!Uri.TryCreate(returnUrl, UriKind.Absolute, out var returnUri) ||
+                !Uri.TryCreate(cancelUrl, UriKind.Absolute, out var cancelUri) ||
+                returnUri.Scheme != Uri.UriSchemeHttps ||
+                cancelUri.Scheme != Uri.UriSchemeHttps ||
+                !string.IsNullOrEmpty(returnUri.UserInfo) ||
+                !string.IsNullOrEmpty(cancelUri.UserInfo))
+                throw new InvalidOperationException(
+                    "payOS return/cancel callback URLs must be server-configured HTTPS URLs.");
+
+            // P1.5 (Owner decision 2026-11-11): internal staging ONLY, no
+            // real payOS calls. ProviderMode=InternalSimulated swaps the
+            // live payOS HTTP client for an in-process provider that is
+            // driven entirely by the persisted staging DB state; the
+            // default (unset or "Live") keeps the real client. In this
+            // internal lane the merchant credentials above are still
+            // REQUIRED to be present from server-side secrets but are
+            // never transmitted anywhere.
+            var providerMode = configuration["BuildingManagement:PayOsStaging:ProviderMode"];
+            var internalSimulated =
+                string.Equals(providerMode, "InternalSimulated", StringComparison.Ordinal);
+            if (!internalSimulated && !string.IsNullOrWhiteSpace(providerMode) &&
+                !string.Equals(providerMode, "Live", StringComparison.Ordinal))
+                throw new InvalidOperationException(
+                    "BuildingManagement:PayOsStaging:ProviderMode must be 'Live' or 'InternalSimulated'.");
+
+            context.Services.AddDbContext<PayOsPaymentMigrationDbContext>(
+                options => options.UseNpgsql(payOsConnection,
+                    db => db.MigrationsHistoryTable("__EFMigrationsHistory_PayOs")));
+            context.Services.AddHttpClient("PayOsStaging");
+            context.Services.AddSingleton(new PayOsStagingCheckoutOptions(returnUri, cancelUri));
+            if (internalSimulated)
+            {
+                context.Services.AddScoped<IPayOsPaymentLinkProvider>(services =>
+                    new PayOsStagingInternalSimulatedProvider(
+                        services.CreateScope()));
+                // Outbox dispatcher only exists in the simulated lane: it
+                // must never generate autonomous live-provider traffic.
+                context.Services.AddHostedService<PayOsStagingOutboxDispatcher>();
+            }
+            else
+            {
+                context.Services.AddScoped<IPayOsPaymentLinkProvider>(services =>
+                    new PayOsPaymentLinkClient(
+                        services.GetRequiredService<IHttpClientFactory>().CreateClient("PayOsStaging"),
+                        clientId, apiKey, checksumKey));
+            }
+            context.Services.AddScoped<PayOsStagingCheckoutService>();
+            context.Services.AddScoped<PayOsStagingReconciliationService>();
+            context.Services.AddScoped<PayOsStagingWebhookInboxWriter>(services =>
+                new PayOsStagingWebhookInboxWriter(
+                    services.GetRequiredService<PayOsPaymentMigrationDbContext>(),
+                    checksumKey));
+            // No migration, provider call or webhook registration is executed
+            // at startup. All requests still require endpoint-level gates.
+        }
+
+        // D04-B is a separate, default-OFF TEST-ONLY three-database gate.
+        // It cannot enable the live merchant checkout, production Identity or
+        // Building DBs, and grants no permission/role automatically.
+        // This is the only way review/Owner/post HTTP services are registered.
+        // The checks live in an internal helper so the fail-closed gate stays
+        // directly regression-testable (D04B_GATE) without booting the Host.
+        ConfigurePayOsD04BIfEnabled(configuration, hostingEnvironment, context.Services);
+
         Configure<AbpMvcLibsOptions>(options =>
         {
             options.CheckLibs = false;
         });
 
-        if (!configuration.GetValue<bool>("App:DisablePII"))
+        // Covers only controllers generated from the BuildingManagement
+        // application assembly. It does NOT replace operation permissions or
+        // server-side building/room scope authorization.
+        Configure<MvcOptions>(options =>
         {
-            Microsoft.IdentityModel.Logging.IdentityModelEventSource.ShowPII = true;
-            Microsoft.IdentityModel.Logging.IdentityModelEventSource.LogCompleteSecurityArtifact = true;
-        }
+            options.Conventions.Add(
+                new BuildingManagementAuthenticatedControllerConvention());
+        });
+
+
+        // Never print complete JWTs or personally identifiable security artifacts.
+        // This is also required for localhost OAuth acceptance and staging.
+        Microsoft.IdentityModel.Logging.IdentityModelEventSource.ShowPII = false;
+        Microsoft.IdentityModel.Logging.IdentityModelEventSource.LogCompleteSecurityArtifact = false;
 
         if (!configuration.GetValue<bool>("AuthServer:RequireHttpsMetadata"))
         {
@@ -159,6 +371,158 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule // syst
         ConfigureVirtualFileSystem(context);
         ConfigureCors(context, configuration);
         ConfigureErrorHttpStatusCodeMappings();
+    }
+
+    /// <summary>
+    /// D04-B startup gate, deliberately separate from Host boot so the
+    /// fail-closed checks are regression-testable without a real environment,
+    /// database or registered ABP module (D04B_GATE). Default OFF.
+    /// </summary>
+    internal static void ConfigurePayOsD04BIfEnabled(
+        IConfiguration configuration,
+        IHostEnvironment hostingEnvironment,
+        IServiceCollection services)
+    {
+        if (!configuration.GetValue<bool>("BuildingManagement:PayOsD04B:Enabled"))
+            return;
+
+        if (!hostingEnvironment.IsStaging() ||
+            configuration["BuildingManagement:PayOsD04B:Activation"] !=
+                "I_ACCEPT_DISPOSABLE_D04B_DUAL_AUTH_ONLY" ||
+            configuration.GetValue<bool>("BuildingManagement:PayOsStaging:Enabled"))
+            throw new InvalidOperationException(
+                "D04-B requires dedicated no-merchant, three-DB disposable staging.");
+
+        var identityD04 = configuration.GetConnectionString("Default");
+        var legacyD04 = configuration.GetConnectionString("BuildingManagement");
+        var stagingD04 = configuration.GetConnectionString("PayOsD04BStaging");
+        if (!ExactD04BDisposableDatabase(identityD04, "payos_d04_identity_test") ||
+            !ExactD04BDisposableDatabase(legacyD04, "payos_d04_legacy_test") ||
+            !ExactD04BDisposableDatabase(stagingD04, "payos_ef_migration_test"))
+            throw new InvalidOperationException(
+                "D04-B rejects anything but three exact disposable PostgreSQL databases.");
+
+        // Explicit disposable-only encrypted archive for native OpenIddict UAT.
+        // The key and absolute storage path are operator-supplied; no defaults,
+        // no production registration, no real bank documents permitted.
+        if (configuration.GetValue<bool>("BuildingManagement:PayOsD04B:DisposableArchive:Enabled"))
+        {
+            var archiveRoot = configuration["BuildingManagement:PayOsD04B:DisposableArchive:Root"];
+            var archiveKey = configuration["BuildingManagement:PayOsD04B:DisposableArchive:KeyBase64"];
+            if (string.IsNullOrWhiteSpace(archiveRoot) ||
+                !Path.IsPathFullyQualified(archiveRoot) ||
+                string.IsNullOrWhiteSpace(archiveKey))
+                throw new InvalidOperationException("D04-B disposable archive requires absolute root and operator key.");
+            byte[] key;
+            try { key = Convert.FromBase64String(archiveKey); }
+            catch (FormatException) { throw new InvalidOperationException("D04-B archive key format invalid."); }
+            if (key.Length != 32)
+                throw new InvalidOperationException("D04-B archive requires a 256-bit key.");
+            // P1.3: optional previous-key generation for rotation. When
+            // present, existing evidence written under the previous key
+            // still verifies; new files always encrypt under the current key.
+            byte[]? previousKey = null;
+            var archivePreviousKey =
+                configuration["BuildingManagement:PayOsD4B:DisposableArchive:PreviousKeyBase64"];
+            if (!string.IsNullOrWhiteSpace(archivePreviousKey))
+            {
+                try { previousKey = Convert.FromBase64String(archivePreviousKey); }
+                catch (FormatException) { throw new InvalidOperationException("D04-B archive previous key format invalid."); }
+                if (previousKey.Length != 32)
+                    throw new InvalidOperationException("D04-B archive previous key must be a 256-bit key.");
+                if (System.Security.Cryptography.CryptographicOperations
+                        .FixedTimeEquals(previousKey, key))
+                    throw new InvalidOperationException(
+                        "D04-B archive previous key must differ from the current key.");
+            }
+            services.AddSingleton<IPayOsD04ProtectedBankEvidenceArchive>(
+                new PayOsD04DisposableEncryptedArchive(archiveRoot, key, previousKey));
+            System.Security.Cryptography.CryptographicOperations.ZeroMemory(key);
+            if (previousKey is not null)
+                System.Security.Cryptography.CryptographicOperations.ZeroMemory(previousKey);
+        }
+
+        // A configured database and ABP sign-in are insufficient:
+        // financial review previously accepted a CLIENT-PROVIDED archive
+        // label without retaining the bank file. Fail at startup if a
+        // separately reviewed, server-controlled archival backend has
+        // not been explicitly registered by an authorized staging module.
+        // No such backend is registered by default, even in staging.
+        if (!services.Any(s =>
+                s.ServiceType == typeof(IPayOsD04ProtectedBankEvidenceArchive)))
+            throw new InvalidOperationException(
+                "D04-B activation DENIED: protected bank evidence archive is not registered.");
+
+        services.AddDbContext<PayOsPaymentMigrationDbContext>(
+            options => options.UseNpgsql(stagingD04,
+                db => db.MigrationsHistoryTable("__EFMigrationsHistory_PayOs")));
+        services.AddScoped<PayOsD04BStagingOrchestrator>();
+        services.AddScoped<IPayOsD04ManualEvidenceService>(sp =>
+            sp.GetRequiredService<PayOsD04BStagingOrchestrator>());
+        services.AddScoped<IPayOsD04ReviewedPostingCoordinator>(sp =>
+            sp.GetRequiredService<PayOsD04BStagingOrchestrator>());
+        // No hosted worker, raw writer, permissive authority, live
+        // payOS API client, migration or tenant-facing endpoint is added.
+    }
+
+    private static bool ExactD04BDisposableDatabase(string? input, string name)
+    {
+        if (string.IsNullOrWhiteSpace(input)) return false;
+        try
+        {
+            var db = new NpgsqlConnectionStringBuilder(input);
+            return db.Host is ("localhost" or "127.0.0.1") &&
+                   db.Port == 15432 &&
+                   string.Equals(db.Database, name, StringComparison.Ordinal) &&
+                   (db.Username == "postgres" ||
+                    // P1.3: the legacy money-writer and staging-ACK slots may
+                    // run under the restricted least-privilege HOST runtime
+                    // roles (no DDL, no superuser) whose grants match the
+                    // full canonical Host D04-B SQL (review + approval +
+                    // writer + ACK). Distinct from the narrower P1.2
+                    // d04_money_writer_* rehearsal roles by design.
+                    (name == "payos_d04_legacy_test" &&
+                     db.Username == "d04_d04b_host_legacy_test") ||
+                    (name == "payos_ef_migration_test" &&
+                     db.Username == "d04_d04b_host_staging_test")) &&
+                   db.Password == "disposable-only";
+        }
+        catch (ArgumentException) { return false; }
+    }
+
+    private static bool HaveTwoIsolatedSliceADatabases(
+        string? buildingConnection, string? identityConnection)
+    {
+        if (!IsIsolatedSliceADatabase(buildingConnection) ||
+            !IsIsolatedSliceADatabase(identityConnection))
+            return false;
+
+        // Sharing one staging database violates the isolation runbook:
+        // Identity and BuildingManagement must not share one schema/owner
+        // merely because both connection strings have a safe-looking prefix.
+        var building = new NpgsqlConnectionStringBuilder(buildingConnection);
+        var identity = new NpgsqlConnectionStringBuilder(identityConnection);
+        return !string.Equals(building.Database, identity.Database,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsIsolatedSliceADatabase(string? connectionString)
+    {
+        if (string.IsNullOrWhiteSpace(connectionString))
+            return false;
+        try
+        {
+            var parsed = new NpgsqlConnectionStringBuilder(connectionString);
+            return parsed.Database?.StartsWith(
+                       "bm_slicea_staging_", StringComparison.OrdinalIgnoreCase) == true &&
+                   parsed.Database.Length > "bm_slicea_staging_".Length &&
+                   !string.IsNullOrWhiteSpace(parsed.Host) &&
+                   !string.IsNullOrWhiteSpace(parsed.Username);
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
     }
 
     private void ConfigureStudio(IHostEnvironment hostingEnvironment)
@@ -207,10 +571,7 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule // syst
                 bundle =>
                 {
                     bundle.AddFiles("/global-scripts.js");
-                    if (hostingEnvironment.IsDevelopment())
-                    {
-                        bundle.AddFiles("/dev-login-helper.js");
-                    }
+                    // Never publish or autofill administrator passwords in client assets.
                 }
             );
         });
@@ -822,7 +1183,12 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule // syst
             app.UseMultiTenancy();
         }
 
-        app.UseUnitOfWork();
+        // No app.UseUnitOfWork(): its reserved ambient unit of work is begun
+        // with conventional (POST => transactional) options and silently
+        // overrides [UnitOfWork(isTransactional:false)] on controller actions.
+        // The D04-B financial writer MUST own its own SERIALIZABLE
+        // transactions, so MVC actions manage their units of work through
+        // AbpUowActionFilter only. See Payments/PayOsD04* acceptance tests.
         app.UseDynamicClaims();
         app.UseAuthorization();
 

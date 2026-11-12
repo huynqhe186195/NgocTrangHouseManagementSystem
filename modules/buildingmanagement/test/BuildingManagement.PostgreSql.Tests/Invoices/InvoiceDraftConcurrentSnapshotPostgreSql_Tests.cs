@@ -1,0 +1,507 @@
+using System;
+using System.Data;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using BuildingManagement.Buildings;
+using BuildingManagement.Contracts;
+using BuildingManagement.Floors;
+using BuildingManagement.Invoices;
+using BuildingManagement.Rooms;
+using BuildingManagement.Utilities;
+using Microsoft.Extensions.DependencyInjection;
+using Npgsql;
+using Volo.Abp.Domain.Repositories;
+using Volo.Abp.Uow;
+using Xunit;
+
+namespace BuildingManagement.PostgreSqlTests;
+
+/// <summary>
+/// Deterministic overlapping PostgreSQL transactions using only newly
+/// created, per-test business records on ngoctrang_integration_test.
+/// Snapshot reader anchors an actual ABP REPEATABLE READ UOW before the
+/// independent writer commits electricity and water source changes.
+/// No invoices are created or issued; test fixture is hard-deleted in finally.
+/// </summary>
+[Collection("Phase2G2A_UtilityIntegrity")]
+public sealed class InvoiceDraftConcurrentSnapshotPostgreSql_Tests
+    : BuildingManagementApplicationTestBase<BuildingManagementPostgreSqlTestModule>
+{
+    private readonly IServiceScopeFactory _scopes;
+    private readonly IRepository<Building, Guid> _buildings;
+    private readonly IRepository<Floor, Guid> _floors;
+    private readonly IRepository<Room, Guid> _rooms;
+    private readonly IRepository<Contract, Guid> _contracts;
+    private readonly IRepository<UtilityRate, Guid> _rates;
+    private readonly IRepository<UtilityMeter, Guid> _meters;
+    private readonly IRepository<MeterReading, Guid> _readings;
+
+    private sealed record Fixture(
+        Guid Building, Guid Floor, Guid Room, Guid Contract,
+        Guid ElectricityRate, Guid WaterRate,
+        Guid ElectricityMeter, Guid WaterMeter,
+        Guid ElectricityReading, Guid WaterReading);
+
+    public InvoiceDraftConcurrentSnapshotPostgreSql_Tests()
+    {
+        _scopes = GetRequiredService<IServiceScopeFactory>();
+        _buildings = GetRequiredService<IRepository<Building, Guid>>();
+        _floors = GetRequiredService<IRepository<Floor, Guid>>();
+        _rooms = GetRequiredService<IRepository<Room, Guid>>();
+        _contracts = GetRequiredService<IRepository<Contract, Guid>>();
+        _rates = GetRequiredService<IRepository<UtilityRate, Guid>>();
+        _meters = GetRequiredService<IRepository<UtilityMeter, Guid>>();
+        _readings = GetRequiredService<IRepository<MeterReading, Guid>>();
+    }
+
+    [Fact]
+    public async Task PGINV04_Meter_And_Tariff_Writes_Cannot_Mix_Versions_In_Invoice_Candidate()
+    {
+        var f = new Fixture(
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
+            Guid.NewGuid(), Guid.NewGuid());
+
+        try
+        {
+            await SeedAsync(f);
+
+            // First SQL statement fixes this independent PostgreSQL
+            // REPEATABLE READ snapshot before any utility data is updated.
+            using (var scope = _scopes.CreateScope())
+            {
+                var provider = scope.ServiceProvider;
+                var manager = provider.GetRequiredService<IUnitOfWorkManager>();
+                using var outer = manager.Begin(
+                    new AbpUnitOfWorkOptions
+                    {
+                        IsTransactional = true,
+                        IsolationLevel = IsolationLevel.RepeatableRead
+                    }, requiresNew: true);
+
+                var anchored = await provider
+                    .GetRequiredService<IRepository<Contract, Guid>>()
+                    .GetAsync(f.Contract);
+                Assert.Equal(f.Room, anchored.RoomId);
+
+                // Separate Npgsql connection and COMMITTED transaction.
+                // It runs while the reader's PostgreSQL transaction is open.
+                await CommitNewSourceValuesAsync(f);
+
+                var oldCandidate = await provider
+                    .GetRequiredService<IInvoiceDraftCandidateAppService>()
+                    .GetMonthlyCandidateAsync(f.Contract, 2026, 10);
+                AssertCandidate(oldCandidate, electricityUnits: 10m,
+                    electricityRate: 3500m, waterUnits: 5m, waterRate: 15000m);
+
+                // No CompleteAsync: read-only outer UOW disposes/rolls back.
+            }
+
+            // A fresh UOW must see the newer COMMITTED *pair* of meter
+            // readings and tariffs, not old values cached by first context.
+            using (var fresh = _scopes.CreateScope())
+            {
+                var currentCandidate = await fresh.ServiceProvider
+                    .GetRequiredService<IInvoiceDraftCandidateAppService>()
+                    .GetMonthlyCandidateAsync(f.Contract, 2026, 10);
+                AssertCandidate(currentCandidate, electricityUnits: 20m,
+                    electricityRate: 7000m, waterUnits: 8m, waterRate: 30000m);
+            }
+        }
+        catch (Exception originalError)
+        {
+            // Preserve the test's ORIGINAL root failure. Cleanup must
+            // never replace it with a misleading missing-table exception.
+            try
+            {
+                await CleanupAsync(f);
+            }
+            catch (Exception cleanupError)
+            {
+                throw new AggregateException(
+                    "PGINV04 test failed and test-only fixture cleanup also failed. " +
+                    "Both original and cleanup exceptions are preserved.",
+                    originalError, cleanupError);
+            }
+
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo
+                .Capture(originalError).Throw();
+            throw; // Unreachable, makes control flow explicit.
+        }
+
+        // Successful test must also remove its own fixture; cleanup
+        // failure makes the test fail rather than leak test records.
+        await CleanupAsync(f);
+    }
+
+    [Fact]
+    public async Task PGINV05_Application_Service_Meter_And_Tariff_Edits_Do_Not_Mix_Candidate_Snapshot()
+    {
+        var f = new Fixture(
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
+            Guid.NewGuid(), Guid.NewGuid());
+
+        try
+        {
+            await SeedAsync(f);
+
+            using (var scope = _scopes.CreateScope())
+            {
+                var provider = scope.ServiceProvider;
+                var manager = provider.GetRequiredService<IUnitOfWorkManager>();
+                using var outer = manager.Begin(
+                    new AbpUnitOfWorkOptions
+                    {
+                        IsTransactional = true,
+                        IsolationLevel = IsolationLevel.RepeatableRead
+                    }, requiresNew: true);
+
+                // Anchor the original reader's real PostgreSQL MVCC
+                // snapshot before the business writers start.
+                var contract = await provider
+                    .GetRequiredService<IRepository<Contract, Guid>>()
+                    .GetAsync(f.Contract);
+                Assert.Equal(f.Room, contract.RoomId);
+
+                // Never flow ABP's AsyncLocal ambient UOW into the writer.
+                // Use an independent scope and the actual application
+                // service proxies, including physical meter locks.
+                Task writer;
+                using (ExecutionContext.SuppressFlow())
+                {
+                    writer = Task.Run(() => CommitThroughApplicationServicesAsync(f));
+                }
+                await writer.WaitAsync(TimeSpan.FromSeconds(35));
+
+                var original = await provider
+                    .GetRequiredService<IInvoiceDraftCandidateAppService>()
+                    .GetMonthlyCandidateAsync(f.Contract, 2026, 10);
+                AssertCandidate(original, electricityUnits: 10m,
+                    electricityRate: 3500m, waterUnits: 5m, waterRate: 15000m);
+            }
+
+            using (var fresh = _scopes.CreateScope())
+            {
+                var updated = await fresh.ServiceProvider
+                    .GetRequiredService<IInvoiceDraftCandidateAppService>()
+                    .GetMonthlyCandidateAsync(f.Contract, 2026, 10);
+                AssertCandidate(updated, electricityUnits: 20m,
+                    electricityRate: 7000m, waterUnits: 8m, waterRate: 30000m);
+            }
+        }
+        catch (Exception originalError)
+        {
+            try
+            {
+                await CleanupAsync(f);
+            }
+            catch (Exception cleanupError)
+            {
+                throw new AggregateException(
+                    "PGINV05 source-service race test and fixture cleanup both failed.",
+                    originalError, cleanupError);
+            }
+
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo
+                .Capture(originalError).Throw();
+            throw;
+        }
+
+        await CleanupAsync(f);
+    }
+
+    private async Task CommitThroughApplicationServicesAsync(Fixture f)
+    {
+        using var scope = _scopes.CreateScope();
+        var readings = scope.ServiceProvider
+            .GetRequiredService<IMeterReadingAppService>();
+        var rates = scope.ServiceProvider
+            .GetRequiredService<IUtilityRateAppService>();
+
+        await readings.UpdateAsync(f.ElectricityReading, new UpdateMeterReadingDto
+        {
+            CurrentReading = 30m,
+            ReadingDate = new DateTime(2026, 10, 31)
+        });
+        await readings.UpdateAsync(f.WaterReading, new UpdateMeterReadingDto
+        {
+            CurrentReading = 108m,
+            ReadingDate = new DateTime(2026, 10, 31)
+        });
+
+        await rates.UpdateAsync(f.ElectricityRate, new UpdateUtilityRateDto
+        {
+            BuildingId = f.Building,
+            UtilityType = UtilityType.Electricity,
+            UnitPrice = 7000m,
+            EffectiveFrom = new DateTime(2026, 10, 1)
+        });
+        await rates.UpdateAsync(f.WaterRate, new UpdateUtilityRateDto
+        {
+            BuildingId = f.Building,
+            UtilityType = UtilityType.Water,
+            UnitPrice = 30000m,
+            EffectiveFrom = new DateTime(2026, 10, 1)
+        });
+    }
+
+
+    [Fact]
+    public async Task PGINV06_Concurrent_Meter_Replacement_Keeps_Old_Snapshot_And_Blocks_Unverified_New_Meter()
+    {
+        var f = new Fixture(
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
+            Guid.NewGuid(), Guid.NewGuid());
+
+        try
+        {
+            await SeedAsync(f);
+
+            using (var scope = _scopes.CreateScope())
+            {
+                var provider = scope.ServiceProvider;
+                using var outer = provider.GetRequiredService<IUnitOfWorkManager>().Begin(
+                    new AbpUnitOfWorkOptions
+                    {
+                        IsTransactional = true,
+                        IsolationLevel = IsolationLevel.RepeatableRead
+                    }, requiresNew: true);
+
+                // One real SELECT fixes the reader's PostgreSQL MVCC view.
+                var contract = await provider
+                    .GetRequiredService<IRepository<Contract, Guid>>()
+                    .GetAsync(f.Contract);
+                Assert.Equal(f.Room, contract.RoomId);
+
+                // Replace the old electricity meter in an independent
+                // application UOW. The new meter has no closing reading
+                // for October and must NOT be treated as zero usage.
+                Task<MeterReplacementDto> writer;
+                using (ExecutionContext.SuppressFlow())
+                {
+                    writer = Task.Run(() => ReplaceSeededMeterAsync(f));
+                }
+                var replacement = await writer.WaitAsync(TimeSpan.FromSeconds(35));
+                Assert.Equal(f.ElectricityMeter, replacement.OldMeterId);
+                Assert.NotEqual(f.ElectricityMeter, replacement.NewMeterId);
+
+                var oldSnapshot = await provider
+                    .GetRequiredService<IInvoiceDraftCandidateAppService>()
+                    .GetMonthlyCandidateAsync(f.Contract, 2026, 10);
+                AssertCandidate(oldSnapshot, electricityUnits: 10m,
+                    electricityRate: 3500m, waterUnits: 5m, waterRate: 15000m);
+            }
+
+            using (var fresh = _scopes.CreateScope())
+            {
+                var updated = await fresh.ServiceProvider
+                    .GetRequiredService<IInvoiceDraftCandidateAppService>()
+                    .GetMonthlyCandidateAsync(f.Contract, 2026, 10);
+
+                // The committed replacement adds a 20 -> 25 closing
+                // segment, but the NEW meter has no end-of-month
+                // reading. Therefore candidate pricing must fail closed.
+                Assert.Contains("Electricity:RateOrUsageNotReady", updated.Blockers);
+                Assert.Null(updated.ProvisionalTotal);
+                var electricity = updated.UtilityLines.Single(
+                    x => x.UtilityType == UtilityType.Electricity);
+                Assert.Contains("ActiveMeterMissingMonthlyReading",
+                    electricity.CoverageIssues);
+                Assert.Contains(electricity.MeterSegments,
+                    x => x.SourceType == nameof(MeterUsageSourceType.ReplacementClosing)
+                      && x.PreviousReading == 20m && x.CurrentReading == 25m);
+                Assert.Null(electricity.ProvisionalAmount);
+            }
+        }
+        catch (Exception originalError)
+        {
+            try
+            {
+                await CleanupAsync(f);
+            }
+            catch (Exception cleanupError)
+            {
+                throw new AggregateException(
+                    "PGINV06 meter replacement test and fixture cleanup both failed.",
+                    originalError, cleanupError);
+            }
+
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo
+                .Capture(originalError).Throw();
+            throw;
+        }
+
+        await CleanupAsync(f);
+    }
+
+    private async Task<MeterReplacementDto> ReplaceSeededMeterAsync(Fixture f)
+    {
+        using var scope = _scopes.CreateScope();
+        return await scope.ServiceProvider
+            .GetRequiredService<IUtilityMeterAppService>()
+            .ReplaceAsync(f.ElectricityMeter, new ReplaceUtilityMeterDto
+            {
+                NewMeterCode = "PGINV06-" + Guid.NewGuid().ToString("N"),
+                OldFinalReading = 25m,
+                NewInitialReading = 0m,
+                ReplacementDate = new DateTime(2026, 10, 31),
+                Reason = "Test-only concurrent meter replacement"
+            });
+    }
+
+    private async Task SeedAsync(Fixture f)
+    {
+        await WithUnitOfWorkAsync(async () =>
+        {
+            await _buildings.InsertAsync(
+                new Building(f.Building, "PGINV04-" + Guid.NewGuid().ToString("N"),
+                    "Test-only building"), autoSave: true);
+            await _floors.InsertAsync(
+                new Floor(f.Floor, f.Building, 1, "Test floor"), autoSave: true);
+            await _rooms.InsertAsync(
+                new Room(f.Room, f.Floor, "INV-" + Guid.NewGuid().ToString("N")[..8],
+                    "Test room", 25m, 2, RoomStatus.Available), autoSave: true);
+
+            var contract = new Contract(
+                f.Contract, "PGINV04-" + Guid.NewGuid().ToString("N"),
+                f.Room, new DateTime(2026, 10, 1),
+                new DateTime(2026, 12, 31), 3000000m);
+            contract.Activate();
+            await _contracts.InsertAsync(contract, autoSave: true);
+
+            await _rates.InsertAsync(new UtilityRate(
+                f.ElectricityRate, f.Building, UtilityType.Electricity,
+                3500m, new DateTime(2026, 10, 1), null), autoSave: true);
+            await _rates.InsertAsync(new UtilityRate(
+                f.WaterRate, f.Building, UtilityType.Water,
+                15000m, new DateTime(2026, 10, 1), null), autoSave: true);
+
+            await _meters.InsertAsync(new UtilityMeter(
+                f.ElectricityMeter, f.Room, UtilityType.Electricity,
+                "PGINV04E-" + Guid.NewGuid().ToString("N"),
+                10m, new DateTime(2026, 10, 1)), autoSave: true);
+            await _meters.InsertAsync(new UtilityMeter(
+                f.WaterMeter, f.Room, UtilityType.Water,
+                "PGINV04W-" + Guid.NewGuid().ToString("N"),
+                100m, new DateTime(2026, 10, 1)), autoSave: true);
+
+            await _readings.InsertAsync(new MeterReading(
+                f.ElectricityReading, f.ElectricityMeter, 2026, 10,
+                10m, 20m, new DateTime(2026, 10, 31)), autoSave: true);
+            await _readings.InsertAsync(new MeterReading(
+                f.WaterReading, f.WaterMeter, 2026, 10,
+                100m, 105m, new DateTime(2026, 10, 31)), autoSave: true);
+        });
+    }
+
+    private static async Task CommitNewSourceValuesAsync(Fixture f)
+    {
+        await using var connection = new NpgsqlConnection(
+            BuildingManagementPostgreSqlTestModule.RequireSafeConnectionString());
+        await connection.OpenAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        await using (var command = new NpgsqlCommand(
+            """
+            UPDATE "BuildingManagementMeterReadings"
+            SET "CurrentReading" = CASE WHEN "Id" = @electricReading
+                THEN 30 ELSE 108 END
+            WHERE "Id" IN (@electricReading, @waterReading);
+            UPDATE "BuildingManagementUtilityRates"
+            SET "UnitPrice" = CASE WHEN "Id" = @electricRate
+                THEN 7000 ELSE 30000 END
+            WHERE "Id" IN (@electricRate, @waterRate);
+            """, connection, transaction))
+        {
+            command.Parameters.AddWithValue("electricReading", f.ElectricityReading);
+            command.Parameters.AddWithValue("waterReading", f.WaterReading);
+            command.Parameters.AddWithValue("electricRate", f.ElectricityRate);
+            command.Parameters.AddWithValue("waterRate", f.WaterRate);
+            Assert.Equal(4, await command.ExecuteNonQueryAsync());
+        }
+        await transaction.CommitAsync();
+    }
+
+    private static void AssertCandidate(
+        InvoiceDraftCandidateDto candidate, decimal electricityUnits,
+        decimal electricityRate, decimal waterUnits, decimal waterRate)
+    {
+        Assert.Empty(candidate.Blockers);
+        Assert.Equal(2, candidate.UtilityLines.Count);
+        var electricity = candidate.UtilityLines.Single(
+            x => x.UtilityType == UtilityType.Electricity);
+        var water = candidate.UtilityLines.Single(
+            x => x.UtilityType == UtilityType.Water);
+
+        Assert.Empty(electricity.CoverageIssues);
+        Assert.Empty(water.CoverageIssues);
+        Assert.Equal(electricityUnits, electricity.RecordedQuantity);
+        Assert.Equal(electricityRate, electricity.UnitPrice);
+        Assert.Equal(electricityUnits * electricityRate,
+            electricity.ProvisionalAmount);
+        Assert.Equal(waterUnits, water.RecordedQuantity);
+        Assert.Equal(waterRate, water.UnitPrice);
+        Assert.Equal(waterUnits * waterRate, water.ProvisionalAmount);
+        Assert.Equal(electricityUnits * electricityRate + waterUnits * waterRate,
+            candidate.ProvisionalTotal);
+    }
+
+    private static async Task CleanupAsync(Fixture f)
+    {
+        await using var connection = new NpgsqlConnection(
+            BuildingManagementPostgreSqlTestModule.RequireSafeConnectionString());
+        await connection.OpenAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+
+        // Some tests create a physical meter replacement in a separate
+        // committed UOW. Discover only records referencing THIS exact
+        // generated old meter, so cleanup can remove its new meter too.
+        var replacementIds = new System.Collections.Generic.List<Guid>();
+        var newlyCreatedMeterIds = new System.Collections.Generic.List<Guid>();
+        await using (var locate = new NpgsqlCommand(
+            """
+            SELECT "Id", "NewMeterId"
+            FROM "BuildingManagementMeterReplacements"
+            WHERE "OldMeterId" = @oldMeterId
+            """, connection, transaction))
+        {
+            locate.Parameters.AddWithValue("oldMeterId", f.ElectricityMeter);
+            await using var reader = await locate.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                replacementIds.Add(reader.GetGuid(0));
+                newlyCreatedMeterIds.Add(reader.GetGuid(1));
+            }
+        }
+
+        // Hard-delete only the exact generated GUIDs, children first.
+        // BuildingConfiguration maps Building to "Buildings" (no prefix).
+        // If a statement fails, transaction disposal ROLLS BACK all
+        // deletions; the original error is preserved by the caller.
+        var deletions = new (string Table, Guid[] Ids)[]
+        {
+            ("BuildingManagementMeterReplacements", replacementIds.ToArray()),
+            ("BuildingManagementMeterReadings", new[] { f.ElectricityReading, f.WaterReading }),
+            ("BuildingManagementUtilityMeters",
+                new[] { f.ElectricityMeter, f.WaterMeter }
+                    .Concat(newlyCreatedMeterIds).ToArray()),
+            ("BuildingManagementUtilityRates", new[] { f.ElectricityRate, f.WaterRate }),
+            ("BuildingManagementContracts", new[] { f.Contract }),
+            ("BuildingManagementRooms", new[] { f.Room }),
+            ("BuildingManagementFloors", new[] { f.Floor }),
+            ("Buildings", new[] { f.Building })
+        };
+
+        foreach (var (table, ids) in deletions)
+        {
+            await using var command = new NpgsqlCommand(
+                $"DELETE FROM \"{table}\" WHERE \"Id\" = ANY(@ids)",
+                connection, transaction);
+            command.Parameters.AddWithValue("ids", ids);
+            await command.ExecuteNonQueryAsync();
+        }
+        await transaction.CommitAsync();
+    }
+}

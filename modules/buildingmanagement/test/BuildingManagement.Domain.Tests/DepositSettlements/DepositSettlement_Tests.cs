@@ -214,6 +214,72 @@ public class DepositSettlement_Tests
         );
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void Contract_Deposit_Forfeit_Requires_Explanation(string? reason)
+    {
+        var ex = Should.Throw<BusinessException>(() =>
+            new DepositSettlement(
+                Guid.NewGuid(), DepositSettlementType.Forfeit,
+                250_000m, sourceContractId: Guid.NewGuid(),
+                notes: reason));
+
+        ex.Code.ShouldBe(
+            BuildingManagementErrorCodes.ContractDepositForfeitReasonRequired);
+    }
+
+    [Fact]
+    public void Contract_Forfeit_Reason_Is_Trimmed_And_Retained_After_Completion()
+    {
+        var settlement = new DepositSettlement(
+            Guid.NewGuid(), DepositSettlementType.Forfeit,
+            250_000m, sourceContractId: Guid.NewGuid(),
+            notes: "  Broken window in room 203  ");
+
+        settlement.Complete(new DateTime(2026, 10, 27, 8, 0, 0,
+            DateTimeKind.Utc));
+
+        settlement.Notes.ShouldBe("Broken window in room 203");
+        settlement.Status.ShouldBe(DepositSettlementStatus.Completed);
+    }
+
+    [Fact]
+    public void Reservation_Forfeit_No_Show_Still_Allows_Missing_Notes()
+    {
+        var settlement = new DepositSettlement(
+            Guid.NewGuid(), DepositSettlementType.Forfeit,
+            500_000m, sourceRoomReservationId: Guid.NewGuid());
+
+        settlement.Complete(DateTime.UtcNow);
+
+        settlement.Status.ShouldBe(DepositSettlementStatus.Completed);
+        settlement.Notes.ShouldBeNull();
+    }
+
+    [Fact]
+    public void Legacy_Contract_Forfeit_Without_Reason_Cannot_Be_Completed()
+    {
+        var settlement = new DepositSettlement(
+            Guid.NewGuid(), DepositSettlementType.Forfeit,
+            300_000m, sourceContractId: Guid.NewGuid(),
+            notes: "Originally documented damage");
+
+        // Simulate a legacy materialized/altered Pending row. A normal
+        // constructor would have rejected this record.
+        var notesProperty = typeof(DepositSettlement)
+            .GetProperty(nameof(DepositSettlement.Notes))!;
+        notesProperty.SetValue(settlement, null);
+
+        var ex = Should.Throw<BusinessException>(() =>
+            settlement.Complete(DateTime.UtcNow));
+        ex.Code.ShouldBe(
+            BuildingManagementErrorCodes.ContractDepositForfeitReasonRequired);
+        settlement.Status.ShouldBe(DepositSettlementStatus.Pending);
+        settlement.CompletedAt.ShouldBeNull();
+    }
+
     [Fact]
     public void
         Should_Not_Complete_Settlement_Twice()

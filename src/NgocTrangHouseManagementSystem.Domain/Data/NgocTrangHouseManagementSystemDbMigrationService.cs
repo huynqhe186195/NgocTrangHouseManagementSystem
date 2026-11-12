@@ -6,6 +6,7 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Volo.Abp.Data;
 using Volo.Abp.DependencyInjection;
@@ -22,21 +23,25 @@ public class NgocTrangHouseManagementSystemDbMigrationService : ITransientDepend
     private readonly IDataSeeder _dataSeeder;
     private readonly IEnumerable<INgocTrangHouseManagementSystemDbSchemaMigrator> _dbSchemaMigrators;
     private readonly ICurrentTenant _currentTenant;
+    private readonly IConfiguration _configuration;
 
     public NgocTrangHouseManagementSystemDbMigrationService(
         IDataSeeder dataSeeder,
         ICurrentTenant currentTenant,
+        IConfiguration configuration,
         IEnumerable<INgocTrangHouseManagementSystemDbSchemaMigrator> dbSchemaMigrators)
     {
         _dataSeeder = dataSeeder;
         _currentTenant = currentTenant;
         _dbSchemaMigrators = dbSchemaMigrators;
+        _configuration = configuration;
 
         Logger = NullLogger<NgocTrangHouseManagementSystemDbMigrationService>.Instance;
     }
 
     public async Task MigrateAsync()
     {
+        var adminPassword = GetBootstrapAdminPassword();
         var initialMigrationAdded = AddInitialMigrationIfNotExist();
 
         if (initialMigrationAdded)
@@ -47,7 +52,7 @@ public class NgocTrangHouseManagementSystemDbMigrationService : ITransientDepend
         Logger.LogInformation("Started database migrations...");
 
         await MigrateDatabaseSchemaAsync();
-        await SeedDataAsync();
+        await SeedDataAsync(adminPassword);
 
         Logger.LogInformation($"Successfully completed host database migrations.");
 
@@ -62,14 +67,26 @@ public class NgocTrangHouseManagementSystemDbMigrationService : ITransientDepend
         }
     }
 
-    private async Task SeedDataAsync()
+    private async Task SeedDataAsync(string adminPassword)
     {
         await _dataSeeder.SeedAsync(new DataSeedContext()
             .WithProperty(IdentityDataSeedContributor.AdminEmailPropertyName,
                 NgocTrangHouseManagementSystemConsts.AdminEmailDefaultValue)
             .WithProperty(IdentityDataSeedContributor.AdminPasswordPropertyName,
-                NgocTrangHouseManagementSystemConsts.AdminPasswordDefaultValue)
+                adminPassword)
         );
+    }
+
+    private string GetBootstrapAdminPassword()
+    {
+        // MUST be set before any database schema change/seeding.
+        // No default password exists in source or in the browser.
+        var password = _configuration["NgocTrang:LocalBootstrap:AdminPassword"];
+        if (string.IsNullOrWhiteSpace(password) || password.Length < 16)
+            throw new InvalidOperationException(
+                "Migration refused: set NgocTrang:LocalBootstrap:AdminPassword " +
+                "using development secrets or a local process environment variable (min 16 chars).");
+        return password;
     }
 
     private bool AddInitialMigrationIfNotExist()

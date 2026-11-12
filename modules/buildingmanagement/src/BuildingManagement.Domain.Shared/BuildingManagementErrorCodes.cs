@@ -297,6 +297,9 @@ public static class BuildingManagementErrorCodes
     public const string DepositSettlementCannotBeCompleted =
         "BuildingManagement:DepositSettlementCannotBeCompleted";
 
+    public const string ContractDepositForfeitReasonRequired =
+        "BuildingManagement:ContractDepositForfeitReasonRequired";
+
     public const string ContractDepositNotPayable =
     "BuildingManagement:ContractDepositNotPayable";
 

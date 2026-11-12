@@ -1,0 +1,325 @@
+name: payOS foundation isolated tests
+
+on:
+  pull_request:
+    paths:
+      - 'modules/buildingmanagement/src/BuildingManagement.Application/Payments/PayOs*.cs'
+      - 'modules/buildingmanagement/src/BuildingManagement.Domain/Payments/PayOs*.cs'
+      - 'modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/EntityConfigurations/PayOs*.cs'
+      - 'modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/EntityFrameworkCore/BuildingManagementDbContext.cs'
+      - 'modules/buildingmanagement/test/BuildingManagement.Application.Tests/Payments/PayOs*.cs'
+      - 'modules/buildingmanagement/test/BuildingManagement.Domain.Tests/Payments/PayOs*.cs'
+      - '.github/workflows/payos-foundation-isolated.yml'
+      - 'etc/phase-audits/payos-postgresql16-schema-rehearsal.sql'
+      - 'etc/phase-audits/payos-generated-ef-migration-acceptance.sql'
+      - 'etc/scripts/review-payos-ef-migration.ps1'
+      - 'modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/PayOsMigrations/*.cs'
+      - 'modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Migrations/PayOs/**'
+      - 'src/NgocTrangHouseManagementSystem.HttpApi.Host/Payments/PayOs*.cs'
+      - 'src/NgocTrangHouseManagementSystem.HttpApi.Host/NgocTrangHouseManagementSystemHttpApiHostModule.cs'
+      - 'test/PayOs.Staging.Persistence.Tests/**'
+  workflow_dispatch:
+
+# Only PR + manual runs; avoid 2 workflows per commit on the same branch.
+# When a newer commit arrives, terminate superseded pending CI runs.
+concurrency:
+  group: payos-foundation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-only-payments:
+    name: Build and isolated payOS .NET tests (no DB)
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    timeout-minutes: 25
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Domain payOS source tests
+        shell: pwsh
+        run: |
+          dotnet test modules/buildingmanagement/test/BuildingManagement.Domain.Tests/BuildingManagement.Domain.Tests.csproj --configuration Release --filter 'FullyQualifiedName~PayOs' --logger 'trx;LogFileName=payos-domain.trx' --results-directory test-results/domain --verbosity normal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Application payOS source tests
+        shell: pwsh
+        run: |
+          dotnet test modules/buildingmanagement/test/BuildingManagement.Application.Tests/BuildingManagement.Application.Tests.csproj --configuration Release --filter 'FullyQualifiedName~PayOs' --logger 'trx;LogFileName=payos-application.trx' --results-directory test-results/application --verbosity normal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Compile EF Core mapping (no database connection)
+        shell: pwsh
+        run: |
+          dotnet build modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/BuildingManagement.EntityFrameworkCore.csproj --configuration Release --verbosity minimal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build actual HTTP Host and staging payment DI without starting a server
+        shell: pwsh
+        run: |
+          dotnet build src/NgocTrangHouseManagementSystem.HttpApi.Host/NgocTrangHouseManagementSystem.HttpApi.Host.csproj --configuration Release --verbosity minimal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload raw test evidence, even when tests fail
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: payos-isolated-trx
+          path: test-results/**/*.trx
+          if-no-files-found: warn
+          retention-days: 14
+
+  disposable-postgresql:
+    name: PostgreSQL 16 disposable schema / concurrent duplicate / rollback
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: disposable-only
+          POSTGRES_DB: payos_rehearsal_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d payos_rehearsal_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: SQL constraints and transaction rollback on disposable DB
+        shell: bash
+        run: |
+          set -euo pipefail
+          pg_container="$(docker ps --filter ancestor=postgres:16 --format '{{.ID}}' | head -n 1)"
+          test -n "$pg_container"
+          docker exec -i "$pg_container" psql -U postgres -d payos_rehearsal_test -v ON_ERROR_STOP=1 < etc/phase-audits/payos-postgresql16-schema-rehearsal.sql
+      - name: Concurrent same-order inserts must not both commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          pg_container="$(docker ps --filter ancestor=postgres:16 --format '{{.ID}}' | head -n 1)"
+          test -n "$pg_container"
+          first="INSERT INTO payos_rehearsal.payment_intents(id,building_id,payer_id,order_code,amount_vnd,payment_id,expires_at_utc,status) VALUES ('00000000-0000-0000-0000-000000000611','00000000-0000-0000-0000-000000000201','00000000-0000-0000-0000-000000000301',910000,150000,'00000000-0000-0000-0000-000000000711',now()+interval '1 day',0)"
+          second="INSERT INTO payos_rehearsal.payment_intents(id,building_id,payer_id,order_code,amount_vnd,payment_id,expires_at_utc,status) VALUES ('00000000-0000-0000-0000-000000000612','00000000-0000-0000-0000-000000000201','00000000-0000-0000-0000-000000000301',910000,150000,'00000000-0000-0000-0000-000000000712',now()+interval '1 day',0)"
+          docker exec "$pg_container" psql -U postgres -d payos_rehearsal_test -v ON_ERROR_STOP=1 -c "BEGIN; $first; SELECT pg_sleep(3); COMMIT;" > first.log 2>&1 &
+          first_pid=$!
+          sleep 1
+          if docker exec "$pg_container" psql -U postgres -d payos_rehearsal_test -v ON_ERROR_STOP=1 -c "$second" > second.log 2>&1; then
+            echo "FAIL: two simultaneous inserts with the same order_code committed"
+            cat first.log second.log
+            exit 1
+          fi
+          wait "$first_pid"
+          grep -q 'duplicate key value violates unique constraint' second.log
+          count="$(docker exec "$pg_container" psql -U postgres -d payos_rehearsal_test -A -t -c 'SELECT count(*) FROM payos_rehearsal.payment_intents WHERE order_code=910000')"
+          test "$count" = "1"
+          echo "PAYOS PG CONCURRENCY PASS: only 1 of 2 same-order inserts committed"
+
+
+  d04b-three-database-posting:
+    name: D04-B real three-DB writer and ACK (synthetic actors, no bank funds)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 30
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+      BM_PAYOS_EF_TEST_DB: '1'
+      BM_PAYOS_EF_TEST_PASSWORD: 'disposable-only'
+      BM_PAYOS_EF_TEST_PORT: '15432'
+      BM_PAYOS_D04_REAL_WRITER_TEST_DB: 'I_ACCEPT_ONLY_DISPOSABLE_PAYOS_D04_DB'
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: disposable-only
+          POSTGRES_DB: payos_ef_migration_test
+        ports:
+          - 15432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d payos_ef_migration_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Create separate disposable Identity and Building databases
+        shell: bash
+        run: |
+          set -euo pipefail
+          pg_container="$(docker ps --filter ancestor=postgres:16 --format '{{.ID}}' | head -n 1)"
+          test -n "$pg_container"
+          docker exec "$pg_container" createdb -U postgres payos_d04_identity_test
+          docker exec "$pg_container" createdb -U postgres payos_d04_legacy_test
+          docker exec "$pg_container" psql -U postgres -d payos_ef_migration_test -At -c 'SELECT current_database()'
+      # The D04-B forced process recovery gate launches a SEPARATE .NET
+      # process (the recovery probe) to prove cross-process crash recovery.
+      # Mirrors the local harness verify-payos-d04-local.ps1 (probe build +
+      # BM_PAYOS_D04_PROCESS_PROBE_DLL export). The gate fails closed when
+      # the env var is missing, so CI must provide the same wiring.
+      - name: Build D04 forced process recovery probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet build test/PayOs.D04.ProcessRecovery.Probe/PayOs.D04.ProcessRecovery.Probe.csproj --configuration Release
+          probe_dll="$PWD/test/PayOs.D04.ProcessRecovery.Probe/bin/Release/net10.0/PayOs.D04.ProcessRecovery.Probe.dll"
+          test -f "$probe_dll"
+          echo "BM_PAYOS_D04_PROCESS_PROBE_DLL=$probe_dll" >> "$GITHUB_ENV"
+      - name: Real Building writer, locked Identity grants, persisted staging proof, durable ACK and replay
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p test-results/d04b
+          dotnet test test/PayOs.Staging.Persistence.Tests/PayOs.Staging.Persistence.Tests.csproj \
+            --configuration Release \
+            --filter 'FullyQualifiedName~D04RealLegacyWriterAcceptance_Tests' \
+            --logger 'trx;LogFileName=payos-d04b-three-db.trx' \
+            --results-directory test-results/d04b \
+            --verbosity normal
+      - name: Retain D04-B three-DB TRX, including on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: payos-d04b-three-db-trx
+          path: test-results/d04b/**/*.trx
+          if-no-files-found: warn
+          retention-days: 14
+
+  ef-migration-review:
+    name: Offline EF migration preview (never applies database)
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    timeout-minutes: 25
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+      BM_INVOICE_MIGRATION_OFFLINE: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Generate migration from existing model snapshot OFFLINE
+        shell: pwsh
+        run: |
+          dotnet restore modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/BuildingManagement.EntityFrameworkCore.csproj
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet build modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/BuildingManagement.EntityFrameworkCore.csproj --no-restore --configuration Debug
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet tool install --global dotnet-ef --version 10.0.9
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $project = 'modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/BuildingManagement.EntityFrameworkCore.csproj'
+          $dir = 'modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Migrations/PayOs'
+          $committed = @(Get-ChildItem "$dir/*StagePayOsPaymentIntentsAndWebhookInbox.cs" -ErrorAction SilentlyContinue | Where-Object { $_.Name -notlike '*.Designer.cs' })
+          if ($committed.Count -eq 0) {
+            dotnet ef migrations add StagePayOsPaymentIntentsAndWebhookInbox --project $project --startup-project $project --context PayOsPaymentMigrationDbContext --output-dir Migrations/PayOs
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } elseif ($committed.Count -eq 1) {
+            dotnet ef migrations has-pending-model-changes --project $project --startup-project $project --context PayOsPaymentMigrationDbContext
+            if ($LASTEXITCODE -ne 0) { throw 'Committed payOS migration snapshot differs from current EF model.' }
+          } else {
+            throw "Multiple payOS migration sources detected: $($committed.Count)"
+          }
+      - name: Refuse unexpected migration drift
+        shell: pwsh
+        run: |
+          ./etc/scripts/review-payos-ef-migration.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload generated migration for human review
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: payos-ef-migration-preview
+          path: |
+            modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Migrations/PayOs/*StagePayOsPaymentIntentsAndWebhookInbox*
+            modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Migrations/PayOs/PayOsPaymentMigrationDbContextModelSnapshot.cs
+          retention-days: 14
+
+  ef-postgres-migration-acceptance:
+    name: EF payOS migration up/down/reapply on disposable PG16
+    needs: ef-migration-review
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 30
+    env:
+      BM_PAYOS_EF_TEST_DB: '1'
+      BM_PAYOS_EF_TEST_PASSWORD: 'disposable-only'
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: disposable-only
+          POSTGRES_DB: payos_ef_migration_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d payos_ef_migration_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Download reviewed EF migration source from offline job
+        uses: actions/download-artifact@v4
+        with:
+          name: payos-ef-migration-preview
+          path: modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Migrations/PayOs
+      - name: Build generated migration and apply to test DB only
+        shell: bash
+        run: |
+          set -euo pipefail
+          project=modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/BuildingManagement.EntityFrameworkCore.csproj
+          dotnet tool install --global dotnet-ef --version 10.0.9
+          dotnet restore "$project"
+          # Apply the FULL committed payOS EF chain. The webhook/checkout
+          # acceptance tests require the P1.5 staging outbox table; stopping
+          # at the first migration left 42P01 errors in CI run 382.
+          dotnet ef database update StagePayOsStagingOutbox --context PayOsPaymentMigrationDbContext --project "$project" --startup-project "$project" --verbose
+      - name: Assert real EF-created tables, scoped FK and rollback from invalid rows
+        shell: bash
+        run: |
+          set -euo pipefail
+          pg_container="$(docker ps --filter ancestor=postgres:16 --format '{{.ID}}' | head -n 1)"
+          test -n "$pg_container"
+          docker exec -i "$pg_container" psql -U postgres -d payos_ef_migration_test -v ON_ERROR_STOP=1 < etc/phase-audits/payos-generated-ef-migration-acceptance.sql
+          history="$(docker exec "$pg_container" psql -U postgres -d payos_ef_migration_test -A -t -c 'SELECT count(*) FROM public."__EFMigrationsHistory_PayOs"')"
+          test "$history" = "2"
+      - name: Signed webhook inbox writer acceptance on real EF tables
+        shell: bash
+        run: |
+          set -euo pipefail
+          dotnet test test/PayOs.Staging.Persistence.Tests/PayOs.Staging.Persistence.Tests.csproj --configuration Release --filter 'FullyQualifiedName~PayOsStaging' --logger 'trx;LogFileName=payos-pg-webhook.trx' --results-directory test-results/payos-pg --verbosity normal
+      - name: Upload real PostgreSQL webhook test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: payos-webhook-pg16-trx
+          path: test-results/payos-pg/**/*.trx
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Roll back the actual EF migration to zero and reapply
+        shell: bash
+        run: |
+          set -euo pipefail
+          project=modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/BuildingManagement.EntityFrameworkCore.csproj
+          dotnet ef database update 0 --context PayOsPaymentMigrationDbContext --project "$project" --startup-project "$project"
+          pg_container="$(docker ps --filter ancestor=postgres:16 --format '{{.ID}}' | head -n 1)"
+          remaining="$(docker exec "$pg_container" psql -U postgres -d payos_ef_migration_test -A -t -c "SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename IN ('BuildingManagementPayOsPaymentIntents','BuildingManagementPayOsWebhookInbox','BuildingManagementPayOsStagingOutbox')")"
+          test "$remaining" = "0"
+          dotnet ef database update StagePayOsStagingOutbox --context PayOsPaymentMigrationDbContext --project "$project" --startup-project "$project"
+          restored="$(docker exec "$pg_container" psql -U postgres -d payos_ef_migration_test -A -t -c "SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename IN ('BuildingManagementPayOsPaymentIntents','BuildingManagementPayOsWebhookInbox','BuildingManagementPayOsStagingOutbox')")"
+          test "$restored" = "3"
+          history="$(docker exec "$pg_container" psql -U postgres -d payos_ef_migration_test -A -t -c 'SELECT count(*) FROM public."__EFMigrationsHistory_PayOs"')"
+          test "$history" = "2"
+          echo "PAYOS REAL EF MIGRATION: APPLY/ROLLBACK/REAPPLY PASS"

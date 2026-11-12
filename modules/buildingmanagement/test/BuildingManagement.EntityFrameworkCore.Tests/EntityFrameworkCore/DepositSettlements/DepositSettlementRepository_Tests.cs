@@ -174,5 +174,20 @@ public class DepositSettlementRepository_Tests
         loaded.Notes.ShouldBe(
             "Early termination deposit"
         );
+
+        // A contract-origin forfeiture can be completed only when the
+        // documented reason survives database materialization.
+        await WithUnitOfWorkAsync(async () =>
+        {
+            var pending = await _settlementRepository.GetAsync(settlementId);
+            pending.Complete(DateTime.UtcNow);
+            await _settlementRepository.UpdateAsync(pending, autoSave: true);
+        });
+
+        var completed = await WithUnitOfWorkAsync(async () =>
+            await _settlementRepository.GetAsync(settlementId));
+        completed.Status.ShouldBe(DepositSettlementStatus.Completed);
+        completed.Notes.ShouldBe("Early termination deposit");
+        completed.CompletedAt.ShouldNotBeNull();
     }
 }

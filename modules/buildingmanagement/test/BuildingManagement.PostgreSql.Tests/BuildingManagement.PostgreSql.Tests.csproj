@@ -7,6 +7,24 @@
     <IsTestProject>true</IsTestProject>
   </PropertyGroup>
   <ItemGroup>
+    <!-- Embed the guarded, test-only schema patch so PostgreSQL integration
+         tests need no separate psql/pgAdmin setup after a model change. -->
+    <EmbeddedResource Include="Phase2G2B1_TestSchema.sql"
+                      LogicalName="Phase2G2B1_TestSchema.sql" />
+    <!-- The exact user-reviewed offline EF-generated SQL. Used ONLY in a
+         rollback-only, schema-isolated PostgreSQL smoke test. -->
+    <EmbeddedResource Include="..\..\..\..\etc\phase-audits\Phase2G3A4_InvoiceDraftSchema_Review.sql"
+                      LogicalName="Phase2G3A4_InvoiceDraftSchema_Review.sql" />
+    <!-- SQL candidate remains inert until an explicit localhost PG test.
+         Compile the test in CI, but never run it as part of Full. -->
+    <EmbeddedResource Include="..\..\..\..\etc\phase-audits\SliceA_OperatorBuildingGrant_Up_Candidate.sql"
+                      LogicalName="SliceA_OperatorBuildingGrant_Up_Candidate.sql" />
+    <EmbeddedResource Include="..\..\..\..\etc\phase-audits\SliceA_OperatorBuildingGrant_Down_Candidate.sql"
+                      LogicalName="SliceA_OperatorBuildingGrant_Down_Candidate.sql" />
+    <EmbeddedResource Include="..\..\..\..\etc\phase-audits\SliceA_RuntimeDbRole_ReadOnlyAudit.sql"
+                      LogicalName="SliceA_RuntimeDbRole_ReadOnlyAudit.sql" />
+  </ItemGroup>
+  <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />

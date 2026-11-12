@@ -1,0 +1,256 @@
+using System;
+using System.Collections.Generic;
+using System.Data;
+using System.Linq;
+using System.Text.Json;
+using System.Threading.Tasks;
+using BuildingManagement.Contracts;
+using BuildingManagement.Utilities;
+using Volo.Abp;
+using Volo.Abp.Application.Services;
+using Volo.Abp.Domain.Repositories;
+using Volo.Abp.Uow;
+
+namespace BuildingManagement.Invoices;
+
+/// <summary>
+/// Internal-only persistence bridge for utility draft snapshots.
+/// Deliberately not exposed as a remote HTTP API until authorization,
+/// migration rollout and issuance policy are approved.
+/// It never creates rent lines, posts receivables or moves deposits.
+/// </summary>
+[RemoteService(IsEnabled = false)]
+public class InvoiceDraftStorageAppService
+    : ApplicationService, IInvoiceDraftStorageAppService
+{
+    private readonly IContractRepository _contractLocks;
+    private readonly IRepository<Invoice, Guid> _invoices;
+    private readonly IRepository<InvoiceItem, Guid> _items;
+    private readonly IRepository<InvoiceItemMeterSource, Guid> _sources;
+    private readonly IInvoiceDraftCandidateAppService _candidates;
+    private readonly IInvoiceDraftReadIsolationGuard _isolationGuard;
+
+    public InvoiceDraftStorageAppService(
+        IContractRepository contractLocks,
+        IRepository<Invoice, Guid> invoices,
+        IRepository<InvoiceItem, Guid> items,
+        IRepository<InvoiceItemMeterSource, Guid> sources,
+        IInvoiceDraftCandidateAppService candidates,
+        IInvoiceDraftReadIsolationGuard isolationGuard)
+    {
+        _contractLocks = contractLocks;
+        _invoices = invoices;
+        _items = items;
+        _sources = sources;
+        _candidates = candidates;
+        _isolationGuard = isolationGuard;
+    }
+
+    // PostgreSQL REPEATABLE READ holds one MVCC snapshot across contract,
+    // meter usage and tariff queries. A concurrent source change is seen
+    // wholly before or wholly after snapshot acquisition, not partly.
+    // This DOES NOT freeze later source edits or authorize issuance.
+    // The attribute applies only when this call creates the outer UOW.
+    [UnitOfWork(true, IsolationLevel.RepeatableRead)]
+    public virtual async Task<InvoiceDraftDto> CreateAsync(CreateInvoiceDraftDto input)
+    {
+        ArgumentNullException.ThrowIfNull(input);
+        if (input.ContractId == Guid.Empty)
+            throw new BusinessException(BuildingManagementErrorCodes.ContractNotFound);
+        if (input.BillingYear is < 1 or > 9999)
+            throw new BusinessException(BuildingManagementErrorCodes.InvalidBillingYear);
+        if (input.BillingMonth is < 1 or > 12)
+            throw new BusinessException(BuildingManagementErrorCodes.InvalidBillingMonth);
+
+        // Fail closed if a caller provided an ambient READ COMMITTED UOW.
+        // An attribute on this method cannot override an outer transaction.
+        await _isolationGuard.RequireRepeatableReadAsync();
+
+        // Shared PostgreSQL row lock: same ordering as the existing
+        // contract/move-out mutators. Only after locking do we read
+        // a fresh candidate and create the entire draft graph.
+        var contract = await _contractLocks.FindForUpdateAsync(input.ContractId);
+        if (contract is null)
+            throw new BusinessException(BuildingManagementErrorCodes.ContractNotFound);
+
+        if (await _invoices.AnyAsync(x =>
+                x.ContractId == contract.Id &&
+                x.BillingYear == input.BillingYear &&
+                x.BillingMonth == input.BillingMonth))
+            throw new BusinessException(InvoiceDraftErrorCodes.AlreadyExists);
+
+        var candidate = await _candidates.GetMonthlyCandidateAsync(
+            contract.Id, input.BillingYear, input.BillingMonth);
+
+        // Only server-side live meter/rate candidates are trusted. Clients
+        // never submit meter counters, tariffs, room identities or amounts.
+        if (candidate.ContractId != contract.Id ||
+            candidate.RoomId != contract.RoomId ||
+            candidate.Blockers.Count > 0 ||
+            candidate.ProvisionalTotal is null ||
+            candidate.UtilityLines.Count != 2 ||
+            candidate.UtilityLines.Select(x => x.UtilityType).Distinct().Count() != 2 ||
+            candidate.UtilityLines.Any(x => x.ProvisionalAmount is null ||
+                                            x.CoverageIssues.Count != 0 ||
+                                            x.MeterSegments.Count == 0))
+            throw new BusinessException(InvoiceDraftErrorCodes.CandidateNotReady)
+                .WithData("Blockers", string.Join(",", candidate.Blockers));
+
+        var lines = candidate.UtilityLines.Select(x =>
+            new InvoiceDraftUtilityLineSnapshot(
+                x.UtilityType, x.UtilityRateId, x.RateStatus,
+                x.RecordedQuantity, x.UnitPrice, x.ProvisionalAmount,
+                x.MeterSegments.Select(segment =>
+                {
+                    if (!Enum.TryParse<MeterUsageSourceType>(
+                            segment.SourceType, out var sourceType) ||
+                        !Enum.IsDefined(typeof(MeterUsageSourceType), sourceType))
+                        throw new BusinessException(
+                            UtilityUsagePreviewErrorCodes.HistoryRequiresReview);
+                    return new InvoiceDraftMeterSegmentSnapshot(
+                        segment.SourceId, segment.UtilityMeterId, sourceType,
+                        segment.RecordedDate, segment.PreviousReading,
+                        segment.CurrentReading);
+                }), x.CoverageIssues)).ToList();
+
+        var snapshot = InvoiceDraftSnapshot.Capture(
+            contract.Id, contract.RoomId, input.BillingYear, input.BillingMonth,
+            lines);
+        if (snapshot.ProvisionalTotal != candidate.ProvisionalTotal)
+            throw new BusinessException(InvoiceDraftErrorCodes.CandidateNotReady);
+
+        var invoice = Invoice.CreateDraft(
+            GuidGenerator.Create(), snapshot, () => GuidGenerator.Create());
+
+        // Single UoW persists header, utility items and immutable meter
+        // evidence. Nonfiltered database indexes also reject races that
+        // bypass application pre-checks.
+        await _invoices.InsertAsync(invoice, autoSave: true);
+        return ToDto(invoice, invoice.Items, invoice.Items.SelectMany(x => x.MeterSources));
+    }
+
+    /// <summary>
+    /// Internal-only, point-in-time freshness check of stored meter evidence
+    /// and rates. A true result is NOT permission to issue; financial
+    /// finalization must revalidate in its own protected transaction.
+    /// </summary>
+    [UnitOfWork(true, IsolationLevel.RepeatableRead)]
+    public virtual async Task<bool> HasCurrentSourceSnapshotAsync(Guid id)
+    {
+        if (id == Guid.Empty)
+            throw new BusinessException(InvoiceDraftErrorCodes.NotFound);
+
+        // ABP's method attribute cannot upgrade an ambient ReadCommitted
+        // UOW. Refuse it before reading the stored/current snapshots.
+        await _isolationGuard.RequireRepeatableReadAsync();
+
+        var saved = await GetAsync(id);
+        try
+        {
+            var current = await _candidates.GetMonthlyCandidateAsync(
+                saved.ContractId, saved.BillingYear, saved.BillingMonth);
+            return InvoiceDraftFreshnessEvaluator.MatchesCurrentCandidate(
+                saved, current);
+        }
+        catch (BusinessException ex) when (
+            ex.Code == UtilityUsagePreviewErrorCodes.HistoryRequiresReview ||
+            ex.Code == BuildingManagementErrorCodes.ContractNotFound ||
+            ex.Code == BuildingManagementErrorCodes.RoomNotFound)
+        {
+            // Invalid/missing source history cannot authorize a stale draft.
+            // Unexpected errors propagate rather than disguising outages.
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Internal read-only preview. Even ReadyForRevisionDesign is not
+    /// permission to write; eventual revision must recheck everything
+    /// inside its own authorized/locked transaction.
+    /// </summary>
+    [UnitOfWork(true, IsolationLevel.RepeatableRead)]
+    public virtual async Task<InvoiceDraftRebuildGateResult> PreviewRebuildAsync(
+        Guid id, string? reason)
+    {
+        if (id == Guid.Empty)
+            throw new BusinessException(InvoiceDraftErrorCodes.NotFound);
+
+        await _isolationGuard.RequireRepeatableReadAsync();
+
+        var saved = await GetAsync(id);
+        try
+        {
+            var current = await _candidates.GetMonthlyCandidateAsync(
+                saved.ContractId, saved.BillingYear, saved.BillingMonth);
+            return InvoiceDraftRebuildPreflight.Assess(saved, current, reason);
+        }
+        catch (BusinessException ex) when (
+            ex.Code == UtilityUsagePreviewErrorCodes.HistoryRequiresReview ||
+            ex.Code == BuildingManagementErrorCodes.ContractNotFound ||
+            ex.Code == BuildingManagementErrorCodes.RoomNotFound)
+        {
+            // Never allow a manual reason to bypass missing historical
+            // records or a contract/room which cannot be verified.
+            return new(InvoiceDraftRebuildGateStatus.CurrentCandidateNotReady);
+        }
+    }
+
+    [UnitOfWork(isTransactional: true)]
+    public virtual async Task<InvoiceDraftDto> GetAsync(Guid id)
+    {
+        var invoice = id == Guid.Empty ? null : await _invoices.FindAsync(id);
+        if (invoice is null)
+            throw new BusinessException(InvoiceDraftErrorCodes.NotFound);
+
+        var items = await _items.GetListAsync(x => x.InvoiceId == id);
+        var ids = items.Select(x => x.Id).ToArray();
+        var sources = ids.Length == 0
+            ? new List<InvoiceItemMeterSource>()
+            : await _sources.GetListAsync(x => ids.Contains(x.InvoiceItemId));
+        return ToDto(invoice, items, sources);
+    }
+
+    private static InvoiceDraftDto ToDto(
+        Invoice invoice,
+        IEnumerable<InvoiceItem> items,
+        IEnumerable<InvoiceItemMeterSource> sources)
+    {
+        var allSources = sources.ToList();
+        return new InvoiceDraftDto
+        {
+            Id = invoice.Id,
+            ContractId = invoice.ContractId,
+            RoomId = invoice.RoomId,
+            BillingYear = invoice.BillingYear,
+            BillingMonth = invoice.BillingMonth,
+            Status = invoice.Status,
+            ProvisionalUtilityTotal = invoice.ProvisionalUtilityTotal,
+            Items = items.OrderBy(x => x.UtilityType).Select(line =>
+                new InvoiceDraftItemDto
+                {
+                    Id = line.Id,
+                    UtilityType = line.UtilityType,
+                    UtilityRateId = line.UtilityRateId,
+                    RateStatus = line.RateStatus,
+                    Quantity = line.RecordedQuantity,
+                    UnitPrice = line.UnitPrice,
+                    ProvisionalAmount = line.ProvisionalAmount,
+                    CoverageIssues = JsonSerializer.Deserialize<List<string>>(
+                        line.CoverageIssuesJson) ?? new List<string>(),
+                    Sources = allSources.Where(x => x.InvoiceItemId == line.Id)
+                        .OrderBy(x => x.RecordedDate)
+                        .ThenBy(x => x.SourceId)
+                        .Select(source => new InvoiceDraftSourceDto
+                        {
+                            SourceId = source.SourceId,
+                            UtilityMeterId = source.UtilityMeterId,
+                            SourceType = source.SourceType.ToString(),
+                            RecordedDate = source.RecordedDate,
+                            PreviousReading = source.PreviousReading,
+                            CurrentReading = source.CurrentReading,
+                            Quantity = source.Quantity
+                        }).ToList()
+                }).ToList()
+        };
+    }
+}

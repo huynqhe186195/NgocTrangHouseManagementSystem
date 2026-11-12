@@ -1,0 +1,91 @@
+diff --git a/modules/buildingmanagement/src/BuildingManagement.Application/Payments/PaymentAppService.cs b/modules/buildingmanagement/src/BuildingManagement.Application/Payments/PaymentAppService.cs
+index 5bd1843..9e62204 100644
+--- a/modules/buildingmanagement/src/BuildingManagement.Application/Payments/PaymentAppService.cs
++++ b/modules/buildingmanagement/src/BuildingManagement.Application/Payments/PaymentAppService.cs
+@@ -296,15 +296,41 @@ namespace BuildingManagement.Payments
+             >(payment);
+         }
+ 
+-        public async Task<ContractDepositAllocationDto> AllocateReservationDepositToContractAsync(
+-            Guid reservationId, 
++        // Contract must be locked before Reservation in every payment flow.
++        // Both locks must remain held in one database transaction.
++        [UnitOfWork(isTransactional: true)]
++        public virtual async Task<ContractDepositAllocationDto> AllocateReservationDepositToContractAsync(
++            Guid reservationId,
+             Guid contractId)
+         {
+             /*
+-             * Lock SOURCE trước.
++             * Shared lock order: Contract -> Reservation.
++             *
++             * ReservationDeposit.CompleteAsync uses the same order when an
++             * Active Contract exists. Reversing the order can deadlock with
++             * an in-flight top-up payment for the same reservation.
+              *
+-             * Chặn cùng một Reservation bị allocate
+-             * đồng thời sang hai Contract khác nhau.
++             * Locking the target Contract first also serializes all other
++             * deposit coverage/ContractDeposit completion for this Contract.
++             */
++            var contract =
++                await _contractLockRepository
++                    .FindForUpdateAsync(
++                        contractId
++                    );
++
++            if (contract is null)
++            {
++                throw new BusinessException(
++                    BuildingManagementErrorCodes
++                        .ContractNotFound
++                );
++            }
++
++            /*
++             * Lock the source only after acquiring the Contract lock.
++             * This still prevents duplicate allocation from a Reservation,
++             * including two concurrent requests targeting different contracts.
+              */
+             var reservation =
+                 await _roomReservationLockRepository
+@@ -314,10 +340,6 @@ namespace BuildingManagement.Payments
+ 
+             if (reservation is null)
+             {
+-                /*
+-                 * Dùng helper hiện tại để giữ nguyên
+-                 * error handling RoomReservationNotFound.
+-                 */
+                 await GetExistingReservationAsync(
+                     reservationId
+                 );
+@@ -327,28 +349,6 @@ namespace BuildingManagement.Payments
+                 );
+             }
+ 
+-            /*
+-             * Sau đó mới lock TARGET Contract.
+-             *
+-             * Lock này serialize:
+-             * - Reservation allocation
+-             * - ContractDeposit payment completion
+-             * - nhiều nguồn tiền cùng cover một Contract
+-             */
+-            var contract =
+-                await _contractLockRepository
+-                    .FindForUpdateAsync(
+-                        contractId
+-                    );
+-
+-            if (contract is null)
+-            {
+-                throw new BusinessException(
+-                    BuildingManagementErrorCodes
+-                        .ContractNotFound
+-                );
+-            }
+-
+             /*
+              * Reservation deposit chỉ được chuyển
+              * sang ContractDeposit khi khách thực sự

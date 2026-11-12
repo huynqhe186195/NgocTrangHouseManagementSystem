@@ -90,6 +90,35 @@ namespace BuildingManagement.Migrations
                     b.ToTable("Buildings", (string)null);
                 });
 
+            modelBuilder.Entity("BuildingManagement.Buildings.BuildingOperatorAccessGrant", b =>
+                {
+                    b.Property<Guid>("Id").HasColumnType("uuid");
+                    b.Property<Guid>("OperatorUserId").HasColumnType("uuid");
+                    b.Property<Guid>("BuildingId").HasColumnType("uuid");
+                    b.Property<Guid>("GrantedByUserId").HasColumnType("uuid");
+                    b.Property<DateTime>("GrantedAtUtc").HasColumnType("timestamp with time zone");
+                    b.Property<DateTime?>("ExpiresAtUtc").HasColumnType("timestamp with time zone");
+                    b.Property<DateTime?>("RevokedAtUtc").HasColumnType("timestamp with time zone");
+                    b.Property<Guid?>("RevokedByUserId").HasColumnType("uuid");
+                    b.Property<int>("RevisionNumber")
+                        .IsConcurrencyToken().HasColumnType("integer");
+                    b.Property<string>("ConcurrencyStamp")
+                        .IsConcurrencyToken().IsRequired()
+                        .HasMaxLength(40).HasColumnType("character varying(40)")
+                        .HasColumnName("ConcurrencyStamp");
+                    b.Property<string>("ExtraProperties")
+                        .IsRequired().HasColumnType("text")
+                        .HasColumnName("ExtraProperties");
+                    b.HasKey("Id").HasName("PK_BM_OperatorBuildingGrants");
+                    b.HasIndex("BuildingId")
+                        .HasDatabaseName("IX_BM_OperatorBuilding_BuildingId");
+                    b.HasIndex("OperatorUserId", "BuildingId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_BM_OperatorBuilding_Unrevoked")
+                        .HasFilter("\"RevokedAtUtc\" IS NULL");
+                    b.ToTable("BuildingManagementOperatorBuildingGrants", (string)null);
+                });
+
             modelBuilder.Entity("BuildingManagement.Contracts.Contract", b =>
                 {
                     b.Property<Guid>("Id")
@@ -469,6 +498,225 @@ namespace BuildingManagement.Migrations
                         .IsUnique();
 
                     b.ToTable("BuildingManagementFloors", (string)null);
+                });
+
+            modelBuilder.Entity("BuildingManagement.Invoices.Invoice", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("BillingMonth")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("BillingYear")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ConcurrencyStamp")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasColumnName("ConcurrencyStamp");
+
+                    b.Property<Guid>("ContractId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreationTime")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("CreationTime");
+
+                    b.Property<Guid?>("CreatorId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("CreatorId");
+
+                    b.Property<string>("ExtraProperties")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("ExtraProperties");
+
+                    b.Property<DateTime?>("LastModificationTime")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("LastModificationTime");
+
+                    b.Property<Guid?>("LastModifierId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("LastModifierId");
+
+                    b.Property<decimal?>("ProvisionalUtilityTotal")
+                        .HasPrecision(18, 3)
+                        .HasColumnType("numeric(18,3)");
+
+                    b.Property<Guid>("RoomId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ContractId", "BillingYear", "BillingMonth")
+                        .IsUnique()
+                        .HasDatabaseName("UX_BM_Invoice_Contract_Period");
+
+                    b.HasIndex("RoomId", "BillingYear", "BillingMonth")
+                        .IsUnique()
+                        .HasDatabaseName("UX_BM_Invoice_Room_Period");
+
+                    b.ToTable("BuildingManagementInvoices", (string)null);
+                });
+
+            modelBuilder.Entity("BuildingManagement.Invoices.InvoiceDraftRevisionRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("ArchivedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("ArchivedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("ArchivedRevision")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("EvidenceJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("EvidenceSha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<Guid>("InvoiceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("InvoiceId", "ArchivedRevision")
+                        .IsUnique()
+                        .HasDatabaseName("UX_BM_InvoiceDraftRevision_Invoice_Number");
+
+                    b.ToTable("BuildingManagementInvoiceDraftRevisions", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_BM_InvoiceDraftRevision_Evidence", "length(\"EvidenceJson\") BETWEEN 1 AND 1000000");
+
+                            t.HasCheckConstraint("CK_BM_InvoiceDraftRevision_Hash", "length(\"EvidenceSha256\") = 64 AND \"EvidenceSha256\" = lower(\"EvidenceSha256\")");
+
+                            t.HasCheckConstraint("CK_BM_InvoiceDraftRevision_Positive", "\"ArchivedRevision\" >= 1");
+
+                            t.HasCheckConstraint("CK_BM_InvoiceDraftRevision_Reason", "length(trim(\"Reason\")) BETWEEN 8 AND 500");
+                        });
+                });
+
+            modelBuilder.Entity("BuildingManagement.Invoices.InvoiceItem", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("CoverageIssuesJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("CreationTime")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("CreationTime");
+
+                    b.Property<Guid?>("CreatorId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("CreatorId");
+
+                    b.Property<Guid>("InvoiceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("LastModificationTime")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("LastModificationTime");
+
+                    b.Property<Guid?>("LastModifierId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("LastModifierId");
+
+                    b.Property<decimal?>("ProvisionalAmount")
+                        .HasPrecision(18, 3)
+                        .HasColumnType("numeric(18,3)");
+
+                    b.Property<string>("RateStatus")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<decimal>("RecordedQuantity")
+                        .HasPrecision(18, 3)
+                        .HasColumnType("numeric(18,3)");
+
+                    b.Property<decimal?>("UnitPrice")
+                        .HasPrecision(18)
+                        .HasColumnType("numeric(18,0)");
+
+                    b.Property<Guid?>("UtilityRateId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("UtilityType")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UtilityRateId");
+
+                    b.HasIndex("InvoiceId", "UtilityType")
+                        .IsUnique()
+                        .HasDatabaseName("UX_BM_InvoiceItem_Invoice_Utility");
+
+                    b.ToTable("BuildingManagementInvoiceItems", (string)null);
+                });
+
+            modelBuilder.Entity("BuildingManagement.Invoices.InvoiceItemMeterSource", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("CurrentReading")
+                        .HasPrecision(18, 3)
+                        .HasColumnType("numeric(18,3)");
+
+                    b.Property<Guid>("InvoiceItemId")
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("PreviousReading")
+                        .HasPrecision(18, 3)
+                        .HasColumnType("numeric(18,3)");
+
+                    b.Property<DateTime>("RecordedDate")
+                        .HasColumnType("date");
+
+                    b.Property<Guid>("SourceId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("SourceType")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("UtilityMeterId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UtilityMeterId");
+
+                    b.HasIndex("SourceType", "SourceId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_BM_InvoiceSource_Global");
+
+                    b.HasIndex("InvoiceItemId", "SourceType", "SourceId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_BM_InvoiceSource_Item_Type_Source");
+
+                    b.ToTable("BuildingManagementInvoiceItemMeterSources", (string)null);
                 });
 
             modelBuilder.Entity("BuildingManagement.MoveOuts.MoveOutChecklistTask", b =>
@@ -1112,6 +1360,88 @@ namespace BuildingManagement.Migrations
                     b.ToTable("BuildingManagementMeterReadings", (string)null);
                 });
 
+            modelBuilder.Entity("BuildingManagement.Utilities.MeterReplacement", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ConcurrencyStamp")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasColumnName("ConcurrencyStamp");
+
+                    b.Property<DateTime>("CreationTime")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("CreationTime");
+
+                    b.Property<Guid?>("CreatorId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("CreatorId");
+
+                    b.Property<string>("ExtraProperties")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("ExtraProperties");
+
+                    b.Property<DateTime?>("LastModificationTime")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("LastModificationTime");
+
+                    b.Property<Guid?>("LastModifierId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("LastModifierId");
+
+                    b.Property<decimal>("NewInitialReading")
+                        .HasPrecision(18, 3)
+                        .HasColumnType("numeric(18,3)");
+
+                    b.Property<Guid>("NewMeterId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Notes")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<decimal>("OldFinalReading")
+                        .HasPrecision(18, 3)
+                        .HasColumnType("numeric(18,3)");
+
+                    b.Property<Guid>("OldMeterId")
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("OldPreviousReading")
+                        .HasPrecision(18, 3)
+                        .HasColumnType("numeric(18,3)");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<DateTime>("ReplacementDate")
+                        .HasColumnType("date");
+
+                    b.Property<Guid>("RoomId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("UtilityType")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("NewMeterId")
+                        .IsUnique();
+
+                    b.HasIndex("OldMeterId")
+                        .IsUnique();
+
+                    b.HasIndex("RoomId", "ReplacementDate");
+
+                    b.ToTable("BuildingManagementMeterReplacements", (string)null);
+                });
+
             modelBuilder.Entity("BuildingManagement.Utilities.UtilityMeter", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1356,6 +1686,60 @@ namespace BuildingManagement.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("BuildingManagement.Invoices.Invoice", b =>
+                {
+                    b.HasOne("BuildingManagement.Contracts.Contract", null)
+                        .WithMany()
+                        .HasForeignKey("ContractId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("BuildingManagement.Rooms.Room", null)
+                        .WithMany()
+                        .HasForeignKey("RoomId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("BuildingManagement.Invoices.InvoiceDraftRevisionRecord", b =>
+                {
+                    b.HasOne("BuildingManagement.Invoices.Invoice", null)
+                        .WithMany()
+                        .HasForeignKey("InvoiceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("BuildingManagement.Invoices.InvoiceItem", b =>
+                {
+                    b.HasOne("BuildingManagement.Invoices.Invoice", null)
+                        .WithMany("Items")
+                        .HasForeignKey("InvoiceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("BuildingManagement.Utilities.UtilityRate", null)
+                        .WithMany()
+                        .HasForeignKey("UtilityRateId")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("BuildingManagement.Invoices.InvoiceItemMeterSource", b =>
+                {
+                    b.HasOne("BuildingManagement.Invoices.InvoiceItem", null)
+                        .WithMany("MeterSources")
+                        .HasForeignKey("InvoiceItemId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("BuildingManagement.Utilities.UtilityMeter", null)
+                        .WithMany()
+                        .HasForeignKey("UtilityMeterId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_BuildingManagementInvoiceItemMeterSources_BuildingManageme~1");
+                });
+
             modelBuilder.Entity("BuildingManagement.MoveOuts.MoveOutChecklistTask", b =>
                 {
                     b.HasOne("BuildingManagement.MoveOuts.MoveOutRequest", null)
@@ -1437,6 +1821,30 @@ namespace BuildingManagement.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("BuildingManagement.Utilities.MeterReplacement", b =>
+                {
+                    b.HasOne("BuildingManagement.Utilities.UtilityMeter", null)
+                        .WithMany()
+                        .HasForeignKey("NewMeterId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_BM_MeterReplacements_NewMeter");
+
+                    b.HasOne("BuildingManagement.Utilities.UtilityMeter", null)
+                        .WithMany()
+                        .HasForeignKey("OldMeterId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_BM_MeterReplacements_OldMeter");
+
+                    b.HasOne("BuildingManagement.Rooms.Room", null)
+                        .WithMany()
+                        .HasForeignKey("RoomId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_BM_MeterReplacements_Room");
+                });
+
             modelBuilder.Entity("BuildingManagement.Utilities.UtilityMeter", b =>
                 {
                     b.HasOne("BuildingManagement.Rooms.Room", null)
@@ -1453,6 +1861,26 @@ namespace BuildingManagement.Migrations
                         .HasForeignKey("BuildingId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("BuildingManagement.Buildings.BuildingOperatorAccessGrant", b =>
+                {
+                    b.HasOne("BuildingManagement.Buildings.Building", null)
+                        .WithMany()
+                        .HasForeignKey("BuildingId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_BM_OperatorBuildingGrants_Building");
+                });
+
+            modelBuilder.Entity("BuildingManagement.Invoices.Invoice", b =>
+                {
+                    b.Navigation("Items");
+                });
+
+            modelBuilder.Entity("BuildingManagement.Invoices.InvoiceItem", b =>
+                {
+                    b.Navigation("MeterSources");
                 });
 #pragma warning restore 612, 618
         }

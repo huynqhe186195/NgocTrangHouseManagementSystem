@@ -1,6 +1,5 @@
 ﻿using BuildingManagement.Contracts;
 using BuildingManagement.EntityFrameworkCore.Contracts;
-using BuildingManagement.EntityFrameworkCore.Contracts;
 using BuildingManagement.EntityFrameworkCore.RoomReservations;
 using BuildingManagement.RoomReservations;
 using Microsoft.Extensions.DependencyInjection;

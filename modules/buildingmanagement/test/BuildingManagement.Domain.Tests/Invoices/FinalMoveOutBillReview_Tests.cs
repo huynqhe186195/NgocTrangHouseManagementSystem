@@ -1,0 +1,1843 @@
+using System;
+using System.IO;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json.Nodes;
+using System.Linq;
+using BuildingManagement.Contracts;
+using BuildingManagement.Invoices;
+using BuildingManagement.MoveOuts;
+using BuildingManagement.Payments;
+using BuildingManagement.Payments.BuildingManagement.Payments;
+using BuildingManagement.Utilities;
+using Xunit;
+
+namespace BuildingManagement.Domain.Tests.Invoices;
+
+public sealed class FinalMoveOutBillReview_Tests
+{
+    [Fact]
+    public void FINALBILL01_Approved_Quote_Combines_Full_Rent_And_Both_Draft_Utilities()
+    {
+        var (request, contract, draft) = Fixture();
+        var review = Review(request, contract, draft);
+
+        Assert.Equal(3_500_000m, review.FullMonthRent);
+        Assert.Equal(30_000m, review.ElectricityAmount);
+        Assert.Equal(20_000m, review.WaterAmount);
+        Assert.Equal(3_550_000m, review.ProvisionalRentAndUtilities);
+        Assert.Equal(draft.Id, review.UtilityDraftId);
+        Assert.Contains("FinalInvoiceNotIssued", review.Blockers);
+        Assert.Contains("OutstandingDebtNotReconciled", review.Blockers);
+        Assert.Contains("DepositSettlementNotVerified", review.Blockers);
+        Assert.False(review.CanIssue);
+        Assert.False(review.IsReceivablePosted);
+    }
+
+    [Fact]
+    public void FINALBILL02_Missing_Or_Ambiguous_Draft_Does_Not_Invent_Utility_Money()
+    {
+        var (request, contract, draft) = Fixture();
+        var missing = FinalMoveOutBillReviewEvaluator.Assess(
+            request, contract, Array.Empty<Invoice>(),
+            Array.Empty<InvoiceItem>(), Array.Empty<InvoiceItemMeterSource>());
+        Assert.Null(missing.ProvisionalRentAndUtilities);
+        Assert.Contains("FinalUtilityDraftMissing", missing.Blockers);
+
+        var duplicate = FinalMoveOutBillReviewEvaluator.Assess(
+            request, contract, new[] { draft, draft },
+            draft.Items.ToArray(), draft.Items.SelectMany(x => x.MeterSources).ToArray());
+        Assert.Null(duplicate.ProvisionalRentAndUtilities);
+        Assert.Contains("FinalUtilityDraftAmbiguous", duplicate.Blockers);
+    }
+
+    [Fact]
+    public void FINALBILL03_Absent_Meter_Source_Refuses_Money_Quote()
+    {
+        var (request, contract, draft) = Fixture();
+        var result = FinalMoveOutBillReviewEvaluator.Assess(
+            request, contract, new[] { draft }, draft.Items.ToArray(),
+            Array.Empty<InvoiceItemMeterSource>());
+        Assert.Null(result.ProvisionalRentAndUtilities);
+        Assert.Contains("FinalUtilityDraftEvidenceInvalid", result.Blockers);
+    }
+
+    [Fact]
+    public void FINALBILL04_Pending_Request_Does_Not_Quote()
+    {
+        var (request, contract, draft) = Fixture(approve: false);
+        var result = Review(request, contract, draft);
+        Assert.Null(result.FullMonthRent);
+        Assert.Null(result.ProvisionalRentAndUtilities);
+        Assert.Contains("MoveOutNotApproved", result.Blockers);
+    }
+
+    [Fact]
+    public void FINALBILL05_Another_Contract_Cannot_Borrow_Utility_Draft()
+    {
+        var (request, contract, _) = Fixture();
+        var foreign = BuildDraft(Guid.NewGuid(), request.RoomId);
+        var result = Review(request, contract, foreign);
+        Assert.Null(result.ProvisionalRentAndUtilities);
+        Assert.Contains("FinalUtilityDraftScopeMismatch", result.Blockers);
+    }
+
+    [Fact]
+    public void FINALBILL06_Old_Month_Draft_Cannot_Be_Used_For_Final_Month()
+    {
+        var (request, contract, _) = Fixture();
+        var stale = BuildDraft(contract.Id, request.RoomId, month: 10);
+        var result = Review(request, contract, stale);
+        Assert.Null(result.ProvisionalRentAndUtilities);
+        Assert.Contains("FinalUtilityDraftScopeMismatch", result.Blockers);
+    }
+
+    [Fact]
+    public void FINALPACKAGE01_Full_Rent_And_Immutable_Meter_Snapshot_Have_Checksum()
+    {
+        var (request, contract, draft) = Fixture();
+        var captureTime = new DateTime(2026, 12, 1, 1, 0, 0, DateTimeKind.Utc);
+        var package = Package(request, contract, draft, captureTime);
+
+        Assert.Equal(3_500_000m, package.FullMonthRent);
+        Assert.Equal(3_550_000m, package.KnownRentAndUtilities);
+        Assert.Equal(draft.Id, package.DraftInvoiceId);
+        Assert.Equal(new DateOnly(2026, 11, 30), package.FinalBillingDate);
+        Assert.Equal(2, package.Utilities.Count);
+        Assert.Equal(64, package.EvidenceSha256.Length);
+        Assert.True(package.VerifyChecksum());
+        Assert.False(package.CanIssue);
+        Assert.False(package.IsReceivablePosted);
+        Assert.Equal(30_000m, package.Utilities.Single(x =>
+            x.UtilityType == UtilityType.Electricity).Amount);
+        Assert.Equal(20_000m, package.Utilities.Single(x =>
+            x.UtilityType == UtilityType.Water).Amount);
+    }
+
+    [Fact]
+    public void FINALPACKAGE02_Capture_Is_Deterministic_For_Same_Source_Graph()
+    {
+        var (request, contract, draft) = Fixture();
+        var capturedAt = new DateTime(2026, 11, 30, 23, 0, 0, DateTimeKind.Utc);
+        var first = Package(request, contract, draft, capturedAt);
+        var second = Package(request, contract, draft, capturedAt);
+
+        Assert.Equal(first.EvidenceJson, second.EvidenceJson);
+        Assert.Equal(first.EvidenceSha256, second.EvidenceSha256);
+        Assert.Equal(first.Utilities[0].Sources[0].SourceId,
+            second.Utilities[0].Sources[0].SourceId);
+        Assert.Throws<NotSupportedException>(() =>
+            ((System.Collections.Generic.IList<FinalInvoiceUtilityEvidence>)
+                first.Utilities).Clear());
+    }
+
+    [Fact]
+    public void FINALPACKAGE03_No_Snapshot_From_Pending_Request()
+    {
+        var (request, contract, draft) = Fixture(approve: false);
+        Assert.Throws<InvalidOperationException>(() =>
+            Package(request, contract, draft, DateTime.UtcNow));
+    }
+
+    [Fact]
+    public void FINALPACKAGE04_Rejects_Stale_And_Cross_Contract_Draft()
+    {
+        var (request, contract, _) = Fixture();
+        Assert.Throws<InvalidOperationException>(() =>
+            Package(request, contract,
+                BuildDraft(contract.Id, request.RoomId, month: 10),
+                DateTime.UtcNow));
+        Assert.Throws<InvalidOperationException>(() =>
+            Package(request, contract,
+                BuildDraft(Guid.NewGuid(), request.RoomId),
+                DateTime.UtcNow));
+    }
+
+    [Fact]
+    public void FINALPACKAGE05_Requires_Utc_Capture_And_All_Meter_Evidence()
+    {
+        var (request, contract, draft) = Fixture();
+        Assert.Throws<ArgumentException>(() =>
+            Package(request, contract, draft,
+                new DateTime(2026, 11, 30, 15, 0, 0, DateTimeKind.Local)));
+        Assert.Throws<InvalidOperationException>(() =>
+            FinalInvoiceEvidencePackage.Capture(
+                request, contract, draft, draft.Items.ToArray(),
+                Array.Empty<InvoiceItemMeterSource>(), DateTime.UtcNow));
+    }
+
+    private static FinalInvoiceEvidencePackage Package(
+        MoveOutRequest request, Contract contract, Invoice draft,
+        DateTime capturedAtUtc)
+        => FinalInvoiceEvidencePackage.Capture(
+            request, contract, draft, draft.Items.ToArray(),
+            draft.Items.SelectMany(x => x.MeterSources).ToArray(),
+            capturedAtUtc);
+
+    [Fact]
+    public void ISSUEGATE01_Three_Known_Line_Amounts_Do_Not_Issue_Draft()
+    {
+        var (request, contract, draft) = Fixture();
+        var review = Review(request, contract, draft);
+        var package = Package(request, contract, draft, DateTime.UtcNow);
+        var receipts = FinalMoveOutPaymentEvidenceEvaluator.Assess(
+            review, Array.Empty<Payment>());
+
+        var result = FinalInvoiceIssuePreflightEvaluator.Assess(
+            review, package, receipts);
+
+        Assert.Equal(draft.Id, result.UtilityDraftId);
+        Assert.Equal(3_550_000m, result.KnownBaseChargeTotal);
+        Assert.Equal(package.EvidenceSha256, result.EvidenceSha256);
+        Assert.Equal(3, result.BaseCharges.Count);
+        Assert.Equal(3_500_000m, result.BaseCharges.Single(x =>
+            x.Type == FinalInvoiceBaseChargeType.FullMonthRent).Amount);
+        Assert.Equal(30_000m, result.BaseCharges.Single(x =>
+            x.Type == FinalInvoiceBaseChargeType.Electricity).Amount);
+        Assert.Equal(20_000m, result.BaseCharges.Single(x =>
+            x.Type == FinalInvoiceBaseChargeType.Water).Amount);
+        Assert.Contains("AuxiliaryFeePolicyUndecided", result.Blockers);
+        Assert.Contains("InvoiceDueDatePolicyUndecided", result.Blockers);
+        Assert.Contains("IssuerBuildingAuthorizationUnavailable", result.Blockers);
+        Assert.Contains("ImmutableIssuedInvoiceLedgerNotImplemented", result.Blockers);
+        Assert.Contains("AuditedPaymentAllocationNotImplemented", result.Blockers);
+        Assert.False(result.CanIssue);
+        Assert.False(result.IsReceivablePosted);
+        Assert.False(result.IsDebtCalculated);
+    }
+
+    [Fact]
+    public void ISSUEGATE02_Missing_Evidence_Does_Not_Create_Charge_Lines()
+    {
+        var (request, contract, draft) = Fixture();
+        var review = Review(request, contract, draft);
+        var receipts = FinalMoveOutPaymentEvidenceEvaluator.Assess(
+            review, Array.Empty<Payment>());
+
+        var result = FinalInvoiceIssuePreflightEvaluator.Assess(
+            review, null, receipts);
+
+        Assert.Null(result.KnownBaseChargeTotal);
+        Assert.Null(result.EvidenceSha256);
+        Assert.Empty(result.BaseCharges);
+        Assert.Contains("VerifiedFinalInvoiceEvidenceMissing", result.Blockers);
+        Assert.False(result.CanIssue);
+    }
+
+    [Fact]
+    public void ISSUEGATE03_Other_Contract_Evidence_Is_Rejected()
+    {
+        var (request, contract, draft) = Fixture();
+        var review = Review(request, contract, draft);
+        var receipts = FinalMoveOutPaymentEvidenceEvaluator.Assess(
+            review, Array.Empty<Payment>());
+        var (foreignRequest, foreignContract, foreignDraft) = Fixture();
+        var foreign = Package(
+            foreignRequest, foreignContract, foreignDraft, DateTime.UtcNow);
+
+        var result = FinalInvoiceIssuePreflightEvaluator.Assess(
+            review, foreign, receipts);
+
+        Assert.Contains("VerifiedEvidenceMismatch", result.Blockers);
+        Assert.Null(result.KnownBaseChargeTotal);
+        Assert.Empty(result.BaseCharges);
+        Assert.False(result.CanIssue);
+    }
+
+    [Fact]
+    public void ISSUEGATE04_Completed_Receipt_On_Unissued_Draft_Is_Anomaly()
+    {
+        var (request, contract, draft) = Fixture();
+        var review = Review(request, contract, draft);
+        var package = Package(request, contract, draft, DateTime.UtcNow);
+        var receipt = new Payment(
+            Guid.NewGuid(), "ISSUEGATE-" + Guid.NewGuid().ToString("N"),
+            Guid.NewGuid(), PaymentPurpose.InvoicePayment,
+            PaymentMethod.Cash, PaymentChannel.Manual, 100000m,
+            contractId: contract.Id, invoiceId: draft.Id);
+        receipt.Complete(DateTime.UtcNow);
+        var payments = FinalMoveOutPaymentEvidenceEvaluator.Assess(
+            review, new[] { receipt });
+
+        var result = FinalInvoiceIssuePreflightEvaluator.Assess(
+            review, package, payments);
+
+        Assert.Contains(
+            "Payment:CompletedPaymentLinkedToUnissuedDraft", result.Blockers);
+        Assert.Equal(3_550_000m, result.KnownBaseChargeTotal);
+        Assert.False(result.IsDebtCalculated);
+        Assert.False(result.CanIssue);
+    }
+
+    [Fact]
+    public void ISSUEGATE06_Pending_Invoice_Receipt_With_PaidAt_Is_Corrupt()
+    {
+        var (request, contract, draft) = Fixture();
+        var review = Review(request, contract, draft);
+        var package = Package(request, contract, draft, DateTime.UtcNow);
+        var receipt = new Payment(
+            Guid.NewGuid(), "ISSUEGATE-PENDING-" + Guid.NewGuid().ToString("N"),
+            Guid.NewGuid(), PaymentPurpose.InvoicePayment,
+            PaymentMethod.BankTransfer, PaymentChannel.Manual, 100000m,
+            contractId: contract.Id, invoiceId: draft.Id);
+        typeof(Payment).GetProperty(nameof(Payment.PaidAt))!
+            .SetValue(receipt, DateTime.UtcNow);
+        var evidence = FinalMoveOutPaymentEvidenceEvaluator.Assess(
+            review, new[] { receipt });
+
+        Assert.Contains("InvoicePaymentAttributionInvalid", evidence.Blockers);
+        Assert.Null(evidence.ObservedPendingReceiptAmount);
+        Assert.Null(evidence.ObservedCompletedReceiptAmount);
+        var preflight = FinalInvoiceIssuePreflightEvaluator.Assess(
+            review, package, evidence);
+        Assert.Contains("Payment:InvoicePaymentAttributionInvalid",
+            preflight.Blockers);
+        Assert.False(preflight.CanIssue);
+    }
+
+    [Fact]
+    public void ISSUEGATE05_Pending_MoveOut_Never_Presents_Issuable_Line_Items()
+    {
+        var (request, contract, draft) = Fixture(approve: false);
+        var review = Review(request, contract, draft);
+        var payments = FinalMoveOutPaymentEvidenceEvaluator.Assess(
+            review, Array.Empty<Payment>());
+
+        var result = FinalInvoiceIssuePreflightEvaluator.Assess(
+            review, null, payments);
+
+        Assert.Contains("Bill:MoveOutNotApproved", result.Blockers);
+        Assert.Null(result.KnownBaseChargeTotal);
+        Assert.Empty(result.BaseCharges);
+        Assert.False(result.CanIssue);
+    }
+
+    [Fact]
+    public void ISSUEAUTH01_Matching_Scopes_Still_Cannot_Issue_Without_Financial_Policy()
+    {
+        var (preflight, facts) = IssueFacts();
+
+        var result = InvoiceIssuanceScopePolicy.Assess(preflight, facts);
+
+        Assert.True(result.IsScopeConsistent);
+        Assert.Contains("FinancialIssuancePrerequisitesIncomplete", result.Blockers);
+        Assert.False(result.CanIssue);
+        Assert.False(result.CanPostReceivable);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ISSUEAUTH02_No_Authenticated_Or_Entitled_Issuer_Is_Denied(bool missingId)
+    {
+        var (preflight, facts) = IssueFacts();
+        var invalid = missingId
+            ? facts with { AuthenticatedIssuerId = null }
+            : facts with { IssuerBuildingMemberships = Array.Empty<Guid>() };
+
+        var result = InvoiceIssuanceScopePolicy.Assess(preflight, invalid);
+
+        Assert.Contains("IssuerIdentityOrBuildingPermissionDenied", result.Blockers);
+        Assert.False(result.IsScopeConsistent);
+        Assert.False(result.CanIssue);
+    }
+
+    [Fact]
+    public void ISSUEAUTH03_Permission_Denied_Cannot_Be_Circumvented_By_Membership()
+    {
+        var (preflight, facts) = IssueFacts();
+
+        var result = InvoiceIssuanceScopePolicy.Assess(
+            preflight, facts with { IssuerPermissionGranted = false });
+
+        Assert.Contains("IssuerIdentityOrBuildingPermissionDenied", result.Blockers);
+        Assert.False(result.CanIssue);
+    }
+
+    [Fact]
+    public void ISSUEAUTH04_Cross_Contract_Room_Or_Floor_Is_Rejected()
+    {
+        var (preflight, facts) = IssueFacts();
+        var crossed = facts with
+        {
+            ContractId = Guid.NewGuid(),
+            RoomFloorId = Guid.NewGuid()
+        };
+
+        var result = InvoiceIssuanceScopePolicy.Assess(preflight, crossed);
+
+        Assert.Contains("IssuerResourceRelationshipMismatch", result.Blockers);
+        Assert.False(result.IsScopeConsistent);
+    }
+
+    [Fact]
+    public void ISSUEAUTH05_Another_Draft_Or_MoveOut_Cannot_Borrow_Authority()
+    {
+        var (preflight, facts) = IssueFacts();
+        var reused = facts with
+        {
+            RequestedDraftInvoiceId = Guid.NewGuid(),
+            RequestedMoveOutId = Guid.NewGuid()
+        };
+
+        var result = InvoiceIssuanceScopePolicy.Assess(preflight, reused);
+
+        Assert.Contains("IssuerResourceRelationshipMismatch", result.Blockers);
+        Assert.False(result.CanIssue);
+    }
+
+    [Fact]
+    public void ISSUEAUTH06_Unverified_Evidence_Digest_Never_Qualifies()
+    {
+        var (preflight, facts) = IssueFacts();
+
+        var result = InvoiceIssuanceScopePolicy.Assess(
+            preflight, facts with { PersistedEvidenceSha256 = new string('0', 64) });
+
+        Assert.Contains("PersistedInvoiceEvidenceMismatch", result.Blockers);
+        Assert.False(result.IsScopeConsistent);
+    }
+
+    [Fact]
+    public void ISSUEAUTH07_Duplicate_Invoice_For_Same_Period_Is_Blocked()
+    {
+        var (preflight, facts) = IssueFacts();
+
+        var result = InvoiceIssuanceScopePolicy.Assess(
+            preflight, facts with { ExistingIssuedInvoiceForPeriod = true });
+
+        Assert.Contains("InvoiceAlreadyIssuedForBillingPeriod", result.Blockers);
+        Assert.False(result.CanIssue);
+    }
+
+    [Fact]
+    public void ISSUEAUTH08_NotDraft_Status_Is_Rejected_Without_Changing_Invoice()
+    {
+        var (preflight, facts) = IssueFacts();
+
+        var result = InvoiceIssuanceScopePolicy.Assess(
+            preflight, facts with { PersistedInvoiceStatus = (InvoiceStatus)1 });
+
+        Assert.Contains("PersistedInvoiceNotDraft", result.Blockers);
+        Assert.False(result.IsScopeConsistent);
+    }
+
+    [Fact]
+    public void ISSUEAUTH09_Null_Preflight_Or_Facts_Are_Denied()
+    {
+        var (preflight, facts) = IssueFacts();
+
+        Assert.Contains("IssuerScopeFactsUnavailable",
+            InvoiceIssuanceScopePolicy.Assess(null, facts).Blockers);
+        Assert.Contains("IssuerScopeFactsUnavailable",
+            InvoiceIssuanceScopePolicy.Assess(preflight, null).Blockers);
+    }
+
+    private static (FinalInvoiceIssuePreflight, InvoiceIssuanceScopeFacts)
+        IssueFacts()
+    {
+        var (request, contract, draft) = Fixture();
+        var bill = Review(request, contract, draft);
+        var package = Package(request, contract, draft,
+            new DateTime(2026, 11, 30, 20, 0, 0, DateTimeKind.Utc));
+        var payments = FinalMoveOutPaymentEvidenceEvaluator.Assess(
+            bill, Array.Empty<Payment>());
+        var preflight = FinalInvoiceIssuePreflightEvaluator.Assess(
+            bill, package, payments);
+        var buildingId = Guid.NewGuid();
+        var floorId = Guid.NewGuid();
+        var facts = new InvoiceIssuanceScopeFacts(
+            AuthenticatedIssuerId: Guid.NewGuid(),
+            IssuerPermissionGranted: true,
+            RequestedMoveOutId: request.Id,
+            PersistedMoveOutId: request.Id,
+            RequestedDraftInvoiceId: draft.Id,
+            PersistedDraftInvoiceId: draft.Id,
+            InvoiceContractId: contract.Id,
+            InvoiceRoomId: contract.RoomId,
+            ContractId: contract.Id,
+            ContractRoomId: contract.RoomId,
+            RoomId: contract.RoomId,
+            RoomFloorId: floorId,
+            FloorId: floorId,
+            FloorBuildingId: buildingId,
+            BuildingId: buildingId,
+            IssuerBuildingMemberships: new[] { buildingId },
+            PersistedInvoiceStatus: draft.Status,
+            PersistedEvidenceSha256: package.EvidenceSha256,
+            ExistingIssuedInvoiceForPeriod: false);
+        return (preflight, facts);
+    }
+
+    [Fact]
+    public void ISSUEARCH01_Stage_Verified_Evidence_Without_Posting_Debt()
+    {
+        var (evidence, preflight) = StagingFixture();
+        var preparedBy = Guid.NewGuid();
+        var staged = FinalInvoiceIssueEvidenceRecord.Prepare(
+            Guid.NewGuid(), preparedBy,
+            new DateTime(2026, 12, 1, 2, 0, 0, DateTimeKind.Utc),
+            evidence, preflight);
+
+        staged.VerifyStoredEvidence();
+        Assert.Equal(evidence.DraftInvoiceId, staged.DraftInvoiceId);
+        Assert.Equal(evidence.EvidenceSha256, staged.EvidenceSha256);
+        Assert.Equal(evidence.KnownRentAndUtilities, staged.KnownBaseChargeTotal);
+        Assert.Equal(preparedBy, staged.PreparedByUserId);
+        Assert.Equal(2026, staged.BillingYear);
+        Assert.Equal(11, staged.BillingMonth);
+        Assert.False(staged.IsInvoiceIssued);
+        Assert.False(staged.IsReceivablePosted);
+    }
+
+    [Fact]
+    public void ISSUEARCH02_Foreign_Preflight_Cannot_Archive_Other_Draft()
+    {
+        var (evidence, _) = StagingFixture();
+        var (_, foreignPreflight) = StagingFixture();
+        Assert.Throws<InvalidOperationException>(() =>
+            FinalInvoiceIssueEvidenceRecord.Prepare(
+                Guid.NewGuid(), Guid.NewGuid(), DateTime.UtcNow,
+                evidence, foreignPreflight));
+    }
+
+    [Fact]
+    public void ISSUEARCH03_Missing_Actor_Or_UTC_Time_Is_Rejected()
+    {
+        var (evidence, preflight) = StagingFixture();
+        Assert.Throws<ArgumentException>(() =>
+            FinalInvoiceIssueEvidenceRecord.Prepare(
+                Guid.NewGuid(), Guid.Empty, DateTime.UtcNow,
+                evidence, preflight));
+        Assert.Throws<ArgumentException>(() =>
+            FinalInvoiceIssueEvidenceRecord.Prepare(
+                Guid.NewGuid(), Guid.NewGuid(), DateTime.SpecifyKind(
+                    new DateTime(2026, 11, 30), DateTimeKind.Unspecified),
+                evidence, preflight));
+    }
+
+    [Fact]
+    public void ISSUEARCH05_Different_Capture_Times_Require_A_Matching_Preflight()
+    {
+        var (request, contract, draft) = Fixture();
+        var firstSnapshot = Package(request, contract, draft,
+            new DateTime(2026, 11, 30, 18, 0, 0, DateTimeKind.Utc));
+        var secondSnapshot = Package(request, contract, draft,
+            new DateTime(2026, 11, 30, 18, 0, 1, DateTimeKind.Utc));
+        var bill = Review(request, contract, draft);
+        var paymentEvidence = FinalMoveOutPaymentEvidenceEvaluator.Assess(
+            bill, Array.Empty<Payment>());
+        var firstPreflight = FinalInvoiceIssuePreflightEvaluator.Assess(
+            bill, firstSnapshot, paymentEvidence);
+
+        Assert.Equal(firstSnapshot.KnownRentAndUtilities,
+            secondSnapshot.KnownRentAndUtilities);
+        Assert.NotEqual(firstSnapshot.EvidenceSha256,
+            secondSnapshot.EvidenceSha256);
+        Assert.Throws<InvalidOperationException>(() =>
+            FinalInvoiceIssueEvidenceRecord.Prepare(
+                Guid.NewGuid(), Guid.NewGuid(), DateTime.UtcNow,
+                secondSnapshot, firstPreflight));
+    }
+
+    [Fact]
+    public void ISSUEARCH04_Changed_Stored_Amount_Or_Json_Is_Detected()
+    {
+        var (evidence, preflight) = StagingFixture();
+        var stored = FinalInvoiceIssueEvidenceRecord.Prepare(
+            Guid.NewGuid(), Guid.NewGuid(), DateTime.UtcNow, evidence, preflight);
+        typeof(FinalInvoiceIssueEvidenceRecord)
+            .GetProperty(nameof(FinalInvoiceIssueEvidenceRecord.KnownBaseChargeTotal))!
+            .SetValue(stored, 1m);
+        Assert.Throws<InvalidDataException>(stored.VerifyStoredEvidence);
+
+        var other = FinalInvoiceIssueEvidenceRecord.Prepare(
+            Guid.NewGuid(), Guid.NewGuid(), DateTime.UtcNow, evidence, preflight);
+        typeof(FinalInvoiceIssueEvidenceRecord)
+            .GetProperty(nameof(FinalInvoiceIssueEvidenceRecord.EvidenceJson))!
+            .SetValue(other, other.EvidenceJson + " ");
+        Assert.Throws<InvalidDataException>(other.VerifyStoredEvidence);
+    }
+
+    [Theory]
+    [InlineData("MissingSourceId")]
+    [InlineData("MissingMeterId")]
+    [InlineData("InvalidSourceType")]
+    [InlineData("OutsideBillingPeriod")]
+    [InlineData("ReadingDeltaMismatch")]
+    [InlineData("MissingRateId")]
+    [InlineData("NonUtcCaptureTime")]
+    [InlineData("RepeatedMeterSource")]
+    public void ISSUEARCH07_Rehashed_But_Invalid_Historical_Meter_Evidence_Is_Rejected(
+        string corruption)
+    {
+        var (evidence, preflight) = StagingFixture();
+        var record = FinalInvoiceIssueEvidenceRecord.Prepare(
+            Guid.NewGuid(), Guid.NewGuid(), DateTime.UtcNow,
+            evidence, preflight);
+        record.VerifyStoredEvidence();
+
+        var root = JsonNode.Parse(record.EvidenceJson)!;
+        var firstUtility = root["Utilities"]![0]!;
+        var source = firstUtility["Sources"]![0]!;
+
+        switch (corruption)
+        {
+            case "MissingSourceId":
+                source["SourceId"] = Guid.Empty.ToString();
+                break;
+            case "MissingMeterId":
+                source["UtilityMeterId"] = Guid.Empty.ToString();
+                break;
+            case "InvalidSourceType":
+                source["SourceType"] = 999;
+                break;
+            case "OutsideBillingPeriod":
+                source["RecordedDate"] = "2026-10-31T00:00:00";
+                break;
+            case "ReadingDeltaMismatch":
+                source["CurrentReading"] = 999999m;
+                break;
+            case "MissingRateId":
+                firstUtility["UtilityRateId"] = Guid.Empty.ToString();
+                break;
+            case "NonUtcCaptureTime":
+                root["CapturedAtUtc"] = "2026-11-30T18:00:00";
+                break;
+            case "RepeatedMeterSource":
+                var second = root["Utilities"]![1]!["Sources"]![0]!;
+                second["SourceId"] = source["SourceId"]!.ToString();
+                second["SourceType"] = source["SourceType"]!.GetValue<int>();
+                break;
+            default:
+                throw new ArgumentException("Unknown test scenario", nameof(corruption));
+        }
+
+        // Deliberately recompute the checksum to show that SHA-256 alone
+        // is NOT business validation or a protected digital signature.
+        var modifiedJson = root.ToJsonString();
+        var modifiedHash = Convert.ToHexString(
+            SHA256.HashData(Encoding.UTF8.GetBytes(modifiedJson)))
+            .ToLowerInvariant();
+        typeof(FinalInvoiceIssueEvidenceRecord)
+            .GetProperty(nameof(FinalInvoiceIssueEvidenceRecord.EvidenceJson))!
+            .SetValue(record, modifiedJson);
+        typeof(FinalInvoiceIssueEvidenceRecord)
+            .GetProperty(nameof(FinalInvoiceIssueEvidenceRecord.EvidenceSha256))!
+            .SetValue(record, modifiedHash);
+
+        Assert.Throws<InvalidDataException>(record.VerifyStoredEvidence);
+        Assert.False(record.IsInvoiceIssued);
+        Assert.False(record.IsReceivablePosted);
+    }
+
+    [Fact]
+    public void ISSUEDRIFT01_Unchanged_Draft_Matches_Original_Capture()
+    {
+        var (archive, request, contract, draft) = DriftFixture();
+        var result = DriftReview(archive, request, contract, draft);
+
+        Assert.True(result.MatchesCurrentDraft);
+        Assert.DoesNotContain("ArchivedEvidenceDiffersFromCurrentDraft",
+            result.Blockers);
+        Assert.Contains("InvoiceIssuanceAndDebtPostingNotImplemented",
+            result.Blockers);
+        Assert.False(result.CanIssue);
+        Assert.False(result.IsReceivablePosted);
+    }
+
+    [Fact]
+    public void ISSUEDRIFT02_Changing_Stored_Utility_Rate_Id_Is_Detected()
+    {
+        var (archive, request, contract, draft) = DriftFixture();
+        var electricity = draft.Items.Single(x =>
+            x.UtilityType == UtilityType.Electricity);
+        typeof(InvoiceItem).GetProperty(nameof(InvoiceItem.UtilityRateId))!
+            .SetValue(electricity, Guid.NewGuid());
+
+        var result = DriftReview(archive, request, contract, draft);
+
+        Assert.False(result.MatchesCurrentDraft);
+        Assert.Contains("ArchivedEvidenceDiffersFromCurrentDraft", result.Blockers);
+        Assert.False(result.CanIssue);
+    }
+
+    [Fact]
+    public void ISSUEDRIFT03_Changing_Meter_Source_Reading_Is_Detected()
+    {
+        var (archive, request, contract, draft) = DriftFixture();
+        var electricitySource = draft.Items.Single(x =>
+            x.UtilityType == UtilityType.Electricity).MeterSources.Single();
+        typeof(InvoiceItemMeterSource)
+            .GetProperty(nameof(InvoiceItemMeterSource.CurrentReading))!
+            .SetValue(electricitySource, electricitySource.CurrentReading + 1m);
+
+        var result = DriftReview(archive, request, contract, draft);
+
+        Assert.False(result.MatchesCurrentDraft);
+        Assert.Contains("CurrentDraftEvidenceInvalid", result.Blockers);
+    }
+
+    [Fact]
+    public void ISSUEDRIFT04_Missing_Or_Ambiguous_Draft_Is_Never_Current()
+    {
+        var (archive, request, contract, draft) = DriftFixture();
+        var items = draft.Items.ToArray();
+        var sources = items.SelectMany(x => x.MeterSources).ToArray();
+
+        var missing = FinalInvoiceIssueEvidenceDriftEvaluator.Assess(
+            archive, request, contract, Array.Empty<Invoice>(),
+            items, sources);
+        var ambiguous = FinalInvoiceIssueEvidenceDriftEvaluator.Assess(
+            archive, request, contract, new[] { draft, draft },
+            items, sources);
+
+        Assert.False(missing.MatchesCurrentDraft);
+        Assert.False(ambiguous.MatchesCurrentDraft);
+        Assert.Contains("CurrentDraftMissingAmbiguousOrChanged", missing.Blockers);
+        Assert.Contains("CurrentDraftMissingAmbiguousOrChanged", ambiguous.Blockers);
+    }
+
+    [Fact]
+    public void ISSUEDRIFT05_Request_Scope_Change_Blocks_Reusing_Archive()
+    {
+        var (archive, _, contract, draft) = DriftFixture();
+        var otherRequest = new MoveOutRequest(
+            Guid.NewGuid(), contract.Id, contract.RoomId,
+            new DateOnly(2026, 11, 30), "Other request");
+        otherRequest.Approve(DateTime.UtcNow, null);
+
+        var result = DriftReview(archive, otherRequest, contract, draft);
+
+        Assert.False(result.MatchesCurrentDraft);
+        Assert.Contains("MoveOutOrContractScopeChanged", result.Blockers);
+    }
+
+    [Fact]
+    public void ISSUEDRIFT06_Archived_Hash_Corruption_Blocks_Currentness()
+    {
+        var (archive, request, contract, draft) = DriftFixture();
+        typeof(FinalInvoiceIssueEvidenceRecord)
+            .GetProperty(nameof(FinalInvoiceIssueEvidenceRecord.EvidenceSha256))!
+            .SetValue(archive, new string('0', 64));
+
+        var result = DriftReview(archive, request, contract, draft);
+
+        Assert.False(result.MatchesCurrentDraft);
+        Assert.Contains("ArchivedEvidenceInvalid", result.Blockers);
+        Assert.False(result.CanIssue);
+    }
+
+    [Fact]
+    public void ISSUEDRIFT07_Absent_Approved_Request_Blocks_Currentness()
+    {
+        var (archive, _, contract, draft) = DriftFixture();
+        var items = draft.Items.ToArray();
+
+        var result = FinalInvoiceIssueEvidenceDriftEvaluator.Assess(
+            archive, null, contract, new[] { draft }, items,
+            items.SelectMany(x => x.MeterSources).ToArray());
+
+        Assert.False(result.MatchesCurrentDraft);
+        Assert.Contains("MoveOutOrContractScopeChanged", result.Blockers);
+        Assert.False(result.IsReceivablePosted);
+    }
+
+    private static FinalInvoiceIssueEvidenceDriftReview DriftReview(
+        FinalInvoiceIssueEvidenceRecord archive,
+        MoveOutRequest request, Contract contract, Invoice draft)
+    {
+        var items = draft.Items.ToArray();
+        return FinalInvoiceIssueEvidenceDriftEvaluator.Assess(
+            archive, request, contract, new[] { draft }, items,
+            items.SelectMany(x => x.MeterSources).ToArray());
+    }
+
+    private static (FinalInvoiceIssueEvidenceRecord, MoveOutRequest, Contract, Invoice)
+        DriftFixture()
+    {
+        var (request, contract, draft) = Fixture();
+        var package = Package(request, contract, draft,
+            new DateTime(2026, 11, 30, 18, 0, 0, DateTimeKind.Utc));
+        var review = Review(request, contract, draft);
+        var receipts = FinalMoveOutPaymentEvidenceEvaluator.Assess(
+            review, Array.Empty<Payment>());
+        var preflight = FinalInvoiceIssuePreflightEvaluator.Assess(
+            review, package, receipts);
+        var archive = FinalInvoiceIssueEvidenceRecord.Prepare(
+            Guid.NewGuid(), Guid.NewGuid(), DateTime.UtcNow,
+            package, preflight);
+        return (archive, request, contract, draft);
+    }
+
+    [Fact]
+    public void ISSUEREVIEW01_Independent_Reviewer_May_Sign_Off_For_Design_But_Not_Issue()
+    {
+        var (archive, ticket, preflight, facts, reviewer) = ReviewTicketFixture();
+
+        ticket.RecordReviewForDesign(
+            reviewer, ticket.SubmittedAtUtc.AddMinutes(1), true,
+            "Evidence cross-checked for design only.", preflight, facts);
+        ticket.VerifyStagedEvidence(archive);
+
+        Assert.Equal(InvoiceIssuanceReviewStatus.ReviewedForDesign, ticket.Status);
+        Assert.Equal(reviewer, ticket.ReviewedByUserId);
+        Assert.False(ticket.CanIssue);
+        Assert.False(ticket.CanPostReceivable);
+        Assert.False(ticket.CanReduceDebt);
+    }
+
+    [Fact]
+    public void ISSUEREVIEW02_Self_Review_Is_Always_Denied()
+    {
+        var (_, ticket, preflight, facts, _) = ReviewTicketFixture();
+        Assert.Throws<InvalidOperationException>(() =>
+            ticket.RecordReviewForDesign(
+                ticket.SubmittedByUserId, ticket.SubmittedAtUtc.AddMinutes(1), true,
+                "Attempted self-review must fail.", preflight, facts));
+        Assert.Equal(InvoiceIssuanceReviewStatus.Submitted, ticket.Status);
+    }
+
+    [Fact]
+    public void ISSUEREVIEW03_Sign_Off_Cannot_Be_Replayed_Or_Rejected_Afterward()
+    {
+        var (_, ticket, preflight, facts, reviewer) = ReviewTicketFixture();
+        ticket.RecordReviewForDesign(
+            reviewer, ticket.SubmittedAtUtc.AddMinutes(1), true,
+            "Reviewed with valid staging evidence.", preflight, facts);
+        Assert.Throws<InvalidOperationException>(() =>
+            ticket.RecordReviewForDesign(
+                reviewer, ticket.SubmittedAtUtc.AddMinutes(2), false,
+                "Changing the decision is forbidden.", preflight, facts));
+        Assert.Equal(InvoiceIssuanceReviewStatus.ReviewedForDesign, ticket.Status);
+    }
+
+    [Fact]
+    public void ISSUEREVIEW04_Another_Building_Or_Denied_Permission_Blocks_Review()
+    {
+        var (_, ticket, preflight, facts, reviewer) = ReviewTicketFixture();
+        Assert.Throws<InvalidOperationException>(() =>
+            ticket.RecordReviewForDesign(
+                reviewer, ticket.SubmittedAtUtc.AddMinutes(1), true,
+                "Wrong building permission.", preflight,
+                facts with { BuildingId = Guid.NewGuid() }));
+        Assert.Throws<InvalidOperationException>(() =>
+            ticket.RecordReviewForDesign(
+                reviewer, ticket.SubmittedAtUtc.AddMinutes(1), true,
+                "Missing effective permission.", preflight,
+                facts with { IssuerPermissionGranted = false }));
+        Assert.Equal(InvoiceIssuanceReviewStatus.Submitted, ticket.Status);
+    }
+
+    [Fact]
+    public void ISSUEREVIEW05_Changed_Evidence_Digest_Or_Reviewer_Id_Is_Denied()
+    {
+        var (_, ticket, preflight, facts, reviewer) = ReviewTicketFixture();
+        Assert.Throws<InvalidOperationException>(() =>
+            ticket.RecordReviewForDesign(
+                reviewer, ticket.SubmittedAtUtc.AddMinutes(1), true,
+                "Wrong historical evidence hash.", preflight,
+                facts with { PersistedEvidenceSha256 = new string('0', 64) }));
+        Assert.Throws<InvalidOperationException>(() =>
+            ticket.RecordReviewForDesign(
+                reviewer, ticket.SubmittedAtUtc.AddMinutes(1), true,
+                "Caller cannot impersonate the reviewer.", preflight,
+                facts with { AuthenticatedIssuerId = Guid.NewGuid() }));
+    }
+
+    [Fact]
+    public void ISSUEREVIEW06_Reason_And_Chronological_Utc_Audit_Are_Required()
+    {
+        var (_, ticket, preflight, facts, reviewer) = ReviewTicketFixture();
+        Assert.Throws<ArgumentException>(() =>
+            ticket.RecordReviewForDesign(
+                reviewer, ticket.SubmittedAtUtc.AddMinutes(1), true,
+                "short", preflight, facts));
+        Assert.Throws<ArgumentException>(() =>
+            ticket.RecordReviewForDesign(
+                reviewer, DateTime.SpecifyKind(
+                    ticket.SubmittedAtUtc.AddMinutes(1), DateTimeKind.Unspecified),
+                true, "Invalid review timestamp.", preflight, facts));
+        Assert.Throws<ArgumentException>(() =>
+            ticket.RecordReviewForDesign(
+                reviewer, ticket.SubmittedAtUtc.AddSeconds(-1),
+                true, "Review predates submission.", preflight, facts));
+        Assert.Equal(InvoiceIssuanceReviewStatus.Submitted, ticket.Status);
+    }
+
+    [Fact]
+    public void ISSUEREVIEW07_Documented_Rejection_Persists_Without_Payment_Changes()
+    {
+        var (archive, ticket, preflight, facts, reviewer) = ReviewTicketFixture();
+        ticket.RecordReviewForDesign(
+            reviewer, ticket.SubmittedAtUtc.AddMinutes(1), false,
+            "Auxiliary service charges not yet approved.", preflight, facts);
+        ticket.VerifyStagedEvidence(archive);
+        Assert.Equal(InvoiceIssuanceReviewStatus.Rejected, ticket.Status);
+        Assert.False(ticket.CanIssue);
+        Assert.False(ticket.CanReduceDebt);
+    }
+
+    [Fact]
+    public void ISSUEREVIEW08_Corrupted_Evidence_Link_Cannot_Pass_Audit()
+    {
+        var (archive, ticket, _, _, _) = ReviewTicketFixture();
+        typeof(InvoiceIssuanceReviewTicket)
+            .GetProperty(nameof(InvoiceIssuanceReviewTicket.EvidenceSha256))!
+            .SetValue(ticket, new string('0', 64));
+        Assert.Throws<InvalidDataException>(
+            () => ticket.VerifyStagedEvidence(archive));
+    }
+
+    [Fact]
+    public void ISSUEREVIEW09_Abnormal_Invoice_Payment_Blocks_Positive_Signoff()
+    {
+        var (archive, ticket, preflight, facts, reviewer) = ReviewTicketFixture();
+        preflight.Blockers.Add("Payment:CompletedPaymentLinkedToUnissuedDraft");
+
+        Assert.Throws<InvalidOperationException>(() =>
+            ticket.RecordReviewForDesign(
+                reviewer, ticket.SubmittedAtUtc.AddMinutes(1), true,
+                "Unissued draft payment must be investigated.", preflight, facts));
+        Assert.Equal(InvoiceIssuanceReviewStatus.Submitted, ticket.Status);
+        Assert.Null(ticket.ReviewedByUserId);
+        Assert.False(ticket.CanIssue);
+
+        // A rejection may document the anomaly without approving issuance.
+        ticket.RecordReviewForDesign(
+            reviewer, ticket.SubmittedAtUtc.AddMinutes(1), false,
+            "Payment attributed to an unissued draft; manual reconciliation needed.",
+            preflight, facts);
+        ticket.VerifyStagedEvidence(archive);
+        Assert.Equal(InvoiceIssuanceReviewStatus.Rejected, ticket.Status);
+        Assert.False(ticket.CanPostReceivable);
+    }
+
+    private static (FinalInvoiceIssueEvidenceRecord Archive,
+        InvoiceIssuanceReviewTicket Ticket, FinalInvoiceIssuePreflight Preflight,
+        InvoiceIssuanceScopeFacts Facts, Guid ReviewerId) ReviewTicketFixture()
+    {
+        var (package, preflight) = StagingFixture();
+        var archive = FinalInvoiceIssueEvidenceRecord.Prepare(
+            Guid.NewGuid(), Guid.NewGuid(),
+            new DateTime(2026, 12, 1, 1, 0, 0, DateTimeKind.Utc),
+            package, preflight);
+        var buildingId = Guid.NewGuid();
+        var floorId = Guid.NewGuid();
+        var reviewer = Guid.NewGuid();
+        var ticket = InvoiceIssuanceReviewTicket.Stage(
+            Guid.NewGuid(), archive, buildingId, Guid.NewGuid(),
+            new DateTime(2026, 12, 1, 2, 0, 0, DateTimeKind.Utc),
+            "Ready for internal review");
+        var facts = new InvoiceIssuanceScopeFacts(
+            AuthenticatedIssuerId: reviewer,
+            IssuerPermissionGranted: true,
+            RequestedMoveOutId: package.MoveOutRequestId,
+            PersistedMoveOutId: package.MoveOutRequestId,
+            RequestedDraftInvoiceId: package.DraftInvoiceId,
+            PersistedDraftInvoiceId: package.DraftInvoiceId,
+            InvoiceContractId: package.ContractId,
+            InvoiceRoomId: package.RoomId,
+            ContractId: package.ContractId,
+            ContractRoomId: package.RoomId,
+            RoomId: package.RoomId,
+            RoomFloorId: floorId,
+            FloorId: floorId,
+            FloorBuildingId: buildingId,
+            BuildingId: buildingId,
+            IssuerBuildingMemberships: new[] { buildingId },
+            PersistedInvoiceStatus: InvoiceStatus.Draft,
+            PersistedEvidenceSha256: package.EvidenceSha256,
+            ExistingIssuedInvoiceForPeriod: false);
+        return (archive, ticket, preflight, facts, reviewer);
+    }
+
+    [Fact]
+    public void FINPOLICY01_Explicit_No_Charge_Requires_Documented_Assessment()
+    {
+        var (_, preflight) = StagingFixture();
+        var result = FinalInvoiceFinancialTermsEvaluator.Assess(
+            preflight, FinancialTerms(preflight));
+
+        Assert.Equal(preflight.KnownBaseChargeTotal, result.VerifiedBaseAmount);
+        Assert.Equal(0m, result.ProposedAuxiliaryAmount);
+        Assert.Equal(preflight.KnownBaseChargeTotal, result.ProposedGrandTotal);
+        Assert.Equal(new DateOnly(2026, 12, 5), result.DocumentedDueDate);
+        Assert.Contains("FinancialTermsProposalIsNotPostingAuthorization",
+            result.Blockers);
+        Assert.False(result.CanIssue);
+        Assert.False(result.IsReceivablePosted);
+        Assert.False(result.CanSettleDeposit);
+    }
+
+    [Fact]
+    public void FINPOLICY02_Itemized_Fees_Require_Individual_Rate_Evidence()
+    {
+        var (_, preflight) = StagingFixture();
+        var terms = FinancialTerms(preflight) with
+        {
+            AuxiliaryFeeDecision = AuxiliaryFeeAssessmentDecision.ItemizedCharges,
+            AuxiliaryCharges = new[]
+            {
+                Aux(FinalInvoiceAuxiliaryFeeKind.Internet, "INET", 1m, 90000m),
+                Aux(FinalInvoiceAuxiliaryFeeKind.Trash, "TRASH", 1m, 30000m),
+                Aux(FinalInvoiceAuxiliaryFeeKind.Parking, "PARK", 2m, 50000m)
+            }
+        };
+
+        var result = FinalInvoiceFinancialTermsEvaluator.Assess(preflight, terms);
+
+        Assert.Equal(220000m, result.ProposedAuxiliaryAmount);
+        Assert.Equal(preflight.KnownBaseChargeTotal + 220000m,
+            result.ProposedGrandTotal);
+        Assert.DoesNotContain("AuxiliaryChargeMissingValidPricingEvidence",
+            result.Blockers);
+        Assert.False(result.CanIssue);
+    }
+
+    [Fact]
+    public void FINPOLICY03_No_Terms_Never_Infers_No_Fees_Or_Due_Date()
+    {
+        var (_, preflight) = StagingFixture();
+        var result = FinalInvoiceFinancialTermsEvaluator.Assess(preflight, null);
+
+        Assert.Contains("AuxiliaryFeeAssessmentNotProvided", result.Blockers);
+        Assert.Contains("InvoiceDueDatePolicyNotProvided", result.Blockers);
+        Assert.Null(result.ProposedAuxiliaryAmount);
+        Assert.Null(result.ProposedGrandTotal);
+        Assert.Null(result.DocumentedDueDate);
+    }
+
+    [Fact]
+    public void FINPOLICY04_Foreign_Evidence_Digest_Is_Not_Reusable()
+    {
+        var (_, preflight) = StagingFixture();
+        var terms = FinancialTerms(preflight) with
+        {
+            EvidenceSha256 = new string('0', 64)
+        };
+
+        var result = FinalInvoiceFinancialTermsEvaluator.Assess(preflight, terms);
+        Assert.Contains("ProposedTermsDoNotMatchInvoiceEvidence", result.Blockers);
+        Assert.Null(result.ProposedGrandTotal);
+    }
+
+    [Fact]
+    public void FINPOLICY05_Explicit_No_Fees_Cannot_Contain_Charges()
+    {
+        var (_, preflight) = StagingFixture();
+        var terms = FinancialTerms(preflight) with
+        {
+            AuxiliaryCharges = new[]
+            {
+                Aux(FinalInvoiceAuxiliaryFeeKind.Internet, "NET", 1m, 10000m)
+            }
+        };
+
+        var result = FinalInvoiceFinancialTermsEvaluator.Assess(preflight, terms);
+        Assert.Contains("ExplicitNoFeeDecisionHasChargeLines", result.Blockers);
+        Assert.Null(result.ProposedGrandTotal);
+    }
+
+    [Fact]
+    public void FINPOLICY06_Identical_Service_Cannot_Be_Billed_Twice()
+    {
+        var (_, preflight) = StagingFixture();
+        var terms = FinancialTerms(preflight) with
+        {
+            AuxiliaryFeeDecision = AuxiliaryFeeAssessmentDecision.ItemizedCharges,
+            AuxiliaryCharges = new[]
+            {
+                Aux(FinalInvoiceAuxiliaryFeeKind.Parking, "CAR1", 1m, 50000m),
+                Aux(FinalInvoiceAuxiliaryFeeKind.Parking, " car1 ", 1m, 50000m)
+            }
+        };
+
+        var result = FinalInvoiceFinancialTermsEvaluator.Assess(preflight, terms);
+        Assert.Contains("DuplicateAuxiliaryServiceCharge", result.Blockers);
+        Assert.Null(result.ProposedGrandTotal);
+    }
+
+    [Theory]
+    [InlineData(0.5, 1, 0.5)]
+    [InlineData(1, 0, 0)]
+    [InlineData(1, 50000, 40000)]
+    public void FINPOLICY07_Invalid_Or_Fractional_Fees_Are_Not_Allowed(
+        double quantity, double unitPrice, double amount)
+    {
+        var (_, preflight) = StagingFixture();
+        var charge = new FinalInvoiceAuxiliaryChargeProposal(
+            FinalInvoiceAuxiliaryFeeKind.Internet, "INET",
+            (decimal)quantity, (decimal)unitPrice, (decimal)amount,
+            "TEST-TARIFF", "Internet agreed in contract");
+        var terms = FinancialTerms(preflight) with
+        {
+            AuxiliaryFeeDecision = AuxiliaryFeeAssessmentDecision.ItemizedCharges,
+            AuxiliaryCharges = new[] { charge }
+        };
+        var result = FinalInvoiceFinancialTermsEvaluator.Assess(preflight, terms);
+        Assert.Contains("AuxiliaryChargeMissingValidPricingEvidence", result.Blockers);
+        Assert.Null(result.ProposedGrandTotal);
+    }
+
+    [Fact]
+    public void FINPOLICY08_No_Due_Date_Rule_Or_Reviewer_Is_A_Blocker()
+    {
+        var (_, preflight) = StagingFixture();
+        var terms = FinancialTerms(preflight) with
+        {
+            DueDatePolicyReference = null,
+            AuxiliaryFeeReviewerId = null
+        };
+
+        var result = FinalInvoiceFinancialTermsEvaluator.Assess(preflight, terms);
+        Assert.Contains("InvoiceDueDatePolicyNotProvided", result.Blockers);
+        Assert.Contains("AuxiliaryFeeAssessmentNotProvided", result.Blockers);
+        Assert.Null(result.ProposedGrandTotal);
+    }
+
+    [Fact]
+    public void FINPOLICY09_Unknown_Fee_Category_Cannot_Sneak_In_As_Damage()
+    {
+        var (_, preflight) = StagingFixture();
+        var terms = FinancialTerms(preflight) with
+        {
+            AuxiliaryFeeDecision = AuxiliaryFeeAssessmentDecision.ItemizedCharges,
+            AuxiliaryCharges = new[]
+            {
+                Aux((FinalInvoiceAuxiliaryFeeKind)99, "DAMAGE", 1m, 70000m)
+            }
+        };
+
+        var result = FinalInvoiceFinancialTermsEvaluator.Assess(preflight, terms);
+        Assert.Contains("AuxiliaryChargeMissingValidPricingEvidence", result.Blockers);
+        Assert.False(result.CanSettleDeposit);
+    }
+
+    [Fact]
+    public void FINPOLICY10_Anomalous_Payment_Evidence_Prevents_Grand_Total()
+    {
+        var (_, preflight) = StagingFixture();
+        preflight.Blockers.Add("Payment:CompletedPaymentLinkedToUnissuedDraft");
+
+        var result = FinalInvoiceFinancialTermsEvaluator.Assess(
+            preflight, FinancialTerms(preflight));
+
+        Assert.Contains("VerifiedFinalInvoiceBaseEvidenceRequired", result.Blockers);
+        Assert.Null(result.VerifiedBaseAmount);
+        Assert.Null(result.ProposedGrandTotal);
+    }
+
+    [Fact]
+    public void FINPOLICY11_Overflow_In_Combined_Auxiliary_Charges_Is_Blocked()
+    {
+        var (_, preflight) = StagingFixture();
+        var huge = decimal.MaxValue;
+        var terms = FinancialTerms(preflight) with
+        {
+            AuxiliaryFeeDecision = AuxiliaryFeeAssessmentDecision.ItemizedCharges,
+            AuxiliaryCharges = new[]
+            {
+                new FinalInvoiceAuxiliaryChargeProposal(
+                    FinalInvoiceAuxiliaryFeeKind.Internet, "A", 1m, huge,
+                    huge, "TEST-TARIFF", "Internet service"),
+                new FinalInvoiceAuxiliaryChargeProposal(
+                    FinalInvoiceAuxiliaryFeeKind.Trash, "B", 1m, huge,
+                    huge, "TEST-TARIFF", "Trash service")
+            }
+        };
+
+        var review = FinalInvoiceFinancialTermsEvaluator.Assess(
+            preflight, terms);
+
+        Assert.Contains("AuxiliaryChargeTotalOverflow", review.Blockers);
+        Assert.Null(review.ProposedGrandTotal);
+        Assert.False(review.CanIssue);
+    }
+
+    [Fact]
+    public void FINPOLICY12_Null_Charge_And_Product_Overflow_Fail_Closed()
+    {
+        var (_, preflight) = StagingFixture();
+        var invalid = FinancialTerms(preflight) with
+        {
+            AuxiliaryFeeDecision = AuxiliaryFeeAssessmentDecision.ItemizedCharges,
+            AuxiliaryCharges = new FinalInvoiceAuxiliaryChargeProposal[]
+            {
+                null!,
+                new(FinalInvoiceAuxiliaryFeeKind.Parking,
+                    "CAR", decimal.MaxValue, decimal.MaxValue, 100000m,
+                    "TEST-TARIFF", "Parking service")
+            }
+        };
+
+        var review = FinalInvoiceFinancialTermsEvaluator.Assess(
+            preflight, invalid);
+        Assert.Contains("AuxiliaryChargeMissingValidPricingEvidence", review.Blockers);
+        Assert.Null(review.ProposedGrandTotal);
+        Assert.False(review.CanSettleDeposit);
+    }
+
+    private static FinalInvoiceFinancialTermsProposal FinancialTerms(
+        FinalInvoiceIssuePreflight preflight)
+        => new(
+            preflight.UtilityDraftId!.Value, preflight.ContractId,
+            preflight.RoomId, preflight.EvidenceSha256!,
+            new DateOnly(2026, 12, 5), "TEST-DUE-DATE-POLICY",
+            AuxiliaryFeeAssessmentDecision.ExplicitlyNoCharges,
+            "TEST-OWNER-FEE-ASSESSMENT", Guid.NewGuid(),
+            Array.Empty<FinalInvoiceAuxiliaryChargeProposal>());
+
+    private static FinalInvoiceAuxiliaryChargeProposal Aux(
+        FinalInvoiceAuxiliaryFeeKind kind, string code, decimal quantity,
+        decimal price)
+        => new(kind, code, quantity, price, quantity * price,
+            "TEST-CONTRACT-RATE", "Contracted service charge");
+
+    [Fact]
+    public void ISSUEREADY01_Reviewed_Evidence_Remains_Nonfinancial()
+    {
+        var (request, contract, draft) = Fixture();
+        var capture = Package(request, contract, draft,
+            new DateTime(2026, 11, 30, 18, 0, 0, DateTimeKind.Utc));
+        var bill = Review(request, contract, draft);
+        var receipts = FinalMoveOutPaymentEvidenceEvaluator.Assess(
+            bill, Array.Empty<Payment>());
+        var preflight = FinalInvoiceIssuePreflightEvaluator.Assess(
+            bill, capture, receipts);
+        var archive = FinalInvoiceIssueEvidenceRecord.Prepare(
+            Guid.NewGuid(), Guid.NewGuid(), DateTime.UtcNow,
+            capture, preflight);
+        var building = Guid.NewGuid();
+        var reviewer = Guid.NewGuid();
+        var ticket = InvoiceIssuanceReviewTicket.Stage(
+            Guid.NewGuid(), archive, building, Guid.NewGuid(),
+            new DateTime(2026, 12, 1, 0, 0, 0, DateTimeKind.Utc));
+        var facts = new InvoiceIssuanceScopeFacts(
+            reviewer, true, request.Id, request.Id,
+            draft.Id, draft.Id, contract.Id, contract.RoomId,
+            contract.Id, contract.RoomId, contract.RoomId,
+            Guid.NewGuid(), Guid.Empty, building, building,
+            new[] { building }, InvoiceStatus.Draft,
+            capture.EvidenceSha256, false);
+        facts = facts with { FloorId = facts.RoomFloorId };
+        ticket.RecordReviewForDesign(
+            reviewer, ticket.SubmittedAtUtc.AddMinutes(1), true,
+            "Source evidence reviewed for design only.", preflight, facts);
+
+        var items = draft.Items.ToArray();
+        var drift = FinalInvoiceIssueEvidenceDriftEvaluator.Assess(
+            archive, request, contract, new[] { draft }, items,
+            items.SelectMany(x => x.MeterSources).ToArray());
+        var allocation = InvoicePaymentAllocationJournalAuditor.Assess(
+            Array.Empty<InvoicePaymentAllocationJournalEntry>(),
+            Array.Empty<Payment>(), contract.Id);
+
+        var result = FinalInvoiceReleaseReadinessEvaluator.Assess(
+            preflight, new[] { archive }, new[] { ticket }, drift, allocation);
+
+        Assert.True(result.StagedEvidenceMatchesCurrentDraft);
+        Assert.True(result.IndependentDesignReviewRecorded);
+        // This domain-only fixture does not supply an audited physical source.
+        // A stored design review must not imply current source approval.
+        Assert.False(result.IndependentReviewApplicableToCurrentDraft);
+        Assert.Contains("OriginalInvoiceSourcesNotAudited", result.Blockers);
+        Assert.Contains("IndependentInvoiceReviewSupersededBySourceChanges",
+            result.Blockers);
+        Assert.Equal(archive.Id, result.StagedEvidenceId);
+        Assert.Equal(ticket.Id, result.ReviewTicketId);
+        Assert.Equal(preflight.KnownBaseChargeTotal, result.VerifiedBaseAmount);
+        Assert.Contains("FinancialTerms:AuxiliaryFeeAssessmentNotProvided",
+            result.Blockers);
+        Assert.Contains("FinancialTerms:InvoiceDueDatePolicyNotProvided",
+            result.Blockers);
+        Assert.False(result.CanIssue);
+        Assert.False(result.CanPostReceivable);
+        Assert.False(result.CanSettleDeposit);
+    }
+
+    [Fact]
+    public void ISSUEREADY02_Without_Archive_Or_Fee_Policy_Cannot_Issue()
+    {
+        var (_, preflight) = StagingFixture();
+        var allocation = InvoicePaymentAllocationJournalAuditor.Assess(
+            Array.Empty<InvoicePaymentAllocationJournalEntry>(),
+            Array.Empty<Payment>(), preflight.ContractId);
+        var result = FinalInvoiceReleaseReadinessEvaluator.Assess(
+            preflight,
+            Array.Empty<FinalInvoiceIssueEvidenceRecord>(),
+            Array.Empty<InvoiceIssuanceReviewTicket>(), null, allocation);
+
+        Assert.Contains("StagedInvoiceEvidenceMissing", result.Blockers);
+        Assert.Contains("FinancialTerms:AuxiliaryFeeAssessmentNotProvided",
+            result.Blockers);
+        Assert.False(result.StagedEvidenceMatchesCurrentDraft);
+        Assert.False(result.CanIssue);
+    }
+
+    [Fact]
+    public void ISSUEREADY03_Submitted_Review_Is_Not_Accepted_As_Independent()
+    {
+        var (archive, ticket, preflight, _, _) = ReviewTicketFixture();
+        var allocation = InvoicePaymentAllocationJournalAuditor.Assess(
+            Array.Empty<InvoicePaymentAllocationJournalEntry>(),
+            Array.Empty<Payment>(), preflight.ContractId);
+
+        var result = FinalInvoiceReleaseReadinessEvaluator.Assess(
+            preflight, new[] { archive }, new[] { ticket }, null, allocation);
+
+        Assert.Contains("IndependentInvoiceReviewNotReady", result.Blockers);
+        Assert.Contains("StagedInvoiceEvidenceNoLongerCurrent", result.Blockers);
+        Assert.False(result.IndependentDesignReviewRecorded);
+        Assert.False(result.CanIssue);
+    }
+
+    [Fact]
+    public void ISSUEREADY04_Mismatched_Archived_Scope_Is_Not_Reusable()
+    {
+        var (archive, ticket, preflight, _, _) = ReviewTicketFixture();
+        typeof(FinalInvoiceIssueEvidenceRecord)
+            .GetProperty(nameof(FinalInvoiceIssueEvidenceRecord.DraftInvoiceId))!
+            .SetValue(archive, Guid.NewGuid());
+        var allocation = InvoicePaymentAllocationJournalAuditor.Assess(
+            Array.Empty<InvoicePaymentAllocationJournalEntry>(),
+            Array.Empty<Payment>(), preflight.ContractId);
+
+        var result = FinalInvoiceReleaseReadinessEvaluator.Assess(
+            preflight, new[] { archive }, new[] { ticket }, null, allocation);
+
+        Assert.Contains("StagedInvoiceEvidenceCorrupt", result.Blockers);
+        Assert.Contains("IndependentInvoiceReviewCorrupt", result.Blockers);
+        Assert.False(result.CanIssue);
+    }
+
+    [Fact]
+    public void ISSUEREADY05_Unjournaled_Payment_Remains_A_Blocker()
+    {
+        var (archive, ticket, preflight, _, _) = ReviewTicketFixture();
+        var receipt = new Payment(
+            Guid.NewGuid(), "READINESS-" + Guid.NewGuid().ToString("N"),
+            Guid.NewGuid(), PaymentPurpose.InvoicePayment,
+            PaymentMethod.BankTransfer, PaymentChannel.Manual, 100000m,
+            contractId: preflight.ContractId,
+            invoiceId: preflight.UtilityDraftId);
+        receipt.Complete(DateTime.UtcNow);
+        var allocation = InvoicePaymentAllocationJournalAuditor.Assess(
+            Array.Empty<InvoicePaymentAllocationJournalEntry>(),
+            new[] { receipt }, preflight.ContractId);
+
+        var result = FinalInvoiceReleaseReadinessEvaluator.Assess(
+            preflight, new[] { archive }, new[] { ticket }, null, allocation);
+
+        Assert.Contains("Allocations:CompletedInvoicePaymentUnjournaled",
+            result.Blockers);
+        Assert.False(result.CanPostReceivable);
+        Assert.False(result.CanSettleDeposit);
+    }
+
+    [Fact]
+    public void ISSUEREADY06_Historical_Review_Is_Superseded_By_Draft_Change()
+    {
+        var (archive, ticket, preflight, drift, allocations) =
+            ReviewedReleaseFixture();
+
+        var current = FinalInvoiceReleaseReadinessEvaluator.Assess(
+            preflight, new[] { archive }, new[] { ticket }, drift, allocations);
+        Assert.True(current.IndependentDesignReviewRecorded);
+        Assert.False(current.IndependentReviewApplicableToCurrentDraft);
+        Assert.Contains("OriginalInvoiceSourcesNotAudited", current.Blockers);
+        Assert.Contains("IndependentInvoiceReviewSupersededBySourceChanges",
+            current.Blockers);
+
+        // Even without provenance approval, a later Draft change must
+        // still be independently reported as stale source evidence.
+        var staleDrift = new FinalInvoiceIssueEvidenceDriftReview
+        {
+            EvidenceRecordId = archive.Id,
+            DraftInvoiceId = archive.DraftInvoiceId,
+            ContractId = archive.ContractId
+        };
+        var stale = FinalInvoiceReleaseReadinessEvaluator.Assess(
+            preflight, new[] { archive }, new[] { ticket }, staleDrift, allocations);
+
+        Assert.True(stale.IndependentDesignReviewRecorded);
+        Assert.False(stale.IndependentReviewApplicableToCurrentDraft);
+        Assert.Contains("IndependentInvoiceReviewSupersededByDraftChange",
+            stale.Blockers);
+        Assert.Contains("StagedInvoiceEvidenceNoLongerCurrent", stale.Blockers);
+        Assert.False(stale.CanIssue);
+    }
+
+    [Fact]
+    public void ISSUEREADY07_Later_Payment_Anomaly_Supersedes_Review()
+    {
+        var (archive, ticket, preflight, drift, allocations) =
+            ReviewedReleaseFixture();
+        preflight.Blockers.Add("Payment:CompletedPaymentLinkedToUnissuedDraft");
+
+        var stale = FinalInvoiceReleaseReadinessEvaluator.Assess(
+            preflight, new[] { archive }, new[] { ticket }, drift, allocations);
+
+        Assert.True(stale.StagedEvidenceMatchesCurrentDraft);
+        Assert.True(stale.IndependentDesignReviewRecorded);
+        Assert.False(stale.IndependentReviewApplicableToCurrentDraft);
+        Assert.Contains("IndependentInvoiceReviewSupersededByNewAnomalies",
+            stale.Blockers);
+        Assert.False(stale.CanPostReceivable);
+        Assert.False(stale.CanSettleDeposit);
+    }
+
+    [Fact]
+    public void ISSUEREADY08_Other_Invoice_Unjournaled_Receipt_Supersedes_Review()
+    {
+        var (archive, ticket, preflight, drift, _) =
+            ReviewedReleaseFixture();
+        var unrelatedPayment = new Payment(
+            Guid.NewGuid(),
+            "OTHER-INVOICE-" + Guid.NewGuid().ToString("N"),
+            Guid.NewGuid(), PaymentPurpose.InvoicePayment,
+            PaymentMethod.BankTransfer, PaymentChannel.Manual, 50000m,
+            contractId: preflight.ContractId,
+            invoiceId: Guid.NewGuid());
+        unrelatedPayment.Complete(DateTime.UtcNow);
+        // The per-draft payment audit does not see another invoice's
+        // receipt, but the contract-wide allocation ledger does.
+        var allocations = InvoicePaymentAllocationJournalAuditor.Assess(
+            Array.Empty<InvoicePaymentAllocationJournalEntry>(),
+            new[] { unrelatedPayment }, preflight.ContractId);
+
+        var result = FinalInvoiceReleaseReadinessEvaluator.Assess(
+            preflight, new[] { archive }, new[] { ticket },
+            drift, allocations);
+
+        Assert.True(result.StagedEvidenceMatchesCurrentDraft);
+        Assert.True(result.IndependentDesignReviewRecorded);
+        Assert.False(result.IndependentReviewApplicableToCurrentDraft);
+        Assert.Contains(
+            "IndependentInvoiceReviewSupersededByAllocationAnomalies",
+            result.Blockers);
+        Assert.Contains("Allocations:CompletedInvoicePaymentUnjournaled",
+            result.Blockers);
+        Assert.False(result.CanIssue);
+        Assert.False(result.CanSettleDeposit);
+    }
+
+    private static (
+        FinalInvoiceIssueEvidenceRecord Archive,
+        InvoiceIssuanceReviewTicket Ticket,
+        FinalInvoiceIssuePreflight Preflight,
+        FinalInvoiceIssueEvidenceDriftReview Drift,
+        InvoicePaymentAllocationJournalAudit Allocations) ReviewedReleaseFixture()
+    {
+        var (request, contract, draft) = Fixture();
+        var capture = Package(request, contract, draft,
+            new DateTime(2026, 11, 30, 18, 0, 0, DateTimeKind.Utc));
+        var bill = Review(request, contract, draft);
+        var paymentEvidence = FinalMoveOutPaymentEvidenceEvaluator.Assess(
+            bill, Array.Empty<Payment>());
+        var preflight = FinalInvoiceIssuePreflightEvaluator.Assess(
+            bill, capture, paymentEvidence);
+        var archive = FinalInvoiceIssueEvidenceRecord.Prepare(
+            Guid.NewGuid(), Guid.NewGuid(),
+            new DateTime(2026, 12, 1, 1, 0, 0, DateTimeKind.Utc),
+            capture, preflight);
+        var building = Guid.NewGuid();
+        var floor = Guid.NewGuid();
+        var reviewer = Guid.NewGuid();
+        var ticket = InvoiceIssuanceReviewTicket.Stage(
+            Guid.NewGuid(), archive, building, Guid.NewGuid(),
+            new DateTime(2026, 12, 1, 2, 0, 0, DateTimeKind.Utc));
+        var facts = new InvoiceIssuanceScopeFacts(
+            reviewer, true, request.Id, request.Id,
+            draft.Id, draft.Id, contract.Id, contract.RoomId,
+            contract.Id, contract.RoomId, contract.RoomId,
+            floor, floor, building, building, new[] { building },
+            InvoiceStatus.Draft, capture.EvidenceSha256, false);
+        ticket.RecordReviewForDesign(
+            reviewer, ticket.SubmittedAtUtc.AddMinutes(1), true,
+            "Historical evidence was reviewed for design.", preflight, facts);
+        var items = draft.Items.ToArray();
+        var drift = FinalInvoiceIssueEvidenceDriftEvaluator.Assess(
+            archive, request, contract, new[] { draft }, items,
+            items.SelectMany(x => x.MeterSources).ToArray());
+        var allocations = InvoicePaymentAllocationJournalAuditor.Assess(
+            Array.Empty<InvoicePaymentAllocationJournalEntry>(),
+            Array.Empty<Payment>(), contract.Id);
+        return (archive, ticket, preflight, drift, allocations);
+    }
+
+    [Fact]
+    public void SOURCEAUDIT00_Missing_Original_Source_Audit_Blocks_Release()
+    {
+        var (_, preflight) = StagingFixture();
+        var allocations = InvoicePaymentAllocationJournalAuditor.Assess(
+            Array.Empty<InvoicePaymentAllocationJournalEntry>(),
+            Array.Empty<Payment>(), preflight.ContractId);
+        var release = FinalInvoiceReleaseReadinessEvaluator.Assess(
+            preflight, Array.Empty<FinalInvoiceIssueEvidenceRecord>(),
+            Array.Empty<InvoiceIssuanceReviewTicket>(),
+            null, allocations, sourceProvenance: null);
+        Assert.Contains("OriginalInvoiceSourcesNotAudited", release.Blockers);
+        Assert.False(release.OriginalSourcesVerified);
+        Assert.False(release.CanIssue);
+    }
+
+    [Fact]
+    public void SOURCEAUDIT01_Original_Readings_Meters_And_Rates_Match_Snapshot()
+    {
+        var (archive, building, readings, meters, rates) = SourceAuditFixture();
+        var audit = FinalInvoiceSourceProvenanceEvaluator.Assess(
+            archive, building, readings, meters, rates);
+
+        Assert.True(audit.MatchesPersistedSources);
+        Assert.Equal(new[] { "OriginalSourcesAuditIsNotIssuanceAuthorization" },
+            audit.Blockers);
+        Assert.False(audit.CanIssue);
+        Assert.False(audit.CanPostReceivable);
+    }
+
+    [Fact]
+    public void SOURCEAUDIT02_Changed_Physical_Meter_Reading_Is_Detected()
+    {
+        var (archive, building, readings, meters, rates) = SourceAuditFixture();
+        var reading = readings[0];
+        reading.Update(reading.CurrentReading + 1m,
+            reading.ReadingDate, "History was edited after draft capture");
+        var audit = FinalInvoiceSourceProvenanceEvaluator.Assess(
+            archive, building, readings, meters, rates);
+
+        Assert.False(audit.MatchesPersistedSources);
+        Assert.Contains("OriginalMeterReadingDiffersFromSnapshot", audit.Blockers);
+    }
+
+    [Fact]
+    public void SOURCEAUDIT03_Changed_Original_Rate_Cannot_Silently_Reprice()
+    {
+        var (archive, building, readings, meters, rates) = SourceAuditFixture();
+        var original = rates[0];
+        original.Update(building, original.UtilityType,
+            original.UnitPrice + 500m, original.EffectiveFrom,
+            original.EffectiveTo, "Changed after snapshot");
+        var audit = FinalInvoiceSourceProvenanceEvaluator.Assess(
+            archive, building, readings, meters, rates);
+
+        Assert.False(audit.MatchesPersistedSources);
+        Assert.Contains("OriginalUtilityRateDiffersFromSnapshot", audit.Blockers);
+        Assert.False(audit.CanPostReceivable);
+    }
+
+    [Fact]
+    public void SOURCEAUDIT04_Missing_Reading_Or_Foreign_Room_Meter_Is_Denied()
+    {
+        var (archive, building, readings, meters, rates) = SourceAuditFixture();
+        var missing = FinalInvoiceSourceProvenanceEvaluator.Assess(
+            archive, building, new[] { readings[0] }, meters, rates);
+        Assert.Contains("OriginalMeterReadingMissing", missing.Blockers);
+
+        var original = meters[0];
+        var foreign = new UtilityMeter(original.Id, Guid.NewGuid(),
+            original.UtilityType, "FOREIGN-" + Guid.NewGuid().ToString("N"),
+            0m, new DateTime(2026, 1, 1));
+        var foreignAudit = FinalInvoiceSourceProvenanceEvaluator.Assess(
+            archive, building, readings, new[] { foreign, meters[1] }, rates);
+        Assert.Contains("OriginalMeterResourceScopeMismatch",
+            foreignAudit.Blockers);
+    }
+
+    [Fact]
+    public void SOURCEAUDIT05_Building_And_Rate_Identity_Must_Be_Server_Verified()
+    {
+        var (archive, building, readings, meters, rates) = SourceAuditFixture();
+        var unknownBuilding = FinalInvoiceSourceProvenanceEvaluator.Assess(
+            archive, Guid.Empty, readings, meters, rates);
+        Assert.Contains("SourceBuildingScopeUnavailable",
+            unknownBuilding.Blockers);
+        Assert.Contains("OriginalUtilityRateDiffersFromSnapshot",
+            unknownBuilding.Blockers);
+
+        var foreignBuilding = FinalInvoiceSourceProvenanceEvaluator.Assess(
+            archive, Guid.NewGuid(), readings, meters, rates);
+        Assert.Contains("OriginalUtilityRateDiffersFromSnapshot",
+            foreignBuilding.Blockers);
+    }
+
+    private static (FinalInvoiceIssueEvidenceRecord Archive, Guid Building,
+        MeterReading[] Readings, UtilityMeter[] Meters, UtilityRate[] Rates)
+        SourceAuditFixture()
+    {
+        var (request, contract, draft) = Fixture();
+        var source = Package(request, contract, draft,
+            new DateTime(2026, 11, 30, 18, 0, 0, DateTimeKind.Utc));
+        var review = Review(request, contract, draft);
+        var paymentEvidence = FinalMoveOutPaymentEvidenceEvaluator.Assess(
+            review, Array.Empty<Payment>());
+        var preflight = FinalInvoiceIssuePreflightEvaluator.Assess(
+            review, source, paymentEvidence);
+        var archive = FinalInvoiceIssueEvidenceRecord.Prepare(
+            Guid.NewGuid(), Guid.NewGuid(), DateTime.UtcNow,
+            source, preflight);
+        var building = Guid.NewGuid();
+
+        var readings = source.Utilities
+            .SelectMany(x => x.Sources)
+            .Select(x => new MeterReading(
+                x.SourceId, x.UtilityMeterId,
+                source.FinalBillingDate.Year, source.FinalBillingDate.Month,
+                x.PreviousReading, x.CurrentReading, x.RecordedDate))
+            .ToArray();
+        var meters = source.Utilities
+            .SelectMany(x => x.Sources.Select(y => (
+                Utility: x.UtilityType, Source: y)))
+            .Select(x => new UtilityMeter(
+                x.Source.UtilityMeterId, source.RoomId, x.Utility,
+                "SOURCE-" + Guid.NewGuid().ToString("N"),
+                x.Source.PreviousReading, new DateTime(2026, 1, 1)))
+            .ToArray();
+        var rates = source.Utilities
+            .Select(x => new UtilityRate(
+                x.UtilityRateId, building, x.UtilityType, x.UnitPrice,
+                new DateTime(2026, 11, 1), null))
+            .ToArray();
+        return (archive, building, readings, meters, rates);
+    }
+
+    [Fact]
+    public void REPLACEMENTAUDIT01_Original_Handover_And_Both_Meters_Agree()
+    {
+        var (archive, building, readings, meters, rates, replacements) =
+            ReplacementAuditFixture();
+        var result = FinalInvoiceSourceProvenanceEvaluator.Assess(
+            archive, building, readings, meters, rates, replacements);
+
+        Assert.True(result.MatchesPersistedSources);
+        Assert.DoesNotContain("OriginalMeterReplacementMissing", result.Blockers);
+        Assert.DoesNotContain("ReplacementNewMeterOpeningMismatch", result.Blockers);
+        Assert.False(result.CanIssue);
+        Assert.False(result.CanPostReceivable);
+    }
+
+    [Fact]
+    public void REPLACEMENTAUDIT02_Missing_Original_Closing_Is_Not_Confirmed()
+    {
+        var (archive, building, readings, meters, rates, _) =
+            ReplacementAuditFixture();
+        var result = FinalInvoiceSourceProvenanceEvaluator.Assess(
+            archive, building, readings, meters, rates,
+            Array.Empty<MeterReplacement>());
+
+        Assert.False(result.MatchesPersistedSources);
+        Assert.Contains("OriginalMeterReplacementMissing", result.Blockers);
+        Assert.False(result.CanIssue);
+    }
+
+    [Fact]
+    public void REPLACEMENTAUDIT03_Modified_Closing_Reading_Is_Detected()
+    {
+        var (archive, building, readings, meters, rates, replacements) =
+            ReplacementAuditFixture();
+        typeof(MeterReplacement)
+            .GetProperty(nameof(MeterReplacement.OldFinalReading))!
+            .SetValue(replacements[0], replacements[0].OldFinalReading + 1m);
+        var result = FinalInvoiceSourceProvenanceEvaluator.Assess(
+            archive, building, readings, meters, rates, replacements);
+
+        Assert.False(result.MatchesPersistedSources);
+        Assert.Contains("OriginalMeterReplacementClosingDiffersFromSnapshot",
+            result.Blockers);
+    }
+
+    [Fact]
+    public void REPLACEMENTAUDIT04_New_Meter_Opening_Must_Match_Handover()
+    {
+        var (archive, building, readings, meters, rates, replacements) =
+            ReplacementAuditFixture();
+        var nextMeter = meters.Single(x =>
+            x.Id == replacements[0].NewMeterId);
+        nextMeter.Update(nextMeter.MeterCode,
+            nextMeter.InitialReading + 1m, nextMeter.InstalledDate,
+            "Incorrect initial reading");
+        var result = FinalInvoiceSourceProvenanceEvaluator.Assess(
+            archive, building, readings, meters, rates, replacements);
+
+        Assert.False(result.MatchesPersistedSources);
+        Assert.Contains("ReplacementNewMeterOpeningMismatch", result.Blockers);
+    }
+
+    [Fact]
+    public void REPLACEMENTAUDIT05_Foreign_Or_Missing_New_Meter_Is_Denied()
+    {
+        var (archive, building, readings, meters, rates, replacements) =
+            ReplacementAuditFixture();
+        var noNew = FinalInvoiceSourceProvenanceEvaluator.Assess(
+            archive, building, readings,
+            meters.Where(x => x.Id != replacements[0].NewMeterId).ToArray(),
+            rates, replacements);
+        Assert.Contains("ReplacementNewMeterMissing", noNew.Blockers);
+
+        var foreign = new UtilityMeter(
+            replacements[0].NewMeterId, Guid.NewGuid(), UtilityType.Electricity,
+            "OTHER-" + Guid.NewGuid().ToString("N"), 2m,
+            replacements[0].ReplacementDate);
+        var changed = meters.Select(x =>
+            x.Id == replacements[0].NewMeterId ? foreign : x).ToArray();
+        var result = FinalInvoiceSourceProvenanceEvaluator.Assess(
+            archive, building, readings, changed, rates, replacements);
+        Assert.Contains("ReplacementNewMeterOpeningMismatch", result.Blockers);
+    }
+
+    [Fact]
+    public void REPLACEMENTAUDIT06_Unexplained_Handover_Cannot_Confirm_Proof()
+    {
+        var (archive, building, readings, meters, rates, replacements) =
+            ReplacementAuditFixture();
+        typeof(MeterReplacement)
+            .GetProperty(nameof(MeterReplacement.Reason))!
+            .SetValue(replacements[0], " ");
+        var result = FinalInvoiceSourceProvenanceEvaluator.Assess(
+            archive, building, readings, meters, rates, replacements);
+
+        Assert.False(result.MatchesPersistedSources);
+        Assert.Contains("OriginalMeterReplacementClosingDiffersFromSnapshot",
+            result.Blockers);
+        Assert.False(result.CanIssue);
+    }
+
+    private static (
+        FinalInvoiceIssueEvidenceRecord Archive,
+        Guid Building,
+        MeterReading[] Readings,
+        UtilityMeter[] Meters,
+        UtilityRate[] Rates,
+        MeterReplacement[] Replacements) ReplacementAuditFixture()
+    {
+        var (request, contract, _) = Fixture();
+        var oldMeterId = Guid.NewGuid();
+        var newMeterId = Guid.NewGuid();
+        var waterMeterId = Guid.NewGuid();
+        var closingId = Guid.NewGuid();
+        var waterReadingId = Guid.NewGuid();
+        var closingDate = new DateTime(2026, 11, 15);
+        var monthEnd = new DateTime(2026, 11, 30);
+        var rateElectricId = Guid.NewGuid();
+        var rateWaterId = Guid.NewGuid();
+
+        var electricSource = new InvoiceDraftMeterSegmentSnapshot(
+            closingId, oldMeterId, MeterUsageSourceType.ReplacementClosing,
+            closingDate, 10m, 20m);
+        var waterSource = new InvoiceDraftMeterSegmentSnapshot(
+            waterReadingId, waterMeterId, MeterUsageSourceType.MonthlyReading,
+            monthEnd, 100m, 105m);
+        var snapshot = InvoiceDraftSnapshot.Capture(
+            contract.Id, request.RoomId, 2026, 11,
+            new[]
+            {
+                new InvoiceDraftUtilityLineSnapshot(
+                    UtilityType.Electricity, rateElectricId,
+                    "SingleRateWholeMonth", 10m, 3000m, 30000m,
+                    new[] { electricSource }, Array.Empty<string>()),
+                new InvoiceDraftUtilityLineSnapshot(
+                    UtilityType.Water, rateWaterId,
+                    "SingleRateWholeMonth", 5m, 10000m, 50000m,
+                    new[] { waterSource }, Array.Empty<string>())
+            });
+        var draft = Invoice.CreateDraft(Guid.NewGuid(), snapshot, Guid.NewGuid);
+        var package = Package(request, contract, draft,
+            new DateTime(2026, 11, 30, 18, 0, 0, DateTimeKind.Utc));
+        var bill = Review(request, contract, draft);
+        var payments = FinalMoveOutPaymentEvidenceEvaluator.Assess(
+            bill, Array.Empty<Payment>());
+        var preflight = FinalInvoiceIssuePreflightEvaluator.Assess(
+            bill, package, payments);
+        var archive = FinalInvoiceIssueEvidenceRecord.Prepare(
+            Guid.NewGuid(), Guid.NewGuid(), DateTime.UtcNow, package, preflight);
+
+        var building = Guid.NewGuid();
+        var oldMeter = new UtilityMeter(
+            oldMeterId, request.RoomId, UtilityType.Electricity,
+            "OLD-" + Guid.NewGuid().ToString("N"), 10m,
+            new DateTime(2026, 1, 1));
+        var newMeter = new UtilityMeter(
+            newMeterId, request.RoomId, UtilityType.Electricity,
+            "NEW-" + Guid.NewGuid().ToString("N"), 2m, closingDate);
+        var waterMeter = new UtilityMeter(
+            waterMeterId, request.RoomId, UtilityType.Water,
+            "WATER-" + Guid.NewGuid().ToString("N"), 100m,
+            new DateTime(2026, 1, 1));
+        var replacement = new MeterReplacement(
+            closingId, oldMeterId, newMeterId,
+            request.RoomId, UtilityType.Electricity, closingDate,
+            10m, 20m, 2m, "Faulty meter replaced");
+        return (archive, building,
+            new[] { new MeterReading(
+                waterReadingId, waterMeterId, 2026, 11, 100m, 105m,
+                monthEnd) },
+            new[] { oldMeter, newMeter, waterMeter },
+            new[]
+            {
+                new UtilityRate(rateElectricId, building,
+                    UtilityType.Electricity, 3000m,
+                    new DateTime(2026, 11, 1), null),
+                new UtilityRate(rateWaterId, building,
+                    UtilityType.Water, 10000m,
+                    new DateTime(2026, 11, 1), null)
+            },
+            new[] { replacement });
+    }
+
+    private static (FinalInvoiceEvidencePackage, FinalInvoiceIssuePreflight)
+        StagingFixture()
+    {
+        var (request, contract, draft) = Fixture();
+        var review = Review(request, contract, draft);
+        var evidence = Package(request, contract, draft, DateTime.UtcNow);
+        var receipts = FinalMoveOutPaymentEvidenceEvaluator.Assess(
+            review, Array.Empty<Payment>());
+        var preflight = FinalInvoiceIssuePreflightEvaluator.Assess(
+            review, evidence, receipts);
+        return (evidence, preflight);
+    }
+
+    private static FinalMoveOutBillReview Review(
+        MoveOutRequest request, Contract contract, Invoice draft)
+        => FinalMoveOutBillReviewEvaluator.Assess(
+            request, contract, new[] { draft }, draft.Items.ToArray(),
+            draft.Items.SelectMany(x => x.MeterSources).ToArray());
+
+    private static (MoveOutRequest, Contract, Invoice) Fixture(bool approve = true)
+    {
+        var roomId = Guid.NewGuid();
+        var contract = new Contract(Guid.NewGuid(), "TEST-FINAL",
+            roomId, new DateTime(2026, 1, 1), null, 3_500_000m);
+        contract.Activate();
+        var request = new MoveOutRequest(Guid.NewGuid(), contract.Id,
+            roomId, new DateOnly(2026, 11, 30), null);
+        if (approve)
+            request.Approve(DateTime.UtcNow, null);
+        return (request, contract, BuildDraft(contract.Id, roomId));
+    }
+
+    private static Invoice BuildDraft(Guid contractId, Guid roomId, int month = 11)
+    {
+        var sourceType = Enum.GetValues<MeterUsageSourceType>()[0];
+        InvoiceDraftUtilityLineSnapshot Line(
+            UtilityType type, decimal quantity, decimal unitPrice)
+        {
+            var meter = new InvoiceDraftMeterSegmentSnapshot(
+                Guid.NewGuid(), Guid.NewGuid(), sourceType,
+                new DateTime(2026, month, 30), 0m, quantity);
+            return new InvoiceDraftUtilityLineSnapshot(
+                type, Guid.NewGuid(), "SingleRateWholeMonth",
+                quantity, unitPrice, quantity * unitPrice,
+                new[] { meter }, Array.Empty<string>());
+        }
+
+        var snapshot = InvoiceDraftSnapshot.Capture(
+            contractId, roomId, 2026, month,
+            new[]
+            {
+                Line(UtilityType.Electricity, 10m, 3_000m),
+                Line(UtilityType.Water, 2m, 10_000m)
+            });
+        return Invoice.CreateDraft(Guid.NewGuid(), snapshot, Guid.NewGuid);
+    }
+}

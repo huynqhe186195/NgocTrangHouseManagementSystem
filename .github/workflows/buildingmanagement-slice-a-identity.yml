@@ -1,0 +1,89 @@
+name: Slice A isolated ABP Identity membership composition
+
+on:
+  push:
+    branches:
+      - wip/phase-2g2
+    paths:
+      - "test/NgocTrangHouseManagementSystem.HttpApi.Host.Tests/**"
+      - "modules/buildingmanagement/src/BuildingManagement.Domain/DepositSettlements/**"
+      - "modules/buildingmanagement/src/BuildingManagement.Application/DepositSettlements/**"
+      - "modules/buildingmanagement/test/BuildingManagement.Domain.Tests/DepositSettlements/**"
+      - "modules/buildingmanagement/test/BuildingManagement.Application.Tests/DepositSettlements/**"
+      - "modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Migrations/*Phase2G4*.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/AbpIdentityBuildingOperatorAccountProbe.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceAStagingPersistenceAdapters.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceAStagingOperatorGrantQuery.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceCStagingUtilityRates.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceCStagingUtilityRateController.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceCStagingMeterReadings.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceCStagingMeterReadingController.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceCStagingUtilityMeters.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceCStagingUtilityMeterController.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.Application.Contracts/Permissions/BuildingManagementPermissions.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.Application.Contracts/Permissions/BuildingManagementPermissionDefinitionProvider.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.Application/Utilities/UtilityRateAppService.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceBStagingContractQuery.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceBStagingContractMutation.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceBStagingContractsController.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceAStagingOperatorGrantsController.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/NgocTrangHouseManagementSystemHttpApiHostModule.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Properties/AssemblyInfo.cs"
+      - ".github/workflows/buildingmanagement-slice-a-identity.yml"
+  pull_request:
+    branches:
+      - wip/phase-2g2
+    paths:
+      - "test/NgocTrangHouseManagementSystem.HttpApi.Host.Tests/**"
+      - "modules/buildingmanagement/src/BuildingManagement.Domain/DepositSettlements/**"
+      - "modules/buildingmanagement/src/BuildingManagement.Application/DepositSettlements/**"
+      - "modules/buildingmanagement/test/BuildingManagement.Domain.Tests/DepositSettlements/**"
+      - "modules/buildingmanagement/test/BuildingManagement.Application.Tests/DepositSettlements/**"
+      - "modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Migrations/*Phase2G4*.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/AbpIdentityBuildingOperatorAccountProbe.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceAStagingPersistenceAdapters.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceAStagingOperatorGrantQuery.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceCStagingUtilityRates.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceCStagingUtilityRateController.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceCStagingMeterReadings.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceCStagingMeterReadingController.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceCStagingUtilityMeters.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceCStagingUtilityMeterController.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.Application.Contracts/Permissions/BuildingManagementPermissions.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.Application.Contracts/Permissions/BuildingManagementPermissionDefinitionProvider.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.Application/Utilities/UtilityRateAppService.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceBStagingContractQuery.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceBStagingContractMutation.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceBStagingContractsController.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceAStagingOperatorGrantsController.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/NgocTrangHouseManagementSystemHttpApiHostModule.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Properties/AssemblyInfo.cs"
+      - ".github/workflows/buildingmanagement-slice-a-identity.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: slice-a-identity-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  isolated-identity-composition:
+    name: ABP identity + permission + SQLite membership test composition
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Run only isolated Identity composition tests
+        run: |
+          dotnet test test/NgocTrangHouseManagementSystem.HttpApi.Host.Tests/NgocTrangHouseManagementSystem.HttpApi.Host.Tests.csproj \
+            --filter "FullyQualifiedName~BuildingIdentityMembershipComposition_Tests|FullyQualifiedName~AbpIdentityPermissionRealDi_Tests|FullyQualifiedName~SliceAStagingHttpTwoBuildings_Tests|FullyQualifiedName~SliceAStagingOperatorGrantsGuard_Tests" \
+            --logger "console;verbosity=normal"
+
+# No PostgreSQL or production Identity database, credentials, EF migrations,
+# privileged grant registration, role assignments, or live HTTP host.

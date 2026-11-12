@@ -1,0 +1,128 @@
+# CURRENT STATE — NgocTrangHouseManagementSystem
+**Snapshot:** 2026-11-12 (P3 complete; CI GREEN: run 384 at `c63d370` — first fully-green GitHub Actions run; merge awaits Owner §6 signature + P2 deferral decision)  
+**Verified by:** Claude Code audit  
+**Working Directory:** `D:\Dev\NgocTrangBuilding\Project\NgocTrangHouseManagementSystem`
+
+## Git Status
+
+**Current Branch:** `feat/local-safe-startup-20261109`  
+**HEAD SHA:** `c63d370` (pushed to origin; branch in sync; CI run 384 ID 43240562191 — 5/5 jobs SUCCESS)  
+**Untracked Files:** `etc/phase-audits/Phase2G3A7_RevisionLedger_Generated_Review.sql`
+
+### Branch Inventory
+
+| Branch | HEAD SHA | Tracking | Status vs Handoff |
+|--------|----------|----------|-------------------|
+| `feat/local-safe-startup-20261109` | `c63d370` | origin/feat/local-safe-startup-20261109 | ✅ CURRENT — in sync; contains merged PR #5 lane (`01cba31`); CI run 384 green 5/5 |
+| `feat/d04b-operational-gates-20261108` | `705a481` | origin/feat/d04b-operational-gates-20261108 | ✅ Matches handoff |
+| `feat/d04b-protected-bank-evidence-20261108` | `66a62dc` | origin/feat/d04b-protected-bank-evidence-20261108 | ✅ Matches handoff |
+| `feat/phase2h-payos-signature-foundation-20261106` | `7249c9f` | origin (behind 1) | ⚠️ Behind, differs from handoff `2de0f7e` |
+| `wip/phase-2g2` | `e8e4f29` | origin (behind 49) | ⚠️ Behind, differs from handoff `a951999` |
+| `main` | `3e3636c` | origin/main | ✅ Matches handoff |
+
+### Recent Commits on Current Branch (since handoff)
+
+- `feb8938` — docs(p33): acceptance matrix complete - all local invariants PASS at 1ddf2e6
+- `1ddf2e6` — fix(p32b): replace hard-coded due dates with dynamic VN-local dates (time-bomb fixture, not a merge defect)
+- `127f5d4` — fix(p32b): guard-adapt 2H/2g/2g5 verify lanes to the P3.1 merged trunk (Owner choice (a))
+- `7f48c59` — fix(p32): align D04 bundle host-archive count with 9-test vault suite
+- `38f0037` — fix(p32): accept merged H4 settlement journal as terminal EF migration
+- `01cba31` — merge(p31): integrate PR #5 spec-kit-h4-security lane into PR #10 trunk (Owner-approved)
+- `a1fc719` — docs(p31): branch reconciliation analysis complete - merge clean, awaits Owner
+- `c735639` — docs: P1.5 DONE - internal simulated payOS E2E green at e58b12c (20/20)
+- `6d3ff02` — fix(d04b): durable-state settlement table is BuildingManagementDepositSettlements
+- `95053a3` — fix(d04b): suppress docker cp output in Invoke-Scalar (array, not string)
+- `bf193a3` — fix(d04b): single double-quotes in SQL here-strings (PS5.1 does not collapse "")
+- `7dbda39` — fix(d04b): R1 must submit IntentA2's own bank reference, not the A-lane form
+- `92076b2` — test(d04b): add explicit -AllowUnpushedCommit pre-push verification mode
+- `f14745f` — fix(d04b): three real fixes for native OpenIddict UAT matrix blockers
+- `7621d8a` — test(d04b): regression-test the Host D04-B startup gate as verify step 18c
+- `fc322e8` — test(d04b): cover Host encrypted archive and gate it as verify step 18b
+- `6622b3a` — fix(d04b): support Windows PowerShell 5.1 absolute vault path check
+- `e246e8c` — test(d04b): add fail-closed native OpenIddict disposable Host launcher
+- `0702e0d` — fix(d04b): use supported Convert.FromHexString for archive digest verification **(handoff baseline)**
+
+## Implementation Matrix — PASS/PARTIAL/HOLD
+
+### ✅ VERIFIED PASS (with exact SHA evidence)
+
+| Item | Scope | Evidence | SHA | Notes |
+|------|-------|----------|-----|-------|
+| Identity/OpenIddict localhost | Owner/Reviewer 2 actors, bearer-only, profile HTTP 200, denied 403 | User-confirmed PASS 2026-11-10 | HEAD before `6622b3a` | `AUTH_BEARER_ONLY_PASS`, `IDENTITY_TWO_ACTOR_PASS` |
+| D04-B operational gates | Full isolated PASS, forced OS-kill, ACK recovery, restricted DB role | User log `C:\Users\Huynq\NgocTrang-Test-Logs\payos-20261108-205635` | `705a481` (PR #9) | NOT re-verified on PR #10 yet |
+| D04 payOS foundation | Real writer D04A_REAL01, 2-DB protocol, isolated bundle | `verify-payos-d04-local.ps1` historical PASS | Earlier SHA on foundation branch | Superseded for the writer-only scope by the `fc322e8` row below |
+| D04 writer-only bundle on PR #10 | `-WriterOnly` on `7621d8a`: 19 passed / 0 failed | 5 TRX in `C:\Users\Huynq\NgocTrang-Test-Logs\payos-20261110-162113` | `7621d8a` | Synthetic signed test cookies, NOT native OpenIddict; NOT business accepted |
+| D04-B Host startup gate | Default OFF, environment/DB/archive fail-closed, 8/8 | TRX `payos-d04-host-startup-gate.trx` in `payos-20261110-162113` / `payos-20261110-162625` | `7621d8a` | Pure extraction of the previously inline gate |
+| D04 FULL local bundle on PR #10 | Steps 01–27 all PASS: 8 TRX, 118 passed, 0 failed | `C:\Users\Huynq\NgocTrang-Test-Logs\payos-20261110-162625` | `7621d8a` | Synthetic cookies, NOT native OpenIddict |
+| **P1.1 Native D04 JWT matrix** | Real OpenIddict password-grant bearer tokens for `reviewer-uat`/`owner-uat`/`outsider-uat` on the real Host (https://localhost:44311, Staging): 25/25 matrix steps PASS — N1 anonymous (401/302), N2 forged bearer (401/302), N3 outsider review 403, N4 owner-as-reviewer 403, N5/N6 reviewer-as-owner 403, N7 cross-building 403, N8 self-approve 403; P1 review 201+reviewId, P2 idempotent re-review same reviewId, P3 approve 201+approvalId, P4 post 201+receiptId+LegacyCommittedAndStagingAcknowledged, P5 replay same receiptId; R1 review A2 201, T1 tampered archive blocks approve 403, R2 approve 201, R4 post after grant revoke 403; durable state psql: LEGACY `2\|1\|1\|1`, STAGING `3\|1\|2`; TRX `payos-native-jwt-provision.trx` 1/1 | **Official run 28 at pushed SHA**: `C:\Users\Huynq\NgocTrang-Test-Logs\payos-native-jwt-20261111-001125` (TRX inside), `SOURCE_COMMIT=f30e14d17a0859d35b7548c359b1db116efeea3b` (== origin, no pre-push warning). Pre-push run 27 at `6d3ff02`: `payos-native-jwt-20261111-000218` | `f30e14d` | Tokens were real OpenIddict Bearer (not synthetic cookies); token values never echoed/saved. Fix commits for three real source bugs live in `f14745f` (UseUnitOfWork removal, Forbid→403, idempotent re-review reference reuse); four follow-ups fixed harness-only bugs (`7dbda39`, `bf193a3`, `95053a3`, `6d3ff02`). Temp container + worktree removed; 15433/5432 untouched |
+| **P1.2 DB least privilege (money writer)** | `D04BRestrictedMoneyWriterRolesGate` in 19a: two non-superuser non-DDL runtime roles with grants matching the canonical writer SQL; SERIALIZABLE writer-pattern transaction commits under the role; CREATE TABLE/DROP/inserted Payment/journal UPDATE+DELETE/BankReviews UPDATE/CREATE FUNCTION/CREATE ROLE all denied SQLSTATE 42501; zero grantable rights on the immutable journal (catalog-asserted); staging webhook-inbox + intent INSERT denied; migration stays on separate superuser connection | `-WriterOnly` run 5: 6 TRX / 20 passed / 0 failed, `payos-d04-real-writer.trx` 1/1, LOG_DIRECTORY `C:\Users\Huynq\NgocTrang-Test-Logs\payos-20261111-003546`, `SOURCE_COMMIT=d085d0209f5775c495618c1a20c29556394dd944` (pushed) | `d085d02` | Scope limit recorded: P1.1 Host harness + this rehearsal still use the disposable superuser account for the running writer; switching Host connection strings to restricted runtime roles is an operational config change deferred to P1.3 |
+| **P1.4 crash/recovery in the native JWT lane** | Full crash/recovery regression in the real-Host native OpenIddict JWT lane (IntentB, Building B): C0 grants actors mid-run; C1 arms a staging trigger terminating the ACK backend exactly at the MarkPosted UPDATE (2→3) so the post returns `LegacyCommittedAckPendingRetrySameIntent` with Payment+settlement+journal+outbox committed and outbox unacknowledged (CRASH_LEGACY `2\|1\|1\|0`, intent still ConfirmedPendingPosting); C1b force-kills the whole Host process tree (taskkill /T /F); C2 restarts the real Host, replays the SAME intent → SAME receiptId + `LegacyCommittedAndStagingAcknowledged` (RECOVERED_LEGACY `2\|1\|1\|1\|1`, STAGING `3\|1\|1`); C3 duplicate replay idempotent; webhook inbox untouched (1 row, reconciled). No second Payment/Settlement/Receipt/Outbox row ever appears | Run 2 at pushed SHA: 34/34 matrix steps PASS + TRX `payos-native-jwt-provision.trx` 1/1, LOG_DIRECTORY `C:\Users\Huynq\NgocTrang-Test-Logs\payos-native-jwt-20261111-011917`, `SOURCE_COMMIT=682613d3c74ede9a36e19181aa75e09199c0003a` (== origin, no pre-push warning). Run 1 (`payos-native-jwt-20261111-011315`) exposed the EF-wrapped transport bug fixed at `682613d` | `682613d` | Tokens real OpenIddict Bearer (never echoed/saved); temp container + worktree removed; 15433/5432 untouched. Source fix: EF Core wraps PostgresException 57P01 in InvalidOperationException("transient failure") with the transport exception only in the inner chain — the coordinator's direct-type catch filter missed it and surfaced 409 instead of the designed retriable AckPending outcome; the filter now walks the inner exception chain (integrity mismatches still propagate) |
+| **P1.5 internal simulated payOS staging E2E** | Real Host (Staging, https://localhost:44311) with native OpenIddict password-grant tokens for `operator-p15`/`outsider-p15`, config-only `ProviderMode=InternalSimulated`, loopback checkout → signed webhook → reconcile, ZERO real payOS traffic: N1 anonymous 401/302, N2 forged bearer 401/302, N3 outsider checkout 403, N4 cross-building checkout 403; P1 checkout 201 + `SIM-P15-` link + P2 same-orderCode replay idempotent; W1 HMAC-SHA256-signed webhook 201, W2 duplicate idempotent, W3 tampered signature 400 (inbox untouched); R1 reconcile 201 + `confirmedPendingFinancialReview`, R2 replay idempotent, R3 outsider 403; durable-state psql: CHECKOUT `1\|1\|t\|1` (one intent, AwaitingPayment, SIM link, attach outbox Completed), WEBHOOK `0\|1` (inbox ReconciledNoPosting, one row), FINAL `2\|1\|2\|2` (intent ConfirmedPendingPosting, inbox reconciled, outbox Completed of 2), legacy Payment stays Pending; TRX `payos-p15-internal-provision.trx` 1/1 (fixture seeds schema, all durable rows produced by the real Host HTTP matrix) | **Official run 3 at pushed SHA**: 20/20 matrix steps PASS, LOG_DIRECTORY `C:\Users\Huynq\NgocTrang-Test-Logs\payos-p15-internal-20261111-153928` (TRX inside), `SOURCE_COMMIT=e58b12c52759088a9f1fad2f9a9f1e998fd649a6` (== origin, no pre-push warning). Runs 1–2 exposed two real source bugs: `RootUserIds` array binding requires the indexed env key `BuildingManagement__Bootstrap__RootUserIds__0` (fixed `eb8074b`), and `AbpAuthorizationException` must map to 403 not 500 in the payOS staging controller (fixed `e58b12c`, same class as `f14745f`) | `e58b12c` | In-process simulator lane per Owner decision (real payOS client stays default, hard-gated); D04B lane OFF (mutually exclusive); three DBs `bm_slicea_staging_p15_identity`/`bm_slicea_staging_p15_building`/`bm_payos_staging_p15` on disposable PG16 15432; tokens never echoed/saved; TLS HTTPS public callback URL = HOLD per Owner (internal staging only, no public callback); temp container + worktree removed; 15433/5432 untouched |
+| **P3.1 branch reconciliation + merge** | Read-only merge-tree analysis of PR #5 (`integration/spec-kit-h4-security-20261105`, 95 commits, contains all of `origin/wip/phase-2g2`) vs PR #10 (371 commits) from merge-base `e05049d`: 0 conflicted files in every direction, disjoint migration table/index/trigger names, zero ModelSnapshot/Designer changes on either lane, zero docs overlap; then Owner-approved full-branch merge (no cherry-picks) of PR #5 into the PR #10 trunk | Analysis `etc/phase-audits/P31_BranchReconciliation_20261111.md` at `a1fc719`; merge commit `01cba31` pushed (fast-forward); spec-kit specs/, .specify/, CI workflows and 356-line H4 settlement journal migration now on the trunk | `01cba31` | `origin/wip/phase-2g2` fully absorbed by PR #5 (2g2 lane needs no separate merge); local `wip/phase-2g2` branch stale, left untouched |
+| **P3.2 local regression at merged tree** | Whole-solution build + all module/host suites + both official payOS harnesses + D04 bundles + 2H/2g/2g5 external verify lanes at the P3.1-merged tree: build 0 errors; Domain 720/720, EF 447/447, Application 231/231, Host HTTP 76/76; P1.5 internal staging harness 20/20; D04-B native JWT matrix PASS; D04 writer-only bundle PASS; D04 FULL bundle (01–27) PASS; 2H financial foundations 5/5 groups (domain 165/165, PG 103/103, full migration chain, auth HTTP 1/1, full 2g regression batch embedded); 2g5 staging 4/4 groups (PG archive 58/58, full migration chain 1/1, auth HTTP 1/1, full regression 76/76) | At pushed SHAs: suites+harness at `01cba31` (TRXs in `C:\Users\Huynq\NgocTrang-Test-Logs\p32-merged-01cba31`, P1.5 LOG_DIRECTORY `payos-p15-internal-20261111-230926`); native JWT matrix at `38f0037` (`payos-native-jwt-20261111-231445`); D04 bundles at `7f48c59` (`payos-20261111-232050` writer-only, `payos-20261111-232223` FULL); 2H/2g/2g5 at `1ddf2e6` — 2H LOG_DIRECTORY `C:\Users\Huynq\NgocTrang-Test-Logs` (TRX `15-2h-financial-domain.trx` 165/165, `16-2h-postgresql.trx` 103/103, `17-2h-full-migration.trx` 1/1, `18-2h-auth-http.trx` 1/1, all stamping `PHASE2H_COMMIT=1ddf2e6...`; group 5 = full 2g regression batch `19-2h-full-regression.log` 76/76), 2g5 logs `11-2g5-archive-pg.log` 58/58 + `12-2g5-full-migration.log` 1/1 + `13-2g5-http-pg.log` 1/1 + `14-2g5-full-regression.log` 76/76 (`PHASE2G5...` output: ALL FOUR GROUPS PASSED). Merged-tree fix commits: `38f0037` (D04 fixtures pinned pre-merge terminal EF migration — R3 class), `7f48c59` (stale host-archive count 7→9), `127f5d4` (guard-adapt: 2-branch allowlists in 6 verify scripts, C# port guards widened 5432\|\|15432 — Owner choice (a)), `1ddf2e6` (four fixtures hard-coded due dates 2026-11-07/12-07 that the wall clock had expired — time-bomb, same fix class as `38f0037`; replaced with VN-local today+7 pattern) | `1ddf2e6` | ~~OPEN external item: GitHub Actions billing lock~~ **RESOLVED 2026-11-12** (CI green at `c63d370`, run 384; see item 10) |
+| **P3.3 acceptance matrix** | Consolidated program-wide evidence matrix: 26 requirement rows in 5 sections (A safety/threat-model, B auth invariants, C accounting invariants, D merge-integrity, E historical CI-only). All local-verifiable invariants PASS at `1ddf2e6` with per-row SHA+TRX citations; R3 closed (4 documented fix classes, no semantic lane conflict); remaining HOLD groups are all Owner actions (GitHub billing, production vault/roles/secrets, TLS public payOS callback, merge-to-main authorization) | `etc/phase-audits/P33_AcceptanceMatrix_20261112.md` | `2f0a949` | Matrix built from CURRENT_STATE/TASK_BACKLOG/specs-001-002-003 + run logs; no previous-run PASS copied onto a new SHA |
+| **P3.4 final review + release proposal** | Exact-final-SHA regression green at `feb8938` (3 source gates + 720/720 + 231/231 + 447/447 + 76/76, exit 0; `feb8938` verified docs-only over `1ddf2e6`); threat/auth/accounting reviews inherited from P3.3 matrix; release proposal with preconditions, non-authorization list, post-merge plan, Owner signature block | `etc/phase-audits/P34_FinalReview_ReleaseProposal_20261112.md` §2.1 | `feb8938` | Merge NOT executed — awaits Owner §6 signature + precondition decisions (GitHub billing path, P2 deferral acceptance) |
+| H4 + D01/D02 calendar | 118 ngày lịch, exact-head CI 4/4 PASS | PR #5 CI green at multiple commits | `0b8332e9` on PR #5 | Spec-kit lane now merged into PR #10 trunk at `01cba31` |
+| D03/D06 staging | Service pricing per room, reject fake signatures, Owner-only DOCX | PR #5 bounded CI PASS | `0b8332e9` on PR #5 | PR #5 NOT in current branch |
+
+### 🟡 PARTIAL / NEEDS VERIFICATION
+
+| Item | What's Done | What's Missing | Blocker |
+|------|-------------|----------------|---------|
+| Encrypted bank evidence vault | P1.3 DONE (local rehearsal scope per Owner): AES-GCM with two-key rotation ring (current + one previous generation; equal keys rejected), readback verification under both keys, PNG/JPEG/PDF magic-byte validation, 256B–5MiB bounds — 9/9 archive tests | KMS/production secrets, IAM ACL, backup/restore, cloud malware scan, legal hold = HOLD per Owner decision | none |
+| Host D04-B restricted runtime roles | ✅ DONE — `d04_d04b_host_legacy_test`/`d04_d04b_host_staging_test` non-superuser roles run the Host legacy/staging connections through the FULL native JWT matrix (64/64 at pushed `18fe521`, run `payos-native-jwt-20261111-134136`). Grants: read-all-in-schema legacy role (integrity triggers query cross-domain tables under invoking-role privileges; read is not the privilege boundary), narrow INSERT (evidence/settlement/journal/outbox/bank-claims), narrow UPDATE (Payments/Settlements + FOR SHARE-locked tables per PG16 semantics + outbox ACK columns only), DDL/role-creation denied; immutable evidence rows still 23514-blocked. Identity slot stays superuser (ABP/OpenIddict stack); migrations stay superuser on separate connections | Production role provisioning (Staging/Production secrets) | none |
+
+### 🔴 HOLD / NOT STARTED
+
+| Item | Reason | Dependency |
+|------|--------|------------|
+| Real payOS QR payment | Safety gates P0/P1 must pass first | All P0 + P1 items, Owner explicit approval |
+| Independent bank statement verification | No real money flow yet | Real payOS payment first |
+| ~~GitHub Actions CI evidence~~ | **RESOLVED 2026-11-12** — Owner unlocked billing (no payment method, free-tier public repo); CI re-armed, two workflow/fixture gaps fixed (`80e3c00` probe env + full EF chain, `c63d370` port guard-adapt), run 384 at `c63d370` green 5/5 (ID 43240562191) | — |
+| Phase 2G.5 move-out end-to-end | Partial staging tests exist | Final bill, debt, E/W meter, 3-sig checklist integration |
+| D01/D02 issued invoice correction | Golden candidate tests exist | Apply to actual issued invoices, 28/29/30/31 parity |
+| D03 service pricing in official invoices | Staging tests exist | Integration into issued invoices |
+| H4 settlement (D04 full business flow) | Top-up obligation tracking code exists | Cash-backed deadline ≤1 month, credit OR refund (exactly once), dual approval |
+| UI/Frontend | Unknown — need inventory | Determine what exists in repo |
+
+## Known Issues Fixed (verify on HEAD)
+
+1. ✅ **CS0117 Convert.TryFromHexString** — Fixed at `0702e0db` with `Convert.FromHexString`
+2. ✅ **MSB3027/MSB3021 DLL locks** — Fixed with detached worktree in `verify-payos-d04-local.ps1`
+3. ✅ **PS5.1 vault path check** — Fixed at `6622b3a`
+4. ✅ **P1.1 blockers (run 20–22):** ambient transactional UoW from `app.UseUnitOfWork()` overriding `[UnitOfWork(isTransactional:false)]` → 409; `Forbid()` → 302 login redirect; facade minted a new archive reference per re-review → 403 — all fixed at `f14745f`
+
+## Environment Configuration
+
+- **Test DB (D04):** `127.0.0.1:15432` ✅ Safe to use
+- **Identity DB (firstboot):** `127.0.0.1:15433` ⚠️ DO NOT TOUCH
+- **Production DB:** `127.0.0.1:5432` 🚫 FORBIDDEN
+- **Runtime:** Windows PowerShell, .NET 10
+- **Scripts:** `etc/scripts/verify-payos-d04-local.ps1 -WriterOnly`; native JWT matrix: `etc/scripts/verify-payos-d04b-native-jwt-matrix.ps1 [-AllowUnpushedCommit]`
+
+## Critical Rules in Effect
+
+- 🚫 No production migration, no real payOS, no real bank transfer
+- 🚫 No merge to `main`, no force push without explicit approval  
+- 🚫 No raw JWT/secrets/bank statements in logs or commits
+- ✅ Fail-closed for all financial code
+- ✅ Detached worktree to avoid DLL locks
+- ✅ Owner approval required for destructive operations
+
+## Next Immediate Actions (P1)
+
+1. ✅ P1.1 native D04 financial HTTP auth matrix — 25/25 PASS, official evidence at pushed SHA `f30e14d` (run 28, `payos-native-jwt-20261111-001125`); branch pushed and in sync with origin
+2. ✅ P1.2 DB financial writer least privilege — rehearsal gate at `d085d02` (run 5, `payos-20261111-003546`)
+3. ✅ P1.4 crash/recovery regression in the native JWT lane — 34/34 at pushed `682613d` (run 2, `payos-native-jwt-20261111-011917`)
+4. ✅ P1.3 local extended vault + restricted Host runtime roles — 64/64 matrix PASS at pushed `18fe521` (run 4, `payos-native-jwt-20261111-134136`, TRX provision 1/1; Host legacy/staging slots on `d04_d04b_host_legacy_test`/`d04_d04b_host_staging_test`, identity slot superuser, migrations on separate superuser connection). Owner decisions: local rehearsal scope; KMS/cloud malware scan/legal hold = HOLD
+5. ✅ P1.5 internal webhook/merchant staging readiness — 20/20 matrix PASS at pushed `e58b12c` (run 3, `payos-p15-internal-20261111-153928`, TRX provision 1/1). Owner decisions: in-process simulator (config-only, staging-gated, real client stays default); new staging outbox table; internal staging only — TLS HTTPS public callback URL = HOLD, no real payOS calls ever made
+6. ✅ P3.1 branch reconciliation + merge — Owner-approved full-branch merge of PR #5 into trunk at `01cba31`; merge-tree clean, 0 file conflicts
+7. ✅ P3.2 full regression — local evidence COMPLETE at merged tree (build, 1474/1474 module tests, P1.5 harness 20/20, D04-B native JWT matrix, writer-only + FULL bundles, 2H financial foundations 5/5 groups, 2g5 staging 4/4 groups, all at pushed SHAs through `1ddf2e6`; merged-tree fixes `38f0037`+`7f48c59`+`127f5d4`+`1ddf2e6`); OPEN: GitHub Actions billing lock (Owner action). P3.3 Acceptance Matrix can start on local evidence; CI evidence column stays HOLD until billing is resolved
+8. ✅ P3.3 acceptance matrix — `etc/phase-audits/P33_AcceptanceMatrix_20261112.md`: all local-verifiable invariants PASS at `1ddf2e6`; R3 closed; remaining HOLD = Owner actions (billing, production vault/roles, TLS callback, merge-to-main). Owner duyệt ngày 2026-11-12
+9. ✅ P3.4 final review + release proposal — `etc/phase-audits/P34_FinalReview_ReleaseProposal_20261112.md`: exact-final-SHA regression green at `feb8938`; merge to `main` proposed WITH preconditions, awaits Owner §6 signature (billing path choice + P2 deferral). Sau khi ký: merge GitHub PR #10 → re-run regression tại SHA post-merge → P2.1–P2.6 trên follow-up branches
+10. ✅ CI re-armed + GREEN — Owner unlocked GitHub Actions billing (card-free, 2026-11-12); run 382 (`bd2a11e`, first real run) surfaced 2 workflow gaps: missing D04-B probe env `BM_PAYOS_D04_PROCESS_PROBE_DLL` (fail-closed gate) and EF chain stopped before P1.5 `StagePayOsStagingOutbox` (42P01 in 6 webhook tests); fixed `80e3c00` (workflow probe build+env, full-chain target, acceptance SQL extended to 3 tables/history=2/outbox invariants — gates strictly stronger) + `c63d370` (run 383 residue: `PayOsStagingD04LegacyJournalSchema_Tests` port guard 15432→{5432 CI,15432 local}); both verified locally on disposable PG16 15432 before push (TRX `ci-fix-webhook-fullchain.trx` 57/57, `ci-fix-d04b-probe.trx` 1/1, `ci-fix2-legacyjournal.trx` 57/57). **Run 384 at `c63d370` (ID 43240562191): 5/5 jobs SUCCESS — first fully green CI run of the program.** P3.4 precondition §3.1 (CI-first) evidence complete; remaining: §3.2 P2 deferral + §6 Owner signature
+
+---
+**Last Updated:** 2026-11-12  
+**Verified Against:** local checkout + run 28 log/TRX evidence at pushed SHA `f30e14d` (P1.1), `-WriterOnly` run 5 at `d085d02` (P1.2), native JWT crash/recovery run 2 at pushed `682613d` (P1.4), native JWT restricted-roles run 4 at pushed `18fe521` (P1.3, 64/64), internal simulated payOS staging run 3 at pushed `e58b12c` (P1.5, 20/20), the P3.1-merged tree regression (module suites at `01cba31`, native JWT matrix at `38f0037`, D04 bundles at `7f48c59`, 2H foundations + 2g5 staging at `1ddf2e6`), the exact-final-SHA regression batch at `feb8938`, and CI run 384 green 5/5 at pushed `c63d370` (ID 43240562191)  
+**Confidence:** High for git state (branch == origin at `c63d370`, PR #5 merged at `01cba31`), the merged-tree local regression through the exact final SHA (build + 1474/1474 + all official payOS harnesses/bundles + 2H/2g/2g5 external lanes + final-SHA re-run), **GitHub Actions CI at current trunk (run 384: 5/5 jobs, first fully green run after Owner's card-free billing unlock)**, the native JWT matrix + crash lane under restricted Host roles, least-privilege writer rehearsal, and the P1.5 internal simulated payOS E2E lane; production vault, production role provisioning, TLS public payOS callback, and merge-to-main execution (Owner §6 pending) remain HOLD/open

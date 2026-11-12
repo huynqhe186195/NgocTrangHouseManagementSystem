@@ -1,0 +1,334 @@
+name: Slice A PostgreSQL membership scratch checks
+
+on:
+  push:
+    branches:
+      - wip/phase-2g2
+    paths:
+      - ".github/workflows/buildingmanagement-slice-a-postgres.yml"
+      - ".github/workflows/buildingmanagement-slice-a-identity.yml"
+      - "modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/**"
+      - "modules/buildingmanagement/src/BuildingManagement.Domain/MoveOuts/MoveOutRoomDispositionRecord.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.Domain/RoomChanges/**"
+      - "modules/buildingmanagement/test/BuildingManagement.Domain.Tests/MoveOuts/MoveOutRoomDisposition_Tests.cs"
+      - "modules/buildingmanagement/test/BuildingManagement.Domain.Tests/RoomChanges/**"
+      - "test/NgocTrangHouseManagementSystem.HttpApi.Host.Tests/SliceAStagingPostgreSqlHttp_Tests.cs"
+      - "etc/phase-audits/SliceA_OperatorBuildingGrant_*.sql"
+      - "etc/phase-audits/SliceA_RuntimeDbRole_ReadOnlyAudit.sql"
+      - "etc/phase-audits/SliceA_IdentityRuntimeDbRole_ReadOnlyAudit.sql"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceAStagingIdentityCommitLease.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceAStagingPersistenceAdapters.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceAStagingOperatorGrantQuery.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceCStagingUtilityRates.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceCStagingUtilityRateController.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceCStagingMeterReadings.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceCStagingMeterReadingController.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceCStagingUtilityMeters.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceCStagingUtilityMeterController.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.Application.Contracts/Permissions/BuildingManagementPermissions.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.Application.Contracts/Permissions/BuildingManagementPermissionDefinitionProvider.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.Application/Utilities/UtilityRateAppService.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceBStagingContractQuery.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceBStagingReservationQuery.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/BuildingManagementAuthenticatedControllerConvention.cs"
+      - "test/NgocTrangHouseManagementSystem.HttpApi.Host.Tests/BuildingManagementAutoApiAuthorization_Tests.cs"
+      - "test/NgocTrangHouseManagementSystem.HttpApi.Host.Tests/BuildingManagementAuthenticatedControllerConvention_Tests.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.Application/Payments/PaymentAppService.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceBStagingFinalInvoiceMutation.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceBStagingRoomChangeRequests.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceBStagingRoomChangesController.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceBStagingFinalInvoiceController.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.Domain/DepositSettlements/**"
+      - "modules/buildingmanagement/test/BuildingManagement.Domain.Tests/DepositSettlements/**"
+      - "modules/buildingmanagement/src/BuildingManagement.Domain/DepositSettlements/ContractDepositCloseoutApprovalRecord.cs"
+      - "modules/buildingmanagement/test/BuildingManagement.Domain.Tests/DepositSettlements/ContractDepositCloseoutApprovalIntegrity_Tests.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceBStagingContractMutation.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceBStagingContractsController.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceAStagingOperatorGrantsController.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceAStagingOwnerRecoveryEvidenceStore.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/NgocTrangHouseManagementSystemHttpApiHostModule.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Security/EfBuildingOwnerRecoveryAtomicWriter.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.Application/Security/BuildingOwnerRecoveryCoordinator.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.Application/Security/BuildingOperatorChangeCoordinator.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.Application/Security/BuildingOperatorChangeDesignGate.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Security/EfBuildingOwnerBootstrapAtomicWriter.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Security/EfBuildingOperatorGrantAtomicMutationWriter.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Security/EfBuildingScopedWriteFenceCandidate.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Security/EfBuildingScopedWriteBoundaryCandidate.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Migrations/**"
+      - "modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/EntityFrameworkCore/BuildingManagementDbContext.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/EntityConfigurations/BuildingOperatorAccessGrantDesignConfiguration.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.Application/Buildings/BuildingAppService.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.Application/Security/DenyAllBuildingScopedWriteBoundary.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.Domain/Security/IBuildingScopedWriteBoundary.cs"
+  pull_request:
+    branches:
+      - wip/phase-2g2
+    paths:
+      - ".github/workflows/buildingmanagement-slice-a-postgres.yml"
+      - ".github/workflows/buildingmanagement-slice-a-identity.yml"
+      - "modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/**"
+      - "modules/buildingmanagement/src/BuildingManagement.Domain/MoveOuts/MoveOutRoomDispositionRecord.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.Domain/RoomChanges/**"
+      - "modules/buildingmanagement/test/BuildingManagement.Domain.Tests/MoveOuts/MoveOutRoomDisposition_Tests.cs"
+      - "modules/buildingmanagement/test/BuildingManagement.Domain.Tests/RoomChanges/**"
+      - "test/NgocTrangHouseManagementSystem.HttpApi.Host.Tests/SliceAStagingPostgreSqlHttp_Tests.cs"
+      - "etc/phase-audits/SliceA_OperatorBuildingGrant_*.sql"
+      - "etc/phase-audits/SliceA_RuntimeDbRole_ReadOnlyAudit.sql"
+      - "etc/phase-audits/SliceA_IdentityRuntimeDbRole_ReadOnlyAudit.sql"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceAStagingIdentityCommitLease.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceAStagingPersistenceAdapters.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceAStagingOperatorGrantQuery.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceBStagingContractQuery.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceBStagingReservationQuery.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/BuildingManagementAuthenticatedControllerConvention.cs"
+      - "test/NgocTrangHouseManagementSystem.HttpApi.Host.Tests/BuildingManagementAutoApiAuthorization_Tests.cs"
+      - "test/NgocTrangHouseManagementSystem.HttpApi.Host.Tests/BuildingManagementAuthenticatedControllerConvention_Tests.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.Application/Payments/PaymentAppService.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceBStagingFinalInvoiceMutation.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceBStagingRoomChangeRequests.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceBStagingRoomChangesController.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceBStagingFinalInvoiceController.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.Domain/DepositSettlements/**"
+      - "modules/buildingmanagement/test/BuildingManagement.Domain.Tests/DepositSettlements/**"
+      - "modules/buildingmanagement/src/BuildingManagement.Domain/DepositSettlements/ContractDepositCloseoutApprovalRecord.cs"
+      - "modules/buildingmanagement/test/BuildingManagement.Domain.Tests/DepositSettlements/ContractDepositCloseoutApprovalIntegrity_Tests.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceBStagingContractMutation.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceBStagingContractsController.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceAStagingOperatorGrantsController.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/Security/SliceAStagingOwnerRecoveryEvidenceStore.cs"
+      - "src/NgocTrangHouseManagementSystem.HttpApi.Host/NgocTrangHouseManagementSystemHttpApiHostModule.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Security/EfBuildingOwnerRecoveryAtomicWriter.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.Application/Security/BuildingOwnerRecoveryCoordinator.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.Application/Security/BuildingOperatorChangeCoordinator.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.Application/Security/BuildingOperatorChangeDesignGate.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Security/EfBuildingOwnerBootstrapAtomicWriter.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Security/EfBuildingOperatorGrantAtomicMutationWriter.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Security/EfBuildingScopedWriteFenceCandidate.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Security/EfBuildingScopedWriteBoundaryCandidate.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/Migrations/**"
+      - "modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/EntityFrameworkCore/BuildingManagementDbContext.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.EntityFrameworkCore/EntityConfigurations/BuildingOperatorAccessGrantDesignConfiguration.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.Application/Buildings/BuildingAppService.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.Application/Security/DenyAllBuildingScopedWriteBoundary.cs"
+      - "modules/buildingmanagement/src/BuildingManagement.Domain/Security/IBuildingScopedWriteBoundary.cs"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: membership-scratch-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  isolated-postgres-grants:
+    name: Disposable PostgreSQL grant SQL and concurrency probes
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    # A NEW container is created for each job. No production credentials,
+    # servers, migrations, application databases or user-supplied SQL.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: ngoctrang_integration_test
+          POSTGRES_USER: slice_a_ci
+          POSTGRES_PASSWORD: slice_a_ephemeral_ci_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U slice_a_ci -d ngoctrang_integration_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      BM_PG_TEST_CONNECTION: "Host=127.0.0.1;Port=5432;Database=ngoctrang_integration_test;Username=slice_a_ci;Password=slice_a_ephemeral_ci_only"
+      BM_PG_MEMBERSHIP_CONCURRENCY_OPT_IN: I_ACCEPT_EPHEMERAL_SCHEMA
+      BM_PG_SLICE_A_FULL_CHAIN_OPT_IN: CREATE_AND_DROP_RANDOM_LOCAL_SLICE_A_DATABASE
+      BM_PG_SLICE_A_HTTP_OPT_IN: I_ACCEPT_DISPOSABLE_PG_STAGING_HTTP
+      BM_PG_RUNTIME_ROLE_OPT_IN: I_ACCEPT_EPHEMERAL_NONOWNER_LOGIN
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Membership SQL rollback and concurrent transaction probes
+        run: |
+          dotnet test modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/BuildingManagement.PostgreSql.Tests.csproj \
+            --filter "FullyQualifiedName~BuildingOperatorGrantCandidatePostgreSql_Tests|FullyQualifiedName~BuildingOperatorGrantConcurrencyPostgreSql_Tests|FullyQualifiedName~SliceAGrantEfMigrationPostgreSql_Tests|FullyQualifiedName~SliceAFullChainUpgradePostgreSql_Tests" \
+            --logger "console;verbosity=normal"
+
+      - name: Full Slice B real EF migration chain in disposable PostgreSQL database
+        run: |
+          dotnet test modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/BuildingManagement.PostgreSql.Tests.csproj \
+            --filter "FullyQualifiedName~SliceBFullFinancialMigrationChainPostgreSql_Tests" \
+            --logger "console;verbosity=normal"
+
+      - name: Phase 2G.4 owner offset approval source, immutable proof and rollback
+        run: |
+          dotnet test modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/BuildingManagement.PostgreSql.Tests.csproj \
+            --filter "FullyQualifiedName~Phase2G4OwnerDebtOffsetApprovalPostgreSql_Tests|FullyQualifiedName~Phase2G4CashBackedDebtReviewPostgreSql_Tests|FullyQualifiedName~Phase2G4AtomicOffsetPostingPostgreSql_Tests|FullyQualifiedName~Phase2G4PostOffsetFinalDispositionPostgreSql_Tests|FullyQualifiedName~Phase2G4IndependentRefundBankReviewPostgreSql_Tests" \
+            --logger "console;verbosity=normal"
+
+      - name: Phase 2G.4 signed monthly receipt-line SQL, commit, rollback and concurrency
+        run: |
+          dotnet test modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/BuildingManagement.PostgreSql.Tests.csproj \
+            --filter "FullyQualifiedName~Phase2G4OfficialMonthlyReceiptLineAllocationsPostgreSql_Tests" \
+            --logger "console;verbosity=normal"
+
+      - name: Slice B staged final invoice evidence PostgreSQL rollback probes
+        run: |
+          dotnet test modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/BuildingManagement.PostgreSql.Tests.csproj \
+            --filter "FullyQualifiedName~SliceBFinalInvoiceEvidenceMigrationPostgreSql_Tests" \
+            --logger "console;verbosity=normal"
+
+      - name: Slice B staged payment allocation journal PostgreSQL probes
+        run: |
+          dotnet test modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/BuildingManagement.PostgreSql.Tests.csproj \
+            --filter "FullyQualifiedName~SliceBInvoicePaymentAllocationStagingPostgreSql_Tests" \
+            --logger "console;verbosity=normal"
+
+      - name: Slice B immutable issued-invoice ledger PostgreSQL probes
+        run: |
+          dotnet test modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/BuildingManagement.PostgreSql.Tests.csproj \
+            --filter "FullyQualifiedName~SliceBIssuedInvoiceLedgerPostgreSql_Tests" \
+            --logger "console;verbosity=normal"
+
+      - name: Slice B full issued-invoice and receipt reconciliation PostgreSQL chain
+        run: |
+          dotnet test modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/BuildingManagement.PostgreSql.Tests.csproj \
+            --filter "FullyQualifiedName~SliceBReconciliationBoundaryPostgreSql_Tests" \
+            --logger "console;verbosity=normal"
+
+      - name: Slice B approved deposit closeout PostgreSQL history probes
+        run: |
+          dotnet test modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/BuildingManagement.PostgreSql.Tests.csproj \
+            --filter "FullyQualifiedName~SliceBDepositCloseoutPostgreSql_Tests" \
+            --logger "console;verbosity=normal"
+
+      - name: Slice B immutable source receipts and closed-contract freeze probes
+        run: |
+          dotnet test modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/BuildingManagement.PostgreSql.Tests.csproj \
+            --no-restore --configuration Release \
+            --filter "FullyQualifiedName~SliceBFreezeAllocatedInvoiceReceiptsPostgreSql_Tests" \
+            --logger "console;verbosity=normal"
+
+      - name: Slice B block post-closeout invoice issuance and concurrent SQL race
+        run: |
+          dotnet test modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/BuildingManagement.PostgreSql.Tests.csproj \
+            --no-restore --configuration Release \
+            --filter "FullyQualifiedName~SliceBBlockIssuedInvoiceAfterCloseoutPostgreSql_Tests" \
+            --logger "console;verbosity=normal"
+
+      - name: Slice B refund reference uniqueness and concurrent replay guard
+        run: |
+          dotnet test modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/BuildingManagement.PostgreSql.Tests.csproj \
+            --no-restore --configuration Release \
+            --filter "FullyQualifiedName~SliceBUniqueDepositRefundReferencesPostgreSql_Tests" \
+            --logger "console;verbosity=normal"
+
+      - name: Slice B closed contract financial terms and commit race freeze
+        run: |
+          dotnet test modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/BuildingManagement.PostgreSql.Tests.csproj \
+            --no-restore --configuration Release \
+            --filter "FullyQualifiedName~SliceBFreezeClosedContractTermsPostgreSql_Tests" \
+            --logger "console;verbosity=normal"
+
+      - name: Slice B immutable completed move-out evidence and transaction race
+        run: |
+          dotnet test modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/BuildingManagement.PostgreSql.Tests.csproj \
+            --no-restore --configuration Release \
+            --filter "FullyQualifiedName~SliceBFreezeClosedMoveOutRequestPostgreSql_Tests" \
+            --logger "console;verbosity=normal"
+
+      - name: Slice B deferred atomic closeout consistency at transaction commit
+        run: |
+          dotnet test modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/BuildingManagement.PostgreSql.Tests.csproj \
+            --no-restore --configuration Release \
+            --filter "FullyQualifiedName~SliceBValidateCompletedCloseoutAtCommitPostgreSql_Tests" \
+            --logger "console;verbosity=normal"
+
+      - name: Slice B immutable signed move-out checklist and race probes
+        run: |
+          dotnet test modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/BuildingManagement.PostgreSql.Tests.csproj \
+            --no-restore --configuration Release \
+            --filter "FullyQualifiedName~SliceBFreezeClosedMoveOutChecklistPostgreSql_Tests" \
+            --logger "console;verbosity=normal"
+
+      - name: Slice B freeze signed tenant parties and extensible evidence
+        run: |
+          dotnet test modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/BuildingManagement.PostgreSql.Tests.csproj \
+            --no-restore --configuration Release \
+            --filter "FullyQualifiedName~SliceBFreezeClosedContractPartiesAndExtrasPostgreSql_Tests" \
+            --logger "console;verbosity=normal"
+
+      - name: Slice B completed deposit receipt source attestation and freeze
+        run: |
+          dotnet test modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/BuildingManagement.PostgreSql.Tests.csproj \
+            --no-restore --configuration Release \
+            --filter "FullyQualifiedName~SliceBFreezeClosedDepositReceiptSourcesPostgreSql_Tests" \
+            --logger "console;verbosity=normal"
+
+      - name: Slice B lock both ends of deposit transfers through closeout commit
+        run: |
+          dotnet test modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/BuildingManagement.PostgreSql.Tests.csproj \
+            --no-restore --configuration Release \
+            --filter "FullyQualifiedName~SliceBLockBothDepositSettlementContractsPostgreSql_Tests" \
+            --logger "console;verbosity=normal"
+
+      - name: Phase 2H request schema, review history and conflict guards in scratch PostgreSQL
+        run: |
+          dotnet test modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/BuildingManagement.PostgreSql.Tests.csproj             --filter "FullyQualifiedName~RoomChangeRequestsPostgreSql_Tests"             --logger "console;verbosity=normal"
+
+      - name: Phase 2H immutable party roster persistence PostgreSQL proofs
+        run: |
+          dotnet test modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/BuildingManagement.PostgreSql.Tests.csproj \
+            --no-restore --configuration Release \
+            --filter "FullyQualifiedName~RoomChangeTenantRosterPostgreSql_Tests" \
+            --logger "console;verbosity=normal"
+
+
+      # Run the EXACT Phase 2H 162 Domain / 103 PostgreSQL filtered suites in CI.
+      # These are in addition to the broader source-only safe regression.
+      # Isolated PostgreSQL is a fresh GitHub Actions service, never user data.
+      - name: Phase 2H all 162 domain acceptance cases
+        run: |
+          set -euo pipefail
+          dotnet test modules/buildingmanagement/test/BuildingManagement.Domain.Tests/BuildingManagement.Domain.Tests.csproj \
+            --filter "FullyQualifiedName~RoomChangeMidMonthRentReconciliation_Tests|FullyQualifiedName~RoomChangeDepositDifferencePreview_Tests|FullyQualifiedName~TRF_HAND|FullyQualifiedName~RoomChangeMidMonthFinancialReconciliationPacket_Tests|FullyQualifiedName~RoomChangeDayPricingRuleCandidate_Tests|FullyQualifiedName~RoomChangeOfficialSourceRentEvidenceBridge_Tests|FullyQualifiedName~RoomChangeFinalIndependentSignoffs_Tests|FullyQualifiedName~RoomChangeApprovedH2H3ExecutionPolicy_Tests|FullyQualifiedName~RoomChangeDeferredDepositDisposition_Tests|FullyQualifiedName~RoomScopedServiceTariffPolicy_Tests|FullyQualifiedName~RoomScopedServiceInvoiceSourceBinding_Tests|FullyQualifiedName~RoomChangeDepositDispositionIntent_Tests" --logger "console;verbosity=normal" \
+            2>&1 | tee phase-2h-domain-ci.log
+          grep -Eq 'Total tests:[[:space:]]*162\b' phase-2h-domain-ci.log
+          grep -Eq 'Passed:[[:space:]]*162\b' phase-2h-domain-ci.log
+
+      - name: Phase 2H all 103 PostgreSQL transfer, financial and H4 canonical digest cases
+        run: |
+          set -euo pipefail
+          dotnet test modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/BuildingManagement.PostgreSql.Tests.csproj \
+            --filter "FullyQualifiedName~RoomChangeRequestsPostgreSql_Tests|FullyQualifiedName~RoomChangeTenantRosterPostgreSql_Tests|FullyQualifiedName~RoomChangeSourceDispositionPostgreSql_Tests|FullyQualifiedName~RoomChangeHandoverDigestPostgreSql_Tests|FullyQualifiedName~RoomChangeDayPricingRulePostgreSql_Tests|FullyQualifiedName~RoomChangeEvidenceArchivePostgreSql_Tests|FullyQualifiedName~RoomChangeMidMonthFinancialPostingPostgreSql_Tests|FullyQualifiedName~RoomChangeMidMonthCompletionPostgreSql_Tests|FullyQualifiedName~RoomScopedServiceTariffPostgreSql_Tests|FullyQualifiedName~RoomServiceInvoiceSourceBindingsPostgreSql_Tests|FullyQualifiedName~RoomChangeDepositDispositionIntentPostgreSql_Tests" --logger "console;verbosity=normal" \
+            2>&1 | tee phase-2h-postgres-ci.log
+          grep -Eq 'Total tests:[[:space:]]*103\b' phase-2h-postgres-ci.log
+          grep -Eq 'Passed:[[:space:]]*103\b' phase-2h-postgres-ci.log
+
+      - name: Phase 2H full EF migration chain on a unique disposable database
+        env:
+          BM_ALLOW_FULL_MIGRATION_REHEARSAL: CREATE_AND_DROP_FRESH_LOCAL_TEST_DATABASE
+        run: |
+          dotnet test modules/buildingmanagement/test/BuildingManagement.PostgreSql.Tests/BuildingManagement.PostgreSql.Tests.csproj \
+            --filter "FullyQualifiedName~FullInvoiceMigrationChainPostgreSql_Tests" \
+            --logger "console;verbosity=normal"
+
+      - name: Isolated PostgreSQL ABP authenticated staging HTTP
+        run: |
+          dotnet test test/NgocTrangHouseManagementSystem.HttpApi.Host.Tests/NgocTrangHouseManagementSystem.HttpApi.Host.Tests.csproj \
+            --filter "FullyQualifiedName~SliceAStagingPostgreSqlHttp_Tests" \
+            --logger "console;verbosity=normal"
+
+# Does not start the ABP app, use EF Migrate/DbMigrator, alter runtime
+# identity/grants, or connect to any real user's PostgreSQL database.

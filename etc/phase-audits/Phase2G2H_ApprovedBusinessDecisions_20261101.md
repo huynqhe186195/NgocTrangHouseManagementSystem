@@ -1,0 +1,261 @@
+# Ngọc Trang — Phase 2G–2H approved business decision register
+**Decision status:** BUSINESS DIRECTION APPROVED (NOT CODE ACCEPTANCE)  
+**Approved in project conversation:** 2026-10-31 19:17:57 UTC / **2026-11-01 02:17:57 Asia/Ho_Chi_Minh**  
+**Authority:** Project owner, explicit selections H1–H6 plus acceptance of the previously proposed OI-01–OI-06 directions.  
+**Authoritative baseline:** `Nghiep_vu_Quan_ly_nha_tro_Phase_2G_2H_v1.0(2).docx` (v1.0, 2026-10-22), especially §§3, 5, 6, 7, 8, 9 and 11.  
+**Branch:** `wip/phase-2g2`; **production:** excluded.  
+**Companion plan:** [Post-decision implementation scope](./Phase2G2H_PostDecisionImplementationScope_20261101.md).
+
+## Status definitions
+
+- **APPROVED PRINCIPLE**: owner has selected the business outcome/choice; no additional yes/no on this principle is needed.
+- **DETAIL GATE**: exact arithmetic, evidence, statutory/contractual precedence, user permissions or operational SLA not settled by the above choice. Explicitly document and validate it; deny unsafe operations meanwhile. A proposed algorithm is **not** an approved formula.
+- **IMPLEMENTED SAFE LANE**: existing limited staging code passes its isolated tests; broader approved behaviors are not implied.
+- **BUSINESS ACCEPTED** requires implementation plus tests for the approved scope. Earlier CI PASS is neither approval of broader behavior nor a reason to enable remote/production APIs.
+
+## Phase 2H — owner-approved H1–H6 (OI-07)
+
+| ID | Approved business policy | Present implementation vs future scope | Detail gate / non-negotiable |
+|---|---|---|---|
+| **H1** | End source contract with `RoomChanged`; **create a new contract**, preserve source history and explicit old→new link. No versioned addendum as the normal transfer mechanism. | **Already implemented for safe lane** via linked new contract / atomic room transitions. | Never mutate historical invoices, rent, meter evidence, tenants or settlement on the source. |
+| **H2** | Permit **mid-month transfer after** an approved and tested between-period pricing rule exists; not immediately enabled by this decision. | Current staging supports **month-end only**. | Until H3 details are implemented and evidenced, leave other dates fail-closed. |
+| **H3** | For a mid-month transfer, allocate **rent by actual calendar days of use** in each room; do not blindly charge a full month in both rooms. | Current safe lane charges the whole old month, begins the new contract on the following day. | Confirm charge ownership of handover date, month-length denominator, edge dates, rounding to VND, old/new effective tariffs and effects of already-issued invoices. The tentative candidate formula is NOT approved yet. **The SRS full-final-month rent rule remains in force for ordinary 2G.5 move-out**, pending explicit exception language for transfer. |
+| **H4** | Allow proven **deposit top-up** for a higher required deposit, or **partial carry-forward plus verified refund** for a lower one, after financial reconciliation and authorization. | Safe lane permits only full carry-forward of same held amount; no price/deposit delta. | Do not represent intended money movement as collected/refunded funds. Keep provenance, audit references and one exclusive disposition per currency unit; refund method/timing and payment confirmation remain detailed gates. |
+| **H5** | **All current tenants move together**; a subset moving requires a **separate split-contract workflow**, outside present 2H acceptance. | Existing snapshot and exact-copy roster align with this choice. | Keep original tenant history immutable; target must match the verified, consented roster. |
+| **H6** | Use a **shorter transfer handover checklist**, but retain essential signed evidence. | Existing signed source E/W readings, inspection references, debt and deposit checks remain mandatory. | Minimum: final source electricity/water readings, room/assets/defects, arrears and invoice reconciliation, deposit disposition, actual source/target occupant roster, signed handover + actor/time/reference. Do NOT bypass final metering, finance, maintenance conflict or audit checks. |
+
+**OI-07 status:** H1/H5 and the existing restricted H2/H3/H4/H6 lane are implemented and tested; the *future choices* are approved principles, not full implementation. New policy choices must have their own evidence and serializable SQL commit guards. The `RoomChangeBusinessPolicyRecord` enum having values for day-proration/top-up/refund does NOT mean their execution is implemented.
+
+## Phase 2G — owner-approved OI-01 through OI-06
+
+| ID | Approved direction | Implementation boundary / specific details |
+|---|---|---|
+| **OI-01** — notice | Normal move-out: one **calendar month** of notice, return at **calendar month-end**. The deterministic policy `EndOfMonth(submissionDate.AddMonths(1))` is the baseline candidate for 29th–31st (e.g. 2026-01-31→2026-02-28); early departures/date changes require **Owner-approved documented exception**. | Preserve the source §3 one-month minimum and month-end baseline. Date changes after approval cannot silently change financial terms or bypass ownership checks; test leap years, 29/30/31 and rescheduling. Exception pricing/approval details stay gated. |
+| **OI-02** — authority | Tenant may submit own request and **cancel while Pending**; an authorized, building-scoped **Staff** may approve ordinary compliant requests; **Owner** approves exceptional early/date changes. | An Approved request cannot be casually self-cancelled. Only current account, scope, role and contract tenant relationship grant access. Current staging root/owner-only or deny-all routes must NOT be opened by editing docs. Independent financial approvals continue to require their existing stronger rules. |
+| **OI-03** — invoice | **Ordinary move-out** retains full rent for final month per SRS. E/W use actual legitimate readings; Internet/trash/parking/other services follow **their individually authorized contract/pricing policy**. Post-issuance correction must be append-only/audited, never edit or delete the original issued invoice. | Mid-month **transfer** uses H3 as a separate, explicitly versioned exception, not a silent change to 2G.5. Per-service proration vs fixed billing and VND rounding/effective dates still need precise tariffs. Never confuse a manual receipt claim with bank verification. |
+| **OI-04** — debt/offset | Only **confirmed legitimate receivables** and **Owner-approved compensation** may reduce held deposit. Priority proposal accepted as business direction: **unpaid rent → electricity/water → other approved services → approved damage**. Disputed/unverified amounts are excluded from automatic offset; **Owner final authorization** required. | No automatic offset of all open invoices. Record each allocation and residual amount; do not invent completed bank transfers. Refund method, bank-proof requirements, timing, disputed-amount custody/release require explicit operating details before enabling novel paths. |
+| **OI-05** — damage | Any damage deduction >0 requires **clear reason, amount, photo OR signed inspection/condition report, and Owner approval**. Zero-damage case must not demand fictitious damage evidence. | Image alone is not a cash approval. Require signed actor/time/evidence and immutable references. Maintenance eligibility and compensation are distinct decisions (OI-06). |
+| **OI-06** — reservation vs maintenance | **Safety/maintenance takes precedence** over making a damaged room available. When a confirmed future Reservation/Signed Contract exists, resolve it by an **explicit, audited reassignment, reschedule or authorized cancellation**; never silently delete or override a tenant commitment. | A conflicting maintenance + committed future booking remains **HOLD** until a valid booking resolution is recorded. Existing `MoveOutRoomDispositionRecord` already fail-closes this collision; the coordinated resolution workflow is not silently approved as delivered. Keep `Available`/`Reserved`/`Maintenance` based on verified source facts and commit-time guards. |
+
+## Reconciliation with source SRS — explicit exceptions, no silent precedence
+
+1. **§3 and §11 (OI-01/02):** the minimum notice and five move-out checklist obligations remain. Tenant self-service and delegated staff powers are a **new permission-delivery requirement**, not a license to expose unscoped API methods.
+2. **§5 full final month vs §8 mid-month transfer:** there is a deliberate **potential conflict**. Interpret the accepted H3 as a **transfer-only pricing exception**, requiring explicit signed/versioned rule and audited itemization before use. If SRS text is treated as universal, update the SRS addendum first. No double rent and no rewriting previously issued charges.
+3. **§6 deposit provenance:** preserve first Reservation Deposit receipt requirement (exactly VND 500,000 or full required deposit), actual paid contract deposit, exclusive carry/refund, reasoned compensation. H4 extends, never weakens, this invariant. The current `Contract.DepositAmount` is linked to monthly rent: deposit-delta work must reconcile actual held money with new contract required amount, not infer a transfer from the model property alone.
+4. **§7 CompleteMoveOut:** approved notice alone never ends tenancy; complete only with E/W, final invoice, settled financial state, deposit and signed handover in a transaction. OI-06 maintenance with future booking stays fail-closed pending separately audited reservation resolution.
+5. **§8 RoomChange:** H1/H5 preserve linked history/all occupants; H6 reduces only redundant steps, **not** evidentiary requirements. An authorized policy proposal and a successful immutable completion remain separate states.
+6. **§9 technical/security:** Asia/Ho_Chi_Minh `DateOnly` business dates, UTC instants; stable lock ordering, SERIALIZABLE or equivalently proven isolation, idempotent unique financial writes, permission+membership checking to commit, scratch PostgreSQL migration only. Production DENY-ALL/HOLD.
+7. **Previously accepted 2G.1/2G.2** are not reopened by old prose in the October 22 document. Review regression only where new cross-phase code actually touches them.
+
+## Detail register: decided intent, **not** decided implementation formula
+
+| Detail ID | Open implementation detail | Safe provisional state |
+|---|---|---|
+| **D01** | For H3, who pays the move date (source or target)? Is the start instant midnight Vietnam time or an attested handover time? | No mid-month writer. Proposed half-open occupancy periods must be signed/approved before calculation. |
+| **D02** | Per-month actual calendar-day denominator and **VND rounding** per line/invoice; monthly edge dates and leap year. | No prorated invoice posting until golden fixture values approved. |
+| **D03** | How to handle an already-issued source-month bill, void/correct by append-only delta, due date, promotions and fixed service fees. | Preserve prior issued evidence; do not mutate/delete. |
+| **D04** | Deposit top-up collection method, independently verified receipt, partial refund timing/recipient, approved bank reference, failed/late payment and disputed amount. | No automatic refund/top-up or fake payment evidence. |
+| **D05** | Exceptional early move-out charge/waiver, notice-date reschedule process, and boundary for an Approved notice. | Owner exception with reference; no uncontrolled override. |
+| **D06** | Exact minimum handover signatory matrix, whether a photo alone suffices or an independent inspector must also attest, optional asset inventory format. | No missing E/W/contract/debt/evidence acceptance. |
+| **D07** | Detailed per-service final-month tariffs and whether specific non-rent fees are fixed or daily; refund SLA. | Fee-by-fee policy; zero invented charges. |
+
+**These are refinement gates, not re-openings of H1–H6/OI-01–OI-06.** Once chosen and tested, add versioned policy references. Never hardcode defaults that change tenants' financial obligations.
+
+## Approved Phase 2G.4 operational addendum — 2026-11-02
+
+**Owner acceptance:** the owner explicitly approved the proposed manual-refund,
+recipient, disputed-debt, retry and 7-business-day handling in the 2026-11-02
+project conversation. This addendum resolves the **ordinary 2G.4 move-out
+manual payout process** without pretending an external bank integration exists.
+
+1. **Destination:** root Owner approves the exact beneficiary name, bank,
+   account and signed destination reference before any refund confirmation.
+   The amount is inherited exclusively from the immutable deposit decision;
+   the customer/client never supplies a trusted refund amount.
+2. **Payment evidence:** external manual transfer and bank statement,
+   separate transaction reference and signed independent review are required.
+   The reviewer differs from the approving Owner. A recorded Owner confirmation
+   alone does not equal a completed payment or trigger contract closeout.
+   Duplicate references across incoming receipts, failed attempts and refunds
+   must be blocked at PostgreSQL commit, including direct SQL.
+3. **Deadline:** seven **business days after approved final reconciliation**,
+   counting from the next day. Saturdays/Sundays and statutory holidays
+   supplied in the *signed Vietnam holiday calendar* are excluded; the
+   calendar reference and calculated due date are frozen with the Owner
+   destination instruction. Missing/unapproved holiday schedules are NOT
+   grounds to invent a longer payment deadline.
+4. **Failure/late handling:** record each failed bank attempt with immutable
+   reason, failed timestamp and bank reference. A failed reference must not
+   be reused as proof of an executed refund. Retry uses a **new** transaction
+   reference; overdue/pending/failed are not settled statuses. Reconciliation
+   remains pending until a new distinct independently reviewed transfer exists.
+5. **Dispute:** open a dispute only for an original official receivable,
+   preserve disputed evidence and amount, and deny cấn trừ/deposit closeout
+   while disputed. Owner independently signs an AcceptDebt or RejectDebt
+   resolution. AcceptDebt resumes source reconciliation; RejectDebt does
+   **not** delete or rewrite the issued invoice and remains blocked until
+   official corrective evidence is handled through the existing immutable
+   invoice-adjustment process. No unsafe automatic allocation within an
+   underfunded shared E/W priority tier is authorized.
+6. **Partial same-priority debt:** when the remaining held deposit
+   cannot fully fund multiple electricity/water (or other same-rank)
+   claims, the root Owner must explicitly sign each claim ID and exact
+   whole-VND amount. The signed allocation must cover **every** claim
+   in the underfunded rank, apply exactly the remaining held amount,
+   remain within each approved debt, and cannot alter higher-priority
+   allocations. Without this explicit per-claim split, deny posting.
+   The split is frozen inside the immutable Owner approval JSON/SHA.
+7. **Scope and environment:** staging-only, isolated disposable PostgreSQL.
+   No bank API verification, bank transfer execution, production deployment,
+   feature switch, production migration or live transaction is authorized.
+   This settles D04/D07 only for *ordinary Phase 2G.4 manual refunds*;
+   different-contract deposit top-ups, partial transfer and the H4 room-change
+   financial lane remain separate Phase 2H gates.
+
+The implementation must pass real PostgreSQL migration, SQL-bypass, immutable
+history, failure/retry, authenticated HTTP and Full regression on the exact
+commit SHA before declaring 2G.4 staging technical acceptance.
+
+## Audit baseline and compliance
+
+- Last code commit before this decision: `c12e37031b8ac42a1ca6d2dfc58d3956f16055ab`. Full regression, scratch PostgreSQL including authenticated positive/concurrent 2H HTTP and immutable history, and ABP Identity CI were reported successful **for that SHA**. Do not reuse that PASS claim to certify a later SHA or new business paths.
+- Code presently implements one **month-end, same-rent/same-deposit, all-tenants, new-contract** safe lane. Additional mid-month/delta lanes remain denied pending implementation and PostgreSQL proofs.
+- **Decision recorded only; no production deployment, runtime feature switch, migration or transfer/refund is authorized by this document.**
+
+
+## 2026-11-03 — Phase 2H open detail gate progress (not additional owner approval)
+
+Code now offers D01/D02 per-request SHA-256 pricing snapshots and a
+second signed Owner-review candidate that binds the exact choice;
+D03 source-only official rent reconciliation and separately approved
+per-category **candidate** correction evidence; D04 source cash-backed
+deposit split with completed-target-payment/manual-refund independent
+review **candidate**; D06 proposed Owner/Staff/primary-tenant signoff
+and full source H6 digest/roster binding; unified read-only dossier
+preflight. This implements documentary proof requirements but makes
+**no business-rule choice on the owner's behalf**.
+
+Original signed H1–H6/OI01–OI06 principles remain unchanged.
+D01/D02 effective day/rounding residual and exception precedence;
+D03 official posted line-specific adjustments, received overcollection
+and service treatment; D04 actual outgoing transfer refund,
+destination/timing and unique bank settlement; D06 final legal signer
+matrix require owner authorization before a mid-month writer may be
+enabled. Proposed three-party signing is **not** an approved D06 legal
+matrix; the manual refund review is **not** a settled payment.
+The approved 2G.4 seven-business-day refund rule is not silently
+repurposed to the separate 2H H4 transfer exception.
+Production remains excluded.
+
+
+## 2026-11-04 — Owner's additional Phase 2H binding decisions (supersedes conflicting interim proposals)
+
+**Authority:** Explicit Owner replies to D01–D04 and D06 questions on
+2026-11-04. Preserve H1–H6, OI-01–OI-06, and the approved 2G.4
+manual-refund rules; these details refine, rather than reopen, them.
+**Implementation status:** BUSINESS POLICY RECORDED; financial writer,
+per-room service tariff migration, and Owner contract PDF export NOT
+ACCEPTED until implemented and tested on the resulting exact code SHA.
+
+| Decision | Owner-approved outcome | Non-negotiable implementation / evidence |
+|---|---|---|
+| **D01 / VN civil dates** | All room-transfer business dates and cutoffs use **Vietnam local time** (Asia/Ho_Chi_Minh); UTC instants remain stored for audit. | The Owner subsequently **confirmed on 2026-11-04**: the source room is charged through the day **before** handover; the **target room owns the handover civil date** and all subsequent days. This is now the global D01 transfer policy for newly executed Phase 2H moves. Any legacy per-request source-day `TransferDayOwner` candidate is non-executable under the new policy unless re-reviewed/re-signed for the target-day choice. Preserve historical signed candidate records; no silent document rewriting. |
+| **D02 / rent rounding** | The Owner accepts actual calendar-days denominator and rounding to whole VND at **0.5 VND upward** for nonnegative charges. | Keep 28/29/30/31-day denominator, separately materialize the old/new room charge period and exact line rounding. No double billed day, no retroactive mutation of an issued invoice. Signed effective choice must still match canonical DayRule audit and its SQL parity. |
+| **D03 / services scoped by room** | **Each room may have a different editable price for each service** (e.g. service 150,000 VND / person / month in room 301, with another price in room 302). | RoomId + ServiceId + billing unit + VND price + effective date/version + authorized editor, with an immutable invoice/contract snapshot. Changes are prospective and independently audited, not retroactive rewriting of issued bills. Per-person count uses the contract's verified occupants during the relevant room period. Electricity/water usage uses real handover readings and that room's effective tariffs. Each non-metered service's full-month vs day-prorated charging rule must be explicit per service; do not invent a universal proration policy just because service prices are per-room. |
+| **D04 / higher new-room deposit** | **Allow completion of the room transfer despite an unpaid positive top-up.** The remaining top-up becomes an explicit receivable with a payment deadline **not later than one calendar month after the effective transfer date**. | One-month limit is a calendar-month rule in local dates, not automatically 30 days. As a deterministic maximum due-date candidate use `transferDate.AddMonths(1)` in the Vietnam civil calendar, with month-end clamping; forbid a later due date. On transfer, distinguish `RequiredDeposit`, `ActualCashBackedHeldDeposit`, and `OutstandingDepositTopUp`. Never manufacture a bank receipt or mark the missing amount as held. Unpaid/overdue top-up is tracked independently of rent and services, with later independently reviewed collection and idempotent posting. Never silently revert an already completed tenant/contract transfer when a due date passes. |
+| **D04 / lower new-room deposit** | **Two mutually exclusive Owner-selected dispositions** after reconciliation: (A) record the excess as **credit against the next month's rent**, or (B) perform a **bank/manual refund to the tenant**. | Separate the genuine carried target deposit from the extra retained tenant credit/refund liability. Credit only against authentic future issued rent and post an immutable receipt/credit application once, never disguise it as cash collected or edit the issued rent line. Refund only after approved beneficiary/bank proof and independent review; retain the already approved 2G.4 seven-business-day processing target as the proposed analogous Phase 2H refund SLA, because the Owner accepted proposal 4. Prevent simultaneous full-credit and refund of the same VND and prevent cross-contract/cross-request replay. |
+| **D06 / minimum signers** | Three signatories: **Owner, handing-over Staff, primary tenant/authorized tenant representative**. Signed physical handover, electricity/water and asset/condition evidence remain mandatory. A signed handwritten document uploaded as evidence is accepted; cryptographic e-sign integration is **not** required now. | Persist evidence/actor/time, attachment digest and authorization, and revalidate roles/roster at commit. Text references or SHA-256 by themselves do not prove genuine signer identity. |
+| **Owner contract document** | Owner role must be able to **export the new contract as a file**, while preserving the previous contract and old-to-new link. | Owner/building scope authorization, canonical finalized contract data, tariff/service snapshots, old/new contract linkage, stable document version/number, confidential file access and download audit. Generating a PDF/document is not a substitute for executed signature or independent acceptance. Do not edit the previous contract. |
+
+**Sixth numbered line in the user's reply:** blank, therefore no
+additional sixth decision or requirement was inferred.
+
+### Reconciliation with earlier HOLD statements
+
+- Earlier documentation stating that *all* top-ups must be fully paid
+  before room transfer is **superseded for H4 transfers**. That rule
+  must not be copied into the new authorized mid-month flow. Existing
+  narrow same-deposit path continues unchanged until the full H4 writer
+  is implemented.
+- The previous `RoomChangeDepositDifferencePreview` correctly computes
+  carry/top-up/refund but is a **non-executing preview**. Its
+  `UnpaidTopUpRequirementVnd` becomes the basis of a NEW explicit
+  deposit receivable, not a hard fail that blocks the authorized
+  transfer, and not an amount pretending to be held cash.
+- The present `Contract` aggregate sets `DepositAmount =
+  MonthlyRent` in its constructor and `Update`. The H4 writer must
+  decouple **nominal required deposit** from verified actual held
+  money, with a migration and protected financial journals. Do not
+  silently set `DepositAmount` as if an unpaid top-up was collected.
+- The approved ordinary 2G.4 move-out refund controls remain
+  unchanged; do not silently unlock transfer refund by modifying
+  a generic old settlement guard. The future H4 staging writer
+  needs its own append-only commit-time proofs and role checks.
+- H3 source/target rent and service amounts must be built from
+  their independent effective **room-specific** tariffs and separate
+  read-only original billing snapshots.
+
+### Required revised acceptance scenarios
+
+1. Different target rent and held cash: transfer commits after full
+   roster + handover, carries only verified source cash, posts
+   outstanding deposit top-up due within one Vietnam calendar month,
+   later pays in full/part and marks outstanding accurately.
+2. Due-date edges (Jan 31, Feb 28/29, Apr 30, Dec 31),
+   overdue/late/partial payment, refund race, duplicate payment
+   and denial of fabricated cash evidence.
+3. Lower deposit: after verified reconciliation, choose **exactly one**
+   of next-rent credit or independently reviewed refund; never double
+   consume the same deposit VND; invoice/credit application and refunds
+   are separate immutable entries.
+4. Two rooms charge distinct `per-person` service tariffs; correct
+   verified headcounts/effective dates; later room tariff edit does
+   not alter issued rent/service invoice snapshots.
+5. Cross-building impersonation, role revocation, document download,
+   third-party signature forgery, two concurrent financial writers,
+   and failed transaction full rollback are all denied and audited.
+
+**Acceptance:** The existing five-group Financial Foundations test
+passed at `e24894f3b830a5640c2e7a5ba1857c0911579c2d`. That PASS is
+historical evidence for the prior restricted implementation, **not
+proof that the newly approved behaviors above are implemented**.
+Production and bank integration remain excluded.
+
+
+## 2026-11-04 — Final Owner confirmation: D01 day ownership is TARGET
+
+**Owner explicitly confirmed** the outstanding proposal: charge
+the source room **through the day before** the signed transfer date;
+charge the new/target room **beginning on the transfer date**.
+
+- The handover date is a **Vietnam civil date** in
+  `Asia/Ho_Chi_Minh`; record real actors/handovers as UTC instants,
+  but do not compare UTC dates to decide which room gets the day.
+- For transfer date **D**, a month with **N** calendar days:
+  source chargeable dates: first of month through **D−1**,
+  `sourceDays = day(D)−1`;
+  target dates: **D** through last day of month,
+  `targetDays = N−sourceDays`.
+  `sourceDays + targetDays = N`; the effective source/target
+  contract start boundaries must not overlap.
+- D02, approved separately, rounds each independently computed
+  nonnegative VND charge using the approved midpoint-up whole-VND
+  rule; do not charge both contracts on D or forge first-month
+  full-rent invoices.
+- Example with 30-day month, transfer on the 15th:
+  source **14 days**, target **16 days**.
+  On 31-day month: source **14**, target **17**.
+  Transfer on day 1: source **0**, target **N**;
+  transfer on last day: source **N−1**, target **1**.
+- The existing `RoomChangeDayPricingRuleCandidate` and its SQL
+  archive may retain past history with a source-day owner as
+  immutable audit evidence. **New completion must reject**
+  a stale/source-day choice and require the previously signed
+  target-day pricing evidence, without silently changing
+  or falsely signing original documents.
+- This is a finalized **business decision**, not proof of code
+  implementation. Update server preflight, authenticated write,
+  SQL deferred commit guard and golden tests together; do not
+  touch production.
+
+**No additional D01 question remains open.**

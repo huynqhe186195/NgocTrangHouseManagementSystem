@@ -57,9 +57,11 @@ Combined with the `1ddf2e6` runs (identical executable code, verified by `git di
 
 ## 6. Owner authorization
 
+**2026-11-12 update — precondition §3.1 resolved:** the Owner unlocked the GitHub Actions account (no payment method added; free-tier public-repo usage). CI is re-armed: the workflows will run on the next push; CI evidence retro-fill for SEC-06 begins immediately (see CURRENT_STATE.md). The CI-first path (option a) is in effect.
+
 **Merge execution:** ______________________ (Owner signature/date)
 **P2 deferral acceptance (precondition §3.2):** ______________________
-**CI-evidence path: ☐ resolve billing first ☐ defer with recorded decision** (precondition §3.1)
+**CI-evidence path: ☐ resolve billing first ☐ defer with recorded decision** (precondition §3.1) — ✅ resolved 2026-11-12: billing unlock, CI-first path
 
 ---
 **Prepared by:** Claude Code (program evidence chain 2026-11-10 → 2026-11-12, commits `0702e0d` → `feb8938`)

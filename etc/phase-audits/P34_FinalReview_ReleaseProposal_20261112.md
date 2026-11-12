@@ -66,6 +66,12 @@ Combined with the `1ddf2e6` runs (identical executable code, verified by `git di
 - **§6 merge-to-main: SIGNED** — merge of `feat/local-safe-startup-20261109` → `main` (PR #10) authorized for execution per §5 (merge commit, no force, no squash; local regression re-run at post-merge SHA; CI evidence on `main`).
 All four preconditions (§3.1 billing/CI ✅, §3.2 ✅, §3.3 scope-limits carried ✅, §3.4 signature ✅) now hold.
 
+**2026-11-12 — MERGE EXECUTED (§5 outcome, all steps verified):**
+- PR #10 base re-targeted to `main` (was chain-segment `feat/d04b-operational-gates-20261108`); draft → ready; **merged as merge commit `c499d89`** (no squash, no force; "Merge pull request #10 from huynqhe186195/feat/local-safe-startup-20261109").
+- Local full regression re-run at post-merge main: `verify-2g-security-batch.ps1 -Mode Full` exit 0 — 3 source gates + Domain 720/720 + Application 231/231 + EF-SQLite 447/447 + HTTP 76/76, QUALITY GATE PASS banner (guard-adapt for main at `2149210`, same class as `127f5d4`).
+- CI on `main`: workflow_dispatch run 43247648066 at `c499d89` — **5/5 jobs SUCCESS** (same payOS foundation isolated suite).
+- **Program baseline = `main` @ `c499d89`** (post-merge docs/guard commits: `2149210`+). P3.4 CLOSED. P2.1–P2.6 follow on follow-up branches off `main`.
+
 **Merge execution:** ✅ Owner authorized 2026-11-12 ("Làm cả 2 đi" — explicit instruction recorded in conversation)
 **P2 deferral acceptance (precondition §3.2):** ✅ Owner accepted 2026-11-12 (same instruction) — main = tested-staging-scope; P2.1–P2.6 on follow-up branches
 **CI-evidence path: ☐ resolve billing first ☐ defer with recorded decision** (precondition §3.1) — ✅ resolved 2026-11-12: billing unlock (card-free), CI-first path; run 384 at `c63d370` green 5/5 (ID 43240562191)

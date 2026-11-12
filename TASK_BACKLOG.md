@@ -321,8 +321,8 @@
 **Blocker:** None for P3.4 preparation; the matrix's HOLD items (GitHub billing, production vault/roles, TLS public callback, merge-to-main authorization) are all Owner actions  
 **Dependency:** P3.2 ✅ (local evidence complete at `1ddf2e6`)
 
-### P3.4 ✅ Final Review and Release Proposal (document delivered; execution awaits Owner signature §6)
-**Status:** DONE as a deliverable — proposal `etc/phase-audits/P34_FinalReview_ReleaseProposal_20261112.md`. The merge itself is NOT executed: it requires the Owner's §6 signature + preconditions (GitHub billing path choice, P2 deferral acceptance). P3.4 closes when the proposal is signed and the merge lands (or is explicitly declined).  
+### P3.4 ✅ DONE (Final Review, Release Proposal — MERGE EXECUTED 2026-11-12)
+**Status:** DONE — proposal `etc/phase-audits/P34_FinalReview_ReleaseProposal_20261112.md` signed and EXECUTED. Owner approved both remaining decisions in one instruction ("Làm cả 2 đi", 2026-11-12): §3.2 P2 deferral ACCEPTED (main = tested-staging-scope) + §6 merge SIGNED. PR #10 base re-targeted to `main` (was chain-segment `feat/d04b-operational-gates-20261108`), draft→ready, **merged as merge commit `c499d89`** (no squash, no force). Post-merge verification: local full regression at main exit 0 (QUALITY GATE PASS: 720/720 + 231/231 + 447/447 + 76/76 + 3 source gates; guard-adapt for main at `2149210`, same class as `127f5d4`) and **CI on main green 5/5 at the merge commit** (workflow_dispatch run 43247648066). **Program baseline = `c499d89`.**
 **Evidence:**
 - ✅ Exact-final-SHA regression all green: `verify-2g-security-batch.ps1 -Mode Full` at `feb8938` — 3 source gates, 720/720 + 231/231 + 447/447 + 76/76, exit 0; `feb8938` verified docs-only over `1ddf2e6` (where 2H 5/5 + 2g5 4/4 + payOS harness chain ran)
 - ✅ Threat model review: P3.3 matrix section A (SEC-01…06)
@@ -330,11 +330,11 @@
 - ✅ Proposal document: preconditions (§3), non-authorization list (§4), post-merge plan (§5), Owner signature block (§6)  
 **Definition of Done:**
 - ✅ Exact-final-SHA regression all green (at `feb8938`, recorded in proposal §2.1)
-- ✅ Business acceptance from Owner — **PENDING §6 signature** (matrix duyệt ngày 2026-11-12; proposal awaiting signature)
+- ✅ Business acceptance from Owner — **§6 SIGNED 2026-11-12** ("Làm cả 2 đi": §6 merge + §3.2 P2 deferral both approved)
 - ✅ Threat model review complete (P3.3 §A)
-- ✅ Propose merge/release ONLY after all HOLD items resolved or explicitly deferred — proposal §3/§4 makes every deferral explicit; no merge executed
+- ✅ Propose merge/release ONLY after all HOLD items resolved or explicitly deferred — proposal §3/§4 makes every deferral explicit; **merge EXECUTED** per §5
 
-**Blocker:** Owner §6 signature + precondition decisions (billing path, P2 deferral)  
+**Blocker:** None — merge executed; post-merge regression + CI green at `c499d89`  
 **Dependency:** P3.3 ✅
 
 ---
@@ -365,6 +365,6 @@
 - P0: 6/6 closed (P0.1–P0.3 done, P0.4 not needed, P0.5 startup gate at `7621d8a`, P0.6 full bundle at `7621d8a`)
 - P1: 5/5 done (P1.1 official at `f30e14d`; P1.2 rehearsal gate at `d085d02`; P1.4 crash/recovery at `682613d`; P1.3 vault + restricted roles at `18fe521`, 64/64; P1.5 internal simulated payOS staging E2E at `e58b12c`, 20/20)
 - P2: 0/6 done
-- P3: 4/4 done (P3.1 merge `01cba31`; P3.2 DONE `1ddf2e6`; P3.3 matrix; P3.4 release proposal delivered at `feb8938`+ — merge execution awaits Owner §6 signature + precondition decisions)
+- P3: 4/4 done + **MERGED to main** (P3.1 merge `01cba31`; P3.2 DONE `1ddf2e6`; P3.3 matrix; **P3.4 CLOSED 2026-11-12: PR #10 → main merge commit `c499d89`, Owner §6 signed + §3.2 P2 deferral accepted; post-merge local regression + CI green 5/5 at the merge commit**)
 
-**Current Focus:** P3.4 proposal delivered: `etc/phase-audits/P34_FinalReview_ReleaseProposal_20261112.md` (exact-final-SHA regression green at `feb8938`; preconditions §3; post-merge plan §5). **2026-11-12 update: precondition §3.1 CI-first evidence COMPLETE — CI run 384 at `c63d370` green 5/5 (ID 43240562191), first fully green program CI run, after Owner's card-free billing unlock + two locally-verified CI-fix commits (`80e3c00` workflow probe/EF-chain, `c63d370` port guard-adapt).** Awaiting Owner: §6 signature, P2-scope deferral acceptance. Remaining program work: P2.1–P2.6 on follow-up branches.
+**Current Focus:** P3 COMPLETE. **`main` = program baseline at merge commit `c499d89`** (post-merge docs/guards `2149210`+). Evidence chain closed: CI billing unlocked card-free → run 384 green 5/5 at `c63d370` (ID 43240562191) → Owner §6 + §3.2 approved → PR #10 merged `c499d89` → local regression exit 0 + CI run 43247648066 green 5/5 at `c499d89`. **Next: P2.1–P2.6 on follow-up feature branches off `main`** (P2.1 issued-invoice D01/D02 correction; P2.2 service fees; P2.3 genuine bank evidence; P2.4 three-signature flow — Owner decision E-sign vs scanned; P2.5 move-out E2E; P2.6 frontend discovery). HOLD unchanged: real payOS money flow, TLS public callback, production vault/roles/secrets, production deploy.

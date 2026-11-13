@@ -520,6 +520,28 @@
 
 ---
 
+## P4 — Greenfield Portal (React 19, độc lập backend)
+
+### P4.1 ✅ Auth Portal Slice (login + 3-step reset) — COMPLETE (`dc60a7d`, pushed)
+**Status:** DONE — React 19 + Vite 6 + TypeScript + Tailwind v4 portal at `frontend/`, structurally independent from the backend (dev: Vite proxy → `https://localhost:44311`; deploy: `VITE_API_BASE`). Auth only per approved plan: OpenIddict ROPC password grant on the seeded public client `NgocTrangHouseManagementSystem_App`, ABP 3-step password reset against `/api/account/*`, tokens in memory + sessionStorage (never localStorage, never logged), `RequireAuth` gate, navy app shell with honest fail-closed states (deny-all building grants shown as "chưa được cấp quyền"; dev has no SMTP → reset flow states it).
+**Evidence:**
+- ✅ Commit `dc60a7d` pushed to `origin/main` (fast-forward `abb3097..dc60a7d`, no force)
+- ✅ Vitest 20/20 (3 files: http envelope/401/token tests, tokenStore, authClient) re-run at the pushed SHA, exit 0
+- ✅ `tsc --noEmit` + `vite build` PASS re-run at the pushed SHA, exit 0
+- ✅ E2E harness `etc/scripts/verify-p41-frontend-auth-e2e.ps1` (committed in `dc60a7d`): real HttpApi.Host in Staging at `https://localhost:44311` + real Vite dev server on 5173 + two throwaway PG16 databases (`bm_p41_identity_test`, `bm_p41_legacy_test`) recreated per run on the existing `bm-p21-pg-15432` container (127.0.0.1:15432; 15433 and 5432 untouched) — matrix 4/4 PASS at `dc60a7d`: direct password grant 200 (access token), same grant through the Vite proxy 200, `/api/abp/application-configuration` through the proxy with Bearer → currentUser, wrong password through the proxy → 400 `invalid_grant`
+- ✅ LOG_DIRECTORY `C:\Users\Huynq\NgocTrang-Test-Logs\p41-frontend-auth-e2e-20261113-204601` (pushed-SHA confirmation; pre-push bundle `...-20261113-204154` recorded the local run at `abb3097`)
+- ✅ Admin password / tokens generated in-process, never echoed, never persisted (SEC-03 discipline)
+**Definition of Done:**
+- ✅ React 19 scaffold at `frontend/` independent from backend structure
+- ✅ Login + forgot-password 3 steps wired to real backend endpoints
+- ✅ Unit tests + build + real e2e through the proxy at the pushed SHA
+- ✅ No backend C# touched; UI honestly reflects fail-closed backend states
+
+**Blocker:** None for this slice
+**Dependency:** P2.6 ✅ (frontend discovery)
+
+---
+
 ## NOT IN BACKLOG (Already Fixed — Do Not Repeat)
 
 - ❌ CS0117 Convert.TryFromHexString → Fixed at `0702e0db`
@@ -548,4 +570,4 @@
 - P2: 6/6 **MERGED INTO `main`** (PR #11 merge commit `72a0721`, 2026-11-13, no squash — P2.1 `d36edb5` / P2.2 `b18644b` / P2.3 `aa3b9bb` / P2.4 `950610a` / P2.5 `2d01952` / P2.6 `6c9852f`; local 5-group harness ALL PASSED at `72a0721`; post-merge CI stale-assertion fix `d364ee1` with CI run 43423912631 green 5/5)
 - P3: 4/4 done + **MERGED to main** (P3.1 merge `01cba31`; P3.2 DONE `1ddf2e6`; P3.3 matrix; **P3.4 CLOSED 2026-11-12: PR #10 → main merge commit `c499d89`, Owner §6 signed + §3.2 P2 deferral accepted; post-merge local regression + CI green 5/5 at the merge commit**)
 
-**Current Focus:** **P2 COMPLETE (6/6) AND MERGED INTO `main` (PR #11, merge commit `72a0721`, 2026-11-13, Owner: "gộp P2 vào main"; no squash, no force — PR #10 precedent).** Evidence chain: all six phases closed on their own pushed SHAs (P2.1 `d36edb5`, P2.2 `b18644b`, P2.3 `aa3b9bb`, P2.4 `950610a`, P2.5 `2d01952`, P2.6 `6c9852f`) with the five-group 2H harness green at each → merge-tree pre-checked clean (0 conflicts) → merged `72a0721` → local 5-group harness **ALL FIVE GROUPS PASSED** at `72a0721` (LOG_DIRECTORY `C:\Users\Huynq\NgocTrang-Test-Logs`) → first CI run 43421154917 failed fail-closed on a genuinely stale terminal-migration assertion (pre-P2) → fix `d364ee1` (both assertions → real terminal `20261113150000_Phase2HD06SignedScanAndDownloadAudit`, verified locally with the full CI env incl. the process-recovery probe, TRX `p26-ci-fix-realwriter.trx` 1/1 PASS) → **CI run 43423912631 green 5/5 at `d364ee1`**. **Toàn bộ backlog P0→P3 + P2 đã nằm trong `main`.** Next: Owner decisions only — greenfield portal (stack choice), real payOS money flow, TLS public callback, production vault/roles/secrets, production deploy. HOLD unchanged.
+**Current Focus:** **P4.1 CLOSED (2026-11-13): React 19 auth portal slice at `dc60a7d` pushed to `main`** — Vitest 20/20 + build PASS + 4/4 e2e through the Vite proxy against a real Staging Host and two disposable PG databases on 15432 (LOG_DIRECTORY `C:\Users\Huynq\NgocTrang-Test-Logs\p41-frontend-auth-e2e-20261113-204601`). Owner stack decision honored: React 19, `frontend/` independent from the backend, proxy in dev / `VITE_API_BASE` when deployed. P0→P3 + P2 all merged in `main` (baseline `c499d89`, P2 merge `72a0721`, CI fix `d364ee1`). Next: P4.2+ business screens (Buildings/Rooms/Contracts/…) gated by the deny-all authorization — needs an Owner decision on enabling a staging grant path; real payOS money flow, TLS public callback, production vault/roles/secrets, production deploy stay HOLD.

@@ -1,20 +1,20 @@
 # CURRENT STATE — NgocTrangHouseManagementSystem
-**Snapshot:** 2026-11-13 (**P2 MERGED INTO main** — PR #11 merge commit `72a0721`; local five-group 2H harness green at `72a0721` (212/129/1/1 + regression 767+231+447+76); post-merge CI gap fixed at `d364ee1` (stale terminal-migration assertion), CI run 43423912631 green 5/5 at `d364ee1`)  
+**Snapshot:** 2026-11-13 (**P4.1 AUTH PORTAL SHIPPED** — React 19 + Vite 6 + TS + Tailwind v4 at `frontend/`, pushed `dc60a7d` on `main`: Vitest 20/20, build PASS, 4/4 e2e through the Vite proxy against a real Staging Host + two disposable PG16 DBs on 15432, LOG_DIRECTORY `p41-frontend-auth-e2e-20261113-204601`; P2 merged earlier via `72a0721` with CI green 5/5 at `d364ee1`)  
 **Verified by:** Claude Code audit  
 **Working Directory:** `D:\Dev\NgocTrangBuilding\Project\NgocTrangHouseManagementSystem`
 
 ## Git Status
 
-**Current Branch:** `main` (P2 merged via PR #11)  
-**HEAD SHA:** `d364ee1` — pushed; contains merge commit `72a0721` ("Merge pull request #11 from huynqhe186195/feat/p2-6-frontend-discovery", the P2.1–P2.6 chain) + the post-merge CI assertion fix  
-**Program baseline:** `72a0721` = PR #11 merge commit (evidence chain: local five-group 2H harness exit 0 at `72a0721` + CI workflow_dispatch run 43423912631 green 5/5 at `d364ee1` after the stale terminal-migration assertion fix; prior baseline `c499d89` = PR #10)  
-**Untracked Files:** `etc/phase-audits/Phase2G3A7_RevisionLedger_Generated_Review.sql` (deliberate offline EF preview artifact — do not delete); `etc/test-results/` (local TRX output from this session)
+**Current Branch:** `main`  
+**HEAD SHA:** `dc60a7d` — pushed (fast-forward `abb3097..dc60a7d`); adds the P4.1 frontend auth slice on top of the P2-merged trunk (`72a0721` + CI fix `d364ee1`)  
+**Program baseline:** `72a0721` = PR #11 P2 merge (CI green 5/5 at `d364ee1`); frontend baseline = `dc60a7d` (P4.1)  
+**Untracked Files:** `etc/phase-audits/Phase2G3A7_RevisionLedger_Generated_Review.sql` (deliberate offline EF preview artifact — do not delete); `etc/test-results/` (local TRX output from this session); root `package-lock.json` (stray npm artifact, not part of any slice)
 
 ### Branch Inventory
 
 | Branch | HEAD SHA | Tracking | Status vs Handoff |
 |--------|----------|----------|-------------------|
-| `main` | `d364ee1` | origin/main | ✅ CURRENT — **P2 MERGED via PR #11** (merge commit `72a0721`, 2026-11-13, no squash; 18-commit P2.1–P2.6 chain); local 5-group harness green at `72a0721`, CI 5/5 green at `d364ee1` (run 43423912631) after the post-merge stale-assertion fix |
+| `main` | `dc60a7d` | origin/main | ✅ CURRENT — **P4.1 auth portal slice pushed** (React 19 `frontend/`, e2e 4/4 at `dc60a7d`); contains the PR #11 P2 merge (`72a0721`) + CI fix (`d364ee1`) + docs close-out (`abb3097`) |
 | `feat/local-safe-startup-20261109` | `4b69e36` | origin (fully merged into main) | ✅ MERGED — all commits in `main`; branch retained (no deletion without Owner authorization) |
 | `feat/d04b-operational-gates-20261108` | `705a481` | origin/feat/d04b-operational-gates-20261108 | ✅ Matches handoff |
 | `feat/d04b-protected-bank-evidence-20261108` | `66a62dc` | origin/feat/d04b-protected-bank-evidence-20261108 | ✅ Matches handoff |
@@ -30,6 +30,8 @@
 
 ### Recent Commits on Current Branch (since handoff)
 
+- `dc60a7d` — feat(p41): add the React 19 auth portal slice with local e2e evidence (standalone `frontend/`: login via OpenIddict ROPC on the public client, ABP 3-step reset against `/api/account/*`, tokens memory+sessionStorage only, `RequireAuth` shell with honest fail-closed states; Vitest 20/20 + build PASS + `etc/scripts/verify-p41-frontend-auth-e2e.ps1` 4/4 — real Staging Host + Vite proxy + disposable PG `bm_p41_*_test` on 15432)
+- `abb3097` — docs(p2-merge): close the P2 merge to main with full evidence at 72a0721/d364ee1
 - `d364ee1` — fix(main): align CI terminal-migration assertion with the P2 chain (D04A_REAL01 + the native-JWT provision fixture asserted the chain still ends at `20261105150000_Phase2HD04H4SettlementJournal`; the P2 merge legitimately extends it to the P2.4 D06 terminal `20261113150000`; verified locally with the full CI env incl. the process-recovery probe — 1/1 PASS, TRX `p26-ci-fix-realwriter.trx`)
 - `72a0721` — Merge pull request #11 (P2.1–P2.6, 18 commits, no squash; merge-tree clean, 0 conflicts)
 - `6c9852f` — docs(p26): audit the frontend landscape - no-ui solution by design (P2.6 discovery: no frontend exists — `uiFramework: no-ui` per ABP Studio state; 22 conventional AppServices + 137 HTTP-verb attributes across 10 authenticated controllers mapped as the integration surface; portal coverage all NONE; seven missing flows mapped to existing routes; `etc/phase-audits/P26_FrontendInventory_20261113.md`)
@@ -109,7 +111,7 @@
 | D03 service pricing in official invoices | Staging tests exist | Integration into issued invoices |
 | ~~H4 settlement (D04 full business flow)~~ | **DONE 2026-11-13 at `aa3b9bb`** — obligation, deadline ≤1 month, partial payment + missed deadline, credit-XOR-refund, dual approval, false-receipt guards, H4-scoped dispute reconciliation; real bank verification remains HOLD | Real bank evidence (HOLD) |
 | ~~D06/H6 three-signature process~~ | **DONE 2026-11-13 at `950610a`** — three-party signoff (pre-existing) + scanned signed handover sheet in a dedicated AES-256-GCM vault (Owner's 2026-11-04 decision: scan accepted, e-sign not required) + Owner document download audit trail; DOCX-only export by design (PDF conversion a separate future decision) | — |
-| UI/Frontend | **RESOLVED 2026-11-13** — P2.6 audit at `6c9852f`: **no frontend exists by design** (`uiFramework: "no-ui"`, ABP Studio state); only the template Razor landing page on the headless API host; integration surface mapped (22 conventional AppServices + 137 verb attributes / 10 authenticated controllers); building a portal = new phase, Owner stack decision | — |
+| ~~UI/Frontend~~ | **IN PROGRESS 2026-11-13** — P2.6 discovery at `6c9852f` (no UI existed, by design); **P4.1 auth portal shipped at `dc60a7d`** (React 19 + Vite 6 + TS + Tailwind v4 at `frontend/`, login + 3-step reset, e2e 4/4 through the Vite proxy). Next: P4.2+ business screens gated by deny-all authorization — needs Owner decision on a staging grant path; tenant self-service stays HOLD (OI-02) | — |
 
 ## Known Issues Fixed (verify on HEAD)
 
@@ -147,6 +149,7 @@
 8. ✅ P3.3 acceptance matrix — `etc/phase-audits/P33_AcceptanceMatrix_20261112.md`: all local-verifiable invariants PASS at `1ddf2e6`; R3 closed; remaining HOLD = Owner actions (billing, production vault/roles, TLS callback, merge-to-main). Owner duyệt ngày 2026-11-12
 9. ✅ P3.4 final review + release proposal — `etc/phase-audits/P34_FinalReview_ReleaseProposal_20261112.md`: exact-final-SHA regression green at `feb8938`; merge to `main` proposed WITH preconditions, awaits Owner §6 signature (billing path choice + P2 deferral). Sau khi ký: merge GitHub PR #10 → re-run regression tại SHA post-merge → P2.1–P2.6 trên follow-up branches
 10. ✅ CI re-armed + GREEN — Owner unlocked GitHub Actions billing (card-free, 2026-11-12); run 382 (`bd2a11e`, first real run) surfaced 2 workflow gaps: missing D04-B probe env `BM_PAYOS_D04_PROCESS_PROBE_DLL` (fail-closed gate) and EF chain stopped before P1.5 `StagePayOsStagingOutbox` (42P01 in 6 webhook tests); fixed `80e3c00` (workflow probe build+env, full-chain target, acceptance SQL extended to 3 tables/history=2/outbox invariants — gates strictly stronger) + `c63d370` (run 383 residue: `PayOsStagingD04LegacyJournalSchema_Tests` port guard 15432→{5432 CI,15432 local}); both verified locally on disposable PG16 15432 before push (TRX `ci-fix-webhook-fullchain.trx` 57/57, `ci-fix-d04b-probe.trx` 1/1, `ci-fix2-legacyjournal.trx` 57/57). **Run 384 at `c63d370` (ID 43240562191): 5/5 jobs SUCCESS — first fully green CI run of the program.** P3.4 precondition §3.1 (CI-first) evidence complete; remaining: §3.2 P2 deferral + §6 Owner signature
+11. ✅ **P4.1 auth portal slice — DONE 2026-11-13 at pushed `dc60a7d`** — React 19 standalone `frontend/` (Owner stack decision), login via OpenIddict ROPC + 3-step ABP reset, `RequireAuth` shell; Vitest 20/20 + `tsc --noEmit`/`vite build` PASS + e2e 4/4 through the Vite proxy (harness `etc/scripts/verify-p41-frontend-auth-e2e.ps1`, real Staging Host `https://localhost:44311` + disposable `bm_p41_identity_test`/`bm_p41_legacy_test` on 15432; 15433/5432 untouched, no payOS, no backend C# change). LOG_DIRECTORY `C:\Users\Huynq\NgocTrang-Test-Logs\p41-frontend-auth-e2e-20261113-204601`. Next: P4.2+ business screens need an Owner decision on enabling a staging grant path (backend currently deny-all by design)
 11. ✅ **P3.4 MERGE EXECUTED (2026-11-12, "Làm cả 2 đi")** — Owner approved §3.2 (P2 deferral: main = tested-staging-scope) + §6 (merge). PR #10 base re-targeted to `main` (was chain-segment `feat/d04b-operational-gates-20261108`), draft→ready, **merged as merge commit `c499d89`** (no squash, no force). Post-merge verification: local full regression at main exit 0 (720/720 + 231/231 + 447/447 + 76/76 + 3 source gates, QUALITY GATE PASS; guard-adapt for main at `2149210`); **CI on main: workflow_dispatch run 43247648066 green 5/5 at `c499d89`**. Program baseline = `c499d89`. P3.4 CLOSED; next: P2.1–P2.6 on follow-up branches off `main`
 12. ✅ **P2.1 DONE at `d36edb5`** — issued-invoice D01/D02 correction lane; full five-group 2H harness green at the pushed SHA
 13. ✅ **P2.2 DONE at `b18644b`** — D03 room-service pricing frozen on official issued invoices (2H domain 177 → 188)

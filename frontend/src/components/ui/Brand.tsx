@@ -9,14 +9,14 @@ export function Brand({ compact = false }: BrandProps) {
       <img
         src="/ngoc-trang-logo.png"
         alt="Ngọc Trang"
-        className="h-10 w-10 shrink-0 rounded-lg object-contain"
+        className="h-20 w-20 shrink-0 rounded-lg object-contain"
       />
       {!compact && (
         <div className="flex flex-col leading-tight">
-          <span className="font-display text-base font-extrabold tracking-tight text-primary uppercase">
+          <span className="font-display text-lg font-extrabold tracking-tight text-primary uppercase">
             Nhà trọ Ngọc Trang
           </span>
-          <span className="text-[11px] text-on-surface-variant">Property Management System</span>
+          <span className="text-xs text-on-surface-variant">Property Management System</span>
         </div>
       )}
     </div>

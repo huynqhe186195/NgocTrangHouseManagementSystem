@@ -3,32 +3,36 @@ import { Brand } from '../../components/ui/Brand';
 
 interface AuthLayoutProps {
   children: ReactNode;
-  /** Optional artwork panel; the forgot-password screens use a tinted card. */
+  /** Optional artwork panel content; defaults to the photo artwork. */
   side?: ReactNode;
 }
 
 export function AuthLayout({ children, side }: AuthLayoutProps) {
   return (
-    <div className="flex min-h-screen flex-col bg-surface">
-      <header className="flex items-center justify-between border-b border-outline-variant/60 bg-surface-lowest/80 px-6 py-4 backdrop-blur-md">
+    <div className="flex min-h-screen flex-col justify-between bg-surface text-on-surface selection:bg-primary/20 selection:text-primary">
+      <header className="flex w-full items-center justify-between border-b border-outline-variant/60 bg-surface-lowest/80 px-6 py-4 backdrop-blur-md">
         <Brand />
       </header>
 
-      <main className="flex flex-1 items-start justify-center px-4 py-10 sm:py-14">
-        <div className="grid w-full max-w-5xl overflow-hidden rounded-[1rem] border border-outline-variant bg-surface-lowest shadow-card md:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
-          <aside className="relative hidden md:block">
+      <main className="flex flex-1 items-center justify-center p-4 sm:p-6 lg:p-8">
+        <div className="grid min-h-[580px] w-full max-w-5xl grid-cols-1 overflow-hidden rounded-2xl border border-outline-variant/80 bg-surface-lowest shadow-card lg:grid-cols-12">
+          <aside className="relative hidden min-h-[580px] overflow-hidden lg:col-span-5 lg:block">
             {side ?? <DefaultArtwork />}
           </aside>
-          <section className="px-6 py-8 sm:px-10 sm:py-10">{children}</section>
+          <section className="flex flex-col justify-center bg-surface-lowest p-8 sm:p-10 lg:col-span-7 lg:p-12">
+            {children}
+          </section>
         </div>
       </main>
 
-      <footer className="flex flex-wrap items-center justify-center gap-x-6 gap-y-1 border-t border-outline-variant/60 px-6 py-4 text-xs text-on-surface-variant">
-        <span>Điều khoản sử dụng</span>
-        <span aria-hidden>·</span>
-        <span>Chính sách bảo mật</span>
-        <span aria-hidden>·</span>
-        <span>Hỗ trợ 24/7</span>
+      <footer className="flex w-full flex-col items-center justify-between gap-2 border-t border-outline-variant/50 bg-surface-lowest/40 px-6 py-4 text-xs text-on-surface-variant sm:flex-row">
+        <div className="flex items-center gap-4">
+          <a href="#" className="transition-colors hover:text-primary">Điều khoản sử dụng</a>
+          <span aria-hidden>•</span>
+          <a href="#" className="transition-colors hover:text-primary">Chính sách bảo mật</a>
+          <span aria-hidden>•</span>
+          <a href="#" className="transition-colors hover:text-primary">Hỗ trợ 24/7</a>
+        </div>
       </footer>
     </div>
   );
@@ -36,41 +40,36 @@ export function AuthLayout({ children, side }: AuthLayoutProps) {
 
 function DefaultArtwork() {
   return (
-    <div className="flex h-full min-h-[520px] flex-col justify-between bg-gradient-to-br from-primary-dark via-primary to-primary-active p-8 text-on-primary">
-      <div>
-        <div className="inline-flex items-center gap-2 rounded-full bg-white/12 px-3 py-1.5 text-[11px] font-semibold tracking-wide uppercase">
-          <ShieldIcon />
-          Bảo mật định danh
+    <div className="group relative flex h-full min-h-[580px] flex-col justify-between p-8 text-white lg:p-10">
+      <img
+        src="/auth-artwork.jpg"
+        alt="Nhà trọ Ngọc Trang — cơ sở lưu trú thông minh hiện đại"
+        className="absolute inset-0 h-full w-full object-cover transition-transform duration-700 ease-out group-hover:scale-105"
+      />
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#042824] via-[#042824]/40 to-black/30" />
+      <div className="pointer-events-none absolute inset-0 bg-primary/20 mix-blend-multiply" />
+
+      <div className="relative z-10">
+        <div className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-surface-lowest/20 px-3 py-1.5 text-xs font-semibold tracking-wide text-white shadow-sm backdrop-blur-md">
+          <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-300" />
+          Cơ sở lưu trú thông minh
         </div>
-        <h2 className="mt-6 font-display text-2xl leading-snug font-bold">
-          Nhà Trọ Cao Cấp
-          <br />
-          Ngọc Trang
-        </h2>
-        <p className="mt-3 max-w-xs text-sm leading-relaxed text-white/80">
-          Hệ thống xác thực định danh tính cư dân và phân quyền quản lý chuyên nghiệp, minh bạch và an toàn tuyệt đối.
-        </p>
       </div>
 
-      <dl className="grid grid-cols-2 gap-4 text-sm">
-        <div>
-          <dt className="text-white/65">Hotline</dt>
-          <dd className="font-display text-lg font-bold">1900 8868</dd>
+      <div className="relative z-10 space-y-4 pt-12">
+        <div className="space-y-2">
+          <h2 className="font-display text-2xl leading-snug font-bold tracking-tight">
+            Nhà Trọ Cao Cấp Ngọc Trang
+          </h2>
+          <p className="max-w-xs text-sm leading-relaxed text-white/85">
+            Hệ thống quản lý tòa nhà, hợp đồng và hóa đơn minh bạch — vận hành
+            chuyên nghiệp, an toàn tuyệt đối.
+          </p>
         </div>
-        <div>
-          <dt className="text-white/65">Hỗ trợ</dt>
-          <dd className="font-display text-lg font-bold">24/7</dd>
+        <div className="text-[11px] font-medium tracking-widest text-white/60 uppercase">
+          Property Management System
         </div>
-      </dl>
+      </div>
     </div>
-  );
-}
-
-function ShieldIcon() {
-  return (
-    <svg viewBox="0 0 20 20" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.8">
-      <path d="M10 2l6 2.5v5c0 3.5-2.5 6.7-6 8.5-3.5-1.8-6-5-6-8.5v-5L10 2z" strokeLinejoin="round" />
-      <path d="M7.5 10l1.8 1.8 3.4-3.6" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
   );
 }

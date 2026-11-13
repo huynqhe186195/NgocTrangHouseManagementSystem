@@ -1,20 +1,20 @@
 # CURRENT STATE — NgocTrangHouseManagementSystem
-**Snapshot:** 2026-11-13 (**P4.1 AUTH PORTAL SHIPPED** — React 19 + Vite 6 + TS + Tailwind v4 at `frontend/`, pushed `dc60a7d` on `main`: Vitest 20/20, build PASS, 4/4 e2e through the Vite proxy against a real Staging Host + two disposable PG16 DBs on 15432, LOG_DIRECTORY `p41-frontend-auth-e2e-20261113-204601`; P2 merged earlier via `72a0721` with CI green 5/5 at `d364ee1`)  
+**Snapshot:** 2026-11-13 (**P4.1 AUTH PORTAL + FE RESTYLE COMPLETE** — React 19 + Vite 6 + TS + Tailwind v4 at `frontend/`, pushed `46f4dee` on `main`: Vitest 20/20, build PASS, 4/4 e2e through the Vite proxy against a real Staging Host + two disposable PG16 DBs on 15432, LOG_DIRECTORY `p41-frontend-auth-e2e-20261113-204601`; login restyled at `576072b`, forgot-password FE_1/FE_2/FE_3 restyled at `46f4dee`; P2 merged earlier via `72a0721` with CI green 5/5 at `d364ee1`)  
 **Verified by:** Claude Code audit  
 **Working Directory:** `D:\Dev\NgocTrangBuilding\Project\NgocTrangHouseManagementSystem`
 
 ## Git Status
 
 **Current Branch:** `main`  
-**HEAD SHA:** `dc60a7d` — pushed (fast-forward `abb3097..dc60a7d`); adds the P4.1 frontend auth slice on top of the P2-merged trunk (`72a0721` + CI fix `d364ee1`)  
-**Program baseline:** `72a0721` = PR #11 P2 merge (CI green 5/5 at `d364ee1`); frontend baseline = `dc60a7d` (P4.1)  
+**HEAD SHA:** `46f4dee` — pushed (fast-forward `576072b..46f4dee`); restyles the 3 forgot-password screens to the Owner FE_1/FE_2/FE_3 mockups on top of the P4.1 portal (`dc60a7d`) and login restyle (`576072b`)  
+**Program baseline:** `72a0721` = PR #11 P2 merge (CI green 5/5 at `d364ee1`); frontend baseline = `46f4dee` (P4.1 + restyles)  
 **Untracked Files:** `etc/phase-audits/Phase2G3A7_RevisionLedger_Generated_Review.sql` (deliberate offline EF preview artifact — do not delete); `etc/test-results/` (local TRX output from this session); root `package-lock.json` (stray npm artifact, not part of any slice)
 
 ### Branch Inventory
 
 | Branch | HEAD SHA | Tracking | Status vs Handoff |
 |--------|----------|----------|-------------------|
-| `main` | `dc60a7d` | origin/main | ✅ CURRENT — **P4.1 auth portal slice pushed** (React 19 `frontend/`, e2e 4/4 at `dc60a7d`); contains the PR #11 P2 merge (`72a0721`) + CI fix (`d364ee1`) + docs close-out (`abb3097`) |
+| `main` | `46f4dee` | origin/main | ✅ CURRENT — **P4.1 auth portal + FE_1/FE_2/FE_3 restyle pushed** (React 19 `frontend/`; login restyle `576072b`; e2e 4/4 recorded at `dc60a7d`, restyle verified by build+Vitest 20/20 at `46f4dee`); contains the PR #11 P2 merge (`72a0721`) + CI fix (`d364ee1`) + docs close-out (`abb3097`) |
 | `feat/local-safe-startup-20261109` | `4b69e36` | origin (fully merged into main) | ✅ MERGED — all commits in `main`; branch retained (no deletion without Owner authorization) |
 | `feat/d04b-operational-gates-20261108` | `705a481` | origin/feat/d04b-operational-gates-20261108 | ✅ Matches handoff |
 | `feat/d04b-protected-bank-evidence-20261108` | `66a62dc` | origin/feat/d04b-protected-bank-evidence-20261108 | ✅ Matches handoff |
@@ -30,6 +30,8 @@
 
 ### Recent Commits on Current Branch (since handoff)
 
+- `46f4dee` — feat(p41): restyle the forgot-password flow to the Owner-provided FE_1/FE_2/FE_3 designs (new horizontal `ResetStepper`; step-specific left panels — solid teal security artwork (FE_1) / blurred building photo (FE_2/FE_3); identifier form with clear button + SSL/hotline footer; masked-email chip + badge/key inputs + shield caution callout; verified banner + 3-segment strength bar + 4-rule checklist; honest deviations kept: ABP userId+resetToken link, no SMTP in dev; Vitest 20/20 + build PASS re-run at the pushed SHA)
+- `576072b` — feat(p41): restyle the login screen to the Owner-provided design (two-panel card, photo artwork, role chips, Material Symbols, disabled Google/Zalo with explanatory tooltips)
 - `dc60a7d` — feat(p41): add the React 19 auth portal slice with local e2e evidence (standalone `frontend/`: login via OpenIddict ROPC on the public client, ABP 3-step reset against `/api/account/*`, tokens memory+sessionStorage only, `RequireAuth` shell with honest fail-closed states; Vitest 20/20 + build PASS + `etc/scripts/verify-p41-frontend-auth-e2e.ps1` 4/4 — real Staging Host + Vite proxy + disposable PG `bm_p41_*_test` on 15432)
 - `abb3097` — docs(p2-merge): close the P2 merge to main with full evidence at 72a0721/d364ee1
 - `d364ee1` — fix(main): align CI terminal-migration assertion with the P2 chain (D04A_REAL01 + the native-JWT provision fixture asserted the chain still ends at `20261105150000_Phase2HD04H4SettlementJournal`; the P2 merge legitimately extends it to the P2.4 D06 terminal `20261113150000`; verified locally with the full CI env incl. the process-recovery probe — 1/1 PASS, TRX `p26-ci-fix-realwriter.trx`)
@@ -111,7 +113,7 @@
 | D03 service pricing in official invoices | Staging tests exist | Integration into issued invoices |
 | ~~H4 settlement (D04 full business flow)~~ | **DONE 2026-11-13 at `aa3b9bb`** — obligation, deadline ≤1 month, partial payment + missed deadline, credit-XOR-refund, dual approval, false-receipt guards, H4-scoped dispute reconciliation; real bank verification remains HOLD | Real bank evidence (HOLD) |
 | ~~D06/H6 three-signature process~~ | **DONE 2026-11-13 at `950610a`** — three-party signoff (pre-existing) + scanned signed handover sheet in a dedicated AES-256-GCM vault (Owner's 2026-11-04 decision: scan accepted, e-sign not required) + Owner document download audit trail; DOCX-only export by design (PDF conversion a separate future decision) | — |
-| ~~UI/Frontend~~ | **IN PROGRESS 2026-11-13** — P2.6 discovery at `6c9852f` (no UI existed, by design); **P4.1 auth portal shipped at `dc60a7d`** (React 19 + Vite 6 + TS + Tailwind v4 at `frontend/`, login + 3-step reset, e2e 4/4 through the Vite proxy). Next: P4.2+ business screens gated by deny-all authorization — needs Owner decision on a staging grant path; tenant self-service stays HOLD (OI-02) | — |
+| ~~UI/Frontend~~ | **IN PROGRESS 2026-11-13** — P2.6 discovery at `6c9852f` (no UI existed, by design); **P4.1 auth portal shipped at `dc60a7d`** (React 19 + Vite 6 + TS + Tailwind v4 at `frontend/`, login + 3-step reset, e2e 4/4 through the Vite proxy); login restyled at `576072b` and forgot-password FE_1/FE_2/FE_3 restyled at `46f4dee` per the Owner mockups. Next: P4.2+ business screens gated by deny-all authorization — needs Owner decision on a staging grant path; tenant self-service stays HOLD (OI-02) | — |
 
 ## Known Issues Fixed (verify on HEAD)
 

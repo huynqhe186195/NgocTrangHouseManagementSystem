@@ -540,6 +540,17 @@
 **Blocker:** None for this slice
 **Dependency:** P2.6 ✅ (frontend discovery)
 
+### P4.1b ✅ Forgot-Password FE_1/FE_2/FE_3 Restyle — COMPLETE (`46f4dee`, pushed)
+**Status:** DONE — three reset screens restyled to the Owner-provided mockups (`Docs/front-end/authentication & authorization/forgot_password_FE_1..3`): horizontal 3-step connector stepper (`ResetStepper`), step-specific left panels (solid teal security artwork / blurred building photo ×2), FE_1 identifier form with clear button + SSL/hotline footer, FE_2 masked-email chip + badge/key inputs + shield caution callout, FE_3 verified banner + 3-segment strength bar + 4-rule checklist + confirm-match badge. Honest deviations kept visible: ABP userId+resetToken link (not 6-digit SMS OTP), no SMTP in dev. Old `Stepper`/`Field`/`Button` auth usage replaced; components remain for future screens.
+**Evidence:**
+- ✅ Commit `46f4dee` pushed to `origin/main` (fast-forward `576072b..46f4dee`, no force)
+- ✅ Vitest 20/20 (3 files) re-run at the pushed SHA, exit 0
+- ✅ `tsc --noEmit` + `vite build` PASS re-run at the pushed SHA (`dist/assets/index-D5Cd1SPu.js` 343.66 kB, exit 0)
+- ✅ No backend C# touched; untracked strays (`package-lock.json`, `etc/test-results/`, `etc/phase-audits/…Generated_Review.sql`, `etc/scripts/verify-p41-frontend-auth-e2e.ps1`) left uncommitted
+
+**Blocker:** None
+**Dependency:** P4.1 ✅
+
 ---
 
 ## NOT IN BACKLOG (Already Fixed — Do Not Repeat)
@@ -570,4 +581,4 @@
 - P2: 6/6 **MERGED INTO `main`** (PR #11 merge commit `72a0721`, 2026-11-13, no squash — P2.1 `d36edb5` / P2.2 `b18644b` / P2.3 `aa3b9bb` / P2.4 `950610a` / P2.5 `2d01952` / P2.6 `6c9852f`; local 5-group harness ALL PASSED at `72a0721`; post-merge CI stale-assertion fix `d364ee1` with CI run 43423912631 green 5/5)
 - P3: 4/4 done + **MERGED to main** (P3.1 merge `01cba31`; P3.2 DONE `1ddf2e6`; P3.3 matrix; **P3.4 CLOSED 2026-11-12: PR #10 → main merge commit `c499d89`, Owner §6 signed + §3.2 P2 deferral accepted; post-merge local regression + CI green 5/5 at the merge commit**)
 
-**Current Focus:** **P4.1 CLOSED (2026-11-13): React 19 auth portal slice at `dc60a7d` pushed to `main`** — Vitest 20/20 + build PASS + 4/4 e2e through the Vite proxy against a real Staging Host and two disposable PG databases on 15432 (LOG_DIRECTORY `C:\Users\Huynq\NgocTrang-Test-Logs\p41-frontend-auth-e2e-20261113-204601`). Owner stack decision honored: React 19, `frontend/` independent from the backend, proxy in dev / `VITE_API_BASE` when deployed. P0→P3 + P2 all merged in `main` (baseline `c499d89`, P2 merge `72a0721`, CI fix `d364ee1`). Next: P4.2+ business screens (Buildings/Rooms/Contracts/…) gated by the deny-all authorization — needs an Owner decision on enabling a staging grant path; real payOS money flow, TLS public callback, production vault/roles/secrets, production deploy stay HOLD.
+**Current Focus:** **P4.1 + P4.1b CLOSED (2026-11-13): React 19 auth portal at `46f4dee` pushed to `main`** — Vitest 20/20 + build PASS + 4/4 e2e through the Vite proxy against a real Staging Host and two disposable PG databases on 15432 (LOG_DIRECTORY `C:\Users\Huynq\NgocTrang-Test-Logs\p41-frontend-auth-e2e-20261113-204601`); login restyled at `576072b`, forgot-password FE_1/FE_2/FE_3 restyled at `46f4dee`. Owner stack decision honored: React 19, `frontend/` independent from the backend, proxy in dev / `VITE_API_BASE` when deployed. P0→P3 + P2 all merged in `main` (baseline `c499d89`, P2 merge `72a0721`, CI fix `d364ee1`). Next: P4.2+ business screens (Buildings/Rooms/Contracts/…) gated by the deny-all authorization — needs an Owner decision on enabling a staging grant path; real payOS money flow, TLS public callback, production vault/roles/secrets, production deploy stay HOLD.

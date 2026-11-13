@@ -365,8 +365,8 @@
 **Blocker:** none — P3.1 merged; the E-sign-vs-scan decision was closed by the Owner on 2026-11-04 (scan accepted, e-sign not required).  
 **Dependency:** P3.1
 
-### P2.5 ⏳ Phase 2G.5 Ordinary Move-Out End-to-End
-**Status:** TODO (partial staging tests exist)  
+### P2.5 ✅ Phase 2G.5 Ordinary Move-Out End-to-End — COMPLETE (`2d01952`, pushed)
+**Status:** DONE  
 **Definition of Done:**
 - Final bill generation
 - Debt settlement
@@ -378,7 +378,37 @@
 - **Never** allow direct `Contract.End` bypass
 - Cross-check OI-01 through OI-06 policy compliance
 
-**Blocker:** Multiple dependencies  
+**Already in place before this phase (audited, unchanged)**
+- The whole ordinary move-out lane already exists and was already proven in `STAGEPGHTTP01`: `CompleteMoveOutAsync` single SERIALIZABLE UoW (BootstrapOwner) with contract/request locks, the 5-task checklist gate (only `FinalMeterReading` must be pre-completed), final-invoice `VerifyStoredTerms`, official-receivables zero-balance, exact-match deposit decision, refund destination + independent bank review, refund/forfeit `DepositSettlement` records, `ContractDepositCloseoutApprovalRecord`, `MoveOutRoomDispositionRecord`, `Contract.End(Normal|EarlyTermination)` and `Room.ChangeStatus` — plus the `check-move-out-lifecycle-gate.ps1` source gate that blocks any direct `Contract.End` call outside the audited closeout.
+- Domain tests `MoveOutRoomDisposition_Tests` (CMOUT51–63) already covered the Reserved/PendingPayment/Signed disposition matrix at the domain level.
+
+**Delivered (`2d01952`) — closing the two genuine HTTP evidence gaps**
+- **Final-meter signoff lane (E/W meter final reading):** the finance fixture no longer pre-completes the `FinalMeterReading` checklist task. The E2E now drives the real authenticated `POST {contractId}/move-out-requests/{requestId}/verify-final-meters` route (scoped building B client) with a physically continuous reading history — August zero-usage anchors + September final readings on both E and W meters (without them the coverage assessor correctly fail-closes with `MissingPreviousMonthReading`). Asserts: 200 with `type == FinalMeterReading`, `isCompleted == true`, `completedAt != null`; replay is idempotent (200, still completed); a foreign contract's route stays 403.
+- **Booking-retention lane (future reservation handling, OI-06):** a second full scenario on new room B112 with a `Reserved` future occupancy: the authenticated closeout asserts `roomStatus == Reserved`, `hasFutureCommitment == true`, the stored `MoveOutRoomDispositionRecord` `ResultRoomStatus == Reserved` with `FutureReservationId` bound, the contract `Ended`, the retained reservation still `Reserved`, and the scoped `GET room-disposition` reporting the same. The scenario runs the complete genuine financial lane — prepare → independent review → root issue-candidate → manual receipt → post-receivable → journal review → deposit decision → refund destination → bank review — so the closeout gate is satisfied by real evidence, never bypassed.
+- The second scenario reuses the finance lane's `UtilityRate` rows (same building/type/effective date) instead of seeding duplicates that violate the unique rate index.
+- All six gate/verify scripts allowlist `feat/p2-5-move-out-e2e`.
+
+**Evidence (pushed `2d01952`, full acceptance harness at that exact SHA)**
+- `verify-phase-2h-financial-foundations.ps1` at `2d01952`: **all five groups PASS** — `=== PHASE 2H FINANCIAL FOUNDATIONS: ALL FIVE GROUPS PASSED ===`, `COMMIT=2d01952dbea3e81fc5641665831e59e0b7df5921`
+- Group 1 — Domain 2H: **212/212** PASS — `~/NgocTrang-Test-Logs/15-2h-financial-domain.log` (+ `.trx`, `passed="212" failed="0"`); stamped `PHASE2H_COMMIT=2d01952…`
+- Group 2 — PG 2H concurrency: **129/129** PASS — `16-2h-postgresql.log` / `.trx` (`passed="129" failed="0"`); stamped `2d01952`
+- Group 3 — PG fresh disposable migration chain: **1/1** PASS — `17-2h-full-migration.log` / `.trx` (`passed="1" failed="0"`); stamped `2d01952`
+- Group 4 — Authenticated two-PG HTTP (incl. the new final-meter signoff + booking-retention lanes): **1/1** PASS — `18-2h-auth-http.log` / `.trx` (`passed="1" failed="0"`); stamped `2d01952`
+- Group 5 — Full regression: 767 Domain / 231 Application / 447 SQLite EF / 76 HTTP, 0 failed, 0 skipped — `19-2h-full-regression.log` (`QUALITY GATE PASS`)
+- `LOG_DIRECTORY=C:\Users\Huynq\NgocTrang-Test-Logs`; solution build 0 errors
+
+**Definition of Done status**
+- ✅ Final bill generation — authenticated prepare → review → issue-candidate → receipt → posting lane in both scenarios
+- ✅ Debt settlement — official-receivables zero-balance gate at closeout + journal review
+- ✅ Deposit offset (OI-04 rules) — exact-match `ContractDepositSettlementDecisionRecord.RequireForCloseout` + refund/forfeit settlement records + approval record
+- ✅ E/W meter final reading — authenticated `/verify-final-meters` with continuous reading history; idempotent; foreign contract 403
+- ✅ Checklist completion — the 5-task gate; 4 tasks evidence-verified by the closeout, `FinalMeterReading` completed by the real signoff route
+- ✅ Room disposition — `MoveOutRoomDispositionRecord` over HTTP; room status asserted in DB and via scoped GET
+- ✅ Future reservation handling — Reserved retention + `hasFutureCommitment` proven over HTTP with the retained booking re-verified
+- ✅ **Never** allow direct `Contract.End` bypass — `check-move-out-lifecycle-gate.ps1` source gate (in the full-regression group) + closeout is the only writer
+- ✅ Cross-check OI-01 → OI-06 — each policy anchor covered by the same E2E lanes (issuance terms, meter evidence, deposit decision, destination/bank review, disposition retention)
+
+**Blocker:** none — all dependencies DONE (P2.1 `d36edb5`, P2.2 `b18644b`, P2.3 `aa3b9bb`, P2.4 `950610a`)  
 **Dependency:** P2.1, P2.2, P2.3, P2.4
 
 ### P2.6 ⏳ UI/Frontend Inventory and Integration
@@ -494,7 +524,7 @@
 **Backlog Status Summary:**
 - P0: 6/6 closed (P0.1–P0.3 done, P0.4 not needed, P0.5 startup gate at `7621d8a`, P0.6 full bundle at `7621d8a`)
 - P1: 5/5 done (P1.1 official at `f30e14d`; P1.2 rehearsal gate at `d085d02`; P1.4 crash/recovery at `682613d`; P1.3 vault + restricted roles at `18fe521`, 64/64; P1.5 internal simulated payOS staging E2E at `e58b12c`, 20/20)
-- P2: 4/6 (P2.1 DONE at `d36edb5`, pushed to `origin/feat/p2-1-issued-invoice-correction`; P2.2 DONE at `b18644b`, pushed to `origin/feat/p2-2-service-pricing-official-invoice`; P2.3 DONE at `aa3b9bb`, pushed to `origin/feat/p2-3-h4-settlement-d04`; P2.4 DONE at `950610a`, pushed to `origin/feat/p2-4-d06-three-signature`; P2.5–P2.6 outstanding)
+- P2: 5/6 (P2.1 DONE at `d36edb5`, pushed to `origin/feat/p2-1-issued-invoice-correction`; P2.2 DONE at `b18644b`, pushed to `origin/feat/p2-2-service-pricing-official-invoice`; P2.3 DONE at `aa3b9bb`, pushed to `origin/feat/p2-3-h4-settlement-d04`; P2.4 DONE at `950610a`, pushed to `origin/feat/p2-4-d06-three-signature`; P2.5 DONE at `2d01952`, pushed to `origin/feat/p2-5-move-out-e2e`; P2.6 outstanding)
 - P3: 4/4 done + **MERGED to main** (P3.1 merge `01cba31`; P3.2 DONE `1ddf2e6`; P3.3 matrix; **P3.4 CLOSED 2026-11-12: PR #10 → main merge commit `c499d89`, Owner §6 signed + §3.2 P2 deferral accepted; post-merge local regression + CI green 5/5 at the merge commit**)
 
-**Current Focus:** P3 COMPLETE. **`main` = program baseline at merge commit `c499d89`** (post-merge docs/guards `2149210`+). Evidence chain closed: CI billing unlocked card-free → run 384 green 5/5 at `c63d370` (ID 43240562191) → Owner §6 + §3.2 approved → PR #10 merged `c499d89` → local regression exit 0 + CI run 43247648066 green 5/5 at `c499d89`. **P2 on follow-up feature branches off `main`** — P2.1 DONE (`d36edb5`), P2.2 DONE (`b18644b`), P2.3 DONE (`aa3b9bb`, H4 settlement: obligation aging + H4-scoped dispute lane, harness 5/5 at the pushed SHA), **P2.4 DONE (`950610a`, D06 three-signature: scanned signed handover sheet archived in a dedicated AES-256-GCM vault + Owner document download audit trail)**. Next: P2.5 move-out E2E, P2.6 frontend discovery. HOLD unchanged: real payOS money flow, TLS public callback, production vault/roles/secrets, production deploy.
+**Current Focus:** P3 COMPLETE. **`main` = program baseline at merge commit `c499d89`** (post-merge docs/guards `2149210`+). Evidence chain closed: CI billing unlocked card-free → run 384 green 5/5 at `c63d370` (ID 43240562191) → Owner §6 + §3.2 approved → PR #10 merged `c499d89` → local regression exit 0 + CI run 43247648066 green 5/5 at `c499d89`. **P2 on follow-up feature branches off `main`** — P2.1 DONE (`d36edb5`), P2.2 DONE (`b18644b`), P2.3 DONE (`aa3b9bb`, H4 settlement: obligation aging + H4-scoped dispute lane, harness 5/5 at the pushed SHA), P2.4 DONE (`950610a`, D06 three-signature: scanned signed handover sheet archived in a dedicated AES-256-GCM vault + Owner document download audit trail), **P2.5 DONE (`2d01952`, ordinary move-out E2E: authenticated final-meter signoff completing the checklist task + Reserved booking retention with `hasFutureCommitment` at closeout, full financial lane)**. Next: P2.6 frontend discovery. HOLD unchanged: real payOS money flow, TLS public callback, production vault/roles/secrets, production deploy.

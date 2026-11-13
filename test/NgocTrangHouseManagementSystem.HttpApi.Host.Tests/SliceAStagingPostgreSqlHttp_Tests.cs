@@ -2899,10 +2899,288 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 await uow.CompleteAsync();
             }
 
+            // ---- P2.2 / D03: SERVICE PRICING ON THE ISSUED INVOICE ----
+            // A second month with an itemized per-person service fee. The
+            // rate is the room's OWN versioned tariff, the headcount is the
+            // contract's verified residency, and the issued invoice must
+            // freeze both so a later tariff edit cannot rewrite it.
+            var serviceRoom = await CreateChildAsync(clientB, roomCreate,
+                new { floorId = floorB, roomNumber = "198",
+                    name = "D03 service pricing room B198", area = 24m,
+                    capacity = 2, status = (int)BuildingManagement.Rooms.RoomStatus.Occupied });
+            var serviceContract = Guid.NewGuid();
+            var serviceElectricMeter = Guid.NewGuid();
+            var serviceWaterMeter = Guid.NewGuid();
+            var d03ServiceId = Guid.NewGuid();
+            var serviceTariffId = Guid.NewGuid();
+            const decimal serviceUnitPrice = 150_000m;
+            var secondTenant = Guid.NewGuid();
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var db = await sp.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>().GetDbContextAsync();
+                var contract = new BuildingManagement.Contracts.Contract(
+                    serviceContract, "D03-SERVICE-" + serviceContract.ToString("N"),
+                    serviceRoom, new DateTime(2026, 9, 1), null, 2500000m);
+                contract.Activate();
+                db.Contracts.Add(contract);
+                db.Tenants.Add(new BuildingManagement.Tenants.Tenant(
+                    secondTenant, "Tenant D03 second occupant",
+                    "092" + secondTenant.ToString("N")[..7],
+                    null, null, null,
+                    BuildingManagement.Tenants.IdentityType.CitizenId,
+                    "CID-D03-" + secondTenant.ToString("N")));
+                db.ContractTenants.AddRange(
+                    new BuildingManagement.Contracts.ContractTenant(
+                        Guid.NewGuid(), serviceContract, tenantB,
+                        BuildingManagement.Contracts.ContractTenantRole.PrimaryTenant),
+                    new BuildingManagement.Contracts.ContractTenant(
+                        Guid.NewGuid(), serviceContract, secondTenant,
+                        BuildingManagement.Contracts.ContractTenantRole.Member));
+                db.UtilityMeters.AddRange(
+                    new BuildingManagement.Utilities.UtilityMeter(
+                        serviceElectricMeter, serviceRoom,
+                        BuildingManagement.Utilities.UtilityType.Electricity,
+                        "D03-E-" + serviceElectricMeter.ToString("N"), 0m,
+                        new DateTime(2026, 9, 1)),
+                    new BuildingManagement.Utilities.UtilityMeter(
+                        serviceWaterMeter, serviceRoom,
+                        BuildingManagement.Utilities.UtilityType.Water,
+                        "D03-W-" + serviceWaterMeter.ToString("N"), 0m,
+                        new DateTime(2026, 9, 1)));
+                db.MeterReadings.AddRange(
+                    new BuildingManagement.Utilities.MeterReading(
+                        Guid.NewGuid(), serviceElectricMeter, 2026, 9,
+                        0m, 10m, new DateTime(2026, 9, 30)),
+                    new BuildingManagement.Utilities.MeterReading(
+                        Guid.NewGuid(), serviceWaterMeter, 2026, 9,
+                        0m, 12m, new DateTime(2026, 9, 30)),
+                    new BuildingManagement.Utilities.MeterReading(
+                        Guid.NewGuid(), serviceElectricMeter, 2026, 10,
+                        10m, 25m, new DateTime(2026, 10, 31)),
+                    new BuildingManagement.Utilities.MeterReading(
+                        Guid.NewGuid(), serviceWaterMeter, 2026, 10,
+                        12m, 17m, new DateTime(2026, 10, 31)));
+                db.RoomScopedServiceTariffVersions.Add(
+                    BuildingManagement.RoomChanges.RoomScopedServiceTariffVersion.Create(
+                        serviceTariffId, serviceRoom, d03ServiceId, 1,
+                        serviceUnitPrice,
+                        BuildingManagement.RoomChanges.RoomScopedServiceBillingUnit.PerPerson,
+                        BuildingManagement.RoomChanges.RoomScopedServiceChargingRule.WholeMonth,
+                        new DateOnly(2026, 10, 1), null, root,
+                        new DateTime(2026, 9, 20, 8, 0, 0, DateTimeKind.Utc),
+                        "OWNER-SIGNED-D03-ROOM-SERVICE-RATE-OCTOBER-2026"));
+                await db.SaveChangesAsync();
+                await uow.CompleteAsync();
+            }
+
+            Guid serviceDraftId;
+            using (var created = await clientB.PostAsync(
+                scopedContracts + "/" + serviceContract.ToString("D") +
+                "/monthly-utility-drafts/2026/10", null))
+            {
+                var body = await created.Content.ReadAsStringAsync();
+                Assert.True(created.StatusCode is HttpStatusCode.OK or
+                    HttpStatusCode.Created,
+                    $"D03 monthly draft: {created.StatusCode}: {body}");
+                using var json = JsonDocument.Parse(body);
+                serviceDraftId = json.RootElement.GetProperty("id").GetGuid();
+            }
+
+            // The issued service line must equal rate x verified headcount.
+            const decimal serviceLineAmount = serviceUnitPrice * 2m;
+            var serviceCandidatePayload = new
+            {
+                contractId = serviceContract,
+                roomId = serviceRoom,
+                billingYear = 2026,
+                billingMonth = 10,
+                paymentDueDate = DateOnly.FromDateTime(
+                    TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow,
+                        TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh")))
+                    .AddDays(7),
+                dueDatePolicyReference = "APPROVED-MONTHLY-DUE-REVIEW",
+                auxiliaryFeeDecision = 2,
+                auxiliaryFeePolicyReference =
+                    "OWNER-APPROVED-D03-PER-ROOM-SERVICE-POLICY-2026",
+                auxiliaryFeeReviewerId = root,
+                auxiliaryCharges = new[]
+                {
+                    new
+                    {
+                        kind = 1,
+                        serviceCode = "INTERNET",
+                        quantity = 2m,
+                        unitPrice = serviceLineAmount / 2m,
+                        amount = serviceLineAmount,
+                        contractOrRateReference =
+                            "OWNER-SIGNED-D03-ROOM-SERVICE-RATE-OCTOBER-2026",
+                        description = "Per-person internet service for the billed month"
+                    }
+                }
+            };
+            var d03Candidate = await PostFinalAsync(clientRoot,
+                FinalInvoices(serviceContract) + "/monthly-drafts/" +
+                serviceDraftId.ToString("D") + "/candidate",
+                JsonSerializer.Serialize(serviceCandidatePayload));
+            Assert.True(d03Candidate.Status is HttpStatusCode.OK or
+                HttpStatusCode.Created,
+                $"D03 candidate: {d03Candidate.Status}: {d03Candidate.Body}");
+            Guid serviceCandidateId;
+            decimal serviceCandidateAmount;
+            using (var json = JsonDocument.Parse(d03Candidate.Body))
+            {
+                serviceCandidateId = json.RootElement.GetProperty("candidateId").GetGuid();
+                serviceCandidateAmount = json.RootElement
+                    .GetProperty("frozenCandidateAmount").GetDecimal();
+            }
+            // The service fee is a genuine part of the official amount, on
+            // top of rent and metered utilities, not a look-alike line.
+            Assert.True(serviceCandidateAmount > serviceLineAmount);
+
+            // Persist the ORIGINAL room-service source binding, exactly as a
+            // secured issuer would: from the frozen candidate and the tariff
+            // version that was effective for the billed month.
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var db = await sp.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>().GetDbContextAsync();
+                var candidate = await db.MonthlyInvoiceCandidates
+                    .SingleAsync(x => x.Id == serviceCandidateId);
+                var tariff = await db.RoomScopedServiceTariffVersions
+                    .SingleAsync(x => x.Id == serviceTariffId);
+                var premium = tariff.PreviewCharge(
+                    new DateOnly(2026, 10, 1), new DateOnly(2026, 10, 31), 2);
+                db.RoomServiceInvoiceSourceBindings.Add(
+                    BuildingManagement.RoomChanges
+                        .RoomScopedServiceInvoiceSourceBinding.Freeze(
+                            candidate, tariff, premium, "INTERNET",
+                            "VERIFIED-RESIDENCY-2-TENANTS-OCTOBER-2026"));
+                await db.SaveChangesAsync();
+                await uow.CompleteAsync();
+            }
+
+            var d03Review = await PostFinalAsync(clientB,
+                FinalInvoices(serviceContract) + "/monthly-candidates/" +
+                serviceCandidateId.ToString("D") + "/review",
+                JsonSerializer.Serialize(new
+                {
+                    accept = true,
+                    reason = "Independently audited D03 service rate and headcount"
+                }));
+            Assert.True(d03Review.Status is HttpStatusCode.OK or
+                HttpStatusCode.Created,
+                $"D03 review: {d03Review.Status}: {d03Review.Body}");
+
+            var d03Issued = await PostFinalAsync(clientRoot,
+                FinalInvoices(serviceContract) + "/monthly-candidates/" +
+                serviceCandidateId.ToString("D") + "/issue", "{}");
+            Assert.True(d03Issued.Status is HttpStatusCode.OK or
+                HttpStatusCode.Created,
+                $"D03 issuance: {d03Issued.Status}: {d03Issued.Body}");
+            Guid serviceIssuedId;
+            using (var json = JsonDocument.Parse(d03Issued.Body))
+            {
+                serviceIssuedId = json.RootElement
+                    .GetProperty("issuedInvoiceId").GetGuid();
+                Assert.Equal(serviceCandidateAmount,
+                    json.RootElement.GetProperty("amount").GetDecimal());
+                Assert.False(json.RootElement
+                    .GetProperty("isOfficialReceivable").GetBoolean());
+            }
+
+            // The frozen schedule really is the room's own rate multiplied
+            // by the verified residency count, and it survives a later
+            // Owner price edit unchanged.
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var db = await sp.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>().GetDbContextAsync();
+                var candidate = await db.MonthlyInvoiceCandidates
+                    .SingleAsync(x => x.Id == serviceCandidateId);
+                var review = await db.MonthlyInvoiceReviews
+                    .SingleAsync(x => x.CandidateId == serviceCandidateId);
+                var month = await db.MonthlyIssuedInvoices
+                    .SingleAsync(x => x.Id == serviceIssuedId);
+                var bindings = await db.RoomServiceInvoiceSourceBindings
+                    .Where(x => x.MonthlyCandidateId == serviceCandidateId).ToArrayAsync();
+                var history = await db.RoomScopedServiceTariffVersions
+                    .Where(x => x.RoomId == serviceRoom).ToArrayAsync();
+                var residency = await db.ContractTenants
+                    .Where(x => x.ContractId == serviceContract)
+                    .Select(x => new { x.TenantId, x.Role }).ToArrayAsync();
+
+                var schedule = BuildingManagement.Invoices
+                    .OfficialServicePricingSchedule.Bind(
+                        month, candidate, bindings, history,
+                        residency.Select(x =>
+                            new BuildingManagement.RoomChanges.RoomChangeRosterMember(
+                                x.TenantId, x.Role)).ToArray());
+                schedule.VerifySchedule(candidate);
+
+                var line = Assert.Single(schedule.Lines);
+                Assert.Equal(serviceUnitPrice, line.UnitPriceVnd);
+                Assert.Equal(2, line.VerifiedOccupantCount);
+                Assert.Equal(serviceLineAmount, line.AmountVnd);
+                Assert.Equal(serviceLineAmount, schedule.TotalVnd);
+                Assert.Equal(serviceTariffId, line.TariffVersionId);
+                Assert.False(schedule.IsOfficialReceivable);
+
+                // A later, higher-priced version must NOT rewrite history.
+                db.RoomScopedServiceTariffVersions.Add(
+                    BuildingManagement.RoomChanges.RoomScopedServiceTariffVersion.Create(
+                        Guid.NewGuid(), serviceRoom, d03ServiceId, 2,
+                        500_000m,
+                        BuildingManagement.RoomChanges.RoomScopedServiceBillingUnit.PerPerson,
+                        BuildingManagement.RoomChanges.RoomScopedServiceChargingRule.WholeMonth,
+                        new DateOnly(2026, 11, 1), null, root,
+                        new DateTime(2026, 10, 20, 8, 0, 0, DateTimeKind.Utc),
+                        "OWNER-SIGNED-D03-ROOM-SERVICE-RATE-NOVEMBER-2026"));
+                await db.SaveChangesAsync();
+                await uow.CompleteAsync();
+            }
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var db = await sp.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>().GetDbContextAsync();
+                var candidate = await db.MonthlyInvoiceCandidates
+                    .SingleAsync(x => x.Id == serviceCandidateId);
+                var month = await db.MonthlyIssuedInvoices
+                    .SingleAsync(x => x.Id == serviceIssuedId);
+                var bindings = await db.RoomServiceInvoiceSourceBindings
+                    .Where(x => x.MonthlyCandidateId == serviceCandidateId).ToArrayAsync();
+                var history = await db.RoomScopedServiceTariffVersions
+                    .Where(x => x.RoomId == serviceRoom).ToArrayAsync();
+                var residency = await db.ContractTenants
+                    .Where(x => x.ContractId == serviceContract)
+                    .Select(x => new { x.TenantId, x.Role }).ToArrayAsync();
+
+                var again = BuildingManagement.Invoices
+                    .OfficialServicePricingSchedule.Bind(
+                        month, candidate, bindings, history,
+                        residency.Select(x =>
+                            new BuildingManagement.RoomChanges.RoomChangeRosterMember(
+                                x.TenantId, x.Role)).ToArray());
+                Assert.Equal(serviceUnitPrice, Assert.Single(again.Lines).UnitPriceVnd);
+                Assert.Equal(serviceLineAmount, again.TotalVnd);
+                await uow.CompleteAsync();
+            }
+
             var monthlyBalanceRoute = FinalInvoices(monthlyDraftContract) +
                 "/monthly-issued/" + monthlyIssuedId.ToString("D") +
-                "/balance";
-            using (var balance = await clientB.GetAsync(monthlyBalanceRoute))
+                "/balance";            using (var balance = await clientB.GetAsync(monthlyBalanceRoute))
             {
                 Assert.Equal(HttpStatusCode.OK, balance.StatusCode);
                 using var json = JsonDocument.Parse(

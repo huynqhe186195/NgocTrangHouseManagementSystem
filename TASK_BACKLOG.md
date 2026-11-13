@@ -183,22 +183,55 @@
 
 ## P2 — Complete Phase 2H/2G Business Logic (Still HOLD)
 
-### P2.1 ⏳ D01/D02 Invoice Correction
-**Status:** TODO (golden candidates exist on PR #5, not integrated)  
-**Definition of Done:**
-- Apply "target owns handover day" policy
-- HTTP/PG parity for 28/29/30/31 days, leap year
-- VND rounding per line (0.5 → up for non-negative)
-- Signed pricing artifact, append-only adjustments
-- Receipt reconciliation
-- Concurrency/rollback/SQL bypass protection
-- Test against **issued invoices**, not just staging
+### P2.1 ✅ D01/D02 Invoice Correction — COMPLETE (`d36edb5`, pushed)
+**Status:** DONE on `feat/p2-1-issued-invoice-correction`. Domain planner, PG concurrency/rollback proof and per-month-length HTTP parity all green.
 
-**Blocker:** PR #5 integration needed  
-**Dependency:** P3.1 (branch merge)
+**Delivered (`24216e2`)**
+- `RoomChangeIssuedInvoiceCorrectionPlanner` (`modules/buildingmanagement/src/BuildingManagement.Domain/RoomChanges/`): binds an approved D01/D02 quote to REAL `MonthlyIssuedInvoiceRecord`s and produces the ordered append-only `MonthlyInvoiceAdjustmentRecord` proposals (source credit → target debit).
+  - Recalculates the quote from its own inputs; rejects any record whose outputs disagree (no caller arithmetic, no silent default).
+  - D01 target-owns-handover-day partition, month coverage asserted.
+  - Whole-VND per line; source rent below captured receipts refused.
+  - Never rewrites issued invoice / meter evidence / receipts.
+  - Deterministic adjustment ids → replay yields identical proposals, not a second correction.
+  - `VerifyAgainst()` detects drift (reissued invoice, new receipt).
+  - `CanIssueInvoice` / `CanPostOfficialReceivable` / `CanExecuteRoomChange` all `false`.
+- 12 domain Facts `RICC01–RICC12`, incl. 118-scenario parity against an independent exact-rational oracle over 28/29/30/31-day months and leap year, the 0.5 away-from-zero boundary, full-month and day-1 edges, replay identity, and every fail-closed path.
 
-### P2.2 ⏳ D03 Service Pricing in Official Invoices
-**Status:** TODO (staging tests exist on PR #5)  
+**Delivered (`f2665e0`, doc-closed at `d36edb5`)**
+- `RoomChangeIssuedInvoiceCorrectionPostgreSql_Tests` (6 Facts `RICCPG01–RICCPG06`): mounts the real `20261029223000_Phase2G3AuditedMonthlyAdjustments` migration into a throwaway schema, so the production trigger definitions are what is exercised.
+  - Two independent sessions proposing the same correction on one issued invoice serialize to exactly one row (`23505` for the loser), leaving no orphan decision journal.
+  - Replaying an identical correction cannot double-post.
+  - `UPDATE` / `DELETE` / `TRUNCATE … CASCADE` / hash-mismatched `INSERT` all refused with `23514`.
+  - The proposer cannot review their own correction; a credit that would drop the invoice below captured receipts is refused.
+  - Migration `Down()` is a clean, complete reversal with no history, and refuses with `23514` once a correction exists.
+- Month-length parity matrix inside the authenticated HTTP Fact: the D01 target-owns-handover-day quote is verified against calendar arithmetic alone across 28-day (2027-02), leap 29-day (2028-02), 30-day (2027-04) and 31-day (2027-01) transfer months at day 11, including day split, per-line VND, and a re-read that returns the same stored figures.
+
+**Evidence (pushed `d36edb5`, full acceptance harness at that exact SHA)**
+- `verify-phase-2h-financial-foundations.ps1` at `d36edb5`: **all five groups PASS**, exit 0 — `=== QUALITY GATE PASS: ALL REQUESTED TEST RUNS SUCCEEDED ===`, `COMMIT=d36edb5c04f84668f0044ab5bbae3526da136cdc`
+- Group 1 — Domain 2H (incl. `RICC01–RICC12`): 177/177 PASS — `~/NgocTrang-Test-Logs/15-2h-financial-domain.log` (+ `.trx`, `Assert-Phase2HTrx.ps1` verified); log line 1 stamped `PHASE2H_COMMIT=d36edb5…`
+- Group 2 — PG 2H concurrency (incl. `RICCPG01–RICCPG06`): 109/109 PASS — `16-2h-postgresql.log` / `.trx`; stamped `d36edb5`
+- Group 3 — PG fresh disposable migration chain: 1/1 PASS (`PGMIG01`) — `17-2h-full-migration.log` / `.trx`; stamped `d36edb5`
+- Group 4 — Authenticated two-PG HTTP + month-length matrix: 1/1 PASS (2m01s) — `18-2h-auth-http.log` / `.trx`; stamped `d36edb5`
+- Group 5 — Full regression: 732 Domain / 231 Application / 447 SQLite EF / 76 HTTP, 0 failed, 0 skipped — `19-2h-full-regression.log`
+- Concurrency Fact repeated 5× standalone before the push: 5/5 PASS (no flakiness)
+- Solution build: 0 errors
+- Harness updated: 6 source gates + 2 verify bundles accept the new branch; 2H domain count 165 → 177, 2H PG count 103 → 109
+
+**Definition of Done status**
+- ✅ Apply "target owns handover day" policy
+- ✅ VND rounding per line (0.5 → up for non-negative)
+- ✅ Signed pricing artifact, append-only adjustments
+- ✅ Receipt reconciliation (refuses to correct below captured receipts)
+- ✅ SQL bypass protection — DB triggers on `BuildingManagementMonthlyInvoiceAdjustments` (append-only, no-truncate, independent reviewer, credit-vs-receipts ceiling), now proven against the shipped migration DDL
+- ✅ Test against **issued invoices**, not just staging
+- ✅ HTTP/PG parity for 28/29/30/31 days, leap year — per-month-length HTTP matrix + exhaustive domain parity
+- ✅ Concurrency/rollback — dedicated concurrent-correction scenario, SQL-bypass refusals, and guarded migration rollback
+
+**Blocker:** none — P3.1 merged, PR #5 integrated.  
+**Shared spine:** `MonthlyInvoiceAdjustmentRecord` + DB append-only triggers (migration `20261029223000`); HTTP surface `contracts/{contractId}/monthly-issued/{issuedId}/adjustments` (+ `/review`) in `SliceBStagingFinalInvoiceController`.
+
+### P2.2 ✅ D03 Service Pricing in Official Invoices — COMPLETE (`b18644b`, pushed)
+**Status:** DONE  
 **Definition of Done:**
 - Pricing by `RoomId + ServiceId + effective version + unit`
 - Actual occupant count from verified residency list
@@ -206,11 +239,40 @@
 - Service fees appear in **official issued invoice**
 - Immutable when room/pricing changes (snapshot)
 
-**Blocker:** PR #5 integration needed  
+**Delivered (`b18644b`)**
+- `OfficialServicePricingSchedule` (`modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/`): the missing production gate. `Bind(issued, candidate, sourceBindings, roomTariffHistory, verifiedResidency)` reconstructs the whole service schedule from frozen evidence and `VerifySchedule(candidate)` re-checks it.
+  - Every line recomputed from the **room's own** tariff version — `PreviewCharge` must equal the frozen binding amount and the fee line amount, so caller arithmetic is never trusted.
+  - Tariff selection is anchored to `candidate.ReviewedAtUtc` (private `SelectFrozenVersion`), **not** `SelectEffectiveForDate`/“latest today”. A version approved after the review instant can never rewrite an issued invoice.
+  - Refuses superseded rates, missing/foreign bindings, one-binding-per-service-code violations, per-person lines whose headcount ≠ verified residency, and `VerifiedOccupantCount` 0 with a meter quantity (and vice versa).
+  - `VerifyResidency` requires 1–100 unique tenants with exactly one `PrimaryTenant`; an empty or double-primary roster is refused.
+  - `EvidenceSha256` computed in the private constructor (`Fingerprint(this)`), so get-only snapshots cannot drift; `VerifyAgainst` throws `InvalidDataException` on drift.
+  - `IsOfficialReceivable` / `CanPostMoney` are hard `false` — pricing evidence never posts money.
+- Wired into production issuance: `IssueMonthlyAsync` now calls `VerifyOfficialServicePricingAsync(db, archived, issued)` **before** `db.MonthlyIssuedInvoices.Add(issued)`. Residency and tariff history are loaded server-side from `ContractTenant` / `RoomScopedServiceTariffVersions`; nothing comes from the client. The existing `BM_2HVerifyRoomServiceInvoiceBinding` trigger stays as the last line of defence.
+- 11 domain Facts `DOSVC01–DOSVC11`: per-person 150k×2, target room's own rate rather than a foreign rate, metered unit quantity, empty no-fee schedule, future-appended version ignored, superseded-before-review refused, headcount under/overstatement refused, missing/foreign binding refused, cross-candidate issuance refused, malformed residency refused, schedule refused for a candidate it was not bound to.
+- Authenticated HTTP month-10 cycle in `SliceAStagingPostgreSqlHttp_Tests`: 2-occupant contract, 150,000 VND/person tariff, itemized fee candidate → independent review by `clientB` → issuance by `clientRoot`. Asserts the issued `amount` equals the frozen candidate amount, the bound line is exactly 2×150,000 with `TariffVersionId` matching, and that appending a 500,000 VND November version afterwards leaves the issued schedule unchanged.
+
+**Evidence (pushed `b18644b`, full acceptance harness at that exact SHA)**
+- `verify-phase-2h-financial-foundations.ps1` at `b18644b`: **all five groups PASS** — `=== PHASE 2H FINANCIAL FOUNDATIONS: ALL FIVE GROUPS PASSED ===`, `COMMIT=b18644b9610ba2ee8b6b7357736a5328f4d4f78d`
+- Group 1 — Domain 2H (incl. `DOSVC01–DOSVC11`): **188/188** PASS (`TRX VERIFIED: passed=188/188; failed=0; skipped=0`) — `~/NgocTrang-Test-Logs/15-2h-financial-domain.log` (+ `.trx`); log line 1 stamped `PHASE2H_COMMIT=b18644b…`
+- Group 2 — PG 2H concurrency (incl. `TRFBINDPG01–TRFBINDPG10`): **109/109** PASS (`TRX VERIFIED: passed=109/109`) — `16-2h-postgresql.log` / `.trx`; stamped `b18644b`
+- Group 3 — PG fresh disposable migration chain: 1/1 PASS (`PGMIG01`) — `17-2h-full-migration.log` / `.trx`; stamped `b18644b`
+- Group 4 — Authenticated two-PG HTTP + D03 service-pricing cycle: 1/1 PASS (2m30s) — `18-2h-auth-http.log` / `.trx`; stamped `b18644b`
+- Group 5 — Full regression: 743 Domain / 231 Application / 447 SQLite EF / 76 HTTP, 0 failed, 0 skipped — `19-2h-full-regression.log`
+- Solution build: 0 errors
+- Harness updated: 6 source gates + 2 verify bundles accept `feat/p2-2-service-pricing-official-invoice`; 2H domain count 177 → 188
+
+**Definition of Done status**
+- ✅ Pricing by `RoomId + ServiceId + effective version + unit` — `Bind` matches binding↔tariff version↔room and refuses any other combination
+- ✅ Actual occupant count from verified residency list — per-person multiplier equals `ContractTenant` count; mismatch refuses issuance
+- ✅ E/W meter actual readings — metered-unit path requires `VerifiedMeterQuantity`; a per-room fee cannot disguise one
+- ✅ Service fees appear in **official issued invoice** — proven over authenticated HTTP, issued amount includes the service line
+- ✅ Immutable when room/pricing changes (snapshot) — anchored to `candidate.ReviewedAtUtc`; later appended versions proven not to rewrite the issued schedule
+
+**Blocker:** none — P3.1 merged (PR #5 / `c499d89`); this supersedes the "staging tests only" state.  
 **Dependency:** P3.1
 
-### P2.3 ⏳ H4 Settlement (D04 Business Flow)
-**Status:** TODO  
+### P2.3 ✅ H4 Settlement (D04 Business Flow) — COMPLETE (`aa3b9bb`, pushed)
+**Status:** DONE  
 **Definition of Done:**
 - Cash-backed top-up obligation with deadline ≤1 calendar month from move date
 - Track partial payment / missed deadline
@@ -220,11 +282,50 @@
 - Genuine bank evidence required
 - Prevent false receipts
 
-**Blocker:** P1.1, P1.2, P1.3 must pass  
+**Already in place before this phase (audited, unchanged)**
+- Obligation creation is atomic with the signed H4 completion: `BuildingManagementRoomChangeH4Obligations` is insert-only under `BM_2HGuardH4Obligation`, which re-derives kind/amount/due from the completion and refuses any drift. `CK_BM_2H_H4MoneyShape` enforces `top-up XOR (credit XOR refund)` on the completion itself, so "exactly one, never both" is a database fact, not a service-layer convention.
+- Partial installments accumulate through append-only `...H4SettlementPostings`; overpayment and replay are refused by `BM_D04GuardH4SettlementPosting`.
+- Dual approval: `ReviewH4BankEvidenceAsync` requires a scoped reviewer and forbids the Owner as reviewer; `PostH4SettlementAsync` requires the founding Owner plus `BootstrapOwner` and re-reads the live Identity record at commit.
+- False receipts: a receipt may be claimed once; a self-reviewed evidence row is refused by `BM_D04GuardH4SettlementReview` even from a privileged SQL session.
+- **Deadline ≤1 month:** `TRFH4PG03` proves a 2026-12-16 due date on a 2026-11-15 transfer is refused with `23514`.
+
+**Delivered (`aa3b9bb`)**
+- `RoomChangeH4ObligationAging` + `RoomChangeH4ObligationAgingEvaluator` (`modules/buildingmanagement/src/BuildingManagement.Domain/RoomChanges/`): read-only aging of an already committed obligation.
+  - Only `DepositTopUp` may carry a due date; a `NextMonthIssuedRentCredit` or `IndependentBankRefund` carrying one is refused, and those two kinds can never report overdue.
+  - Lateness starts the day **after** the due date; the outstanding remainder is what ages, so a partial installment shrinks the aging exposure; a fully settled obligation is never overdue.
+  - Rejects an empty obligation id, an undefined kind, a non-positive or fractional original amount, and a settled amount outside `[0, original]`.
+  - Surfaced as `isOverdue` / `daysPastDue` / `agedAsOfVietnam` on both `SliceBRoomChangeH4ObligationRead` and `SliceBRoomChangeD04BalanceRead`; the obligation read also carries `CanPostMoney => false`. Aging is presentation-only: it never creates a fee, penalty or new receivable.
+- Migration `20261113100000_Phase2HH4ObligationDisputes`: H4-scoped dispute lane. The existing move-out dispute lane is keyed to an `OfficialPostingId` **and** a `MoveOutRequestId`, so it structurally cannot represent an H4 obligation.
+  - `BuildingManagementRoomChangeH4ObligationDisputes` (one per obligation) and `...H4ObligationDisputeResolutions` (one per dispute), both append-only via `BM_GuardH4ObligationDispute`, which requires `transaction_isolation = serializable`, rechecks that the obligation's **source contract** matches, refuses a `OpenedAtUtc` in the future, and refuses a dispute once any settlement posting exists.
+  - `BM_DenyH4DisputeMutation` blocks `TRUNCATE` on both tables; `Down()` refuses to drop either table while evidence remains.
+- `SliceBStagingRoomChangeH4Disputes.cs` + 3 controller routes: `POST .../h4-obligation-disputes`, `POST .../h4-obligation-disputes/{disputeId}/resolve`, `GET .../h4-obligation-dispute-status` (`state` 0 none / 1 open / 2 accepted / 3 rejected; `isSettlementBlocked` true for 1 and 3).
+  - The resolver must be a **different** authenticated person from the opener; a second dispute of the same obligation and a second resolution of the same dispute are both refused.
+- `PostH4SettlementAsync` now refuses to post while a dispute is open or was rejected: a contest can never be silently settled in the building's favour.
+
+**Evidence (pushed `aa3b9bb`, full acceptance harness at that exact SHA)**
+- `verify-phase-2h-financial-foundations.ps1` at `aa3b9bb`: **all five groups PASS** — `=== PHASE 2H FINANCIAL FOUNDATIONS: ALL FIVE GROUPS PASSED ===`, `COMMIT=aa3b9bb578a1012a96d13204cc94d1a7f81a6809`
+- Group 1 — Domain 2H (incl. `H4AGE01–H4AGE14`, `DOSVC01–DOSVC11`): **202/202** PASS — `~/NgocTrang-Test-Logs/15-2h-financial-domain.log` (+ `.trx`); line 1 stamped `PHASE2H_COMMIT=aa3b9bb…`
+- Group 2 — PG 2H concurrency (incl. `TRFH4DSPG01–TRFH4DSPG10`): **119/119** PASS — `16-2h-postgresql.log` / `.trx`; stamped `aa3b9bb`
+- Group 3 — PG fresh disposable migration chain (`ExpectedLatestMigration = 20261113100000_Phase2HH4ObligationDisputes`): 1/1 PASS — `17-2h-full-migration.log` / `.trx`; stamped `aa3b9bb`
+- Group 4 — Authenticated two-PG HTTP + H4 dispute cycle + overdue aging under a moved fixture clock: 1/1 PASS (2m10s) — `18-2h-auth-http.log` / `.trx`; stamped `aa3b9bb`
+- Group 5 — Full regression: 757 Domain / 231 Application / 447 SQLite EF / 76 HTTP, 0 failed, 0 skipped — `19-2h-full-regression.log`
+- `LOG_DIRECTORY=C:\Users\Huynq\NgocTrang-Test-Logs`; solution build 0 errors
+- Harness updated: all 6 scripts with a branch allowlist accept `feat/p2-3-h4-settlement-d04` (3 `check-*-gate.ps1`, `verify-2g-security-batch.ps1`, `verify-phase-2g5-staging.ps1`, `verify-phase-2h-financial-foundations.ps1`); 2H domain count 188 → 202, PG count 109 → 119
+
+**Definition of Done status**
+- ✅ Cash-backed top-up obligation with deadline ≤1 calendar month — enforced by the signed completion cascade; over-long due date refused (`TRFH4PG03`)
+- ✅ Track partial payment / missed deadline — postings accumulate the settled amount; `RoomChangeH4ObligationAging` reports `isOverdue` / `daysPastDue` on both reads, proven over HTTP with a moved clock (35 days past due)
+- ✅ Credit to next month rent **OR** bank refund, exactly one — `CK_BM_2H_H4MoneyShape` (top-up XOR (credit XOR refund)) plus `BM_D04GuardH4SettlementPosting`
+- ✅ Refund/debt dispute reconciliation — new H4-scoped append-only dispute lane with independent resolution and a settlement block while contested
+- ✅ Dual approval: Owner + Reviewer — reviewer ≠ Owner on review, Owner + `BootstrapOwner` on posting
+- ✅ Genuine bank evidence required — manual independent attestation is mandatory and `IsBankApiVerified` is permanently `false`; real bank verification remains HOLD under the standing no-real-bank-transfer constraint
+- ✅ Prevent false receipts — one-claim-per-receipt, self-review refused at the trigger, append-only journal
+
+**Blocker:** none — P3.1 merged (PR #5 / `c499d89`); real bank settlement remains HOLD.  
 **Dependency:** P1.3, P2.1
 
-### P2.4 ⏳ D06/H6 Three-Signature Process
-**Status:** TODO (bounded DOCX test exists on PR #5)  
+### P2.4 ✅ D06/H6 Three-Signature Process — COMPLETE (`950610a`, pushed)
+**Status:** DONE  
 **Definition of Done:**
 - 3 signatures: Owner, Staff, Tenant/Representative
 - Scan physical documents (accept scanned handwritten signatures)
@@ -232,11 +333,40 @@
 - Owner exports new contract DOCX/PDF with audit trail
 - Download access control with audit
 
-**Blocker:** PR #5 integration + E-sign or scan flow decision  
+**Already in place before this phase (audited, unchanged)**
+- The three-signature record itself — `RoomChangeHandoverThreePartySignoff.Sign` (PR #5 lane, tested by `RoomChangeFinalIndependentSignoffs_Tests`) — enforces distinct Owner / handover-staff / recorded primary-tenant ids, roster binding, the physical-handover evidence fingerprint, `CanExecuteTransfer => false` and `IsCryptographicallyAuthenticatedSignature => false`.
+- The signoff is archived append-only by `RoomChangeEvidenceArchiveRecord.CaptureThreePartyHandover` (Kind 4) and exposed over authenticated HTTP by `POST .../three-party-handover-archive` with the blank-signature and wrong-representative denials proven in the two-PG fixture.
+- The Owner's signed-document export (`GET .../export.docx`) with two-building scoping, live `BootstrapOwner` revocation and a non-caching response already exists (PR #5 lane).
+
+**Delivered (`950610a`)**
+- `RoomChangeSignedHandoverScanRecord` + `RoomChangeContractDocumentAccessRecord` (`modules/buildingmanagement/src/BuildingManagement.Domain/RoomChanges/`). The scan stores **only** the SHA-256 of the uploaded sheet, its media type/byte length and an opaque 32-hex vault handle — never the bytes. It must bind to the archived `ThreePartyPhysicalHandover` of the same request (`HandoverEvidenceSha256 = archive.RecordSha256`), accept only `application/pdf` / `image/png` / `image/jpeg`, 256 B – 5 MB, be uploaded at/after the archive time by a non-empty user, and stay one-per-handover and one-per-request. `ProvesSignerIdentity => false`, `CanExecuteRoomChange => false`. The access trail records actor, scope, purpose (12–300 chars), delivered digest and delivered size; `GrantsAccess => false`.
+- Migration `20261113150000_Phase2HD06SignedScanAndDownloadAudit`: `CK_BM_D06ScanShape` / `CK_BM_DocAccessShape`, unique `UX_BM_D06Scan_Handover` / `UX_BM_D06Scan_Request`, `BM_GuardD06SignedHandoverScan` (append-only + SERIALIZABLE + re-derives the archive binding), `BM_GuardContractDocumentAccess` (append-only + SERIALIZABLE/REPEATABLE READ + live non-deleted contract), TRUNCATE blockers, evidence-retaining `Down()`.
+- `D06DisposableEncryptedScanArchive` (`src/.../HttpApi.Host/Security/`): AES-256-GCM vault with its **own key ring and directory** (`*.d06scan`), separate from the D04 bank-evidence vault; magic-byte type verification; store-then-readback digest proof before the row is written. Fail-closed: without `BuildingManagement:SliceAStaging:D06ScanArchive:Root` + `:KeyBase64` (validated 32-byte key, absolute path) the routes stay unavailable.
+- `SliceBStagingRoomChangeD06SignedScan.cs` + 2 controller routes (`POST`/`GET `{requestId}/d06-signed-handover-scan``; 35 → 37 in the boundary inventory). The vault handle is bound to the uploader via AES-GCM associated data, so the Owner download opens it with the **original uploader identity** while the downloader is separately verified by the scoped Owner path. `GET .../export.docx` now takes an optional `purpose` and appends exactly one access-trail row per successful export inside the same transaction.
+
+**Evidence (pushed `950610a`, full acceptance harness at that exact SHA)**
+- `verify-phase-2h-financial-foundations.ps1` at `950610a`: **all five groups PASS** — `=== PHASE 2H FINANCIAL FOUNDATIONS: ALL FIVE GROUPS PASSED ===`, `COMMIT=950610a00d519d4b49b97b294cf94fcd0d427904`
+- Group 1 — Domain 2H (incl. `TRFD06S01–TRFD06S10`): **212/212** PASS — `~/NgocTrang-Test-Logs/15-2h-financial-domain.log` (+ `.trx`); stamped `PHASE2H_COMMIT=950610a…`
+- Group 2 — PG 2H concurrency (incl. `TRFD06PG01–TRFD06PG10`): **129/129** PASS — `16-2h-postgresql.log` / `.trx`; stamped `950610a`
+- Group 3 — PG fresh disposable migration chain (`ExpectedLatestMigration = 20261113150000_Phase2HD06SignedScanAndDownloadAudit`): 1/1 PASS — `17-2h-full-migration.log` / `.trx`; stamped `950610a`
+- Group 4 — Authenticated two-PG HTTP + D06 upload/download cycle (wrong media type 403, forged PDF magic bytes 409, duplicate scan 403, staff download 403, Owner download byte-exact + no-store + nosniff, stored row = digest + opaque handle, encrypted file on disk): 1/1 PASS — `18-2h-auth-http.log` / `.trx`; stamped `950610a`
+- Group 5 — Full regression: 767 Domain / 231 Application / 447 SQLite EF / 76 HTTP, 0 failed, 0 skipped — `19-2h-full-regression.log`
+- `LOG_DIRECTORY=C:\Users\Huynq\NgocTrang-Test-Logs`; solution build 0 errors
+- Harness updated: all 6 scripts with a branch allowlist accept `feat/p2-4-d06-three-signature`; 2H domain count 202 → 212, PG count 119 → 129
+
+**Definition of Done status**
+- ✅ 3 signatures: Owner, Staff, Tenant/Representative — pre-existing `RoomChangeHandoverThreePartySignoff` + `CaptureThreePartyHandover`, unchanged, re-verified
+- ✅ Scan physical documents (accept scanned handwritten signatures) — the 2026-11-04 Owner decision (scan accepted, cryptographic e-signing explicitly NOT required); scanned sheet archived in the encrypted D06 vault with digest binding
+- ✅ Permission and handover evidence verification — scoped `Contracts.Manage` upload, vault bound to the archived three-party handover, download requires the scoped Owner bootstrap
+- ✅ Owner exports new contract DOCX with audit trail — every successful `export.docx` appends one immutable `ContractDocumentAccess` row (actor, scope, purpose, delivered digest)
+- ✅ Download access control with audit — staff download 403; Owner download byte-exact, `no-store`/`nosniff`; access trail append-only with shape CHECK + trigger guards
+- PDF export remains DOCX-only by existing design (the DOCX is the Owner's working document; a PDF conversion lane is a separate future decision, not part of the D06 evidence chain)
+
+**Blocker:** none — P3.1 merged; the E-sign-vs-scan decision was closed by the Owner on 2026-11-04 (scan accepted, e-sign not required).  
 **Dependency:** P3.1
 
-### P2.5 ⏳ Phase 2G.5 Ordinary Move-Out End-to-End
-**Status:** TODO (partial staging tests exist)  
+### P2.5 ✅ Phase 2G.5 Ordinary Move-Out End-to-End — COMPLETE (`2d01952`, pushed)
+**Status:** DONE  
 **Definition of Done:**
 - Final bill generation
 - Debt settlement
@@ -248,11 +378,41 @@
 - **Never** allow direct `Contract.End` bypass
 - Cross-check OI-01 through OI-06 policy compliance
 
-**Blocker:** Multiple dependencies  
+**Already in place before this phase (audited, unchanged)**
+- The whole ordinary move-out lane already exists and was already proven in `STAGEPGHTTP01`: `CompleteMoveOutAsync` single SERIALIZABLE UoW (BootstrapOwner) with contract/request locks, the 5-task checklist gate (only `FinalMeterReading` must be pre-completed), final-invoice `VerifyStoredTerms`, official-receivables zero-balance, exact-match deposit decision, refund destination + independent bank review, refund/forfeit `DepositSettlement` records, `ContractDepositCloseoutApprovalRecord`, `MoveOutRoomDispositionRecord`, `Contract.End(Normal|EarlyTermination)` and `Room.ChangeStatus` — plus the `check-move-out-lifecycle-gate.ps1` source gate that blocks any direct `Contract.End` call outside the audited closeout.
+- Domain tests `MoveOutRoomDisposition_Tests` (CMOUT51–63) already covered the Reserved/PendingPayment/Signed disposition matrix at the domain level.
+
+**Delivered (`2d01952`) — closing the two genuine HTTP evidence gaps**
+- **Final-meter signoff lane (E/W meter final reading):** the finance fixture no longer pre-completes the `FinalMeterReading` checklist task. The E2E now drives the real authenticated `POST {contractId}/move-out-requests/{requestId}/verify-final-meters` route (scoped building B client) with a physically continuous reading history — August zero-usage anchors + September final readings on both E and W meters (without them the coverage assessor correctly fail-closes with `MissingPreviousMonthReading`). Asserts: 200 with `type == FinalMeterReading`, `isCompleted == true`, `completedAt != null`; replay is idempotent (200, still completed); a foreign contract's route stays 403.
+- **Booking-retention lane (future reservation handling, OI-06):** a second full scenario on new room B112 with a `Reserved` future occupancy: the authenticated closeout asserts `roomStatus == Reserved`, `hasFutureCommitment == true`, the stored `MoveOutRoomDispositionRecord` `ResultRoomStatus == Reserved` with `FutureReservationId` bound, the contract `Ended`, the retained reservation still `Reserved`, and the scoped `GET room-disposition` reporting the same. The scenario runs the complete genuine financial lane — prepare → independent review → root issue-candidate → manual receipt → post-receivable → journal review → deposit decision → refund destination → bank review — so the closeout gate is satisfied by real evidence, never bypassed.
+- The second scenario reuses the finance lane's `UtilityRate` rows (same building/type/effective date) instead of seeding duplicates that violate the unique rate index.
+- All six gate/verify scripts allowlist `feat/p2-5-move-out-e2e`.
+
+**Evidence (pushed `2d01952`, full acceptance harness at that exact SHA)**
+- `verify-phase-2h-financial-foundations.ps1` at `2d01952`: **all five groups PASS** — `=== PHASE 2H FINANCIAL FOUNDATIONS: ALL FIVE GROUPS PASSED ===`, `COMMIT=2d01952dbea3e81fc5641665831e59e0b7df5921`
+- Group 1 — Domain 2H: **212/212** PASS — `~/NgocTrang-Test-Logs/15-2h-financial-domain.log` (+ `.trx`, `passed="212" failed="0"`); stamped `PHASE2H_COMMIT=2d01952…`
+- Group 2 — PG 2H concurrency: **129/129** PASS — `16-2h-postgresql.log` / `.trx` (`passed="129" failed="0"`); stamped `2d01952`
+- Group 3 — PG fresh disposable migration chain: **1/1** PASS — `17-2h-full-migration.log` / `.trx` (`passed="1" failed="0"`); stamped `2d01952`
+- Group 4 — Authenticated two-PG HTTP (incl. the new final-meter signoff + booking-retention lanes): **1/1** PASS — `18-2h-auth-http.log` / `.trx` (`passed="1" failed="0"`); stamped `2d01952`
+- Group 5 — Full regression: 767 Domain / 231 Application / 447 SQLite EF / 76 HTTP, 0 failed, 0 skipped — `19-2h-full-regression.log` (`QUALITY GATE PASS`)
+- `LOG_DIRECTORY=C:\Users\Huynq\NgocTrang-Test-Logs`; solution build 0 errors
+
+**Definition of Done status**
+- ✅ Final bill generation — authenticated prepare → review → issue-candidate → receipt → posting lane in both scenarios
+- ✅ Debt settlement — official-receivables zero-balance gate at closeout + journal review
+- ✅ Deposit offset (OI-04 rules) — exact-match `ContractDepositSettlementDecisionRecord.RequireForCloseout` + refund/forfeit settlement records + approval record
+- ✅ E/W meter final reading — authenticated `/verify-final-meters` with continuous reading history; idempotent; foreign contract 403
+- ✅ Checklist completion — the 5-task gate; 4 tasks evidence-verified by the closeout, `FinalMeterReading` completed by the real signoff route
+- ✅ Room disposition — `MoveOutRoomDispositionRecord` over HTTP; room status asserted in DB and via scoped GET
+- ✅ Future reservation handling — Reserved retention + `hasFutureCommitment` proven over HTTP with the retained booking re-verified
+- ✅ **Never** allow direct `Contract.End` bypass — `check-move-out-lifecycle-gate.ps1` source gate (in the full-regression group) + closeout is the only writer
+- ✅ Cross-check OI-01 → OI-06 — each policy anchor covered by the same E2E lanes (issuance terms, meter evidence, deposit decision, destination/bank review, disposition retention)
+
+**Blocker:** none — all dependencies DONE (P2.1 `d36edb5`, P2.2 `b18644b`, P2.3 `aa3b9bb`, P2.4 `950610a`)  
 **Dependency:** P2.1, P2.2, P2.3, P2.4
 
-### P2.6 ⏳ UI/Frontend Inventory and Integration
-**Status:** TODO  
+### P2.6 ✅ UI/Frontend Inventory and Integration — COMPLETE (`6c9852f`, pushed)
+**Status:** DONE (discovery audit; no integration to build against — see verdict)  
 **Definition of Done:**
 - Inventory existing frontend projects in repo
 - Identify tech stack (React/Angular/Vue/Blazor?)
@@ -260,8 +420,29 @@
 - Identify missing flows: transfer, invoice, meter, contract, payment, proof upload
 - Do NOT change framework or rewrite without audit
 
-**Blocker:** Discovery needed  
-**Dependency:** None
+**Verdict:** **there is no frontend in the repository — by design.** The solution was generated with `uiFramework: "no-ui"` (ABP Studio `.abpstudio/state.json`, verbatim). The only UI is the ABP template's Razor landing page (login/logout + language switch + OpenIddict app cards) rendered by the headless API host; `wwwroot` scripts/styles are empty template placeholders; `package.json` holds only the MVC Basic-theme packages. There is no SPA/Blazor/Angular/Vue/React project anywhere to inventory, so there is also nothing to migrate or rewrite.
+
+**Delivered (`6c9852f`) — the audit document `etc/phase-audits/P26_FrontendInventory_20261113.md`**
+- Full inventory of everything UI-shaped (landing page, theme packages, wwwroot, resource mapping, the 2 seeded OpenIddict clients — the `_App` client id has no RootUrl configured, i.e. no real SPA registered)
+- API-surface map a frontend would consume: 22 conventional AppServices under `/api/building-management/...` + 137 HTTP-verb attributes across 10 authenticated slice/payOS controllers
+- Portal coverage matrix: Tenant / Staff / Owner — **all NONE**; Swagger UI is the current de-facto frontend
+- The seven missing flows (transfer, invoice, meter, contract, payment, proof upload, move-out E2E) — all exist as authenticated, E2E-tested backend routes (P2.1–P2.5) with zero UI
+- Security constraints any future portal must inherit (no direct `Contract.End`, append-only evidence, two-building scoping, owner-route live revocation, payOS money HOLD, Vietnamese default language)
+- Recommended (not executed) next step: an Owner decision on the greenfield portal stack; per the P2.6 rule this phase changed no framework and started no rewrite
+
+**Evidence (pushed `6c9852f`)**
+- Read-only inspection of the working tree at `43c70dd`/`6c9852f`; no files modified beyond the audit document, no application started, no database touched — docs-only phase, no test TRX applicable
+- Branch pushed ff-only: `origin/feat/p2-6-frontend-discovery` = `6c9852f`
+
+**Definition of Done status**
+- ✅ Inventory existing frontend projects in repo — complete: none exist (by design, with the authoritative template record cited)
+- ✅ Identify tech stack — server-rendered Razor (ABP Basic theme) on the API host only; no SPA framework present
+- ✅ Map coverage: Tenant/Staff/Owner portals — all NONE; Swagger is the de-facto frontend
+- ✅ Identify missing flows — all seven mapped to the exact controllers/routes that already implement them
+- ✅ Do NOT change framework or rewrite without audit — production code untouched (docs-only commit)
+
+**Blocker:** none — the follow-up (building a portal) is a new phase requiring an Owner stack decision  
+**Dependency:** none
 
 ---
 
@@ -364,7 +545,7 @@
 **Backlog Status Summary:**
 - P0: 6/6 closed (P0.1–P0.3 done, P0.4 not needed, P0.5 startup gate at `7621d8a`, P0.6 full bundle at `7621d8a`)
 - P1: 5/5 done (P1.1 official at `f30e14d`; P1.2 rehearsal gate at `d085d02`; P1.4 crash/recovery at `682613d`; P1.3 vault + restricted roles at `18fe521`, 64/64; P1.5 internal simulated payOS staging E2E at `e58b12c`, 20/20)
-- P2: 0/6 done
+- P2: 6/6 (P2.1 DONE at `d36edb5`, pushed to `origin/feat/p2-1-issued-invoice-correction`; P2.2 DONE at `b18644b`, pushed to `origin/feat/p2-2-service-pricing-official-invoice`; P2.3 DONE at `aa3b9bb`, pushed to `origin/feat/p2-3-h4-settlement-d04`; P2.4 DONE at `950610a`, pushed to `origin/feat/p2-4-d06-three-signature`; P2.5 DONE at `2d01952`, pushed to `origin/feat/p2-5-move-out-e2e`; P2.6 DONE at `6c9852f`, pushed to `origin/feat/p2-6-frontend-discovery` — discovery audit: no UI exists by design (`uiFramework: no-ui`), all flows backend-complete)
 - P3: 4/4 done + **MERGED to main** (P3.1 merge `01cba31`; P3.2 DONE `1ddf2e6`; P3.3 matrix; **P3.4 CLOSED 2026-11-12: PR #10 → main merge commit `c499d89`, Owner §6 signed + §3.2 P2 deferral accepted; post-merge local regression + CI green 5/5 at the merge commit**)
 
-**Current Focus:** P3 COMPLETE. **`main` = program baseline at merge commit `c499d89`** (post-merge docs/guards `2149210`+). Evidence chain closed: CI billing unlocked card-free → run 384 green 5/5 at `c63d370` (ID 43240562191) → Owner §6 + §3.2 approved → PR #10 merged `c499d89` → local regression exit 0 + CI run 43247648066 green 5/5 at `c499d89`. **Next: P2.1–P2.6 on follow-up feature branches off `main`** (P2.1 issued-invoice D01/D02 correction; P2.2 service fees; P2.3 genuine bank evidence; P2.4 three-signature flow — Owner decision E-sign vs scanned; P2.5 move-out E2E; P2.6 frontend discovery). HOLD unchanged: real payOS money flow, TLS public callback, production vault/roles/secrets, production deploy.
+**Current Focus:** **P2 COMPLETE (6/6).** `main` = program baseline at merge commit `c499d89` (post-merge docs/guards `2149210`+). Evidence chain closed: CI billing unlocked card-free → run 384 green 5/5 at `c63d370` (ID 43240562191) → Owner §6 + §3.2 approved → PR #10 merged `c499d89` → local regression exit 0 + CI run 43247648066 green 5/5 at `c499d89`. **P2 on follow-up feature branches off `main`** — P2.1 DONE (`d36edb5`), P2.2 DONE (`b18644b`), P2.3 DONE (`aa3b9bb`, H4 settlement: obligation aging + H4-scoped dispute lane, harness 5/5 at the pushed SHA), P2.4 DONE (`950610a`, D06 three-signature: scanned signed handover sheet archived in a dedicated AES-256-GCM vault + Owner document download audit trail), P2.5 DONE (`2d01952`, ordinary move-out E2E: authenticated final-meter signoff completing the checklist task + Reserved booking retention with `hasFutureCommitment` at closeout, full financial lane), **P2.6 DONE (`6c9852f`, frontend discovery audit: no UI exists by design — `uiFramework: no-ui`; every flow is backend-complete, all seven missing flows mapped to existing authenticated routes; building a portal is a new phase awaiting an Owner stack decision)**. Next: P2 complete — program-level next steps (portal greenfield, production HOLD releases) are Owner decisions. HOLD unchanged: real payOS money flow, TLS public callback, production vault/roles/secrets, production deploy.

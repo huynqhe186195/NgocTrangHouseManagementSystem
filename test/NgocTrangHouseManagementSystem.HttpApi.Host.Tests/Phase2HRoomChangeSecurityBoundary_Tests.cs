@@ -22,7 +22,49 @@ public sealed class Phase2HRoomChangeSecurityBoundary_Tests
 
         var methods = controller.GetMethods(BindingFlags.Public |
             BindingFlags.Instance | BindingFlags.DeclaredOnly);
-        Assert.Equal(32, methods.Length);
+        Assert.Equal(37, methods.Length);
+        foreach (var (name, verb, template) in new[] {
+            ("OpenH4ObligationDisputeAsync", "POST",
+                "{requestId:guid}/h4-obligation-disputes"),
+            ("ResolveH4ObligationDisputeAsync", "POST",
+                "{requestId:guid}/h4-obligation-disputes/{disputeId:guid}/resolve"),
+            ("GetH4ObligationDisputeStatusAsync", "GET",
+                "{requestId:guid}/h4-obligation-dispute-status")
+        })
+        {
+            var dispute = Assert.Single(methods.Where(m => m.Name == name));
+            var httpVerb = dispute.GetCustomAttributes()
+                .OfType<Microsoft.AspNetCore.Mvc.Routing.HttpMethodAttribute>()
+                .Single();
+            Assert.Equal(verb, Assert.Single(httpVerb.HttpMethods));
+            Assert.Equal(template, httpVerb.Template);
+            Assert.NotNull(dispute.GetCustomAttribute<UnitOfWorkAttribute>());
+        }
+        // D06: one upload + one download route for the scanned signed
+        // handover sheet. Upload is serializable; download only needs a
+        // stable snapshot. Neither proves a signature nor executes anything.
+        var d06Upload = Assert.Single(methods.Where(m =>
+            m.Name == "UploadD06SignedHandoverScanAsync"));
+        Assert.Equal("{requestId:guid}/d06-signed-handover-scan",
+            d06Upload.GetCustomAttribute<HttpPostAttribute>()?.Template);
+        var d06UploadUow = d06Upload.GetCustomAttribute<UnitOfWorkAttribute>();
+        Assert.NotNull(d06UploadUow);
+        Assert.Equal(System.Data.IsolationLevel.Serializable, d06UploadUow.IsolationLevel);
+        var d06Download = Assert.Single(methods.Where(m =>
+            m.Name == "DownloadD06SignedHandoverScanAsync"));
+        Assert.Equal("{requestId:guid}/d06-signed-handover-scan",
+            d06Download.GetCustomAttribute<HttpGetAttribute>()?.Template);
+        var d06DownloadUow = d06Download.GetCustomAttribute<UnitOfWorkAttribute>();
+        Assert.NotNull(d06DownloadUow);
+        Assert.Equal(System.Data.IsolationLevel.RepeatableRead,
+            d06DownloadUow.IsolationLevel);
+        // A dispute records and resolves a contest; it never moves money.
+        var disputeStatus = new SliceBH4DisputeStatusRead(
+            Guid.NewGuid(), Guid.NewGuid(), 1, DateTime.UtcNow, Guid.NewGuid(),
+            "Tenant contests the deferred top-up", null, null, null,
+            IsSettlementBlocked: true, CanPostMoney: false);
+        Assert.False(disputeStatus.CanPostMoney);
+        Assert.True(disputeStatus.IsSettlementBlocked);
         foreach (var d04 in new[] { "ReviewD04BankEvidenceAsync", "PostD04SettlementAsync", "GetD04SettlementBalanceAsync" })
         {
             var d04Method = Assert.Single(methods.Where(m => m.Name == d04));

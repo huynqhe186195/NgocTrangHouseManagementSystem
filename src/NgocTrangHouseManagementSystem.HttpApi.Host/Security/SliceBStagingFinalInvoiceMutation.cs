@@ -14,6 +14,7 @@ using BuildingManagement.Invoices;
 using BuildingManagement.MoveOuts;
 using BuildingManagement.Payments;
 using BuildingManagement.Payments.BuildingManagement.Payments;
+using BuildingManagement.RoomChanges;
 using BuildingManagement.Rooms;
 using BuildingManagement.Security;
 using BuildingManagement.Utilities;
@@ -352,6 +353,14 @@ public sealed class SliceBStagingFinalInvoiceMutation
                     var issued = MonthlyIssuedInvoiceRecord.Issue(
                         id, "NTM-" + id.ToString("N"), actor, DateTime.UtcNow,
                         archived, review);
+
+                    // D03: every service line on the issued invoice must be
+                    // priced by the original room-specific tariff version and
+                    // by independently verified occupancy / meter evidence,
+                    // then frozen. A superseded rate or an unverified headcount
+                    // refuses the issuance rather than billing a guess.
+                    await VerifyOfficialServicePricingAsync(db, archived, issued);
+
                     db.MonthlyIssuedInvoices.Add(issued);
                     return new SliceBStagedMonthlyIssuedRead(
                         issued.Id, issued.CandidateId, issued.ContractId,
@@ -364,6 +373,40 @@ public sealed class SliceBStagingFinalInvoiceMutation
                     throw Denied();
                 }
             });
+
+    /// <summary>
+    /// D03 gate: re-reads the ISSUED invoice's service evidence from the
+    /// server-side sources only — the frozen room-service bindings, the
+    /// complete scoped tariff history and the current contract residency —
+    /// and refuses issuance when any line cannot be priced from an approved
+    /// effective rate with independently verified quantity.
+    /// </summary>
+    private static async Task VerifyOfficialServicePricingAsync(
+        BuildingManagementDbContext db,
+        MonthlyInvoiceCandidateLedgerRecord archived,
+        MonthlyIssuedInvoiceRecord issued)
+    {
+        var bindings = await db.RoomServiceInvoiceSourceBindings.AsNoTracking()
+            .Where(x => x.MonthlyCandidateId == archived.Id).ToArrayAsync();
+
+        var serviceIds = bindings.Select(x => x.ServiceId).Distinct().ToArray();
+        var history = serviceIds.Length == 0
+            ? Array.Empty<RoomScopedServiceTariffVersion>()
+            : await db.RoomScopedServiceTariffVersions.AsNoTracking()
+                .Where(x => x.RoomId == archived.RoomId &&
+                            serviceIds.Contains(x.ServiceId)).ToArrayAsync();
+
+        var residency = await db.Set<ContractTenant>().AsNoTracking()
+            .Where(x => x.ContractId == archived.ContractId)
+            .Select(x => new { x.TenantId, x.Role })
+            .ToArrayAsync();
+
+        OfficialServicePricingSchedule.Bind(
+                issued, archived, bindings, history,
+                residency.Select(x => new RoomChangeRosterMember(
+                    x.TenantId, x.Role)).ToArray())
+            .VerifySchedule(archived);
+    }
 
     /// <summary>
     /// Root-only, original-proof anchored credit/debit proposal.

@@ -1,5 +1,6 @@
 using System;
 using System.Data;
+using System.IO;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -23,14 +24,17 @@ public sealed class SliceBStagingRoomChangesController : ControllerBase
     private readonly IHostEnvironment _host;
     private readonly IConfiguration _config;
     private readonly SliceBStagingRoomChangeRequests? _requests;
+    private readonly ID06SignedScanArchive? _d06Scans;
 
     public SliceBStagingRoomChangesController(
         IHostEnvironment host, IConfiguration config,
-        SliceBStagingRoomChangeRequests? requests = null)
+        SliceBStagingRoomChangeRequests? requests = null,
+        ID06SignedScanArchive? d06Scans = null)
     {
         _host = host;
         _config = config;
         _requests = requests;
+        _d06Scans = d06Scans;
     }
 
     [HttpGet]
@@ -268,6 +272,106 @@ public sealed class SliceBStagingRoomChangesController : ControllerBase
             RequireIsolatedStaging();
             return Ok(await _requests!.GetH4OutstandingObligationAsync(
                 contractId, requestId));
+        }
+        catch (AbpAuthorizationException) { return Forbid(); }
+    }
+
+    // H4-scoped dispute of a committed deferred obligation. Append-only;
+    // an Owner who is not the opener resolves it. Never moves money.
+    [HttpPost("{requestId:guid}/h4-obligation-disputes")]
+    [UnitOfWork(true, IsolationLevel.Serializable)]
+    public async Task<IActionResult> OpenH4ObligationDisputeAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid requestId,
+        [FromBody] SliceBH4DisputeInput input)
+    {
+        try
+        {
+            RequireIsolatedStaging();
+            return Ok(await _requests!.OpenH4ObligationDisputeAsync(
+                contractId, requestId, input));
+        }
+        catch (AbpAuthorizationException) { return Forbid(); }
+    }
+
+    [HttpPost("{requestId:guid}/h4-obligation-disputes/{disputeId:guid}/resolve")]
+    [UnitOfWork(true, IsolationLevel.Serializable)]
+    public async Task<IActionResult> ResolveH4ObligationDisputeAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid requestId,
+        [FromRoute] Guid disputeId,
+        [FromBody] SliceBH4DisputeResolutionInput input)
+    {
+        try
+        {
+            RequireIsolatedStaging();
+            return Ok(await _requests!.ResolveH4ObligationDisputeAsync(
+                contractId, requestId, disputeId, input));
+        }
+        catch (AbpAuthorizationException) { return Forbid(); }
+    }
+
+    [HttpGet("{requestId:guid}/h4-obligation-dispute-status")]
+    [UnitOfWork(true, IsolationLevel.RepeatableRead)]
+    public async Task<IActionResult> GetH4ObligationDisputeStatusAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid requestId)
+    {
+        try
+        {
+            RequireIsolatedStaging();
+            return Ok(await _requests!.GetH4ObligationDisputeStatusAsync(
+                contractId, requestId));
+        }
+        catch (AbpAuthorizationException) { return Forbid(); }
+    }
+
+    // D06: the scanned signed handover sheet. Owner's 2026-11-04 decision
+    // accepts a handwritten signed document and does NOT require e-signing.
+    // This stores/returns the document; it never executes the transfer.
+    [HttpPost("{requestId:guid}/d06-signed-handover-scan")]
+    [Consumes("multipart/form-data")]
+    [RequestSizeLimit(6_291_456)]
+    [UnitOfWork(true, IsolationLevel.Serializable)]
+    public async Task<IActionResult> UploadD06SignedHandoverScanAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid requestId,
+        [FromForm] SliceBD06ScanForm form)
+    {
+        try
+        {
+            RequireIsolatedStaging();
+            if (_requests is null || _d06Scans is null || form.Document is null)
+                return NotFound();
+            await using var body = new MemoryStream();
+            await form.Document.CopyToAsync(
+                body, HttpContext.RequestAborted);
+            if (body.Length != form.Document.Length ||
+                body.Length is < 256 or > 5_242_880)
+                return BadRequest();
+            var read = await _requests.UploadD06SignedHandoverScanAsync(
+                contractId, requestId,
+                new SliceBD06ScanUpload(
+                    body.ToArray(), form.Document.ContentType),
+                _d06Scans, HttpContext.RequestAborted);
+            return Ok(read);
+        }
+        catch (AbpAuthorizationException) { return Forbid(); }
+        catch (InvalidOperationException) { return Conflict(); }
+    }
+
+    [HttpGet("{requestId:guid}/d06-signed-handover-scan")]
+    [UnitOfWork(true, IsolationLevel.RepeatableRead)]
+    public async Task<IActionResult> DownloadD06SignedHandoverScanAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid requestId)
+    {
+        try
+        {
+            RequireIsolatedStaging();
+            if (_requests is null || _d06Scans is null)
+                return NotFound();
+            var file = await _requests.DownloadD06SignedHandoverScanAsync(
+                contractId, requestId, _d06Scans, HttpContext.RequestAborted);
+            Response.Headers["Cache-Control"] = "no-store, private";
+            Response.Headers["Pragma"] = "no-cache";
+            Response.Headers["X-Content-Type-Options"] = "nosniff";
+            return File(file.Content, file.MediaType, file.FileName);
         }
         catch (AbpAuthorizationException) { return Forbid(); }
     }

@@ -17,7 +17,7 @@ try {
     # of wip/phase-2g2) into this trunk branch, so the historical single-
     # branch pin now accepts both: the legacy 2g2 development branch and the
     # merged trunk that carries the identical test source.
-    $allowedBranches = @('wip/phase-2g2', 'feat/local-safe-startup-20261109', 'main')
+    $allowedBranches = @('wip/phase-2g2', 'feat/local-safe-startup-20261109', 'main', 'feat/p2-1-issued-invoice-correction', 'feat/p2-2-service-pricing-official-invoice', 'feat/p2-3-h4-settlement-d04', 'feat/p2-4-d06-three-signature', 'feat/p2-5-move-out-e2e')
     $branch = (& git branch --show-current | Out-String).Trim()
     if ($LASTEXITCODE -ne 0 -or $branch -cnotin $allowedBranches) {
         throw "Safety stop: expected a reviewed 2g/2h test branch ($($allowedBranches -join ' or ')), got '$branch'."

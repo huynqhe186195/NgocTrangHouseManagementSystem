@@ -67,13 +67,14 @@ public sealed class SliceBStagingContractsController : ControllerBase
     // a declaration that deposit money was received.
     [HttpGet("{id:guid}/export.docx")]
     [UnitOfWork(true, System.Data.IsolationLevel.RepeatableRead)]
-    public async Task<IActionResult> ExportOwnerDocumentAsync([FromRoute] Guid id)
+    public async Task<IActionResult> ExportOwnerDocumentAsync(
+        [FromRoute] Guid id, [FromQuery] string? purpose = null)
     {
         try
         {
             RequireIsolatedStaging();
             var file=await (_query ?? throw Denied())
-                .ExportOwnerDocumentDocxAsync(id);
+                .ExportOwnerDocumentDocxAsync(id, purpose);
             // Contract names and financial terms are private. Never let a
             // browser/shared proxy cache this cross-account document.
             Response.Headers["Cache-Control"] = "no-store, private";

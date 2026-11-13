@@ -172,6 +172,36 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule // syst
             context.Services.AddTransient<SliceBStagingFinalInvoiceMutation>();
             context.Services.AddTransient<SliceBStagingRoomChangeRequests>();
             context.Services.AddTransient<SliceBStagingRoomScopedServiceTariffs>();
+
+            // D06 signed-handover scans get their OWN encrypted store and key
+            // ring, separate from bank evidence. Without an explicit root and
+            // key the upload route stays unavailable (fail-closed); the
+            // download route then has nothing to open either.
+            var d06Root = configuration[
+                "BuildingManagement:SliceAStaging:D06ScanArchive:Root"];
+            var d06Key = configuration[
+                "BuildingManagement:SliceAStaging:D06ScanArchive:KeyBase64"];
+            if (!string.IsNullOrWhiteSpace(d06Root) &&
+                !string.IsNullOrWhiteSpace(d06Key))
+            {
+                if (!System.IO.Path.IsPathFullyQualified(d06Root))
+                    throw new InvalidOperationException(
+                        "D06 scan archive requires an absolute root path.");
+                byte[] d06KeyBytes;
+                try { d06KeyBytes = Convert.FromBase64String(d06Key); }
+                catch (FormatException)
+                {
+                    throw new InvalidOperationException(
+                        "D06 scan archive key format invalid.");
+                }
+                if (d06KeyBytes.Length != 32)
+                    throw new InvalidOperationException(
+                        "D06 scan archive requires a 256-bit key.");
+                context.Services.AddSingleton<ID06SignedScanArchive>(
+                    new D06DisposableEncryptedScanArchive(d06Root, d06KeyBytes));
+                System.Security.Cryptography.CryptographicOperations
+                    .ZeroMemory(d06KeyBytes);
+            }
             context.Services.AddTransient<SliceCStagingUtilityRates>();
             context.Services.AddTransient<SliceCStagingMeterReadings>();
             context.Services.AddTransient<SliceCStagingUtilityMeters>();

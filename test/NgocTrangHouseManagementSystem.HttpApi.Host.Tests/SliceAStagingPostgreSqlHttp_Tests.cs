@@ -7,7 +7,9 @@ using System.Xml.Linq;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Security.Claims;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
@@ -100,6 +102,13 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
         var identityCreated = false;
         var buildingsCreated = false;
         WebApplication? app = null;
+        // D06 scans need their own disposable encrypted root; it lives under
+        // the OS temp directory keyed by this run's random suffix and is
+        // removed in the finally block, never a shared or real archive path.
+        var d06ArchiveRoot = Path.Combine(
+            Path.GetTempPath(), "bm_d06_scan_" + suffix);
+        var d06ArchiveKey = Convert.ToBase64String(
+            RandomNumberGenerator.GetBytes(32));
         try
         {
             await ExecuteAsync(admin, $"""CREATE DATABASE "{idName}" TEMPLATE template0""");
@@ -150,7 +159,13 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                         cosigner.ToString("D"),
                     ["BuildingManagement:SliceAStaging:Enabled"] = "true",
                     ["BuildingManagement:SliceAStaging:Activation"] =
-                        "I_ACCEPT_ISOLATED_SLICE_A_STAGING_WRITES"
+                        "I_ACCEPT_ISOLATED_SLICE_A_STAGING_WRITES",
+                    // D06 signed scans: an encrypted store rooted in this
+                    // run's disposable temp directory with a fresh key.
+                    ["BuildingManagement:SliceAStaging:D06ScanArchive:Root"] =
+                        d06ArchiveRoot,
+                    ["BuildingManagement:SliceAStaging:D06ScanArchive:KeyBase64"] =
+                        d06ArchiveKey
                 }).Build();
             // Capture test-server exceptions only in the isolated fixture.
             // ABP intentionally returns generic 500 bodies; preserve this
@@ -1991,13 +2006,12 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 foreach (var type in Enum.GetValues<
                     BuildingManagement.MoveOuts.MoveOutChecklistTaskType>())
                 {
-                    var task = new BuildingManagement.MoveOuts.MoveOutChecklistTask(
-                        Guid.NewGuid(), financeMoveOut, type);
-                    if (type == BuildingManagement.MoveOuts.MoveOutChecklistTaskType
-                            .FinalMeterReading)
-                        task.MarkFinalMeterReadingsVerified(
-                            DateTime.UtcNow.AddDays(-5));
-                    db.MoveOutChecklistTasks.Add(task);
+                    // The FinalMeterReading task is NOT pre-completed by the
+                    // fixture: the P2.5 E2E lane proves the evidence-backed
+                    // /verify-final-meters route itself completes it later.
+                    db.MoveOutChecklistTasks.Add(
+                        new BuildingManagement.MoveOuts.MoveOutChecklistTask(
+                            Guid.NewGuid(), financeMoveOut, type));
                 }
 
                 var installed = new DateTime(2026, 8, 1);
@@ -2023,6 +2037,18 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                         BuildingManagement.Utilities.UtilityType.Water,
                         12000m, installed, null));
                 db.MeterReadings.AddRange(
+                    // August (previous-month) zero-usage anchors: without
+                    // them the meter coverage assessor flags
+                    // MissingPreviousMonthReading and the authenticated
+                    // /verify-final-meters signoff must refuse the
+                    // evidence (final-meter lane is only satisfiable
+                    // with a physically continuous reading history).
+                    new BuildingManagement.Utilities.MeterReading(
+                        Guid.NewGuid(), financeMeterE, 2026, 8,
+                        10m, 10m, new DateTime(2026, 8, 31)),
+                    new BuildingManagement.Utilities.MeterReading(
+                        Guid.NewGuid(), financeMeterW, 2026, 8,
+                        15m, 15m, new DateTime(2026, 8, 31)),
                     new BuildingManagement.Utilities.MeterReading(
                         financeReadingE, financeMeterE, 2026, 9,
                         10m, 20m, readAt),
@@ -2899,10 +2925,288 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 await uow.CompleteAsync();
             }
 
+            // ---- P2.2 / D03: SERVICE PRICING ON THE ISSUED INVOICE ----
+            // A second month with an itemized per-person service fee. The
+            // rate is the room's OWN versioned tariff, the headcount is the
+            // contract's verified residency, and the issued invoice must
+            // freeze both so a later tariff edit cannot rewrite it.
+            var serviceRoom = await CreateChildAsync(clientB, roomCreate,
+                new { floorId = floorB, roomNumber = "198",
+                    name = "D03 service pricing room B198", area = 24m,
+                    capacity = 2, status = (int)BuildingManagement.Rooms.RoomStatus.Occupied });
+            var serviceContract = Guid.NewGuid();
+            var serviceElectricMeter = Guid.NewGuid();
+            var serviceWaterMeter = Guid.NewGuid();
+            var d03ServiceId = Guid.NewGuid();
+            var serviceTariffId = Guid.NewGuid();
+            const decimal serviceUnitPrice = 150_000m;
+            var secondTenant = Guid.NewGuid();
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var db = await sp.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>().GetDbContextAsync();
+                var contract = new BuildingManagement.Contracts.Contract(
+                    serviceContract, "D03-SERVICE-" + serviceContract.ToString("N"),
+                    serviceRoom, new DateTime(2026, 9, 1), null, 2500000m);
+                contract.Activate();
+                db.Contracts.Add(contract);
+                db.Tenants.Add(new BuildingManagement.Tenants.Tenant(
+                    secondTenant, "Tenant D03 second occupant",
+                    "092" + secondTenant.ToString("N")[..7],
+                    null, null, null,
+                    BuildingManagement.Tenants.IdentityType.CitizenId,
+                    "CID-D03-" + secondTenant.ToString("N")));
+                db.ContractTenants.AddRange(
+                    new BuildingManagement.Contracts.ContractTenant(
+                        Guid.NewGuid(), serviceContract, tenantB,
+                        BuildingManagement.Contracts.ContractTenantRole.PrimaryTenant),
+                    new BuildingManagement.Contracts.ContractTenant(
+                        Guid.NewGuid(), serviceContract, secondTenant,
+                        BuildingManagement.Contracts.ContractTenantRole.Member));
+                db.UtilityMeters.AddRange(
+                    new BuildingManagement.Utilities.UtilityMeter(
+                        serviceElectricMeter, serviceRoom,
+                        BuildingManagement.Utilities.UtilityType.Electricity,
+                        "D03-E-" + serviceElectricMeter.ToString("N"), 0m,
+                        new DateTime(2026, 9, 1)),
+                    new BuildingManagement.Utilities.UtilityMeter(
+                        serviceWaterMeter, serviceRoom,
+                        BuildingManagement.Utilities.UtilityType.Water,
+                        "D03-W-" + serviceWaterMeter.ToString("N"), 0m,
+                        new DateTime(2026, 9, 1)));
+                db.MeterReadings.AddRange(
+                    new BuildingManagement.Utilities.MeterReading(
+                        Guid.NewGuid(), serviceElectricMeter, 2026, 9,
+                        0m, 10m, new DateTime(2026, 9, 30)),
+                    new BuildingManagement.Utilities.MeterReading(
+                        Guid.NewGuid(), serviceWaterMeter, 2026, 9,
+                        0m, 12m, new DateTime(2026, 9, 30)),
+                    new BuildingManagement.Utilities.MeterReading(
+                        Guid.NewGuid(), serviceElectricMeter, 2026, 10,
+                        10m, 25m, new DateTime(2026, 10, 31)),
+                    new BuildingManagement.Utilities.MeterReading(
+                        Guid.NewGuid(), serviceWaterMeter, 2026, 10,
+                        12m, 17m, new DateTime(2026, 10, 31)));
+                db.RoomScopedServiceTariffVersions.Add(
+                    BuildingManagement.RoomChanges.RoomScopedServiceTariffVersion.Create(
+                        serviceTariffId, serviceRoom, d03ServiceId, 1,
+                        serviceUnitPrice,
+                        BuildingManagement.RoomChanges.RoomScopedServiceBillingUnit.PerPerson,
+                        BuildingManagement.RoomChanges.RoomScopedServiceChargingRule.WholeMonth,
+                        new DateOnly(2026, 10, 1), null, root,
+                        new DateTime(2026, 9, 20, 8, 0, 0, DateTimeKind.Utc),
+                        "OWNER-SIGNED-D03-ROOM-SERVICE-RATE-OCTOBER-2026"));
+                await db.SaveChangesAsync();
+                await uow.CompleteAsync();
+            }
+
+            Guid serviceDraftId;
+            using (var created = await clientB.PostAsync(
+                scopedContracts + "/" + serviceContract.ToString("D") +
+                "/monthly-utility-drafts/2026/10", null))
+            {
+                var body = await created.Content.ReadAsStringAsync();
+                Assert.True(created.StatusCode is HttpStatusCode.OK or
+                    HttpStatusCode.Created,
+                    $"D03 monthly draft: {created.StatusCode}: {body}");
+                using var json = JsonDocument.Parse(body);
+                serviceDraftId = json.RootElement.GetProperty("id").GetGuid();
+            }
+
+            // The issued service line must equal rate x verified headcount.
+            const decimal serviceLineAmount = serviceUnitPrice * 2m;
+            var serviceCandidatePayload = new
+            {
+                contractId = serviceContract,
+                roomId = serviceRoom,
+                billingYear = 2026,
+                billingMonth = 10,
+                paymentDueDate = DateOnly.FromDateTime(
+                    TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow,
+                        TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh")))
+                    .AddDays(7),
+                dueDatePolicyReference = "APPROVED-MONTHLY-DUE-REVIEW",
+                auxiliaryFeeDecision = 2,
+                auxiliaryFeePolicyReference =
+                    "OWNER-APPROVED-D03-PER-ROOM-SERVICE-POLICY-2026",
+                auxiliaryFeeReviewerId = root,
+                auxiliaryCharges = new[]
+                {
+                    new
+                    {
+                        kind = 1,
+                        serviceCode = "INTERNET",
+                        quantity = 2m,
+                        unitPrice = serviceLineAmount / 2m,
+                        amount = serviceLineAmount,
+                        contractOrRateReference =
+                            "OWNER-SIGNED-D03-ROOM-SERVICE-RATE-OCTOBER-2026",
+                        description = "Per-person internet service for the billed month"
+                    }
+                }
+            };
+            var d03Candidate = await PostFinalAsync(clientRoot,
+                FinalInvoices(serviceContract) + "/monthly-drafts/" +
+                serviceDraftId.ToString("D") + "/candidate",
+                JsonSerializer.Serialize(serviceCandidatePayload));
+            Assert.True(d03Candidate.Status is HttpStatusCode.OK or
+                HttpStatusCode.Created,
+                $"D03 candidate: {d03Candidate.Status}: {d03Candidate.Body}");
+            Guid serviceCandidateId;
+            decimal serviceCandidateAmount;
+            using (var json = JsonDocument.Parse(d03Candidate.Body))
+            {
+                serviceCandidateId = json.RootElement.GetProperty("candidateId").GetGuid();
+                serviceCandidateAmount = json.RootElement
+                    .GetProperty("frozenCandidateAmount").GetDecimal();
+            }
+            // The service fee is a genuine part of the official amount, on
+            // top of rent and metered utilities, not a look-alike line.
+            Assert.True(serviceCandidateAmount > serviceLineAmount);
+
+            // Persist the ORIGINAL room-service source binding, exactly as a
+            // secured issuer would: from the frozen candidate and the tariff
+            // version that was effective for the billed month.
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var db = await sp.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>().GetDbContextAsync();
+                var candidate = await db.MonthlyInvoiceCandidates
+                    .SingleAsync(x => x.Id == serviceCandidateId);
+                var tariff = await db.RoomScopedServiceTariffVersions
+                    .SingleAsync(x => x.Id == serviceTariffId);
+                var premium = tariff.PreviewCharge(
+                    new DateOnly(2026, 10, 1), new DateOnly(2026, 10, 31), 2);
+                db.RoomServiceInvoiceSourceBindings.Add(
+                    BuildingManagement.RoomChanges
+                        .RoomScopedServiceInvoiceSourceBinding.Freeze(
+                            candidate, tariff, premium, "INTERNET",
+                            "VERIFIED-RESIDENCY-2-TENANTS-OCTOBER-2026"));
+                await db.SaveChangesAsync();
+                await uow.CompleteAsync();
+            }
+
+            var d03Review = await PostFinalAsync(clientB,
+                FinalInvoices(serviceContract) + "/monthly-candidates/" +
+                serviceCandidateId.ToString("D") + "/review",
+                JsonSerializer.Serialize(new
+                {
+                    accept = true,
+                    reason = "Independently audited D03 service rate and headcount"
+                }));
+            Assert.True(d03Review.Status is HttpStatusCode.OK or
+                HttpStatusCode.Created,
+                $"D03 review: {d03Review.Status}: {d03Review.Body}");
+
+            var d03Issued = await PostFinalAsync(clientRoot,
+                FinalInvoices(serviceContract) + "/monthly-candidates/" +
+                serviceCandidateId.ToString("D") + "/issue", "{}");
+            Assert.True(d03Issued.Status is HttpStatusCode.OK or
+                HttpStatusCode.Created,
+                $"D03 issuance: {d03Issued.Status}: {d03Issued.Body}");
+            Guid serviceIssuedId;
+            using (var json = JsonDocument.Parse(d03Issued.Body))
+            {
+                serviceIssuedId = json.RootElement
+                    .GetProperty("issuedInvoiceId").GetGuid();
+                Assert.Equal(serviceCandidateAmount,
+                    json.RootElement.GetProperty("amount").GetDecimal());
+                Assert.False(json.RootElement
+                    .GetProperty("isOfficialReceivable").GetBoolean());
+            }
+
+            // The frozen schedule really is the room's own rate multiplied
+            // by the verified residency count, and it survives a later
+            // Owner price edit unchanged.
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var db = await sp.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>().GetDbContextAsync();
+                var candidate = await db.MonthlyInvoiceCandidates
+                    .SingleAsync(x => x.Id == serviceCandidateId);
+                var review = await db.MonthlyInvoiceReviews
+                    .SingleAsync(x => x.CandidateId == serviceCandidateId);
+                var month = await db.MonthlyIssuedInvoices
+                    .SingleAsync(x => x.Id == serviceIssuedId);
+                var bindings = await db.RoomServiceInvoiceSourceBindings
+                    .Where(x => x.MonthlyCandidateId == serviceCandidateId).ToArrayAsync();
+                var history = await db.RoomScopedServiceTariffVersions
+                    .Where(x => x.RoomId == serviceRoom).ToArrayAsync();
+                var residency = await db.ContractTenants
+                    .Where(x => x.ContractId == serviceContract)
+                    .Select(x => new { x.TenantId, x.Role }).ToArrayAsync();
+
+                var schedule = BuildingManagement.Invoices
+                    .OfficialServicePricingSchedule.Bind(
+                        month, candidate, bindings, history,
+                        residency.Select(x =>
+                            new BuildingManagement.RoomChanges.RoomChangeRosterMember(
+                                x.TenantId, x.Role)).ToArray());
+                schedule.VerifySchedule(candidate);
+
+                var line = Assert.Single(schedule.Lines);
+                Assert.Equal(serviceUnitPrice, line.UnitPriceVnd);
+                Assert.Equal(2, line.VerifiedOccupantCount);
+                Assert.Equal(serviceLineAmount, line.AmountVnd);
+                Assert.Equal(serviceLineAmount, schedule.TotalVnd);
+                Assert.Equal(serviceTariffId, line.TariffVersionId);
+                Assert.False(schedule.IsOfficialReceivable);
+
+                // A later, higher-priced version must NOT rewrite history.
+                db.RoomScopedServiceTariffVersions.Add(
+                    BuildingManagement.RoomChanges.RoomScopedServiceTariffVersion.Create(
+                        Guid.NewGuid(), serviceRoom, d03ServiceId, 2,
+                        500_000m,
+                        BuildingManagement.RoomChanges.RoomScopedServiceBillingUnit.PerPerson,
+                        BuildingManagement.RoomChanges.RoomScopedServiceChargingRule.WholeMonth,
+                        new DateOnly(2026, 11, 1), null, root,
+                        new DateTime(2026, 10, 20, 8, 0, 0, DateTimeKind.Utc),
+                        "OWNER-SIGNED-D03-ROOM-SERVICE-RATE-NOVEMBER-2026"));
+                await db.SaveChangesAsync();
+                await uow.CompleteAsync();
+            }
+            using (var scope = app.Services.CreateScope())
+            {
+                var sp = scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var db = await sp.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>().GetDbContextAsync();
+                var candidate = await db.MonthlyInvoiceCandidates
+                    .SingleAsync(x => x.Id == serviceCandidateId);
+                var month = await db.MonthlyIssuedInvoices
+                    .SingleAsync(x => x.Id == serviceIssuedId);
+                var bindings = await db.RoomServiceInvoiceSourceBindings
+                    .Where(x => x.MonthlyCandidateId == serviceCandidateId).ToArrayAsync();
+                var history = await db.RoomScopedServiceTariffVersions
+                    .Where(x => x.RoomId == serviceRoom).ToArrayAsync();
+                var residency = await db.ContractTenants
+                    .Where(x => x.ContractId == serviceContract)
+                    .Select(x => new { x.TenantId, x.Role }).ToArrayAsync();
+
+                var again = BuildingManagement.Invoices
+                    .OfficialServicePricingSchedule.Bind(
+                        month, candidate, bindings, history,
+                        residency.Select(x =>
+                            new BuildingManagement.RoomChanges.RoomChangeRosterMember(
+                                x.TenantId, x.Role)).ToArray());
+                Assert.Equal(serviceUnitPrice, Assert.Single(again.Lines).UnitPriceVnd);
+                Assert.Equal(serviceLineAmount, again.TotalVnd);
+                await uow.CompleteAsync();
+            }
+
             var monthlyBalanceRoute = FinalInvoices(monthlyDraftContract) +
                 "/monthly-issued/" + monthlyIssuedId.ToString("D") +
-                "/balance";
-            using (var balance = await clientB.GetAsync(monthlyBalanceRoute))
+                "/balance";            using (var balance = await clientB.GetAsync(monthlyBalanceRoute))
             {
                 Assert.Equal(HttpStatusCode.OK, balance.StatusCode);
                 using var json = JsonDocument.Parse(
@@ -3675,6 +3979,41 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 Assert.Equal(finalBill, json.RootElement
                     .GetProperty("outstandingAmount").GetDecimal());
             }
+
+            // P2.5 E2E: the final E/W meter reading checklist item is
+            // completed ONLY through the authenticated evidence-backed
+            // signoff route. The fixture never pre-completes it via EF.
+            // Idempotent replay must return the SAME signed task.
+            var meterSignoffRoute = scopedContracts + "/" +
+                financeContract.ToString("D") + "/move-out-requests/" +
+                financeMoveOut.ToString("D") + "/verify-final-meters";
+            using (var signedMeters = await clientB.PostAsync(
+                meterSignoffRoute, null))
+            {
+                Assert.Equal(HttpStatusCode.OK, signedMeters.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await signedMeters.Content.ReadAsStringAsync());
+                Assert.Equal((int)BuildingManagement.MoveOuts
+                    .MoveOutChecklistTaskType.FinalMeterReading,
+                    json.RootElement.GetProperty("type").GetInt32());
+                Assert.True(json.RootElement.GetProperty("isCompleted")
+                    .GetBoolean());
+                Assert.NotNull(json.RootElement.GetProperty("completedAt"));
+            }
+            using (var signedMetersReplay = await clientB.PostAsync(
+                meterSignoffRoute, null))
+            {
+                Assert.Equal(HttpStatusCode.OK, signedMetersReplay.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await signedMetersReplay.Content.ReadAsStringAsync());
+                Assert.True(json.RootElement.GetProperty("isCompleted")
+                    .GetBoolean());
+            }
+            using (var foreignMeters = await clientB.PostAsync(
+                scopedContracts + "/" + contractA.ToString("D") +
+                "/move-out-requests/" + financeMoveOut.ToString("D") +
+                "/verify-final-meters", null))
+                Assert.Equal(HttpStatusCode.Forbidden, foreignMeters.StatusCode);
             // Fully staged payments do not suffice for CLOSEOUT once
             // an official receivable exists. Independent manual review is
             // required before the final bill is considered settled.
@@ -4176,6 +4515,394 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 financeMoveOut.ToString("D") + "/room-disposition"))
                 Assert.Equal(HttpStatusCode.Forbidden,
                     foreignDisposition.StatusCode);
+
+            // P2.5 OI-06 E2E: a CONFIRMED future booking (Reserved) on the
+            // vacated room must retain it as Reserved at closeout, not
+            // release it to Available. This is the second E2E disposition
+            // lane: the domain tests prove the policy, this proves the
+            // authenticated closeout honors it end-to-end. The room below
+            // is a NEW scratch room so the finance scenario above (which
+            // asserts Available) is untouched.
+            var futureBookingRoom = await CreateChildAsync(clientB, roomCreate,
+                new { floorId = floorB, roomNumber = "112",
+                    name = "PG B112 future booking retention", area = 24m,
+                    capacity = 2,
+                    status = (int)BuildingManagement.Rooms.RoomStatus.Occupied });
+            var futureBookingContract = Guid.NewGuid();
+            var futureBookingMoveOut = Guid.NewGuid();
+            var futureBookingReservation = Guid.NewGuid();
+            var futureBookingDraftId = Guid.NewGuid();
+            using (var futureSetup = app.Services.CreateScope())
+            {
+                var sp = futureSetup.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var db = await sp.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>()
+                    .GetDbContextAsync();
+                var futureContract = new BuildingManagement.Contracts.Contract(
+                    futureBookingContract,
+                    "FUT-HTTP-" + futureBookingContract.ToString("N"),
+                    futureBookingRoom,
+                    new DateTime(2026, 9, 1, 0, 0, 0, DateTimeKind.Utc),
+                    null, 3000000m);
+                futureContract.Activate();
+                db.Contracts.Add(futureContract);
+                db.ContractTenants.Add(
+                    new BuildingManagement.Contracts.ContractTenant(
+                        Guid.NewGuid(), futureBookingContract, tenantB,
+                        BuildingManagement.Contracts.ContractTenantRole
+                            .PrimaryTenant));
+                var futureRequest = new BuildingManagement.MoveOuts.MoveOutRequest(
+                    futureBookingMoveOut, futureBookingContract,
+                    futureBookingRoom, new DateOnly(2026, 9, 30),
+                    "E2E future booking retention");
+                futureRequest.Approve(DateTime.UtcNow.AddDays(-1),
+                    "Approved month-end exit with confirmed booking");
+                db.MoveOutRequests.Add(futureRequest);
+                foreach (var type in Enum.GetValues<
+                    BuildingManagement.MoveOuts.MoveOutChecklistTaskType>())
+                {
+                    var task = new BuildingManagement.MoveOuts.MoveOutChecklistTask(
+                        Guid.NewGuid(), futureBookingMoveOut, type);
+                    if (type == BuildingManagement.MoveOuts.MoveOutChecklistTaskType
+                            .FinalMeterReading)
+                        // The verified-meter lane is proven above for the
+                        // finance room; this lane isolates disposition
+                        // retention, so seed the meter gate directly.
+                        task.MarkFinalMeterReadingsVerified(
+                            DateTime.UtcNow.AddDays(-1));
+                    db.MoveOutChecklistTasks.Add(task);
+                }
+                // A one-month deposit hold, already completed and allocated,
+                // so the closeout deposit audit sees the exact held amount.
+                var futureDepositPaymentId = Guid.NewGuid();
+                var futureDeposit = new BuildingManagement.Payments.Payment(
+                    futureDepositPaymentId,
+                    "FUT-PAID-" + futureDepositPaymentId.ToString("N"),
+                    tenantB, BuildingManagement.Payments.PaymentPurpose
+                        .ContractDeposit,
+                    BuildingManagement.Payments.BuildingManagement.Payments
+                        .PaymentMethod.BankTransfer,
+                    BuildingManagement.Payments.PaymentChannel.Manual,
+                    3000000m, contractId: futureBookingContract,
+                    transactionReference: "FUT-INITIAL-DEPOSIT-PAID-2026");
+                futureDeposit.Complete(DateTime.UtcNow.AddDays(-2),
+                    "FUT-INITIAL-DEPOSIT-PAID-2026");
+                db.Payments.Add(futureDeposit);
+                await db.SaveChangesAsync();
+                var futureAllocation = new BuildingManagement.DepositSettlements
+                    .DepositSettlement(
+                        Guid.NewGuid(),
+                        BuildingManagement.DepositSettlements.DepositSettlementType
+                            .AllocateToContractDeposit,
+                        3000000m, paymentId: futureDepositPaymentId,
+                        targetContractId: futureBookingContract,
+                        notes: "Isolated held deposit for booking retention");
+                futureAllocation.Complete(DateTime.UtcNow.AddDays(-1));
+                db.DepositSettlements.Add(futureAllocation);
+                // The confirmed future occupancy on the vacated room. A
+                // Reserved booking IS a genuine commitment (OI-06). The
+                // tenant must exist (FK), so use the seeded tenantB.
+                var futureBooking = new BuildingManagement.RoomReservations
+                    .RoomReservation(
+                        futureBookingReservation,
+                        "FUT-RES-" + futureBookingReservation.ToString("N"),
+                        futureBookingRoom, tenantB,
+                        new DateTime(2026, 10, 5, 0, 0, 0, DateTimeKind.Utc),
+                        3000000m, 3000000m, 500000m);
+                futureBooking.MarkReserved(
+                    DateTime.UtcNow.AddDays(-2),
+                    new DateTime(2026, 10, 1, 0, 0, 0, DateTimeKind.Utc));
+                db.RoomReservations.Add(futureBooking);
+                // The closeout requires one final issued invoice for this
+                // contract+request; mirror the finance lane's draft graph
+                // (meters, rates, readings, two-line draft snapshot) so the
+                // authenticated prepare -> review -> issue lane works.
+                var futureMeterE = Guid.NewGuid();
+                var futureMeterW = Guid.NewGuid();
+                var futureReadingE = Guid.NewGuid();
+                var futureReadingW = Guid.NewGuid();
+                var futureDraftId = futureBookingDraftId;
+                var futureInstalled = new DateTime(2026, 8, 1);
+                var futureReadAt = new DateTime(2026, 9, 30);
+                db.UtilityMeters.AddRange(
+                    new BuildingManagement.Utilities.UtilityMeter(
+                        futureMeterE, futureBookingRoom,
+                        BuildingManagement.Utilities.UtilityType.Electricity,
+                        "FUT-E-" + futureMeterE.ToString("N"),
+                        10m, futureInstalled),
+                    new BuildingManagement.Utilities.UtilityMeter(
+                        futureMeterW, futureBookingRoom,
+                        BuildingManagement.Utilities.UtilityType.Water,
+                        "FUT-W-" + futureMeterW.ToString("N"),
+                        15m, futureInstalled));
+                // Reuse the finance lane's UtilityRate rows (same building
+                // b, type and effective date): seeding a second
+                // (building, type, effectiveFrom) pair would violate the
+                // unique index IX_BuildingManagementUtilityRates_..._Effec~.
+                // The draft snapshot below references the same immutable
+                // rates via financeRateE / financeRateW.
+                db.MeterReadings.AddRange(
+                    new BuildingManagement.Utilities.MeterReading(
+                        futureReadingE, futureMeterE, 2026, 9,
+                        10m, 20m, futureReadAt),
+                    new BuildingManagement.Utilities.MeterReading(
+                        futureReadingW, futureMeterW, 2026, 9,
+                        15m, 19m, futureReadAt));
+                db.Invoices.Add(BuildingManagement.Invoices.Invoice.CreateDraft(
+                    futureDraftId,
+                    BuildingManagement.Invoices.InvoiceDraftSnapshot.Capture(
+                        futureBookingContract, futureBookingRoom, 2026, 9, new[]
+                        {
+                            new BuildingManagement.Invoices.InvoiceDraftUtilityLineSnapshot(
+                                BuildingManagement.Utilities.UtilityType.Electricity,
+                                financeRateE, "SingleRateWholeMonth",
+                                10m, 3500m, 35000m,
+                                new[] {
+                                    new BuildingManagement.Invoices.InvoiceDraftMeterSegmentSnapshot(
+                                        futureReadingE, futureMeterE,
+                                        BuildingManagement.Utilities.MeterUsageSourceType.MonthlyReading,
+                                        futureReadAt, 10m, 20m)
+                                },
+                                Array.Empty<string>()),
+                            new BuildingManagement.Invoices.InvoiceDraftUtilityLineSnapshot(
+                                BuildingManagement.Utilities.UtilityType.Water,
+                                financeRateW, "SingleRateWholeMonth",
+                                4m, 12000m, 48000m,
+                                new[] {
+                                    new BuildingManagement.Invoices.InvoiceDraftMeterSegmentSnapshot(
+                                        futureReadingW, futureMeterW,
+                                        BuildingManagement.Utilities.MeterUsageSourceType.MonthlyReading,
+                                        futureReadAt, 15m, 19m)
+                                },
+                                Array.Empty<string>())
+                        }), Guid.NewGuid));
+                await db.SaveChangesAsync();
+                await uow.CompleteAsync();
+            }
+            var futureRoot = FinalInvoices(futureBookingContract);
+            // Final bill issuance lane (OI-01): prepare -> independent
+            // review -> root issue. Mirrors the finance lane but for the
+            // booking-retention contract.
+            using var futurePrepared = await PostValidFinanceAsync(
+                clientRoot, futureRoot + "/move-outs/" +
+                    futureBookingMoveOut.ToString("D") + "/prepare", new { });
+            var futureEvidenceId = futurePrepared.RootElement
+                .GetProperty("id").GetGuid();
+            var futureEvidenceHash = futurePrepared.RootElement
+                .GetProperty("sha256").GetString();
+            Assert.NotNull(futureEvidenceHash);
+            using var futureReviewSubmission = await PostValidFinanceAsync(
+                clientRoot, futureRoot + "/evidence/" +
+                    futureEvidenceId.ToString("D") + "/reviews",
+                new { note = "Independent scoped future-booking review" });
+            var futureReviewId = futureReviewSubmission.RootElement.GetGuid();
+            using var futureReviewDecision = await PostValidFinanceAsync(
+                clientB, futureRoot + "/reviews/" +
+                    futureReviewId.ToString("D") + "/decide",
+                new { acceptForDesign = true,
+                    reason = "Independent meter, rent and policy evidence verified" });
+            using var futureIssued = await PostValidFinanceAsync(
+                clientRoot, futureRoot + "/evidence/" +
+                    futureEvidenceId.ToString("D") + "/issue-candidate",
+                new {
+                    draftInvoiceId = futureBookingDraftId,
+                    contractId = futureBookingContract,
+                    roomId = futureBookingRoom,
+                    evidenceSha256 = futureEvidenceHash,
+                    paymentDueDate = DateOnly.FromDateTime(
+                        TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow,
+                            TimeZoneInfo.FindSystemTimeZoneById(
+                                "Asia/Ho_Chi_Minh"))).AddDays(14)
+                        .ToString("yyyy-MM-dd"),
+                    dueDatePolicyReference = "AGREED-DUE-DATE-POLICY-2026",
+                    auxiliaryFeeDecision = 1,
+                    auxiliaryFeePolicyReference =
+                        "NO-AUXILIARY-FEES-POLICY-2026",
+                    auxiliaryFeeReviewerId = root,
+                    auxiliaryCharges = Array.Empty<object>()
+                });
+            var futureIssuedId = futureIssued.RootElement
+                .GetProperty("id").GetGuid();
+            // The issued final bill must be paid in full before closeout
+            // (debt settlement): one manual receipt for the whole amount.
+            using var futurePaidBill = await PostValidFinanceAsync(
+                clientRoot, futureRoot + "/issued/" +
+                    futureIssuedId.ToString("D") + "/manual-receipts",
+                new {
+                    tenantId = tenantB, amount = 3083000m,
+                    paidAtUtc = DateTime.UtcNow,
+                    transactionReference = "FUT-BANK-FINAL-BILL-0001",
+                    bankEvidenceReference = "FUT-SIGNED-RECEIPT-0001"
+                });
+            var futureBillJournalId = futurePaidBill.RootElement
+                .GetProperty("allocationJournalId").GetGuid();
+            // Post the final bill as the official receivable, then review
+            // the journal receipt against it (debt settlement precondition).
+            var futurePostedBill = await PostFinalAsync(
+                clientRoot, futureRoot + "/issued/" +
+                    futureIssuedId.ToString("D") + "/post-receivable", "{}");
+            Assert.True(futurePostedBill.Status is HttpStatusCode.OK or
+                HttpStatusCode.Created,
+                $"Future-booking posting: {futurePostedBill.Status} " +
+                futurePostedBill.Body);
+            Guid futureOfficialPostingId;
+            using (var postedJson = JsonDocument.Parse(
+                futurePostedBill.Body))
+                futureOfficialPostingId = postedJson.RootElement
+                    .GetProperty("postingId").GetGuid();
+            var futureJournalReview = await PostFinalAsync(
+                clientB, futureRoot + "/receivables/" +
+                    futureOfficialPostingId.ToString("D") +
+                    "/allocations/" + futureBillJournalId.ToString("D") +
+                    "/review",
+                JsonSerializer.Serialize(new {
+                    accept = true,
+                    bankStatementEvidenceReference =
+                        "FUT-RECONCILED-BANK-STATEMENT-0001",
+                    reason = "Independent review confirmed original bank statement"
+                }));
+            Assert.True(futureJournalReview.Status is HttpStatusCode.OK or
+                HttpStatusCode.Created,
+                $"Future-booking journal review: " +
+                $"{futureJournalReview.Status} {futureJournalReview.Body}");
+            var futureCloseoutRoute = futureRoot + "/move-outs/" +
+                futureBookingMoveOut.ToString("D") + "/complete";
+            var futureCloseoutBody = JsonSerializer.Serialize(new {
+                forfeitAmount = 0m,
+                inspectionEvidenceReference = "FUT-SIGNED-INSPECTION-0001",
+                handoverEvidenceReference = "FUT-SIGNED-HANDOVER-0001",
+                depositPolicyReference = "FUT-CONTRACT-DEPOSIT-POLICY-2026",
+                confirmManualRefundPaid = true,
+                refundPaidAtUtc = DateTime.UtcNow,
+                refundTransactionReference = "FUT-MANUAL-REFUND-0001",
+                refundBankEvidenceReference = "FUT-REFUND-SIGNED-PROOF-0001"
+            });
+            var futureDenied = await PostFinalAsync(
+                clientRoot, futureCloseoutRoute, futureCloseoutBody);
+            Assert.Equal(HttpStatusCode.Forbidden, futureDenied.Status);
+            var futureDepositApprove = await PostFinalAsync(
+                clientRoot, futureRoot + "/move-outs/" +
+                    futureBookingMoveOut.ToString("D") +
+                    "/deposit-settlement/approve",
+                JsonSerializer.Serialize(new {
+                    forfeitAmount = 0m,
+                    depositPolicyReference = "FUT-CONTRACT-DEPOSIT-POLICY-2026"
+                }));
+            Assert.True(futureDepositApprove.Status is HttpStatusCode.OK or
+                HttpStatusCode.Created,
+                $"Future-booking deposit decision: " +
+                $"{futureDepositApprove.Status} {futureDepositApprove.Body}");
+            var futureDestination = await PostFinalAsync(
+                clientRoot, futureRoot + "/move-outs/" +
+                    futureBookingMoveOut.ToString("D") +
+                    "/deposit-settlement/refund-destination",
+                JsonSerializer.Serialize(new {
+                    beneficiaryName = "Nguyen Van B",
+                    bankName = "Isolated Test Bank",
+                    accountNumber = "210987654321",
+                    signedDestinationReference = "FUT-BENEFICIARY-0001",
+                    holidayCalendarReference = "SIGNED-VIETNAM-HOLIDAYS-2026",
+                    statutoryHolidays = Array.Empty<string>()
+                }));
+            Assert.True(futureDestination.Status is HttpStatusCode.OK or
+                HttpStatusCode.Created,
+                $"Future-booking destination: " +
+                $"{futureDestination.Status} {futureDestination.Body}");
+            var futurePaidAt = DateTime.UtcNow;
+            futurePaidAt = futurePaidAt.AddTicks(
+                -(futurePaidAt.Ticks % 10L));
+            var futureBankReview = await PostFinalAsync(
+                clientB, futureRoot + "/move-outs/" +
+                    futureBookingMoveOut.ToString("D") +
+                    "/deposit-settlement/refund-bank-review",
+                JsonSerializer.Serialize(new {
+                    paidAtUtc = futurePaidAt,
+                    transactionReference = "FUT-MANUAL-REFUND-0001",
+                    bankStatementEvidenceReference =
+                        "FUT-REFUND-SIGNED-PROOF-0001",
+                    signedIndependentReviewReference =
+                        "FUT-INDEPENDENT-REFUND-REVIEW-0001"
+                }));
+            Assert.True(futureBankReview.Status is HttpStatusCode.OK or
+                HttpStatusCode.Created,
+                $"Future-booking bank review: " +
+                $"{futureBankReview.Status} {futureBankReview.Body}");
+            using var futureCloseout = await PostValidFinanceAsync(
+                clientRoot, futureCloseoutRoute, new {
+                    forfeitAmount = 0m,
+                    inspectionEvidenceReference = "FUT-SIGNED-INSPECTION-0001",
+                    handoverEvidenceReference = "FUT-SIGNED-HANDOVER-0001",
+                    depositPolicyReference = "FUT-CONTRACT-DEPOSIT-POLICY-2026",
+                    confirmManualRefundPaid = true,
+                    refundPaidAtUtc = futurePaidAt,
+                    refundTransactionReference = "FUT-MANUAL-REFUND-0001",
+                    refundBankEvidenceReference = "FUT-REFUND-SIGNED-PROOF-0001"
+                });
+            Assert.Equal(futureBookingContract,
+                futureCloseout.RootElement.GetProperty("contractId").GetGuid());
+            Assert.Equal((int)BuildingManagement.Rooms.RoomStatus.Reserved,
+                futureCloseout.RootElement.GetProperty("roomStatus").GetInt32());
+            Assert.True(futureCloseout.RootElement
+                .GetProperty("hasFutureCommitment").GetBoolean());
+            var futureDispositionId = futureCloseout.RootElement
+                .GetProperty("roomDispositionId").GetGuid();
+            Assert.NotEqual(Guid.Empty, futureDispositionId);
+            using (var futureCheck = app.Services.CreateScope())
+            {
+                using var futureCheckUow = futureCheck.ServiceProvider
+                    .GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var futureCheckDb = await futureCheck.ServiceProvider
+                    .GetRequiredService<IDbContextProvider<BuildingManagementDbContext>>()
+                    .GetDbContextAsync();
+                Assert.Equal(BuildingManagement.Rooms.RoomStatus.Reserved,
+                    (await futureCheckDb.Rooms.SingleAsync(
+                        x => x.Id == futureBookingRoom)).Status);
+                var futureRecord = await futureCheckDb.MoveOutRoomDispositions
+                    .AsNoTracking().SingleAsync(
+                        x => x.Id == futureDispositionId);
+                futureRecord.VerifyStoredDisposition();
+                Assert.Equal(BuildingManagement.Rooms.RoomStatus.Reserved,
+                    futureRecord.ResultRoomStatus);
+                Assert.Equal(futureBookingReservation,
+                    futureRecord.FutureReservationId);
+                Assert.True(futureRecord.FutureReservationId.HasValue ||
+                    futureRecord.FutureSignedContractId.HasValue);
+                Assert.Equal(BuildingManagement.Contracts.ContractStatus.Ended,
+                    (await futureCheckDb.Contracts.SingleAsync(
+                        x => x.Id == futureBookingContract)).Status);
+                await futureCheckUow.CompleteAsync();
+            }
+            using (var futureRead = await clientB.GetAsync(
+                futureRoot + "/move-outs/" +
+                futureBookingMoveOut.ToString("D") + "/room-disposition"))
+            {
+                Assert.Equal(HttpStatusCode.OK, futureRead.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await futureRead.Content.ReadAsStringAsync());
+                Assert.Equal((int)BuildingManagement.Rooms.RoomStatus.Reserved,
+                    json.RootElement.GetProperty("resultRoomStatus")
+                        .GetInt32());
+                Assert.True(json.RootElement.GetProperty(
+                    "hasFutureCommitment").GetBoolean());
+            }
+            // The retained booking itself survives closeout untouched.
+            using (var retainedCheck = app.Services.CreateScope())
+            {
+                using var retainedUow = retainedCheck.ServiceProvider
+                    .GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var retainedDb = await retainedCheck.ServiceProvider
+                    .GetRequiredService<IDbContextProvider<BuildingManagementDbContext>>()
+                    .GetDbContextAsync();
+                Assert.Equal(
+                    BuildingManagement.RoomReservations.RoomReservationStatus.Reserved,
+                    (await retainedDb.RoomReservations.SingleAsync(
+                        x => x.Id == futureBookingReservation)).Status);
+                await retainedUow.CompleteAsync();
+            }
 
 
             // Authenticated building-scoped retrieval AFTER commit:
@@ -6520,6 +7247,114 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 Assert.False(signedPhysical.RootElement.GetProperty(
                     "canExecuteTransfer").GetBoolean());
 
+            // D06 REAL AUTHENTICATED HTTP: the Owner's 2026-11-04 decision
+            // accepts a scanned signed handover sheet as D06 evidence. The
+            // scan must bind to the archived three-party handover above,
+            // only genuine PDF/PNG/JPEG bytes are storable, the database row
+            // keeps a digest + opaque vault handle (never the bytes), and
+            // only the scoped Owner may download the decrypted document.
+            var d06ScanRoute = h4At + "/d06-signed-handover-scan";
+            var d06ScanBytes = new byte[2048];
+            d06ScanBytes[0] = 0x25; d06ScanBytes[1] = 0x50;
+            d06ScanBytes[2] = 0x44; d06ScanBytes[3] = 0x46;
+            for (var i = 4; i < d06ScanBytes.Length; i++)
+                d06ScanBytes[i] = (byte)(i % 251);
+            var d06ScanSha = Convert.ToHexString(
+                SHA256.HashData(d06ScanBytes)).ToLowerInvariant();
+            async Task<(HttpStatusCode Status, string Body)> PostD06ScanAsync(
+                HttpClient caller, byte[] document, string mediaType)
+            {
+                using var form = new MultipartFormDataContent();
+                using var part = new ByteArrayContent(document);
+                part.Headers.ContentType = new MediaTypeHeaderValue(mediaType);
+                form.Add(part, "Document", "signed-handover.pdf");
+                using var reply = await caller.PostAsync(d06ScanRoute, form);
+                return (reply.StatusCode,
+                    await reply.Content.ReadAsStringAsync());
+            }
+            var wrongMediaType = await PostD06ScanAsync(
+                clientRoot, d06ScanBytes, "text/plain");
+            Assert.Equal(HttpStatusCode.Forbidden, wrongMediaType.Status);
+            var forgedHeader = new byte[2048];
+            new Random(42).NextBytes(forgedHeader);
+            // Declared PDF with non-PDF magic bytes: the media type passes
+            // the surface check and is then refused by the vault's
+            // magic-byte verification (409, not an authorization failure).
+            var notAPdf = await PostD06ScanAsync(
+                clientRoot, forgedHeader, "application/pdf");
+            Assert.Equal(HttpStatusCode.Conflict, notAPdf.Status);
+            var uploaded = await PostD06ScanAsync(
+                clientRoot, d06ScanBytes, "application/pdf");
+            {
+                Assert.True(uploaded.Status == HttpStatusCode.OK,
+                    "D06 scan upload: " + uploaded.Status + " " +
+                    uploaded.Body + ". " + serverErrors.Describe());
+                using var json = JsonDocument.Parse(uploaded.Body);
+                Assert.Equal(h4Request, json.RootElement
+                    .GetProperty("requestId").GetGuid());
+                Assert.Equal(d06ScanSha, json.RootElement
+                    .GetProperty("documentSha256").GetString());
+                Assert.Equal("application/pdf", json.RootElement
+                    .GetProperty("mediaType").GetString());
+                Assert.Equal(2048, json.RootElement
+                    .GetProperty("byteLength").GetInt32());
+                Assert.False(json.RootElement
+                    .GetProperty("provesSignerIdentity").GetBoolean());
+                Assert.False(json.RootElement
+                    .GetProperty("canExecuteRoomChange").GetBoolean());
+                Assert.True(json.RootElement
+                    .GetProperty("canDownload").GetBoolean());
+            }
+            // Exactly one scan per handover: a second genuine upload is
+            // refused instead of overwriting the archived evidence.
+            var duplicateScan = await PostD06ScanAsync(
+                clientRoot, d06ScanBytes, "application/pdf");
+            Assert.Equal(HttpStatusCode.Forbidden, duplicateScan.Status);
+            // A non-bootstrap staff member may upload (scoped contract
+            // manager) but may NOT download the Owner's evidence vault.
+            using (var deniedDownload = await clientB.GetAsync(d06ScanRoute))
+                Assert.Equal(HttpStatusCode.Forbidden,
+                    deniedDownload.StatusCode);
+            using (var download = await clientRoot.GetAsync(d06ScanRoute))
+            {
+                Assert.True(download.StatusCode == HttpStatusCode.OK,
+                    "D06 scan download: " + download.StatusCode + ". " +
+                    serverErrors.Describe());
+                Assert.Equal("application/pdf",
+                    download.Content.Headers.ContentType?.MediaType);
+                Assert.True(download.Headers.TryGetValues(
+                    "Cache-Control", out var d06Cache) &&
+                    d06Cache.Any(x => x.Contains("no-store",
+                        StringComparison.OrdinalIgnoreCase)));
+                Assert.True(download.Headers.TryGetValues(
+                    "X-Content-Type-Options", out var d06Sniff) &&
+                    d06Sniff.Contains("nosniff"));
+                var delivered = await download.Content.ReadAsByteArrayAsync();
+                Assert.Equal(d06ScanBytes, delivered);
+            }
+            // The stored row is a digest + opaque handle; the bytes live
+            // only in the disposable encrypted vault directory.
+            using (var d06Scope = app.Services.CreateScope())
+            {
+                var sp = d06Scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var db = await sp.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>()
+                    .GetDbContextAsync();
+                var stored = await db.RoomChangeSignedHandoverScans
+                    .AsNoTracking()
+                    .SingleAsync(x => x.RequestId == h4Request);
+                Assert.Equal(d06ScanSha, stored.HandoverDocumentSha256);
+                Assert.Matches(@"^[0-9a-f]{32}$", stored.VaultReference);
+                Assert.NotEqual(Guid.Empty, stored.UploadedByUserId);
+                Assert.Equal(2048, stored.ByteLength);
+                await uow.CompleteAsync();
+            }
+            Assert.True(Directory.Exists(d06ArchiveRoot));
+            Assert.Contains(Directory.GetFiles(d06ArchiveRoot),
+                file => file.EndsWith(".d06scan", StringComparison.Ordinal));
+
             // Verify the minimum safe denial even AFTER price and handover
             // are signed: no original fully reviewed monthly receivable yet.
             var h4CompletionRoute =
@@ -7129,6 +7964,15 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     .GetProperty("remainingOutstandingVnd").GetDecimal());
                 Assert.Equal(0L, json.RootElement
                     .GetProperty("postingCount").GetInt64());
+                // Aging is presentation only. A deferred top-up reports its
+                // own one-month deadline; a rent credit or a refund liability
+                // carries no tenant-facing deadline and so is never overdue.
+                // The balance is not yet past the 2026-11-15 top-up deadline,
+                // and no obligation here can post money by itself.
+                Assert.False(json.RootElement.GetProperty("isOverdue")
+                    .GetBoolean());
+                Assert.Equal(0, json.RootElement
+                    .GetProperty("daysPastDue").GetInt32());
             }
             using (var staffCannotPost = await clientB.PostAsync(d04PostAt,
                 new StringContent(JsonSerializer.Serialize(new {
@@ -7136,8 +7980,66 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 }), Encoding.UTF8, "application/json")))
                 Assert.Equal(HttpStatusCode.Forbidden, staffCannotPost.StatusCode);
 
+            // P2.3: the H4 dispute lane starts clear for every disposition.
+            var d04DisputeAt = h4At + "/h4-obligation-disputes";
+            var d04DisputeStatusAt = h4At + "/h4-obligation-dispute-status";
+            using (var clear = await clientRoot.GetAsync(d04DisputeStatusAt))
+            {
+                Assert.Equal(HttpStatusCode.OK, clear.StatusCode);
+                using var status = JsonDocument.Parse(
+                    await clear.Content.ReadAsStringAsync());
+                Assert.Equal(0, status.RootElement.GetProperty("state").GetInt32());
+                Assert.False(status.RootElement.GetProperty(
+                    "isSettlementBlocked").GetBoolean());
+                Assert.False(status.RootElement.GetProperty(
+                    "canPostMoney").GetBoolean());
+            }
+
             if (choice == 0)
             {
+                // A contested top-up blocks settlement until an Owner who is
+                // NOT the opener accepts the obligation. The dispute never
+                // alters the signed original amount or posts money itself.
+                Guid h4DisputeId;
+                using (var opened = await Positive2HPostAsync(clientB,
+                    d04DisputeAt, new {
+                        reason = "Tenant contests the recorded deferred top-up amount",
+                        evidenceReference = "SIGNED-TENANT-H4-DISPUTE-2026-11"
+                    }))
+                    h4DisputeId = opened.RootElement.GetGuid();
+                using (var contested = await clientRoot.GetAsync(
+                    d04DisputeStatusAt))
+                {
+                    Assert.Equal(HttpStatusCode.OK, contested.StatusCode);
+                    using var status = JsonDocument.Parse(
+                        await contested.Content.ReadAsStringAsync());
+                    Assert.Equal(1, status.RootElement.GetProperty("state").GetInt32());
+                    Assert.Equal(h4DisputeId, status.RootElement
+                        .GetProperty("disputeId").GetGuid());
+                    Assert.Equal(operatorB, status.RootElement
+                        .GetProperty("openedByUserId").GetGuid());
+                    Assert.True(status.RootElement.GetProperty(
+                        "isSettlementBlocked").GetBoolean());
+                }
+                // An open dispute cannot be opened again, and the operator who
+                // raised it is not the independent resolver.
+                var reopen = await PostFinalAsync(clientB, d04DisputeAt,
+                    JsonSerializer.Serialize(new {
+                        reason = "Second parallel dispute of the same obligation",
+                        evidenceReference = "SIGNED-TENANT-H4-DISPUTE-CHAIN-2026"
+                    }));
+                Assert.Equal(HttpStatusCode.Forbidden, reopen.Status);
+                var selfResolve = await PostFinalAsync(clientB,
+                    d04DisputeAt + "/" + h4DisputeId.ToString("D") + "/resolve",
+                    JsonSerializer.Serialize(new {
+                        obligationAccepted = true,
+                        signedOwnerResolutionReference =
+                            "OPERATOR-SELF-RESOLVED-H4-DISPUTE-2026"
+                    }));
+                Assert.Equal(HttpStatusCode.Forbidden, selfResolve.Status);
+                // The dispute is settled below, after a genuine reviewed
+                // receipt exists and a first posting is refused while open.
+
                 // Two independently reviewed actual Completed Payment records.
                 // The H4 original top-up is not marked paid until BOTH posts.
                 foreach (var chunk in new[] { 400_000m, 600_000m })
@@ -7288,6 +8190,59 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                             """, checkDb);
                         verify.Parameters.AddWithValue("review", reviewId);
                         Assert.Equal(0L, (long)(await verify.ExecuteScalarAsync())!);
+                    }
+                    // While the dispute is open, even a genuine independently
+                    // reviewed receipt cannot be posted as settled.
+                    if (chunk == 400_000m)
+                    {
+                        var blockedPost = await PostFinalAsync(clientRoot,
+                            d04PostAt, JsonSerializer.Serialize(new { reviewId }));
+                        Assert.Equal(HttpStatusCode.Forbidden, blockedPost.Status);
+                        using (var resolved = await Positive2HPostAsync(
+                            clientRoot, d04DisputeAt + "/" +
+                                h4DisputeId.ToString("D") + "/resolve", new {
+                                obligationAccepted = true,
+                                signedOwnerResolutionReference =
+                                    "OWNER-SIGNED-H4-DISPUTE-ACCEPTANCE-2026-11"
+                            }))
+                            Assert.NotEqual(Guid.Empty,
+                                resolved.RootElement.GetGuid());
+                        using (var accepted = await clientRoot.GetAsync(
+                            d04DisputeStatusAt))
+                        {
+                            Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
+                            using var status = JsonDocument.Parse(
+                                await accepted.Content.ReadAsStringAsync());
+                            Assert.Equal(2, status.RootElement
+                                .GetProperty("state").GetInt32());
+                            Assert.True(status.RootElement
+                                .GetProperty("obligationAccepted").GetBoolean());
+                            Assert.False(status.RootElement
+                                .GetProperty("isSettlementBlocked").GetBoolean());
+                        }
+                        // Missed-deadline tracking: the deferred top-up is
+                        // due 2026-11-15, so a later Vietnam date must be
+                        // reported overdue WITHOUT changing the original
+                        // amount or minting any new receivable.
+                        transferClock.SetUtc(new DateTimeOffset(
+                            2026, 12, 20, 4, 0, 0, TimeSpan.Zero));
+                        try
+                        {
+                            using var overdue = await clientRoot
+                                .GetAsync(d04BalanceAt);
+                            Assert.Equal(HttpStatusCode.OK, overdue.StatusCode);
+                            using var aged = JsonDocument.Parse(
+                                await overdue.Content.ReadAsStringAsync());
+                            Assert.True(aged.RootElement
+                                .GetProperty("isOverdue").GetBoolean());
+                            Assert.Equal(35, aged.RootElement
+                                .GetProperty("daysPastDue").GetInt32());
+                            Assert.Equal("2026-12-20", aged.RootElement
+                                .GetProperty("agedAsOfVietnam").GetString());
+                            Assert.Equal(1_000_000m, aged.RootElement
+                                .GetProperty("originalAmountVnd").GetDecimal());
+                        }
+                        finally { transferClock.Reset(); }
                     }
                     using (var posting = await Positive2HPostAsync(
                         clientRoot, d04PostAt, new { reviewId }))
@@ -7723,6 +8678,131 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             await RunH4DispositionScenarioAsync(choice: 0);
             await RunH4DispositionScenarioAsync(choice: 1);
             await RunH4DispositionScenarioAsync(choice: 2);
+
+            // P2.1d: the D01 target-owns-handover-day quote must be identical
+            // whether the transfer month has 28, 29, 30 or 31 days. The only
+            // oracle here is calendar arithmetic; nothing is read back from
+            // the server to build the expectation.
+            var monthLengths = new[] {
+                (Year: 2027, Month: 2, Days: 28),
+                (Year: 2028, Month: 2, Days: 29),
+                (Year: 2027, Month: 4, Days: 30),
+                (Year: 2027, Month: 1, Days: 31)
+            };
+            for (var index = 0; index < monthLengths.Length; index++)
+            {
+                var (year, month, days) = monthLengths[index];
+                const decimal sourceRent = 3_000_000m;
+                const decimal targetRent = 4_000_000m;
+                const int transferDay = 11;
+                var transferOn = new DateOnly(year, month, transferDay);
+                var expectedSourceDays = transferDay - 1;
+                var expectedTargetDays = days - expectedSourceDays;
+                var expectedSource = decimal.Round(
+                    sourceRent * expectedSourceDays / days, 0,
+                    MidpointRounding.AwayFromZero);
+                var expectedTarget = decimal.Round(
+                    targetRent * expectedTargetDays / days, 0,
+                    MidpointRounding.AwayFromZero);
+
+                var matrixSourceRoom = await CreateChildAsync(clientB, roomCreate,
+                    new { floorId = floorB, roomNumber = (130 + index * 2).ToString(),
+                        name = "P2.1 " + year + "-" + month + " source",
+                        area = 24m, capacity = 2,
+                        status = (int)BuildingManagement.Rooms.RoomStatus.Occupied });
+                var matrixTargetRoom = await CreateChildAsync(clientB, roomCreate,
+                    new { floorId = floorB, roomNumber = (131 + index * 2).ToString(),
+                        name = "P2.1 " + year + "-" + month + " target",
+                        area = 24m, capacity = 2,
+                        status = (int)BuildingManagement.Rooms.RoomStatus.Available });
+                var matrixContract = Guid.NewGuid();
+                using (var matrixScope = app.Services.CreateScope())
+                {
+                    var matrixSp = matrixScope.ServiceProvider;
+                    using var matrixUow = matrixSp.GetRequiredService<IUnitOfWorkManager>()
+                        .Begin(requiresNew: true, isTransactional: true);
+                    var matrixDb = await matrixSp.GetRequiredService<
+                        IDbContextProvider<BuildingManagementDbContext>>()
+                        .GetDbContextAsync();
+                    var matrixSource = new BuildingManagement.Contracts.Contract(
+                        matrixContract, "P21-MATRIX-" + matrixContract.ToString("N"),
+                        matrixSourceRoom, new DateTime(year, month, 1), null, sourceRent);
+                    matrixSource.Activate();
+                    matrixDb.Contracts.Add(matrixSource);
+                    matrixDb.ContractTenants.Add(
+                        new BuildingManagement.Contracts.ContractTenant(
+                            Guid.NewGuid(), matrixContract, tenantB,
+                            BuildingManagement.Contracts.ContractTenantRole
+                                .PrimaryTenant));
+                    await matrixUow.CompleteAsync();
+                }
+
+                var matrixRoute = ChangeRoute(matrixContract);
+                Guid matrixRequest;
+                using (var submitted = await Positive2HPostAsync(clientB, matrixRoute,
+                    new { targetRoomId = matrixTargetRoom,
+                        requestedDate = transferOn.ToString("yyyy-MM-dd"),
+                        reason = "Signed " + year + "-" + month + " month-length parity" }))
+                    matrixRequest = submitted.RootElement.GetProperty("id").GetGuid();
+                var matrixAt = matrixRoute + "/" + matrixRequest.ToString("D");
+                using (var roster = await Positive2HPostAsync(clientB,
+                    matrixAt + "/tenant-roster", new { }))
+                    Assert.Equal(1, roster.RootElement.GetProperty("rosterCount").GetInt32());
+                using (var proposal = await Positive2HPostAsync(clientB,
+                    matrixAt + "/business-policy-proposal", new {
+                        contractTreatment = 1, pricingTreatment = 2,
+                        depositTreatment = 1, tenantTreatment = 1,
+                        contractPolicyReference = "OWNER-SIGNED-P21-CONTRACT-" + year,
+                        pricingPolicyReference = "OWNER-SIGNED-P21-PRORATION-" + year,
+                        depositPolicyReference = "OWNER-SIGNED-P21-DEPOSIT-" + year,
+                        tenantConsentReference = "TENANT-SIGNED-P21-ROSTER-" + year
+                    }))
+                    Assert.False(proposal.RootElement.GetProperty("isApproved").GetBoolean());
+                using (var approved = await Positive2HPostAsync(clientRoot,
+                    matrixAt + "/business-policy-review", new {
+                        accepted = true,
+                        signedReviewReference = "OWNER-INDEPENDENT-P21-REVIEW-" + year,
+                        reason = "Approved day proration for month-length parity"
+                    }))
+                    Assert.True(approved.RootElement.GetProperty("accepted").GetBoolean());
+
+                using var quote = await Positive2HPostAsync(clientB,
+                    matrixAt + "/day-pricing-rule-candidate", new {
+                        targetMonthlyRentVnd = targetRent,
+                        transferDayOwner = 2, rounding = 1
+                    });
+                Assert.Equal(days, quote.RootElement.GetProperty(
+                    "calendarDays").GetInt32());
+                Assert.Equal(expectedSourceDays, quote.RootElement.GetProperty(
+                    "sourceChargeableDays").GetInt32());
+                Assert.Equal(expectedTargetDays, quote.RootElement.GetProperty(
+                    "targetChargeableDays").GetInt32());
+                Assert.Equal(expectedSource, quote.RootElement.GetProperty(
+                    "proposedSourceRentVnd").GetDecimal());
+                Assert.Equal(expectedTarget, quote.RootElement.GetProperty(
+                    "proposedTargetRentVnd").GetDecimal());
+                Assert.Equal(2, quote.RootElement.GetProperty(
+                    "transferDayOwner").GetInt32());
+                Assert.Equal(1, quote.RootElement.GetProperty("rounding").GetInt32());
+                Assert.False(quote.RootElement.GetProperty(
+                    "isOfficialInvoicePosting").GetBoolean());
+                Assert.False(quote.RootElement.GetProperty(
+                    "canExecuteRoomChange").GetBoolean());
+
+                // Re-reading must return the same reviewed figures; a quote is
+                // never recomputed differently on a second authenticated read.
+                using (var read = await clientB.GetAsync(
+                    matrixAt + "/day-pricing-rule-candidate"))
+                {
+                    Assert.Equal(HttpStatusCode.OK, read.StatusCode);
+                    using var stored = JsonDocument.Parse(
+                        await read.Content.ReadAsStringAsync());
+                    Assert.Equal(expectedSource, stored.RootElement.GetProperty(
+                        "proposedSourceRentVnd").GetDecimal());
+                    Assert.Equal(expectedTarget, stored.RootElement.GetProperty(
+                        "proposedTargetRentVnd").GetDecimal());
+                }
+            }
 
             var positiveRoute = ChangeRoute(transferContract);
             Guid positiveRequest;
@@ -8995,6 +10075,9 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 await ExecuteAsync(admin, $"""DROP DATABASE "{buildingName}" WITH (FORCE)""");
             if (identityCreated)
                 await ExecuteAsync(admin, $"""DROP DATABASE "{idName}" WITH (FORCE)""");
+            // The D06 encrypted root is generated by this run; remove only it.
+            if (Directory.Exists(d06ArchiveRoot))
+                Directory.Delete(d06ArchiveRoot, recursive: true);
         }
     }
 
@@ -9250,6 +10333,17 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             context.Services.AddTransient<SliceBStagingFinalInvoiceMutation>();
             context.Services.AddTransient<SliceBStagingRoomChangeRequests>();
             context.Services.AddTransient<SliceBStagingRoomScopedServiceTariffs>();
+            // D06 signed scans use their own encrypted store, exactly like
+            // the real Host: fail-closed when no root/key is configured.
+            var d06Root = config[
+                "BuildingManagement:SliceAStaging:D06ScanArchive:Root"];
+            var d06Key = config[
+                "BuildingManagement:SliceAStaging:D06ScanArchive:KeyBase64"];
+            if (!string.IsNullOrWhiteSpace(d06Root) &&
+                !string.IsNullOrWhiteSpace(d06Key))
+                context.Services.AddSingleton<ID06SignedScanArchive>(
+                    new D06DisposableEncryptedScanArchive(
+                        d06Root, Convert.FromBase64String(d06Key)));
             context.Services.AddTransient<SliceCStagingUtilityRates>();
             context.Services.AddTransient<SliceCStagingMeterReadings>();
             context.Services.AddTransient<SliceCStagingUtilityMeters>();

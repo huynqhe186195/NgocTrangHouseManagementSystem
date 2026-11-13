@@ -219,6 +219,27 @@ public sealed partial class SliceBStagingRoomChangeRequests
                 sourceRoom, building);
             if (claim.OwnerId != actor) throw Denied();
 
+            // An open, or rejected, dispute means the underlying obligation
+            // is contested. Posting any settlement against it would silently
+            // resolve the dispute in favour of the building, so refuse.
+            await using (var dispute = Command(db, """
+                SELECT d."Id", r."ObligationAccepted"
+                  FROM "BuildingManagementRoomChangeH4ObligationDisputes" d
+                  LEFT JOIN "BuildingManagementRoomChangeH4ObligationDisputeResolutions" r
+                    ON r."DisputeId"=d."Id"
+                 WHERE d."ObligationId"=@obligation
+                """))
+            {
+                Add(dispute, "obligation", claim.Id);
+                await using var reader = await dispute.ExecuteReaderAsync();
+                if (await reader.ReadAsync())
+                {
+                    if (reader.IsDBNull(1) || !reader.GetBoolean(1))
+                        throw Denied();
+                }
+                await reader.DisposeAsync();
+            }
+
             var prior = new List<RoomChangeH4VerifiedPayment>();
             await using (var cmd = Command(db, """
                 SELECT p."AmountVnd", p."Id", p."SourceReference"
@@ -410,11 +431,20 @@ public sealed partial class SliceBStagingRoomChangeRequests
                 matchedIssued = invoiceId;
                 remainingOfficialDebt = debt;
             }
+            var asOf = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(
+                _clock.GetUtcNow().UtcDateTime, VietnamZone));
+            var aging = RoomChangeH4ObligationAgingEvaluator.Evaluate(
+                claim.Id, (RoomChangeH4SettlementKind)claim.Kind, claim.Due,
+                asOf, claim.Amount, paid);
+
             return new SliceBRoomChangeD04BalanceRead(
                 claim.Id, claim.Kind, claim.Amount, paid, claim.Amount-paid,
                 count, IsBankApiVerified: false,
                 CreditedIssuedInvoiceId: matchedIssued,
-                IssuedRentDebtAfterCreditVnd: remainingOfficialDebt);
+                IssuedRentDebtAfterCreditVnd: remainingOfficialDebt,
+                IsOverdue: aging.IsOverdue,
+                DaysPastDue: aging.DaysPastDue,
+                AgedAsOfVietnam: aging.AsOfVietnam);
         }, permitEndedContract: true);
 }
 
@@ -442,4 +472,6 @@ public sealed record SliceBRoomChangeD04BalanceRead(
     decimal LedgerPostedAmountVnd, decimal RemainingOutstandingVnd,
     long PostingCount, bool IsBankApiVerified,
     Guid? CreditedIssuedInvoiceId = null,
-    decimal? IssuedRentDebtAfterCreditVnd = null);
+    decimal? IssuedRentDebtAfterCreditVnd = null,
+    bool IsOverdue = false, int DaysPastDue = 0,
+    DateOnly? AgedAsOfVietnam = null);

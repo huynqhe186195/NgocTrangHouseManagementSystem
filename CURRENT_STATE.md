@@ -1,12 +1,12 @@
 # CURRENT STATE — NgocTrangHouseManagementSystem
-**Snapshot:** 2026-11-13 (P2.1 DONE at `f2665e0` on `feat/p2-1-issued-invoice-correction`; domain/PG/HTTP evidence green; not yet pushed)  
+**Snapshot:** 2026-11-13 (P2.1 DONE at `d36edb5`, pushed to `origin/feat/p2-1-issued-invoice-correction`; full 2H acceptance harness green at that SHA: 177 domain / 109 PG / 1 migration / 1 HTTP / full regression)  
 **Verified by:** Claude Code audit  
 **Working Directory:** `D:\Dev\NgocTrangBuilding\Project\NgocTrangHouseManagementSystem`
 
 ## Git Status
 
 **Current Branch:** `feat/p2-1-issued-invoice-correction` (off `main` @ `2149210`)  
-**HEAD SHA:** `f2665e0` (LOCAL ONLY — awaiting Owner push approval)  
+**HEAD SHA:** `d36edb5c04f84668f0044ab5bbae3526da136cdc` — pushed; `git ls-remote origin refs/heads/feat/p2-1-issued-invoice-correction` matches ("push đi" authorized 2026-11-13)  
 **Program baseline:** `c499d89` = merge commit "Merge pull request #10 from huynqhe186195/feat/local-safe-startup-20261109" (evidence chain: local regression exit 0 + CI workflow_dispatch run 43247648066 green 5/5 at `c499d89`)  
 **Untracked Files:** `etc/phase-audits/Phase2G3A7_RevisionLedger_Generated_Review.sql` (deliberate offline EF preview artifact — do not delete); `etc/test-results/` (local TRX output from this session)
 
@@ -18,6 +18,7 @@
 | `feat/local-safe-startup-20261109` | `4b69e36` | origin (fully merged into main) | ✅ MERGED — all commits in `main`; branch retained (no deletion without Owner authorization) |
 | `feat/d04b-operational-gates-20261108` | `705a481` | origin/feat/d04b-operational-gates-20261108 | ✅ Matches handoff |
 | `feat/d04b-protected-bank-evidence-20261108` | `66a62dc` | origin/feat/d04b-protected-bank-evidence-20261108 | ✅ Matches handoff |
+| `feat/p2-1-issued-invoice-correction` | `d36edb5` | origin/feat/p2-1-issued-invoice-correction | ✅ P2.1 DONE — pushed 2026-11-13, local == origin, full 2H harness green at that SHA |
 | `feat/phase2h-payos-signature-foundation-20261106` | `7249c9f` | origin (behind 1) | ⚠️ Behind, differs from handoff `2de0f7e` |
 | `wip/phase-2g2` | `e8e4f29` | origin (behind 49) | ⚠️ Behind, differs from handoff `a951999` |
 | `main` | `3e3636c` | origin/main | ✅ Matches handoff |

@@ -183,7 +183,7 @@
 
 ## P2 — Complete Phase 2H/2G Business Logic (Still HOLD)
 
-### P2.1 ✅ D01/D02 Invoice Correction — COMPLETE (`f2665e0`)
+### P2.1 ✅ D01/D02 Invoice Correction — COMPLETE (`d36edb5`, pushed)
 **Status:** DONE on `feat/p2-1-issued-invoice-correction`. Domain planner, PG concurrency/rollback proof and per-month-length HTTP parity all green.
 
 **Delivered (`24216e2`)**
@@ -197,7 +197,7 @@
   - `CanIssueInvoice` / `CanPostOfficialReceivable` / `CanExecuteRoomChange` all `false`.
 - 12 domain Facts `RICC01–RICC12`, incl. 118-scenario parity against an independent exact-rational oracle over 28/29/30/31-day months and leap year, the 0.5 away-from-zero boundary, full-month and day-1 edges, replay identity, and every fail-closed path.
 
-**Delivered (`f2665e0`)**
+**Delivered (`f2665e0`, doc-closed at `d36edb5`)**
 - `RoomChangeIssuedInvoiceCorrectionPostgreSql_Tests` (6 Facts `RICCPG01–RICCPG06`): mounts the real `20261029223000_Phase2G3AuditedMonthlyAdjustments` migration into a throwaway schema, so the production trigger definitions are what is exercised.
   - Two independent sessions proposing the same correction on one issued invoice serialize to exactly one row (`23505` for the loser), leaving no orphan decision journal.
   - Replaying an identical correction cannot double-post.
@@ -206,13 +206,14 @@
   - Migration `Down()` is a clean, complete reversal with no history, and refuses with `23514` once a correction exists.
 - Month-length parity matrix inside the authenticated HTTP Fact: the D01 target-owns-handover-day quote is verified against calendar arithmetic alone across 28-day (2027-02), leap 29-day (2028-02), 30-day (2027-04) and 31-day (2027-01) transfer months at day 11, including day split, per-line VND, and a re-read that returns the same stored figures.
 
-**Evidence (`f2665e0`)**
-- Domain 2H group 1 filter: 177/177 PASS — TRX `etc/test-results/p21/p21-2h-domain-group1.trx` (`Assert-Phase2HTrx.ps1` verified)
-- PG 2H concurrency group incl. the 6 new Facts: 109/109 PASS — TRX `etc/test-results/p21/p21-pg-2h-group2.trx`
-- Authenticated HTTP/PG parity: 1/1 PASS — TRX `etc/test-results/p21/p21-http-parity.trx`
-- Concurrency Fact repeated 5× standalone: 5/5 PASS (no flakiness)
-- PG full migration chain: 1/1 PASS — TRX `etc/test-results/p21/p21-pg-group3.trx`
-- `verify-2g-security-batch.ps1 -Mode Full`: exit 0, QUALITY GATE PASS (Domain 732 / App 231 / EF 447 / HTTP 76) — at `cc16422`
+**Evidence (pushed `d36edb5`, full acceptance harness at that exact SHA)**
+- `verify-phase-2h-financial-foundations.ps1` at `d36edb5`: **all five groups PASS**, exit 0 — `=== QUALITY GATE PASS: ALL REQUESTED TEST RUNS SUCCEEDED ===`, `COMMIT=d36edb5c04f84668f0044ab5bbae3526da136cdc`
+- Group 1 — Domain 2H (incl. `RICC01–RICC12`): 177/177 PASS — `~/NgocTrang-Test-Logs/15-2h-financial-domain.log` (+ `.trx`, `Assert-Phase2HTrx.ps1` verified); log line 1 stamped `PHASE2H_COMMIT=d36edb5…`
+- Group 2 — PG 2H concurrency (incl. `RICCPG01–RICCPG06`): 109/109 PASS — `16-2h-postgresql.log` / `.trx`; stamped `d36edb5`
+- Group 3 — PG fresh disposable migration chain: 1/1 PASS (`PGMIG01`) — `17-2h-full-migration.log` / `.trx`; stamped `d36edb5`
+- Group 4 — Authenticated two-PG HTTP + month-length matrix: 1/1 PASS (2m01s) — `18-2h-auth-http.log` / `.trx`; stamped `d36edb5`
+- Group 5 — Full regression: 732 Domain / 231 Application / 447 SQLite EF / 76 HTTP, 0 failed, 0 skipped — `19-2h-full-regression.log`
+- Concurrency Fact repeated 5× standalone before the push: 5/5 PASS (no flakiness)
 - Solution build: 0 errors
 - Harness updated: 6 source gates + 2 verify bundles accept the new branch; 2H domain count 165 → 177, 2H PG count 103 → 109
 
@@ -396,7 +397,7 @@
 **Backlog Status Summary:**
 - P0: 6/6 closed (P0.1–P0.3 done, P0.4 not needed, P0.5 startup gate at `7621d8a`, P0.6 full bundle at `7621d8a`)
 - P1: 5/5 done (P1.1 official at `f30e14d`; P1.2 rehearsal gate at `d085d02`; P1.4 crash/recovery at `682613d`; P1.3 vault + restricted roles at `18fe521`, 64/64; P1.5 internal simulated payOS staging E2E at `e58b12c`, 20/20)
-- P2: 1/6 (P2.1 DONE at `f2665e0` on `feat/p2-1-issued-invoice-correction`; P2.2–P2.6 outstanding)
+- P2: 1/6 (P2.1 DONE at `d36edb5`, pushed to `origin/feat/p2-1-issued-invoice-correction`; P2.2–P2.6 outstanding)
 - P3: 4/4 done + **MERGED to main** (P3.1 merge `01cba31`; P3.2 DONE `1ddf2e6`; P3.3 matrix; **P3.4 CLOSED 2026-11-12: PR #10 → main merge commit `c499d89`, Owner §6 signed + §3.2 P2 deferral accepted; post-merge local regression + CI green 5/5 at the merge commit**)
 
 **Current Focus:** P3 COMPLETE. **`main` = program baseline at merge commit `c499d89`** (post-merge docs/guards `2149210`+). Evidence chain closed: CI billing unlocked card-free → run 384 green 5/5 at `c63d370` (ID 43240562191) → Owner §6 + §3.2 approved → PR #10 merged `c499d89` → local regression exit 0 + CI run 43247648066 green 5/5 at `c499d89`. **Next: P2.1–P2.6 on follow-up feature branches off `main`** (P2.1 issued-invoice D01/D02 correction; P2.2 service fees; P2.3 genuine bank evidence; P2.4 three-signature flow — Owner decision E-sign vs scanned; P2.5 move-out E2E; P2.6 frontend discovery). HOLD unchanged: real payOS money flow, TLS public callback, production vault/roles/secrets, production deploy.

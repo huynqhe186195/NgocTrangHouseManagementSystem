@@ -2006,13 +2006,12 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 foreach (var type in Enum.GetValues<
                     BuildingManagement.MoveOuts.MoveOutChecklistTaskType>())
                 {
-                    var task = new BuildingManagement.MoveOuts.MoveOutChecklistTask(
-                        Guid.NewGuid(), financeMoveOut, type);
-                    if (type == BuildingManagement.MoveOuts.MoveOutChecklistTaskType
-                            .FinalMeterReading)
-                        task.MarkFinalMeterReadingsVerified(
-                            DateTime.UtcNow.AddDays(-5));
-                    db.MoveOutChecklistTasks.Add(task);
+                    // The FinalMeterReading task is NOT pre-completed by the
+                    // fixture: the P2.5 E2E lane proves the evidence-backed
+                    // /verify-final-meters route itself completes it later.
+                    db.MoveOutChecklistTasks.Add(
+                        new BuildingManagement.MoveOuts.MoveOutChecklistTask(
+                            Guid.NewGuid(), financeMoveOut, type));
                 }
 
                 var installed = new DateTime(2026, 8, 1);
@@ -2038,6 +2037,18 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                         BuildingManagement.Utilities.UtilityType.Water,
                         12000m, installed, null));
                 db.MeterReadings.AddRange(
+                    // August (previous-month) zero-usage anchors: without
+                    // them the meter coverage assessor flags
+                    // MissingPreviousMonthReading and the authenticated
+                    // /verify-final-meters signoff must refuse the
+                    // evidence (final-meter lane is only satisfiable
+                    // with a physically continuous reading history).
+                    new BuildingManagement.Utilities.MeterReading(
+                        Guid.NewGuid(), financeMeterE, 2026, 8,
+                        10m, 10m, new DateTime(2026, 8, 31)),
+                    new BuildingManagement.Utilities.MeterReading(
+                        Guid.NewGuid(), financeMeterW, 2026, 8,
+                        15m, 15m, new DateTime(2026, 8, 31)),
                     new BuildingManagement.Utilities.MeterReading(
                         financeReadingE, financeMeterE, 2026, 9,
                         10m, 20m, readAt),
@@ -3968,6 +3979,41 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 Assert.Equal(finalBill, json.RootElement
                     .GetProperty("outstandingAmount").GetDecimal());
             }
+
+            // P2.5 E2E: the final E/W meter reading checklist item is
+            // completed ONLY through the authenticated evidence-backed
+            // signoff route. The fixture never pre-completes it via EF.
+            // Idempotent replay must return the SAME signed task.
+            var meterSignoffRoute = scopedContracts + "/" +
+                financeContract.ToString("D") + "/move-out-requests/" +
+                financeMoveOut.ToString("D") + "/verify-final-meters";
+            using (var signedMeters = await clientB.PostAsync(
+                meterSignoffRoute, null))
+            {
+                Assert.Equal(HttpStatusCode.OK, signedMeters.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await signedMeters.Content.ReadAsStringAsync());
+                Assert.Equal((int)BuildingManagement.MoveOuts
+                    .MoveOutChecklistTaskType.FinalMeterReading,
+                    json.RootElement.GetProperty("type").GetInt32());
+                Assert.True(json.RootElement.GetProperty("isCompleted")
+                    .GetBoolean());
+                Assert.NotNull(json.RootElement.GetProperty("completedAt"));
+            }
+            using (var signedMetersReplay = await clientB.PostAsync(
+                meterSignoffRoute, null))
+            {
+                Assert.Equal(HttpStatusCode.OK, signedMetersReplay.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await signedMetersReplay.Content.ReadAsStringAsync());
+                Assert.True(json.RootElement.GetProperty("isCompleted")
+                    .GetBoolean());
+            }
+            using (var foreignMeters = await clientB.PostAsync(
+                scopedContracts + "/" + contractA.ToString("D") +
+                "/move-out-requests/" + financeMoveOut.ToString("D") +
+                "/verify-final-meters", null))
+                Assert.Equal(HttpStatusCode.Forbidden, foreignMeters.StatusCode);
             // Fully staged payments do not suffice for CLOSEOUT once
             // an official receivable exists. Independent manual review is
             // required before the final bill is considered settled.
@@ -4469,6 +4515,394 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 financeMoveOut.ToString("D") + "/room-disposition"))
                 Assert.Equal(HttpStatusCode.Forbidden,
                     foreignDisposition.StatusCode);
+
+            // P2.5 OI-06 E2E: a CONFIRMED future booking (Reserved) on the
+            // vacated room must retain it as Reserved at closeout, not
+            // release it to Available. This is the second E2E disposition
+            // lane: the domain tests prove the policy, this proves the
+            // authenticated closeout honors it end-to-end. The room below
+            // is a NEW scratch room so the finance scenario above (which
+            // asserts Available) is untouched.
+            var futureBookingRoom = await CreateChildAsync(clientB, roomCreate,
+                new { floorId = floorB, roomNumber = "112",
+                    name = "PG B112 future booking retention", area = 24m,
+                    capacity = 2,
+                    status = (int)BuildingManagement.Rooms.RoomStatus.Occupied });
+            var futureBookingContract = Guid.NewGuid();
+            var futureBookingMoveOut = Guid.NewGuid();
+            var futureBookingReservation = Guid.NewGuid();
+            var futureBookingDraftId = Guid.NewGuid();
+            using (var futureSetup = app.Services.CreateScope())
+            {
+                var sp = futureSetup.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var db = await sp.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>()
+                    .GetDbContextAsync();
+                var futureContract = new BuildingManagement.Contracts.Contract(
+                    futureBookingContract,
+                    "FUT-HTTP-" + futureBookingContract.ToString("N"),
+                    futureBookingRoom,
+                    new DateTime(2026, 9, 1, 0, 0, 0, DateTimeKind.Utc),
+                    null, 3000000m);
+                futureContract.Activate();
+                db.Contracts.Add(futureContract);
+                db.ContractTenants.Add(
+                    new BuildingManagement.Contracts.ContractTenant(
+                        Guid.NewGuid(), futureBookingContract, tenantB,
+                        BuildingManagement.Contracts.ContractTenantRole
+                            .PrimaryTenant));
+                var futureRequest = new BuildingManagement.MoveOuts.MoveOutRequest(
+                    futureBookingMoveOut, futureBookingContract,
+                    futureBookingRoom, new DateOnly(2026, 9, 30),
+                    "E2E future booking retention");
+                futureRequest.Approve(DateTime.UtcNow.AddDays(-1),
+                    "Approved month-end exit with confirmed booking");
+                db.MoveOutRequests.Add(futureRequest);
+                foreach (var type in Enum.GetValues<
+                    BuildingManagement.MoveOuts.MoveOutChecklistTaskType>())
+                {
+                    var task = new BuildingManagement.MoveOuts.MoveOutChecklistTask(
+                        Guid.NewGuid(), futureBookingMoveOut, type);
+                    if (type == BuildingManagement.MoveOuts.MoveOutChecklistTaskType
+                            .FinalMeterReading)
+                        // The verified-meter lane is proven above for the
+                        // finance room; this lane isolates disposition
+                        // retention, so seed the meter gate directly.
+                        task.MarkFinalMeterReadingsVerified(
+                            DateTime.UtcNow.AddDays(-1));
+                    db.MoveOutChecklistTasks.Add(task);
+                }
+                // A one-month deposit hold, already completed and allocated,
+                // so the closeout deposit audit sees the exact held amount.
+                var futureDepositPaymentId = Guid.NewGuid();
+                var futureDeposit = new BuildingManagement.Payments.Payment(
+                    futureDepositPaymentId,
+                    "FUT-PAID-" + futureDepositPaymentId.ToString("N"),
+                    tenantB, BuildingManagement.Payments.PaymentPurpose
+                        .ContractDeposit,
+                    BuildingManagement.Payments.BuildingManagement.Payments
+                        .PaymentMethod.BankTransfer,
+                    BuildingManagement.Payments.PaymentChannel.Manual,
+                    3000000m, contractId: futureBookingContract,
+                    transactionReference: "FUT-INITIAL-DEPOSIT-PAID-2026");
+                futureDeposit.Complete(DateTime.UtcNow.AddDays(-2),
+                    "FUT-INITIAL-DEPOSIT-PAID-2026");
+                db.Payments.Add(futureDeposit);
+                await db.SaveChangesAsync();
+                var futureAllocation = new BuildingManagement.DepositSettlements
+                    .DepositSettlement(
+                        Guid.NewGuid(),
+                        BuildingManagement.DepositSettlements.DepositSettlementType
+                            .AllocateToContractDeposit,
+                        3000000m, paymentId: futureDepositPaymentId,
+                        targetContractId: futureBookingContract,
+                        notes: "Isolated held deposit for booking retention");
+                futureAllocation.Complete(DateTime.UtcNow.AddDays(-1));
+                db.DepositSettlements.Add(futureAllocation);
+                // The confirmed future occupancy on the vacated room. A
+                // Reserved booking IS a genuine commitment (OI-06). The
+                // tenant must exist (FK), so use the seeded tenantB.
+                var futureBooking = new BuildingManagement.RoomReservations
+                    .RoomReservation(
+                        futureBookingReservation,
+                        "FUT-RES-" + futureBookingReservation.ToString("N"),
+                        futureBookingRoom, tenantB,
+                        new DateTime(2026, 10, 5, 0, 0, 0, DateTimeKind.Utc),
+                        3000000m, 3000000m, 500000m);
+                futureBooking.MarkReserved(
+                    DateTime.UtcNow.AddDays(-2),
+                    new DateTime(2026, 10, 1, 0, 0, 0, DateTimeKind.Utc));
+                db.RoomReservations.Add(futureBooking);
+                // The closeout requires one final issued invoice for this
+                // contract+request; mirror the finance lane's draft graph
+                // (meters, rates, readings, two-line draft snapshot) so the
+                // authenticated prepare -> review -> issue lane works.
+                var futureMeterE = Guid.NewGuid();
+                var futureMeterW = Guid.NewGuid();
+                var futureReadingE = Guid.NewGuid();
+                var futureReadingW = Guid.NewGuid();
+                var futureDraftId = futureBookingDraftId;
+                var futureInstalled = new DateTime(2026, 8, 1);
+                var futureReadAt = new DateTime(2026, 9, 30);
+                db.UtilityMeters.AddRange(
+                    new BuildingManagement.Utilities.UtilityMeter(
+                        futureMeterE, futureBookingRoom,
+                        BuildingManagement.Utilities.UtilityType.Electricity,
+                        "FUT-E-" + futureMeterE.ToString("N"),
+                        10m, futureInstalled),
+                    new BuildingManagement.Utilities.UtilityMeter(
+                        futureMeterW, futureBookingRoom,
+                        BuildingManagement.Utilities.UtilityType.Water,
+                        "FUT-W-" + futureMeterW.ToString("N"),
+                        15m, futureInstalled));
+                // Reuse the finance lane's UtilityRate rows (same building
+                // b, type and effective date): seeding a second
+                // (building, type, effectiveFrom) pair would violate the
+                // unique index IX_BuildingManagementUtilityRates_..._Effec~.
+                // The draft snapshot below references the same immutable
+                // rates via financeRateE / financeRateW.
+                db.MeterReadings.AddRange(
+                    new BuildingManagement.Utilities.MeterReading(
+                        futureReadingE, futureMeterE, 2026, 9,
+                        10m, 20m, futureReadAt),
+                    new BuildingManagement.Utilities.MeterReading(
+                        futureReadingW, futureMeterW, 2026, 9,
+                        15m, 19m, futureReadAt));
+                db.Invoices.Add(BuildingManagement.Invoices.Invoice.CreateDraft(
+                    futureDraftId,
+                    BuildingManagement.Invoices.InvoiceDraftSnapshot.Capture(
+                        futureBookingContract, futureBookingRoom, 2026, 9, new[]
+                        {
+                            new BuildingManagement.Invoices.InvoiceDraftUtilityLineSnapshot(
+                                BuildingManagement.Utilities.UtilityType.Electricity,
+                                financeRateE, "SingleRateWholeMonth",
+                                10m, 3500m, 35000m,
+                                new[] {
+                                    new BuildingManagement.Invoices.InvoiceDraftMeterSegmentSnapshot(
+                                        futureReadingE, futureMeterE,
+                                        BuildingManagement.Utilities.MeterUsageSourceType.MonthlyReading,
+                                        futureReadAt, 10m, 20m)
+                                },
+                                Array.Empty<string>()),
+                            new BuildingManagement.Invoices.InvoiceDraftUtilityLineSnapshot(
+                                BuildingManagement.Utilities.UtilityType.Water,
+                                financeRateW, "SingleRateWholeMonth",
+                                4m, 12000m, 48000m,
+                                new[] {
+                                    new BuildingManagement.Invoices.InvoiceDraftMeterSegmentSnapshot(
+                                        futureReadingW, futureMeterW,
+                                        BuildingManagement.Utilities.MeterUsageSourceType.MonthlyReading,
+                                        futureReadAt, 15m, 19m)
+                                },
+                                Array.Empty<string>())
+                        }), Guid.NewGuid));
+                await db.SaveChangesAsync();
+                await uow.CompleteAsync();
+            }
+            var futureRoot = FinalInvoices(futureBookingContract);
+            // Final bill issuance lane (OI-01): prepare -> independent
+            // review -> root issue. Mirrors the finance lane but for the
+            // booking-retention contract.
+            using var futurePrepared = await PostValidFinanceAsync(
+                clientRoot, futureRoot + "/move-outs/" +
+                    futureBookingMoveOut.ToString("D") + "/prepare", new { });
+            var futureEvidenceId = futurePrepared.RootElement
+                .GetProperty("id").GetGuid();
+            var futureEvidenceHash = futurePrepared.RootElement
+                .GetProperty("sha256").GetString();
+            Assert.NotNull(futureEvidenceHash);
+            using var futureReviewSubmission = await PostValidFinanceAsync(
+                clientRoot, futureRoot + "/evidence/" +
+                    futureEvidenceId.ToString("D") + "/reviews",
+                new { note = "Independent scoped future-booking review" });
+            var futureReviewId = futureReviewSubmission.RootElement.GetGuid();
+            using var futureReviewDecision = await PostValidFinanceAsync(
+                clientB, futureRoot + "/reviews/" +
+                    futureReviewId.ToString("D") + "/decide",
+                new { acceptForDesign = true,
+                    reason = "Independent meter, rent and policy evidence verified" });
+            using var futureIssued = await PostValidFinanceAsync(
+                clientRoot, futureRoot + "/evidence/" +
+                    futureEvidenceId.ToString("D") + "/issue-candidate",
+                new {
+                    draftInvoiceId = futureBookingDraftId,
+                    contractId = futureBookingContract,
+                    roomId = futureBookingRoom,
+                    evidenceSha256 = futureEvidenceHash,
+                    paymentDueDate = DateOnly.FromDateTime(
+                        TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow,
+                            TimeZoneInfo.FindSystemTimeZoneById(
+                                "Asia/Ho_Chi_Minh"))).AddDays(14)
+                        .ToString("yyyy-MM-dd"),
+                    dueDatePolicyReference = "AGREED-DUE-DATE-POLICY-2026",
+                    auxiliaryFeeDecision = 1,
+                    auxiliaryFeePolicyReference =
+                        "NO-AUXILIARY-FEES-POLICY-2026",
+                    auxiliaryFeeReviewerId = root,
+                    auxiliaryCharges = Array.Empty<object>()
+                });
+            var futureIssuedId = futureIssued.RootElement
+                .GetProperty("id").GetGuid();
+            // The issued final bill must be paid in full before closeout
+            // (debt settlement): one manual receipt for the whole amount.
+            using var futurePaidBill = await PostValidFinanceAsync(
+                clientRoot, futureRoot + "/issued/" +
+                    futureIssuedId.ToString("D") + "/manual-receipts",
+                new {
+                    tenantId = tenantB, amount = 3083000m,
+                    paidAtUtc = DateTime.UtcNow,
+                    transactionReference = "FUT-BANK-FINAL-BILL-0001",
+                    bankEvidenceReference = "FUT-SIGNED-RECEIPT-0001"
+                });
+            var futureBillJournalId = futurePaidBill.RootElement
+                .GetProperty("allocationJournalId").GetGuid();
+            // Post the final bill as the official receivable, then review
+            // the journal receipt against it (debt settlement precondition).
+            var futurePostedBill = await PostFinalAsync(
+                clientRoot, futureRoot + "/issued/" +
+                    futureIssuedId.ToString("D") + "/post-receivable", "{}");
+            Assert.True(futurePostedBill.Status is HttpStatusCode.OK or
+                HttpStatusCode.Created,
+                $"Future-booking posting: {futurePostedBill.Status} " +
+                futurePostedBill.Body);
+            Guid futureOfficialPostingId;
+            using (var postedJson = JsonDocument.Parse(
+                futurePostedBill.Body))
+                futureOfficialPostingId = postedJson.RootElement
+                    .GetProperty("postingId").GetGuid();
+            var futureJournalReview = await PostFinalAsync(
+                clientB, futureRoot + "/receivables/" +
+                    futureOfficialPostingId.ToString("D") +
+                    "/allocations/" + futureBillJournalId.ToString("D") +
+                    "/review",
+                JsonSerializer.Serialize(new {
+                    accept = true,
+                    bankStatementEvidenceReference =
+                        "FUT-RECONCILED-BANK-STATEMENT-0001",
+                    reason = "Independent review confirmed original bank statement"
+                }));
+            Assert.True(futureJournalReview.Status is HttpStatusCode.OK or
+                HttpStatusCode.Created,
+                $"Future-booking journal review: " +
+                $"{futureJournalReview.Status} {futureJournalReview.Body}");
+            var futureCloseoutRoute = futureRoot + "/move-outs/" +
+                futureBookingMoveOut.ToString("D") + "/complete";
+            var futureCloseoutBody = JsonSerializer.Serialize(new {
+                forfeitAmount = 0m,
+                inspectionEvidenceReference = "FUT-SIGNED-INSPECTION-0001",
+                handoverEvidenceReference = "FUT-SIGNED-HANDOVER-0001",
+                depositPolicyReference = "FUT-CONTRACT-DEPOSIT-POLICY-2026",
+                confirmManualRefundPaid = true,
+                refundPaidAtUtc = DateTime.UtcNow,
+                refundTransactionReference = "FUT-MANUAL-REFUND-0001",
+                refundBankEvidenceReference = "FUT-REFUND-SIGNED-PROOF-0001"
+            });
+            var futureDenied = await PostFinalAsync(
+                clientRoot, futureCloseoutRoute, futureCloseoutBody);
+            Assert.Equal(HttpStatusCode.Forbidden, futureDenied.Status);
+            var futureDepositApprove = await PostFinalAsync(
+                clientRoot, futureRoot + "/move-outs/" +
+                    futureBookingMoveOut.ToString("D") +
+                    "/deposit-settlement/approve",
+                JsonSerializer.Serialize(new {
+                    forfeitAmount = 0m,
+                    depositPolicyReference = "FUT-CONTRACT-DEPOSIT-POLICY-2026"
+                }));
+            Assert.True(futureDepositApprove.Status is HttpStatusCode.OK or
+                HttpStatusCode.Created,
+                $"Future-booking deposit decision: " +
+                $"{futureDepositApprove.Status} {futureDepositApprove.Body}");
+            var futureDestination = await PostFinalAsync(
+                clientRoot, futureRoot + "/move-outs/" +
+                    futureBookingMoveOut.ToString("D") +
+                    "/deposit-settlement/refund-destination",
+                JsonSerializer.Serialize(new {
+                    beneficiaryName = "Nguyen Van B",
+                    bankName = "Isolated Test Bank",
+                    accountNumber = "210987654321",
+                    signedDestinationReference = "FUT-BENEFICIARY-0001",
+                    holidayCalendarReference = "SIGNED-VIETNAM-HOLIDAYS-2026",
+                    statutoryHolidays = Array.Empty<string>()
+                }));
+            Assert.True(futureDestination.Status is HttpStatusCode.OK or
+                HttpStatusCode.Created,
+                $"Future-booking destination: " +
+                $"{futureDestination.Status} {futureDestination.Body}");
+            var futurePaidAt = DateTime.UtcNow;
+            futurePaidAt = futurePaidAt.AddTicks(
+                -(futurePaidAt.Ticks % 10L));
+            var futureBankReview = await PostFinalAsync(
+                clientB, futureRoot + "/move-outs/" +
+                    futureBookingMoveOut.ToString("D") +
+                    "/deposit-settlement/refund-bank-review",
+                JsonSerializer.Serialize(new {
+                    paidAtUtc = futurePaidAt,
+                    transactionReference = "FUT-MANUAL-REFUND-0001",
+                    bankStatementEvidenceReference =
+                        "FUT-REFUND-SIGNED-PROOF-0001",
+                    signedIndependentReviewReference =
+                        "FUT-INDEPENDENT-REFUND-REVIEW-0001"
+                }));
+            Assert.True(futureBankReview.Status is HttpStatusCode.OK or
+                HttpStatusCode.Created,
+                $"Future-booking bank review: " +
+                $"{futureBankReview.Status} {futureBankReview.Body}");
+            using var futureCloseout = await PostValidFinanceAsync(
+                clientRoot, futureCloseoutRoute, new {
+                    forfeitAmount = 0m,
+                    inspectionEvidenceReference = "FUT-SIGNED-INSPECTION-0001",
+                    handoverEvidenceReference = "FUT-SIGNED-HANDOVER-0001",
+                    depositPolicyReference = "FUT-CONTRACT-DEPOSIT-POLICY-2026",
+                    confirmManualRefundPaid = true,
+                    refundPaidAtUtc = futurePaidAt,
+                    refundTransactionReference = "FUT-MANUAL-REFUND-0001",
+                    refundBankEvidenceReference = "FUT-REFUND-SIGNED-PROOF-0001"
+                });
+            Assert.Equal(futureBookingContract,
+                futureCloseout.RootElement.GetProperty("contractId").GetGuid());
+            Assert.Equal((int)BuildingManagement.Rooms.RoomStatus.Reserved,
+                futureCloseout.RootElement.GetProperty("roomStatus").GetInt32());
+            Assert.True(futureCloseout.RootElement
+                .GetProperty("hasFutureCommitment").GetBoolean());
+            var futureDispositionId = futureCloseout.RootElement
+                .GetProperty("roomDispositionId").GetGuid();
+            Assert.NotEqual(Guid.Empty, futureDispositionId);
+            using (var futureCheck = app.Services.CreateScope())
+            {
+                using var futureCheckUow = futureCheck.ServiceProvider
+                    .GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var futureCheckDb = await futureCheck.ServiceProvider
+                    .GetRequiredService<IDbContextProvider<BuildingManagementDbContext>>()
+                    .GetDbContextAsync();
+                Assert.Equal(BuildingManagement.Rooms.RoomStatus.Reserved,
+                    (await futureCheckDb.Rooms.SingleAsync(
+                        x => x.Id == futureBookingRoom)).Status);
+                var futureRecord = await futureCheckDb.MoveOutRoomDispositions
+                    .AsNoTracking().SingleAsync(
+                        x => x.Id == futureDispositionId);
+                futureRecord.VerifyStoredDisposition();
+                Assert.Equal(BuildingManagement.Rooms.RoomStatus.Reserved,
+                    futureRecord.ResultRoomStatus);
+                Assert.Equal(futureBookingReservation,
+                    futureRecord.FutureReservationId);
+                Assert.True(futureRecord.FutureReservationId.HasValue ||
+                    futureRecord.FutureSignedContractId.HasValue);
+                Assert.Equal(BuildingManagement.Contracts.ContractStatus.Ended,
+                    (await futureCheckDb.Contracts.SingleAsync(
+                        x => x.Id == futureBookingContract)).Status);
+                await futureCheckUow.CompleteAsync();
+            }
+            using (var futureRead = await clientB.GetAsync(
+                futureRoot + "/move-outs/" +
+                futureBookingMoveOut.ToString("D") + "/room-disposition"))
+            {
+                Assert.Equal(HttpStatusCode.OK, futureRead.StatusCode);
+                using var json = JsonDocument.Parse(
+                    await futureRead.Content.ReadAsStringAsync());
+                Assert.Equal((int)BuildingManagement.Rooms.RoomStatus.Reserved,
+                    json.RootElement.GetProperty("resultRoomStatus")
+                        .GetInt32());
+                Assert.True(json.RootElement.GetProperty(
+                    "hasFutureCommitment").GetBoolean());
+            }
+            // The retained booking itself survives closeout untouched.
+            using (var retainedCheck = app.Services.CreateScope())
+            {
+                using var retainedUow = retainedCheck.ServiceProvider
+                    .GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var retainedDb = await retainedCheck.ServiceProvider
+                    .GetRequiredService<IDbContextProvider<BuildingManagementDbContext>>()
+                    .GetDbContextAsync();
+                Assert.Equal(
+                    BuildingManagement.RoomReservations.RoomReservationStatus.Reserved,
+                    (await retainedDb.RoomReservations.SingleAsync(
+                        x => x.Id == futureBookingReservation)).Status);
+                await retainedUow.CompleteAsync();
+            }
 
 
             // Authenticated building-scoped retrieval AFTER commit:

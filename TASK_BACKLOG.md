@@ -551,6 +551,24 @@
 **Blocker:** None
 **Dependency:** P4.1 ✅
 
+### P4.2 ✅ Buildings & Rooms Screens (list / detail / floor-plan / rooms) — COMPLETE (`aea363c`, pushed)
+**Status:** DONE — four screens per the Owner-provided mockups (`Docs/front-end/building_rooms`): building card grid, building detail with gradient placeholder card + KPI `StatTile` row + floor table with miniature floor-plan thumbnails, floor-plan view (schematic top/bottom blocks around a shared-corridor strip, status-coloured, area-proportional) with room side panel, and the rooms listing with status filter chips + text search + summary tiles joining room→floor→building client-side. New UI primitives (`PageHeader`, `StatTile`, `StatusBadge`, `EmptyState`), API layer (`lib/api/types.ts`, `buildingApi.ts`, `buildingQueries.ts` react-query hooks + `useBuildingSnapshot` aggregation). The http client recognizes the building-scope gate's real denial shape — a 302 to `/Error?httpStatusCode=403` that `fetch()` follows silently — plus a non-JSON 200, and maps both to `ApiError` 403 so `GateNotice` shows the honest access-denied notice (with traceId) instead of an empty list. All mutating buttons disabled with explanatory tooltips (gate deny-all today); no price/contract/equipment data invented (no public API yet). Nav only lists routes that exist.
+**Evidence:**
+- ✅ Commit `aea363c` pushed to `origin/main` (fast-forward `613ffed..aea363c`, no force)
+- ✅ `tsc --noEmit` + `vite build` PASS re-run at the pushed SHA (`dist/assets/index-pXt_bXz9.js` 384.49 kB, exit 0)
+- ✅ Vitest 28/28 (4 files: http envelope/401/403-gate/redirect-trail tests, tokenStore, authClient, buildingSnapshot aggregation) re-run at the pushed SHA, exit 0
+- ✅ E2E harness `etc/scripts/verify-p42-building-reads.ps1` (committed in `aea363c`): second Staging Host on 44321 + Vite on 5273 (the Owner's dev instance on 44311/5173 untouched), Host built into an isolated `host-bin` output so the dev instance's locked `bin\Release` DLLs are never written to, two throwaway PG16 databases (`bm_p42_identity_test`, `bm_p42_legacy_test`) recreated per run on `bm-p21-pg-15432` (15433 and 5432 untouched) — ALL STEPS PASSED at the pushed SHA: grant through proxy 200, and all three `GET /api/building-management/{building,floor,room}` answer the scope-gate denial (raw 302 → `/Error?httpStatusCode=403`; browser-followed 404), which is exactly the state the screens render
+- ✅ LOG_DIRECTORY `C:\Users\Huynq\NgocTrang-Test-Logs\p42-building-reads-20261113-230615` (pushed-SHA run; earlier iterations `...-223419`/`...-224129` recorded the diagnosis of the 302→`/Error` shape)
+- ✅ Admin password / token generated in-process, never echoed, never persisted (SEC-03 discipline)
+**Definition of Done:**
+- ✅ Four screens wired to the real read endpoints through the Vite proxy
+- ✅ Unit tests + build + e2e probe of all three endpoints at the pushed SHA
+- ✅ Gate denial rendered honestly (no empty-list masquerade), mutations disabled
+- ✅ No backend C# touched; untracked strays left uncommitted
+
+**Blocker:** None (data appears when the operator-grant store is approved server-side)
+**Dependency:** P4.1 ✅ (shell, auth, http client)
+
 ---
 
 ## NOT IN BACKLOG (Already Fixed — Do Not Repeat)
@@ -581,4 +599,4 @@
 - P2: 6/6 **MERGED INTO `main`** (PR #11 merge commit `72a0721`, 2026-11-13, no squash — P2.1 `d36edb5` / P2.2 `b18644b` / P2.3 `aa3b9bb` / P2.4 `950610a` / P2.5 `2d01952` / P2.6 `6c9852f`; local 5-group harness ALL PASSED at `72a0721`; post-merge CI stale-assertion fix `d364ee1` with CI run 43423912631 green 5/5)
 - P3: 4/4 done + **MERGED to main** (P3.1 merge `01cba31`; P3.2 DONE `1ddf2e6`; P3.3 matrix; **P3.4 CLOSED 2026-11-12: PR #10 → main merge commit `c499d89`, Owner §6 signed + §3.2 P2 deferral accepted; post-merge local regression + CI green 5/5 at the merge commit**)
 
-**Current Focus:** **P4.1 + P4.1b CLOSED (2026-11-13): React 19 auth portal at `46f4dee` pushed to `main`** — Vitest 20/20 + build PASS + 4/4 e2e through the Vite proxy against a real Staging Host and two disposable PG databases on 15432 (LOG_DIRECTORY `C:\Users\Huynq\NgocTrang-Test-Logs\p41-frontend-auth-e2e-20261113-204601`); login restyled at `576072b`, forgot-password FE_1/FE_2/FE_3 restyled at `46f4dee`. Owner stack decision honored: React 19, `frontend/` independent from the backend, proxy in dev / `VITE_API_BASE` when deployed. P0→P3 + P2 all merged in `main` (baseline `c499d89`, P2 merge `72a0721`, CI fix `d364ee1`). Next: P4.2+ business screens (Buildings/Rooms/Contracts/…) gated by the deny-all authorization — needs an Owner decision on enabling a staging grant path; real payOS money flow, TLS public callback, production vault/roles/secrets, production deploy stay HOLD.
+**Current Focus:** **P4.2 CLOSED (2026-11-13): Buildings & Rooms screens at `aea363c` pushed to `main`** — Vitest 28/28 + build PASS at the pushed SHA; e2e harness (`verify-p42-building-reads.ps1`) on an isolated lane (Host 44321 + Vite 5273, disposable `bm_p42_*` databases on 15432) confirms all three list endpoints answer the building-scope gate denial for a real token (raw 302 → `/Error?httpStatusCode=403`), and the frontend renders that as an honest access-denied notice (LOG_DIRECTORY `C:\Users\Huynq\NgocTrang-Test-Logs\p42-building-reads-20261113-230615`). P4.1 + P4.1b auth portal closed at `46f4dee`. P0→P3 + P2 all merged in `main` (baseline `c499d89`, P2 merge `72a0721`, CI fix `d364ee1`). Next: further business screens (Contracts/Invoices/Utilities) or enabling a staging grant path so the gate stops deny-all — needs an Owner decision; real payOS money flow, TLS public callback, production vault/roles/secrets, production deploy stay HOLD.

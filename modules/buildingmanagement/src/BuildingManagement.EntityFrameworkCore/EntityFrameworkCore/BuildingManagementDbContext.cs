@@ -51,6 +51,8 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
     public DbSet<RoomChangeEvidenceArchiveRecord> RoomChangeEvidenceArchives { get; set; } = default!;
     public DbSet<RoomChangeHandoverEvidenceRecord> RoomChangeHandoverEvidence { get; set; } = default!;
     public DbSet<RoomChangeCompletionRecord> RoomChangeCompletions { get; set; } = default!;
+    public DbSet<RoomChangeSignedHandoverScanRecord> RoomChangeSignedHandoverScans { get; set; } = default!;
+    public DbSet<RoomChangeContractDocumentAccessRecord> ContractDocumentAccesses { get; set; } = default!;
     public DbSet<RoomChangeMidMonthCompletionRecord> RoomChangeMidMonthCompletions { get; set; } = default!;
     // H4 signed disposition PROPOSAL; never a cash movement or transfer completion.
     public DbSet<RoomChangeDepositDispositionIntentRecord> RoomChangeDepositDispositionIntents { get; set; } = default!;
@@ -189,6 +191,10 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.RoomChangeEvidenceArchiveRecordConfiguration());
         builder.ApplyConfiguration(
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.RoomChangeHandoverEvidenceConfiguration());
+        builder.ApplyConfiguration(
+            new BuildingManagement.EntityFrameworkCore.EntityConfigurations.RoomChangeSignedHandoverScanConfiguration());
+        builder.ApplyConfiguration(
+            new BuildingManagement.EntityFrameworkCore.EntityConfigurations.RoomChangeContractDocumentAccessConfiguration());
         builder.ApplyConfiguration(
             new BuildingManagement.EntityFrameworkCore.EntityConfigurations.RoomChangeCompletionConfiguration());
             builder.ApplyConfiguration(

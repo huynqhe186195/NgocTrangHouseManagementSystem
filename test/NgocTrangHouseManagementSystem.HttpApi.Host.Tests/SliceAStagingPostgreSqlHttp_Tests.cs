@@ -7,7 +7,9 @@ using System.Xml.Linq;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Security.Claims;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
@@ -100,6 +102,13 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
         var identityCreated = false;
         var buildingsCreated = false;
         WebApplication? app = null;
+        // D06 scans need their own disposable encrypted root; it lives under
+        // the OS temp directory keyed by this run's random suffix and is
+        // removed in the finally block, never a shared or real archive path.
+        var d06ArchiveRoot = Path.Combine(
+            Path.GetTempPath(), "bm_d06_scan_" + suffix);
+        var d06ArchiveKey = Convert.ToBase64String(
+            RandomNumberGenerator.GetBytes(32));
         try
         {
             await ExecuteAsync(admin, $"""CREATE DATABASE "{idName}" TEMPLATE template0""");
@@ -150,7 +159,13 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                         cosigner.ToString("D"),
                     ["BuildingManagement:SliceAStaging:Enabled"] = "true",
                     ["BuildingManagement:SliceAStaging:Activation"] =
-                        "I_ACCEPT_ISOLATED_SLICE_A_STAGING_WRITES"
+                        "I_ACCEPT_ISOLATED_SLICE_A_STAGING_WRITES",
+                    // D06 signed scans: an encrypted store rooted in this
+                    // run's disposable temp directory with a fresh key.
+                    ["BuildingManagement:SliceAStaging:D06ScanArchive:Root"] =
+                        d06ArchiveRoot,
+                    ["BuildingManagement:SliceAStaging:D06ScanArchive:KeyBase64"] =
+                        d06ArchiveKey
                 }).Build();
             // Capture test-server exceptions only in the isolated fixture.
             // ABP intentionally returns generic 500 bodies; preserve this
@@ -6798,6 +6813,114 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 Assert.False(signedPhysical.RootElement.GetProperty(
                     "canExecuteTransfer").GetBoolean());
 
+            // D06 REAL AUTHENTICATED HTTP: the Owner's 2026-11-04 decision
+            // accepts a scanned signed handover sheet as D06 evidence. The
+            // scan must bind to the archived three-party handover above,
+            // only genuine PDF/PNG/JPEG bytes are storable, the database row
+            // keeps a digest + opaque vault handle (never the bytes), and
+            // only the scoped Owner may download the decrypted document.
+            var d06ScanRoute = h4At + "/d06-signed-handover-scan";
+            var d06ScanBytes = new byte[2048];
+            d06ScanBytes[0] = 0x25; d06ScanBytes[1] = 0x50;
+            d06ScanBytes[2] = 0x44; d06ScanBytes[3] = 0x46;
+            for (var i = 4; i < d06ScanBytes.Length; i++)
+                d06ScanBytes[i] = (byte)(i % 251);
+            var d06ScanSha = Convert.ToHexString(
+                SHA256.HashData(d06ScanBytes)).ToLowerInvariant();
+            async Task<(HttpStatusCode Status, string Body)> PostD06ScanAsync(
+                HttpClient caller, byte[] document, string mediaType)
+            {
+                using var form = new MultipartFormDataContent();
+                using var part = new ByteArrayContent(document);
+                part.Headers.ContentType = new MediaTypeHeaderValue(mediaType);
+                form.Add(part, "Document", "signed-handover.pdf");
+                using var reply = await caller.PostAsync(d06ScanRoute, form);
+                return (reply.StatusCode,
+                    await reply.Content.ReadAsStringAsync());
+            }
+            var wrongMediaType = await PostD06ScanAsync(
+                clientRoot, d06ScanBytes, "text/plain");
+            Assert.Equal(HttpStatusCode.Forbidden, wrongMediaType.Status);
+            var forgedHeader = new byte[2048];
+            new Random(42).NextBytes(forgedHeader);
+            // Declared PDF with non-PDF magic bytes: the media type passes
+            // the surface check and is then refused by the vault's
+            // magic-byte verification (409, not an authorization failure).
+            var notAPdf = await PostD06ScanAsync(
+                clientRoot, forgedHeader, "application/pdf");
+            Assert.Equal(HttpStatusCode.Conflict, notAPdf.Status);
+            var uploaded = await PostD06ScanAsync(
+                clientRoot, d06ScanBytes, "application/pdf");
+            {
+                Assert.True(uploaded.Status == HttpStatusCode.OK,
+                    "D06 scan upload: " + uploaded.Status + " " +
+                    uploaded.Body + ". " + serverErrors.Describe());
+                using var json = JsonDocument.Parse(uploaded.Body);
+                Assert.Equal(h4Request, json.RootElement
+                    .GetProperty("requestId").GetGuid());
+                Assert.Equal(d06ScanSha, json.RootElement
+                    .GetProperty("documentSha256").GetString());
+                Assert.Equal("application/pdf", json.RootElement
+                    .GetProperty("mediaType").GetString());
+                Assert.Equal(2048, json.RootElement
+                    .GetProperty("byteLength").GetInt32());
+                Assert.False(json.RootElement
+                    .GetProperty("provesSignerIdentity").GetBoolean());
+                Assert.False(json.RootElement
+                    .GetProperty("canExecuteRoomChange").GetBoolean());
+                Assert.True(json.RootElement
+                    .GetProperty("canDownload").GetBoolean());
+            }
+            // Exactly one scan per handover: a second genuine upload is
+            // refused instead of overwriting the archived evidence.
+            var duplicateScan = await PostD06ScanAsync(
+                clientRoot, d06ScanBytes, "application/pdf");
+            Assert.Equal(HttpStatusCode.Forbidden, duplicateScan.Status);
+            // A non-bootstrap staff member may upload (scoped contract
+            // manager) but may NOT download the Owner's evidence vault.
+            using (var deniedDownload = await clientB.GetAsync(d06ScanRoute))
+                Assert.Equal(HttpStatusCode.Forbidden,
+                    deniedDownload.StatusCode);
+            using (var download = await clientRoot.GetAsync(d06ScanRoute))
+            {
+                Assert.True(download.StatusCode == HttpStatusCode.OK,
+                    "D06 scan download: " + download.StatusCode + ". " +
+                    serverErrors.Describe());
+                Assert.Equal("application/pdf",
+                    download.Content.Headers.ContentType?.MediaType);
+                Assert.True(download.Headers.TryGetValues(
+                    "Cache-Control", out var d06Cache) &&
+                    d06Cache.Any(x => x.Contains("no-store",
+                        StringComparison.OrdinalIgnoreCase)));
+                Assert.True(download.Headers.TryGetValues(
+                    "X-Content-Type-Options", out var d06Sniff) &&
+                    d06Sniff.Contains("nosniff"));
+                var delivered = await download.Content.ReadAsByteArrayAsync();
+                Assert.Equal(d06ScanBytes, delivered);
+            }
+            // The stored row is a digest + opaque handle; the bytes live
+            // only in the disposable encrypted vault directory.
+            using (var d06Scope = app.Services.CreateScope())
+            {
+                var sp = d06Scope.ServiceProvider;
+                using var uow = sp.GetRequiredService<IUnitOfWorkManager>()
+                    .Begin(requiresNew: true, isTransactional: true);
+                var db = await sp.GetRequiredService<
+                    IDbContextProvider<BuildingManagementDbContext>>()
+                    .GetDbContextAsync();
+                var stored = await db.RoomChangeSignedHandoverScans
+                    .AsNoTracking()
+                    .SingleAsync(x => x.RequestId == h4Request);
+                Assert.Equal(d06ScanSha, stored.HandoverDocumentSha256);
+                Assert.Matches(@"^[0-9a-f]{32}$", stored.VaultReference);
+                Assert.NotEqual(Guid.Empty, stored.UploadedByUserId);
+                Assert.Equal(2048, stored.ByteLength);
+                await uow.CompleteAsync();
+            }
+            Assert.True(Directory.Exists(d06ArchiveRoot));
+            Assert.Contains(Directory.GetFiles(d06ArchiveRoot),
+                file => file.EndsWith(".d06scan", StringComparison.Ordinal));
+
             // Verify the minimum safe denial even AFTER price and handover
             // are signed: no original fully reviewed monthly receivable yet.
             var h4CompletionRoute =
@@ -9518,6 +9641,9 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 await ExecuteAsync(admin, $"""DROP DATABASE "{buildingName}" WITH (FORCE)""");
             if (identityCreated)
                 await ExecuteAsync(admin, $"""DROP DATABASE "{idName}" WITH (FORCE)""");
+            // The D06 encrypted root is generated by this run; remove only it.
+            if (Directory.Exists(d06ArchiveRoot))
+                Directory.Delete(d06ArchiveRoot, recursive: true);
         }
     }
 
@@ -9773,6 +9899,17 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             context.Services.AddTransient<SliceBStagingFinalInvoiceMutation>();
             context.Services.AddTransient<SliceBStagingRoomChangeRequests>();
             context.Services.AddTransient<SliceBStagingRoomScopedServiceTariffs>();
+            // D06 signed scans use their own encrypted store, exactly like
+            // the real Host: fail-closed when no root/key is configured.
+            var d06Root = config[
+                "BuildingManagement:SliceAStaging:D06ScanArchive:Root"];
+            var d06Key = config[
+                "BuildingManagement:SliceAStaging:D06ScanArchive:KeyBase64"];
+            if (!string.IsNullOrWhiteSpace(d06Root) &&
+                !string.IsNullOrWhiteSpace(d06Key))
+                context.Services.AddSingleton<ID06SignedScanArchive>(
+                    new D06DisposableEncryptedScanArchive(
+                        d06Root, Convert.FromBase64String(d06Key)));
             context.Services.AddTransient<SliceCStagingUtilityRates>();
             context.Services.AddTransient<SliceCStagingMeterReadings>();
             context.Services.AddTransient<SliceCStagingUtilityMeters>();

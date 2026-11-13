@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using BuildingManagement.Contracts;
 using BuildingManagement.MoveOuts;
 using BuildingManagement.Rooms;
+using BuildingManagement.RoomChanges;
 using BuildingManagement.DepositSettlements;
 using BuildingManagement.Invoices;
 using BuildingManagement.Payments;
@@ -93,8 +94,11 @@ public sealed class SliceBStagingContractQuery
     /// document bytes have been created. The parallel Identity root
     /// lease is held for the whole UnitOfWork; never export a foreign
     /// tenant's records through a client-supplied BuildingId.
+    /// Every successful export appends one immutable access-trail row
+    /// naming the actor, the scope and the delivered file digest.
     /// </summary>
-    public async Task<byte[]> ExportOwnerDocumentDocxAsync(Guid contractId)
+    public async Task<byte[]> ExportOwnerDocumentDocxAsync(
+        Guid contractId, string? purpose = null)
     {
         if (contractId == Guid.Empty)
             throw Denied();
@@ -157,7 +161,33 @@ public sealed class SliceBStagingContractQuery
             original.Status.ToString(),original.StartDate,original.EndDate,
             original.MonthlyRent,original.DepositAmount,
             original.RenewedFromContractId,tenants);
-        return SliceBStagingContractDocumentDocx.Export(export);
+        var file = SliceBStagingContractDocumentDocx.Export(export);
+        await RecordDocumentAccessAsync(
+            db, original.Id, original.BuildingId, actor, file, purpose);
+        return file;
+    }
+
+    /// <summary>
+    /// Append the Owner document download trail inside the same transaction
+    /// that produced the bytes, so a download can never happen without an
+    /// attributable row. The purpose is operator-supplied context, not an
+    /// authorization claim; scope and actor come from the live checks above.
+    /// </summary>
+    private static async Task RecordDocumentAccessAsync(
+        BuildingManagementDbContext db, Guid contractId, Guid buildingId,
+        Guid actor, byte[] file, string? purpose)
+    {
+        var record = RoomChangeContractDocumentAccessRecord.Record(
+            Guid.NewGuid(), contractId, buildingId, actor,
+            string.IsNullOrWhiteSpace(purpose)
+                ? "Owner exported the contract document for review"
+                : purpose,
+            Convert.ToHexString(
+                System.Security.Cryptography.SHA256.HashData(file))
+                .ToLowerInvariant(),
+            file.Length, DateTime.UtcNow);
+        db.ContractDocumentAccesses.Add(record);
+        await db.SaveChangesAsync();
     }
 
     /// <summary>

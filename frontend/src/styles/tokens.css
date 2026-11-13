@@ -1,0 +1,72 @@
+@import 'tailwindcss';
+
+/*
+ * Tokens ported from the approved design pack:
+ * Docs/front-end/authentication-and-authorization DESIGN.md files
+ * Auth surfaces use the teal/green family; operational modules use navy.
+ */
+@theme {
+  --font-display: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+
+  --color-surface: #f8f9ff;
+  --color-surface-lowest: #ffffff;
+  --color-surface-low: #eff4ff;
+  --color-surface-container: #e5eeff;
+  --color-surface-high: #dce9ff;
+
+  --color-on-surface: #0b1c30;
+  --color-on-surface-variant: #475569;
+
+  --color-outline: #94a3b8;
+  --color-outline-variant: #e2e8f0;
+
+  --color-primary: #0f766e;
+  --color-primary-dark: #005c55;
+  --color-primary-active: #0d9488;
+  --color-on-primary: #ffffff;
+  --color-primary-fixed: #9cf2e8;
+
+  --color-secondary: #fd651e;
+  --color-error: #ba1a1a;
+  --color-error-container: #ffdad6;
+
+  --color-navy: #0f1d33;
+  --color-navy-hover: #1b2d4a;
+
+  --radius-card: 0.75rem;
+  --radius-panel: 1rem;
+  --radius-control: 0.5rem;
+
+  --shadow-card: 0 20px 40px -15px rgb(15 118 110 / 0.08), 0 1px 3px rgb(0 0 0 / 0.04);
+  --shadow-button: 0 4px 14px 0 rgb(15 118 110 / 0.35);
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--color-surface);
+    color: var(--color-on-surface);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1,
+  h2,
+  h3,
+  .font-display {
+    font-family: var(--font-display);
+  }
+
+  /* Financial values and meter readings must not jitter between rows. */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum' 1;
+  }
+}

@@ -13,6 +13,9 @@ namespace NgocTrangHouseManagementSystem.Security;
 /// </summary>
 public sealed partial class SliceBStagingRoomChangeRequests
 {
+    private static readonly TimeZoneInfo VietnamZone =
+        TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh");
+
     public Task<SliceBRoomChangeH4ObligationRead> GetH4OutstandingObligationAsync(
         Guid contractId, Guid requestId)
         => ExecuteScopedAsync(contractId, async (db, actor, building, sourceRoom) =>
@@ -109,6 +112,12 @@ public sealed partial class SliceBStagingRoomChangeRequests
             if (posted < 0m || posted > amount) throw Denied();
             var remaining = amount - posted;
 
+            var asOf = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(
+                _clock.GetUtcNow().UtcDateTime, VietnamZone));
+            var aging = RoomChangeH4ObligationAgingEvaluator.Evaluate(
+                id, (RoomChangeH4SettlementKind)kind, due, asOf,
+                amount, posted);
+
             return new SliceBRoomChangeH4ObligationRead(
                 id, requestId, completion.Id, contractId, targetContractId,
                 intent.Id, kind, amount, due,
@@ -126,7 +135,10 @@ public sealed partial class SliceBStagingRoomChangeRequests
                 // official receivable debt projection, never treated as cash.
                 IsRentCreditApplied: kind == 2 && remaining == 0m,
                 CanSettleDeposit: false,
-                RemainingAmountVnd: remaining);
+                RemainingAmountVnd: remaining,
+                IsOverdue: aging.IsOverdue,
+                DaysPastDue: aging.DaysPastDue,
+                AgedAsOfVietnam: aging.AsOfVietnam);
         }, permitEndedContract: true);
 }
 
@@ -147,4 +159,11 @@ public sealed record SliceBRoomChangeH4ObligationRead(
     string OwnerSignedReference, bool IsOutstanding,
     bool IsExternallyCollected, bool IsRefundPaid,
     bool IsRentCreditApplied, bool CanSettleDeposit,
-    decimal RemainingAmountVnd);
+    decimal RemainingAmountVnd,
+    bool IsOverdue = false, int DaysPastDue = 0,
+    DateOnly? AgedAsOfVietnam = null)
+{
+    // Presentation-only aging: a missed deadline is surfaced, never
+    // converted into a fee, penalty or new receivable.
+    public bool CanPostMoney => false;
+}

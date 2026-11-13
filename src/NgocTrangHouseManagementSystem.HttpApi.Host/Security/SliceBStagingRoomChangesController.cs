@@ -272,6 +272,53 @@ public sealed class SliceBStagingRoomChangesController : ControllerBase
         catch (AbpAuthorizationException) { return Forbid(); }
     }
 
+    // H4-scoped dispute of a committed deferred obligation. Append-only;
+    // an Owner who is not the opener resolves it. Never moves money.
+    [HttpPost("{requestId:guid}/h4-obligation-disputes")]
+    [UnitOfWork(true, IsolationLevel.Serializable)]
+    public async Task<IActionResult> OpenH4ObligationDisputeAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid requestId,
+        [FromBody] SliceBH4DisputeInput input)
+    {
+        try
+        {
+            RequireIsolatedStaging();
+            return Ok(await _requests!.OpenH4ObligationDisputeAsync(
+                contractId, requestId, input));
+        }
+        catch (AbpAuthorizationException) { return Forbid(); }
+    }
+
+    [HttpPost("{requestId:guid}/h4-obligation-disputes/{disputeId:guid}/resolve")]
+    [UnitOfWork(true, IsolationLevel.Serializable)]
+    public async Task<IActionResult> ResolveH4ObligationDisputeAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid requestId,
+        [FromRoute] Guid disputeId,
+        [FromBody] SliceBH4DisputeResolutionInput input)
+    {
+        try
+        {
+            RequireIsolatedStaging();
+            return Ok(await _requests!.ResolveH4ObligationDisputeAsync(
+                contractId, requestId, disputeId, input));
+        }
+        catch (AbpAuthorizationException) { return Forbid(); }
+    }
+
+    [HttpGet("{requestId:guid}/h4-obligation-dispute-status")]
+    [UnitOfWork(true, IsolationLevel.RepeatableRead)]
+    public async Task<IActionResult> GetH4ObligationDisputeStatusAsync(
+        [FromRoute] Guid contractId, [FromRoute] Guid requestId)
+    {
+        try
+        {
+            RequireIsolatedStaging();
+            return Ok(await _requests!.GetH4ObligationDisputeStatusAsync(
+                contractId, requestId));
+        }
+        catch (AbpAuthorizationException) { return Forbid(); }
+    }
+
     // D04 independently reviewed manual bank statement / completed deposit
     // payment. Review itself neither settles money nor initiates a bank transfer.
     [HttpPost("{requestId:guid}/d04-bank-evidence-review")]

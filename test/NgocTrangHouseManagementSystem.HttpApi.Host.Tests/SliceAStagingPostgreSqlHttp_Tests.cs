@@ -7407,6 +7407,15 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                     .GetProperty("remainingOutstandingVnd").GetDecimal());
                 Assert.Equal(0L, json.RootElement
                     .GetProperty("postingCount").GetInt64());
+                // Aging is presentation only. A deferred top-up reports its
+                // own one-month deadline; a rent credit or a refund liability
+                // carries no tenant-facing deadline and so is never overdue.
+                // The balance is not yet past the 2026-11-15 top-up deadline,
+                // and no obligation here can post money by itself.
+                Assert.False(json.RootElement.GetProperty("isOverdue")
+                    .GetBoolean());
+                Assert.Equal(0, json.RootElement
+                    .GetProperty("daysPastDue").GetInt32());
             }
             using (var staffCannotPost = await clientB.PostAsync(d04PostAt,
                 new StringContent(JsonSerializer.Serialize(new {
@@ -7414,8 +7423,66 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                 }), Encoding.UTF8, "application/json")))
                 Assert.Equal(HttpStatusCode.Forbidden, staffCannotPost.StatusCode);
 
+            // P2.3: the H4 dispute lane starts clear for every disposition.
+            var d04DisputeAt = h4At + "/h4-obligation-disputes";
+            var d04DisputeStatusAt = h4At + "/h4-obligation-dispute-status";
+            using (var clear = await clientRoot.GetAsync(d04DisputeStatusAt))
+            {
+                Assert.Equal(HttpStatusCode.OK, clear.StatusCode);
+                using var status = JsonDocument.Parse(
+                    await clear.Content.ReadAsStringAsync());
+                Assert.Equal(0, status.RootElement.GetProperty("state").GetInt32());
+                Assert.False(status.RootElement.GetProperty(
+                    "isSettlementBlocked").GetBoolean());
+                Assert.False(status.RootElement.GetProperty(
+                    "canPostMoney").GetBoolean());
+            }
+
             if (choice == 0)
             {
+                // A contested top-up blocks settlement until an Owner who is
+                // NOT the opener accepts the obligation. The dispute never
+                // alters the signed original amount or posts money itself.
+                Guid h4DisputeId;
+                using (var opened = await Positive2HPostAsync(clientB,
+                    d04DisputeAt, new {
+                        reason = "Tenant contests the recorded deferred top-up amount",
+                        evidenceReference = "SIGNED-TENANT-H4-DISPUTE-2026-11"
+                    }))
+                    h4DisputeId = opened.RootElement.GetGuid();
+                using (var contested = await clientRoot.GetAsync(
+                    d04DisputeStatusAt))
+                {
+                    Assert.Equal(HttpStatusCode.OK, contested.StatusCode);
+                    using var status = JsonDocument.Parse(
+                        await contested.Content.ReadAsStringAsync());
+                    Assert.Equal(1, status.RootElement.GetProperty("state").GetInt32());
+                    Assert.Equal(h4DisputeId, status.RootElement
+                        .GetProperty("disputeId").GetGuid());
+                    Assert.Equal(operatorB, status.RootElement
+                        .GetProperty("openedByUserId").GetGuid());
+                    Assert.True(status.RootElement.GetProperty(
+                        "isSettlementBlocked").GetBoolean());
+                }
+                // An open dispute cannot be opened again, and the operator who
+                // raised it is not the independent resolver.
+                var reopen = await PostFinalAsync(clientB, d04DisputeAt,
+                    JsonSerializer.Serialize(new {
+                        reason = "Second parallel dispute of the same obligation",
+                        evidenceReference = "SIGNED-TENANT-H4-DISPUTE-CHAIN-2026"
+                    }));
+                Assert.Equal(HttpStatusCode.Forbidden, reopen.Status);
+                var selfResolve = await PostFinalAsync(clientB,
+                    d04DisputeAt + "/" + h4DisputeId.ToString("D") + "/resolve",
+                    JsonSerializer.Serialize(new {
+                        obligationAccepted = true,
+                        signedOwnerResolutionReference =
+                            "OPERATOR-SELF-RESOLVED-H4-DISPUTE-2026"
+                    }));
+                Assert.Equal(HttpStatusCode.Forbidden, selfResolve.Status);
+                // The dispute is settled below, after a genuine reviewed
+                // receipt exists and a first posting is refused while open.
+
                 // Two independently reviewed actual Completed Payment records.
                 // The H4 original top-up is not marked paid until BOTH posts.
                 foreach (var chunk in new[] { 400_000m, 600_000m })
@@ -7566,6 +7633,59 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
                             """, checkDb);
                         verify.Parameters.AddWithValue("review", reviewId);
                         Assert.Equal(0L, (long)(await verify.ExecuteScalarAsync())!);
+                    }
+                    // While the dispute is open, even a genuine independently
+                    // reviewed receipt cannot be posted as settled.
+                    if (chunk == 400_000m)
+                    {
+                        var blockedPost = await PostFinalAsync(clientRoot,
+                            d04PostAt, JsonSerializer.Serialize(new { reviewId }));
+                        Assert.Equal(HttpStatusCode.Forbidden, blockedPost.Status);
+                        using (var resolved = await Positive2HPostAsync(
+                            clientRoot, d04DisputeAt + "/" +
+                                h4DisputeId.ToString("D") + "/resolve", new {
+                                obligationAccepted = true,
+                                signedOwnerResolutionReference =
+                                    "OWNER-SIGNED-H4-DISPUTE-ACCEPTANCE-2026-11"
+                            }))
+                            Assert.NotEqual(Guid.Empty,
+                                resolved.RootElement.GetGuid());
+                        using (var accepted = await clientRoot.GetAsync(
+                            d04DisputeStatusAt))
+                        {
+                            Assert.Equal(HttpStatusCode.OK, accepted.StatusCode);
+                            using var status = JsonDocument.Parse(
+                                await accepted.Content.ReadAsStringAsync());
+                            Assert.Equal(2, status.RootElement
+                                .GetProperty("state").GetInt32());
+                            Assert.True(status.RootElement
+                                .GetProperty("obligationAccepted").GetBoolean());
+                            Assert.False(status.RootElement
+                                .GetProperty("isSettlementBlocked").GetBoolean());
+                        }
+                        // Missed-deadline tracking: the deferred top-up is
+                        // due 2026-11-15, so a later Vietnam date must be
+                        // reported overdue WITHOUT changing the original
+                        // amount or minting any new receivable.
+                        transferClock.SetUtc(new DateTimeOffset(
+                            2026, 12, 20, 4, 0, 0, TimeSpan.Zero));
+                        try
+                        {
+                            using var overdue = await clientRoot
+                                .GetAsync(d04BalanceAt);
+                            Assert.Equal(HttpStatusCode.OK, overdue.StatusCode);
+                            using var aged = JsonDocument.Parse(
+                                await overdue.Content.ReadAsStringAsync());
+                            Assert.True(aged.RootElement
+                                .GetProperty("isOverdue").GetBoolean());
+                            Assert.Equal(35, aged.RootElement
+                                .GetProperty("daysPastDue").GetInt32());
+                            Assert.Equal("2026-12-20", aged.RootElement
+                                .GetProperty("agedAsOfVietnam").GetString());
+                            Assert.Equal(1_000_000m, aged.RootElement
+                                .GetProperty("originalAmountVnd").GetDecimal());
+                        }
+                        finally { transferClock.Reset(); }
                     }
                     using (var posting = await Positive2HPostAsync(
                         clientRoot, d04PostAt, new { reviewId }))

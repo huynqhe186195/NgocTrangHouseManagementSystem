@@ -411,8 +411,8 @@
 **Blocker:** none — all dependencies DONE (P2.1 `d36edb5`, P2.2 `b18644b`, P2.3 `aa3b9bb`, P2.4 `950610a`)  
 **Dependency:** P2.1, P2.2, P2.3, P2.4
 
-### P2.6 ⏳ UI/Frontend Inventory and Integration
-**Status:** TODO  
+### P2.6 ✅ UI/Frontend Inventory and Integration — COMPLETE (`6c9852f`, pushed)
+**Status:** DONE (discovery audit; no integration to build against — see verdict)  
 **Definition of Done:**
 - Inventory existing frontend projects in repo
 - Identify tech stack (React/Angular/Vue/Blazor?)
@@ -420,8 +420,29 @@
 - Identify missing flows: transfer, invoice, meter, contract, payment, proof upload
 - Do NOT change framework or rewrite without audit
 
-**Blocker:** Discovery needed  
-**Dependency:** None
+**Verdict:** **there is no frontend in the repository — by design.** The solution was generated with `uiFramework: "no-ui"` (ABP Studio `.abpstudio/state.json`, verbatim). The only UI is the ABP template's Razor landing page (login/logout + language switch + OpenIddict app cards) rendered by the headless API host; `wwwroot` scripts/styles are empty template placeholders; `package.json` holds only the MVC Basic-theme packages. There is no SPA/Blazor/Angular/Vue/React project anywhere to inventory, so there is also nothing to migrate or rewrite.
+
+**Delivered (`6c9852f`) — the audit document `etc/phase-audits/P26_FrontendInventory_20261113.md`**
+- Full inventory of everything UI-shaped (landing page, theme packages, wwwroot, resource mapping, the 2 seeded OpenIddict clients — the `_App` client id has no RootUrl configured, i.e. no real SPA registered)
+- API-surface map a frontend would consume: 22 conventional AppServices under `/api/building-management/...` + 137 HTTP-verb attributes across 10 authenticated slice/payOS controllers
+- Portal coverage matrix: Tenant / Staff / Owner — **all NONE**; Swagger UI is the current de-facto frontend
+- The seven missing flows (transfer, invoice, meter, contract, payment, proof upload, move-out E2E) — all exist as authenticated, E2E-tested backend routes (P2.1–P2.5) with zero UI
+- Security constraints any future portal must inherit (no direct `Contract.End`, append-only evidence, two-building scoping, owner-route live revocation, payOS money HOLD, Vietnamese default language)
+- Recommended (not executed) next step: an Owner decision on the greenfield portal stack; per the P2.6 rule this phase changed no framework and started no rewrite
+
+**Evidence (pushed `6c9852f`)**
+- Read-only inspection of the working tree at `43c70dd`/`6c9852f`; no files modified beyond the audit document, no application started, no database touched — docs-only phase, no test TRX applicable
+- Branch pushed ff-only: `origin/feat/p2-6-frontend-discovery` = `6c9852f`
+
+**Definition of Done status**
+- ✅ Inventory existing frontend projects in repo — complete: none exist (by design, with the authoritative template record cited)
+- ✅ Identify tech stack — server-rendered Razor (ABP Basic theme) on the API host only; no SPA framework present
+- ✅ Map coverage: Tenant/Staff/Owner portals — all NONE; Swagger is the de-facto frontend
+- ✅ Identify missing flows — all seven mapped to the exact controllers/routes that already implement them
+- ✅ Do NOT change framework or rewrite without audit — production code untouched (docs-only commit)
+
+**Blocker:** none — the follow-up (building a portal) is a new phase requiring an Owner stack decision  
+**Dependency:** none
 
 ---
 
@@ -524,7 +545,7 @@
 **Backlog Status Summary:**
 - P0: 6/6 closed (P0.1–P0.3 done, P0.4 not needed, P0.5 startup gate at `7621d8a`, P0.6 full bundle at `7621d8a`)
 - P1: 5/5 done (P1.1 official at `f30e14d`; P1.2 rehearsal gate at `d085d02`; P1.4 crash/recovery at `682613d`; P1.3 vault + restricted roles at `18fe521`, 64/64; P1.5 internal simulated payOS staging E2E at `e58b12c`, 20/20)
-- P2: 5/6 (P2.1 DONE at `d36edb5`, pushed to `origin/feat/p2-1-issued-invoice-correction`; P2.2 DONE at `b18644b`, pushed to `origin/feat/p2-2-service-pricing-official-invoice`; P2.3 DONE at `aa3b9bb`, pushed to `origin/feat/p2-3-h4-settlement-d04`; P2.4 DONE at `950610a`, pushed to `origin/feat/p2-4-d06-three-signature`; P2.5 DONE at `2d01952`, pushed to `origin/feat/p2-5-move-out-e2e`; P2.6 outstanding)
+- P2: 6/6 (P2.1 DONE at `d36edb5`, pushed to `origin/feat/p2-1-issued-invoice-correction`; P2.2 DONE at `b18644b`, pushed to `origin/feat/p2-2-service-pricing-official-invoice`; P2.3 DONE at `aa3b9bb`, pushed to `origin/feat/p2-3-h4-settlement-d04`; P2.4 DONE at `950610a`, pushed to `origin/feat/p2-4-d06-three-signature`; P2.5 DONE at `2d01952`, pushed to `origin/feat/p2-5-move-out-e2e`; P2.6 DONE at `6c9852f`, pushed to `origin/feat/p2-6-frontend-discovery` — discovery audit: no UI exists by design (`uiFramework: no-ui`), all flows backend-complete)
 - P3: 4/4 done + **MERGED to main** (P3.1 merge `01cba31`; P3.2 DONE `1ddf2e6`; P3.3 matrix; **P3.4 CLOSED 2026-11-12: PR #10 → main merge commit `c499d89`, Owner §6 signed + §3.2 P2 deferral accepted; post-merge local regression + CI green 5/5 at the merge commit**)
 
-**Current Focus:** P3 COMPLETE. **`main` = program baseline at merge commit `c499d89`** (post-merge docs/guards `2149210`+). Evidence chain closed: CI billing unlocked card-free → run 384 green 5/5 at `c63d370` (ID 43240562191) → Owner §6 + §3.2 approved → PR #10 merged `c499d89` → local regression exit 0 + CI run 43247648066 green 5/5 at `c499d89`. **P2 on follow-up feature branches off `main`** — P2.1 DONE (`d36edb5`), P2.2 DONE (`b18644b`), P2.3 DONE (`aa3b9bb`, H4 settlement: obligation aging + H4-scoped dispute lane, harness 5/5 at the pushed SHA), P2.4 DONE (`950610a`, D06 three-signature: scanned signed handover sheet archived in a dedicated AES-256-GCM vault + Owner document download audit trail), **P2.5 DONE (`2d01952`, ordinary move-out E2E: authenticated final-meter signoff completing the checklist task + Reserved booking retention with `hasFutureCommitment` at closeout, full financial lane)**. Next: P2.6 frontend discovery. HOLD unchanged: real payOS money flow, TLS public callback, production vault/roles/secrets, production deploy.
+**Current Focus:** **P2 COMPLETE (6/6).** `main` = program baseline at merge commit `c499d89` (post-merge docs/guards `2149210`+). Evidence chain closed: CI billing unlocked card-free → run 384 green 5/5 at `c63d370` (ID 43240562191) → Owner §6 + §3.2 approved → PR #10 merged `c499d89` → local regression exit 0 + CI run 43247648066 green 5/5 at `c499d89`. **P2 on follow-up feature branches off `main`** — P2.1 DONE (`d36edb5`), P2.2 DONE (`b18644b`), P2.3 DONE (`aa3b9bb`, H4 settlement: obligation aging + H4-scoped dispute lane, harness 5/5 at the pushed SHA), P2.4 DONE (`950610a`, D06 three-signature: scanned signed handover sheet archived in a dedicated AES-256-GCM vault + Owner document download audit trail), P2.5 DONE (`2d01952`, ordinary move-out E2E: authenticated final-meter signoff completing the checklist task + Reserved booking retention with `hasFutureCommitment` at closeout, full financial lane), **P2.6 DONE (`6c9852f`, frontend discovery audit: no UI exists by design — `uiFramework: no-ui`; every flow is backend-complete, all seven missing flows mapped to existing authenticated routes; building a portal is a new phase awaiting an Owner stack decision)**. Next: P2 complete — program-level next steps (portal greenfield, production HOLD releases) are Owner decisions. HOLD unchanged: real payOS money flow, TLS public callback, production vault/roles/secrets, production deploy.

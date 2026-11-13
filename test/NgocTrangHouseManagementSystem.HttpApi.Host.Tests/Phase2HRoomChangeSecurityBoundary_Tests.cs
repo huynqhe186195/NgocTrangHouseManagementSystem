@@ -22,7 +22,31 @@ public sealed class Phase2HRoomChangeSecurityBoundary_Tests
 
         var methods = controller.GetMethods(BindingFlags.Public |
             BindingFlags.Instance | BindingFlags.DeclaredOnly);
-        Assert.Equal(32, methods.Length);
+        Assert.Equal(35, methods.Length);
+        foreach (var (name, verb, template) in new[] {
+            ("OpenH4ObligationDisputeAsync", "POST",
+                "{requestId:guid}/h4-obligation-disputes"),
+            ("ResolveH4ObligationDisputeAsync", "POST",
+                "{requestId:guid}/h4-obligation-disputes/{disputeId:guid}/resolve"),
+            ("GetH4ObligationDisputeStatusAsync", "GET",
+                "{requestId:guid}/h4-obligation-dispute-status")
+        })
+        {
+            var dispute = Assert.Single(methods.Where(m => m.Name == name));
+            var httpVerb = dispute.GetCustomAttributes()
+                .OfType<Microsoft.AspNetCore.Mvc.Routing.HttpMethodAttribute>()
+                .Single();
+            Assert.Equal(verb, Assert.Single(httpVerb.HttpMethods));
+            Assert.Equal(template, httpVerb.Template);
+            Assert.NotNull(dispute.GetCustomAttribute<UnitOfWorkAttribute>());
+        }
+        // A dispute records and resolves a contest; it never moves money.
+        var disputeStatus = new SliceBH4DisputeStatusRead(
+            Guid.NewGuid(), Guid.NewGuid(), 1, DateTime.UtcNow, Guid.NewGuid(),
+            "Tenant contests the deferred top-up", null, null, null,
+            IsSettlementBlocked: true, CanPostMoney: false);
+        Assert.False(disputeStatus.CanPostMoney);
+        Assert.True(disputeStatus.IsSettlementBlocked);
         foreach (var d04 in new[] { "ReviewD04BankEvidenceAsync", "PostD04SettlementAsync", "GetD04SettlementBalanceAsync" })
         {
             var d04Method = Assert.Single(methods.Where(m => m.Name == d04));

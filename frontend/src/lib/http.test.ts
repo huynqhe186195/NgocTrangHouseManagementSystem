@@ -117,6 +117,45 @@ describe('request', () => {
     expect((error as ApiError).message).toContain('Không kết nối được máy chủ');
   });
 
+  it('surfaces the scope-gate denial when fetch follows the gate 302 to /Error?httpStatusCode=403', async () => {
+    // The gate emits 302 -> /Error?httpStatusCode=403; fetch() follows it and
+    // the Vite proxy answers 404. response.redirected + response.url keep the
+    // redirect trail, which is how the client detects the real denial.
+    const followed = {
+      status: 404,
+      ok: false,
+      redirected: true,
+      url: 'http://localhost:5173/Error?httpStatusCode=403',
+      headers: new Headers(),
+      text: () => Promise.resolve(''),
+    } as unknown as Response;
+    fetchMock.mockResolvedValue(followed);
+
+    const error = (await request('/api/building-management/building').catch(
+      (caught: unknown) => caught,
+    )) as ApiError;
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error.status).toBe(403);
+    expect(error.message).toContain('từ chối truy cập');
+  });
+
+  it('surfaces the scope-gate denial when a 200 carries non-JSON HTML instead of data', async () => {
+    const html = new Response('<html>index fallback</html>', {
+      status: 200,
+      headers: { 'content-type': 'text/html' },
+    });
+    fetchMock.mockResolvedValue(html);
+
+    const error = (await request('/api/building-management/building').catch(
+      (caught: unknown) => caught,
+    )) as ApiError;
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error.status).toBe(403);
+    expect(error.message).toContain('từ chối truy cập');
+  });
+
   it('serializes the JSON body and keeps the content type', async () => {
     fetchMock.mockResolvedValue(
       jsonResponse({ success: true, data: null, error: null, meta: null }, 201),

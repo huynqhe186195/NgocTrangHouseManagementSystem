@@ -159,12 +159,33 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     return parsed.data as T;
   }
 
+  // The building-scope gate's 403 is emitted as a 302 to /Error?httpStatusCode=403;
+  // fetch() follows it silently, so the redirect trail is the only witness left.
+  // Detect it and surface the real denial instead of a misleading 404/HTML.
+  if (response.redirected && response.url.includes('httpStatusCode=403')) {
+    throw new ApiError(
+      'HTTP:403',
+      'Máy chủ từ chối truy cập tài nguyên này (phạm vi tòa nhà).',
+      403,
+    );
+  }
+
   // Any other unwrapped payload (e.g. a proxy or HTML error page).
   if (!response.ok) {
     throw new ApiError(
       `HTTP:${response.status}`,
       `Yêu cầu thất bại (${response.status}).`,
       response.status,
+    );
+  }
+
+  // 200 with a body that is not JSON and not the envelope: a proxy or HTML
+  // error page masquerading as data. Report it as a denial, not an empty list.
+  if (typeof parsed !== 'object' || parsed === null) {
+    throw new ApiError(
+      'HTTP:403',
+      'Máy chủ từ chối truy cập tài nguyên này (phạm vi tòa nhà).',
+      403,
     );
   }
   return parsed as T;

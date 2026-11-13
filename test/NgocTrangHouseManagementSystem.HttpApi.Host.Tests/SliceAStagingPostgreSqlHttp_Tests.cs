@@ -7724,6 +7724,131 @@ public sealed class SliceAStagingPostgreSqlHttp_Tests
             await RunH4DispositionScenarioAsync(choice: 1);
             await RunH4DispositionScenarioAsync(choice: 2);
 
+            // P2.1d: the D01 target-owns-handover-day quote must be identical
+            // whether the transfer month has 28, 29, 30 or 31 days. The only
+            // oracle here is calendar arithmetic; nothing is read back from
+            // the server to build the expectation.
+            var monthLengths = new[] {
+                (Year: 2027, Month: 2, Days: 28),
+                (Year: 2028, Month: 2, Days: 29),
+                (Year: 2027, Month: 4, Days: 30),
+                (Year: 2027, Month: 1, Days: 31)
+            };
+            for (var index = 0; index < monthLengths.Length; index++)
+            {
+                var (year, month, days) = monthLengths[index];
+                const decimal sourceRent = 3_000_000m;
+                const decimal targetRent = 4_000_000m;
+                const int transferDay = 11;
+                var transferOn = new DateOnly(year, month, transferDay);
+                var expectedSourceDays = transferDay - 1;
+                var expectedTargetDays = days - expectedSourceDays;
+                var expectedSource = decimal.Round(
+                    sourceRent * expectedSourceDays / days, 0,
+                    MidpointRounding.AwayFromZero);
+                var expectedTarget = decimal.Round(
+                    targetRent * expectedTargetDays / days, 0,
+                    MidpointRounding.AwayFromZero);
+
+                var matrixSourceRoom = await CreateChildAsync(clientB, roomCreate,
+                    new { floorId = floorB, roomNumber = (130 + index * 2).ToString(),
+                        name = "P2.1 " + year + "-" + month + " source",
+                        area = 24m, capacity = 2,
+                        status = (int)BuildingManagement.Rooms.RoomStatus.Occupied });
+                var matrixTargetRoom = await CreateChildAsync(clientB, roomCreate,
+                    new { floorId = floorB, roomNumber = (131 + index * 2).ToString(),
+                        name = "P2.1 " + year + "-" + month + " target",
+                        area = 24m, capacity = 2,
+                        status = (int)BuildingManagement.Rooms.RoomStatus.Available });
+                var matrixContract = Guid.NewGuid();
+                using (var matrixScope = app.Services.CreateScope())
+                {
+                    var matrixSp = matrixScope.ServiceProvider;
+                    using var matrixUow = matrixSp.GetRequiredService<IUnitOfWorkManager>()
+                        .Begin(requiresNew: true, isTransactional: true);
+                    var matrixDb = await matrixSp.GetRequiredService<
+                        IDbContextProvider<BuildingManagementDbContext>>()
+                        .GetDbContextAsync();
+                    var matrixSource = new BuildingManagement.Contracts.Contract(
+                        matrixContract, "P21-MATRIX-" + matrixContract.ToString("N"),
+                        matrixSourceRoom, new DateTime(year, month, 1), null, sourceRent);
+                    matrixSource.Activate();
+                    matrixDb.Contracts.Add(matrixSource);
+                    matrixDb.ContractTenants.Add(
+                        new BuildingManagement.Contracts.ContractTenant(
+                            Guid.NewGuid(), matrixContract, tenantB,
+                            BuildingManagement.Contracts.ContractTenantRole
+                                .PrimaryTenant));
+                    await matrixUow.CompleteAsync();
+                }
+
+                var matrixRoute = ChangeRoute(matrixContract);
+                Guid matrixRequest;
+                using (var submitted = await Positive2HPostAsync(clientB, matrixRoute,
+                    new { targetRoomId = matrixTargetRoom,
+                        requestedDate = transferOn.ToString("yyyy-MM-dd"),
+                        reason = "Signed " + year + "-" + month + " month-length parity" }))
+                    matrixRequest = submitted.RootElement.GetProperty("id").GetGuid();
+                var matrixAt = matrixRoute + "/" + matrixRequest.ToString("D");
+                using (var roster = await Positive2HPostAsync(clientB,
+                    matrixAt + "/tenant-roster", new { }))
+                    Assert.Equal(1, roster.RootElement.GetProperty("rosterCount").GetInt32());
+                using (var proposal = await Positive2HPostAsync(clientB,
+                    matrixAt + "/business-policy-proposal", new {
+                        contractTreatment = 1, pricingTreatment = 2,
+                        depositTreatment = 1, tenantTreatment = 1,
+                        contractPolicyReference = "OWNER-SIGNED-P21-CONTRACT-" + year,
+                        pricingPolicyReference = "OWNER-SIGNED-P21-PRORATION-" + year,
+                        depositPolicyReference = "OWNER-SIGNED-P21-DEPOSIT-" + year,
+                        tenantConsentReference = "TENANT-SIGNED-P21-ROSTER-" + year
+                    }))
+                    Assert.False(proposal.RootElement.GetProperty("isApproved").GetBoolean());
+                using (var approved = await Positive2HPostAsync(clientRoot,
+                    matrixAt + "/business-policy-review", new {
+                        accepted = true,
+                        signedReviewReference = "OWNER-INDEPENDENT-P21-REVIEW-" + year,
+                        reason = "Approved day proration for month-length parity"
+                    }))
+                    Assert.True(approved.RootElement.GetProperty("accepted").GetBoolean());
+
+                using var quote = await Positive2HPostAsync(clientB,
+                    matrixAt + "/day-pricing-rule-candidate", new {
+                        targetMonthlyRentVnd = targetRent,
+                        transferDayOwner = 2, rounding = 1
+                    });
+                Assert.Equal(days, quote.RootElement.GetProperty(
+                    "calendarDays").GetInt32());
+                Assert.Equal(expectedSourceDays, quote.RootElement.GetProperty(
+                    "sourceChargeableDays").GetInt32());
+                Assert.Equal(expectedTargetDays, quote.RootElement.GetProperty(
+                    "targetChargeableDays").GetInt32());
+                Assert.Equal(expectedSource, quote.RootElement.GetProperty(
+                    "proposedSourceRentVnd").GetDecimal());
+                Assert.Equal(expectedTarget, quote.RootElement.GetProperty(
+                    "proposedTargetRentVnd").GetDecimal());
+                Assert.Equal(2, quote.RootElement.GetProperty(
+                    "transferDayOwner").GetInt32());
+                Assert.Equal(1, quote.RootElement.GetProperty("rounding").GetInt32());
+                Assert.False(quote.RootElement.GetProperty(
+                    "isOfficialInvoicePosting").GetBoolean());
+                Assert.False(quote.RootElement.GetProperty(
+                    "canExecuteRoomChange").GetBoolean());
+
+                // Re-reading must return the same reviewed figures; a quote is
+                // never recomputed differently on a second authenticated read.
+                using (var read = await clientB.GetAsync(
+                    matrixAt + "/day-pricing-rule-candidate"))
+                {
+                    Assert.Equal(HttpStatusCode.OK, read.StatusCode);
+                    using var stored = JsonDocument.Parse(
+                        await read.Content.ReadAsStringAsync());
+                    Assert.Equal(expectedSource, stored.RootElement.GetProperty(
+                        "proposedSourceRentVnd").GetDecimal());
+                    Assert.Equal(expectedTarget, stored.RootElement.GetProperty(
+                        "proposedTargetRentVnd").GetDecimal());
+                }
+            }
+
             var positiveRoute = ChangeRoute(transferContract);
             Guid positiveRequest;
             transferClock.SetUtc(new DateTimeOffset(

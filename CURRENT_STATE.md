@@ -1,12 +1,12 @@
 # CURRENT STATE — NgocTrangHouseManagementSystem
-**Snapshot:** 2026-11-13 (P2.1 DONE at `d36edb5`, pushed to `origin/feat/p2-1-issued-invoice-correction`; full 2H acceptance harness green at that SHA: 177 domain / 109 PG / 1 migration / 1 HTTP / full regression)  
+**Snapshot:** 2026-11-13 (P2.2 DONE at `b18644b`, pushed to `origin/feat/p2-2-service-pricing-official-invoice`; full 2H acceptance harness green at that SHA: 188 domain / 109 PG / 1 migration / 1 HTTP / full regression)  
 **Verified by:** Claude Code audit  
 **Working Directory:** `D:\Dev\NgocTrangBuilding\Project\NgocTrangHouseManagementSystem`
 
 ## Git Status
 
-**Current Branch:** `feat/p2-1-issued-invoice-correction` (off `main` @ `2149210`)  
-**HEAD SHA:** `d36edb5c04f84668f0044ab5bbae3526da136cdc` — pushed; `git ls-remote origin refs/heads/feat/p2-1-issued-invoice-correction` matches ("push đi" authorized 2026-11-13)  
+**Current Branch:** `feat/p2-2-service-pricing-official-invoice` (off `feat/p2-1-issued-invoice-correction` @ `aac257e`)  
+**HEAD SHA:** `b18644b9610ba2ee8b6b7357736a5328f4d4f78d` — pushed; `git ls-remote origin refs/heads/feat/p2-2-service-pricing-official-invoice` matches ("push nhánh p2.2 lên origin đi" authorized 2026-11-13)  
 **Program baseline:** `c499d89` = merge commit "Merge pull request #10 from huynqhe186195/feat/local-safe-startup-20261109" (evidence chain: local regression exit 0 + CI workflow_dispatch run 43247648066 green 5/5 at `c499d89`)  
 **Untracked Files:** `etc/phase-audits/Phase2G3A7_RevisionLedger_Generated_Review.sql` (deliberate offline EF preview artifact — do not delete); `etc/test-results/` (local TRX output from this session)
 
@@ -19,12 +19,16 @@
 | `feat/d04b-operational-gates-20261108` | `705a481` | origin/feat/d04b-operational-gates-20261108 | ✅ Matches handoff |
 | `feat/d04b-protected-bank-evidence-20261108` | `66a62dc` | origin/feat/d04b-protected-bank-evidence-20261108 | ✅ Matches handoff |
 | `feat/p2-1-issued-invoice-correction` | `d36edb5` | origin/feat/p2-1-issued-invoice-correction | ✅ P2.1 DONE — pushed 2026-11-13, local == origin, full 2H harness green at that SHA |
+| `feat/p2-2-service-pricing-official-invoice` | `b18644b` | origin/feat/p2-2-service-pricing-official-invoice | ✅ P2.2 DONE — pushed 2026-11-13, local == origin, full 2H harness green at that SHA (188 domain) |
 | `feat/phase2h-payos-signature-foundation-20261106` | `7249c9f` | origin (behind 1) | ⚠️ Behind, differs from handoff `2de0f7e` |
 | `wip/phase-2g2` | `e8e4f29` | origin (behind 49) | ⚠️ Behind, differs from handoff `a951999` |
 | `main` | `3e3636c` | origin/main | ✅ Matches handoff |
 
 ### Recent Commits on Current Branch (since handoff)
 
+- `b18644b` — feat(p22): freeze room-service pricing on official issued invoices (D03 gate + 11 domain facts + authenticated HTTP cycle; 2H domain 177 → 188)
+- `aac257e` — docs(p21): cite pushed SHA d36edb5 with full five-group harness evidence
+- `d36edb5` — docs(p21): close P2.1 with PG concurrency and HTTP month-length evidence (P2.1 DONE)
 - `feb8938` — docs(p33): acceptance matrix complete - all local invariants PASS at 1ddf2e6
 - `1ddf2e6` — fix(p32b): replace hard-coded due dates with dynamic VN-local dates (time-bomb fixture, not a merge defect)
 - `127f5d4` — fix(p32b): guard-adapt 2H/2g/2g5 verify lanes to the P3.1 merged trunk (Owner choice (a))

@@ -230,8 +230,8 @@
 **Blocker:** none — P3.1 merged, PR #5 integrated.  
 **Shared spine:** `MonthlyInvoiceAdjustmentRecord` + DB append-only triggers (migration `20261029223000`); HTTP surface `contracts/{contractId}/monthly-issued/{issuedId}/adjustments` (+ `/review`) in `SliceBStagingFinalInvoiceController`.
 
-### P2.2 ⏳ D03 Service Pricing in Official Invoices
-**Status:** TODO (staging tests exist on PR #5)  
+### P2.2 ✅ D03 Service Pricing in Official Invoices — COMPLETE (`b18644b`, pushed)
+**Status:** DONE  
 **Definition of Done:**
 - Pricing by `RoomId + ServiceId + effective version + unit`
 - Actual occupant count from verified residency list
@@ -239,7 +239,36 @@
 - Service fees appear in **official issued invoice**
 - Immutable when room/pricing changes (snapshot)
 
-**Blocker:** PR #5 integration needed  
+**Delivered (`b18644b`)**
+- `OfficialServicePricingSchedule` (`modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/`): the missing production gate. `Bind(issued, candidate, sourceBindings, roomTariffHistory, verifiedResidency)` reconstructs the whole service schedule from frozen evidence and `VerifySchedule(candidate)` re-checks it.
+  - Every line recomputed from the **room's own** tariff version — `PreviewCharge` must equal the frozen binding amount and the fee line amount, so caller arithmetic is never trusted.
+  - Tariff selection is anchored to `candidate.ReviewedAtUtc` (private `SelectFrozenVersion`), **not** `SelectEffectiveForDate`/“latest today”. A version approved after the review instant can never rewrite an issued invoice.
+  - Refuses superseded rates, missing/foreign bindings, one-binding-per-service-code violations, per-person lines whose headcount ≠ verified residency, and `VerifiedOccupantCount` 0 with a meter quantity (and vice versa).
+  - `VerifyResidency` requires 1–100 unique tenants with exactly one `PrimaryTenant`; an empty or double-primary roster is refused.
+  - `EvidenceSha256` computed in the private constructor (`Fingerprint(this)`), so get-only snapshots cannot drift; `VerifyAgainst` throws `InvalidDataException` on drift.
+  - `IsOfficialReceivable` / `CanPostMoney` are hard `false` — pricing evidence never posts money.
+- Wired into production issuance: `IssueMonthlyAsync` now calls `VerifyOfficialServicePricingAsync(db, archived, issued)` **before** `db.MonthlyIssuedInvoices.Add(issued)`. Residency and tariff history are loaded server-side from `ContractTenant` / `RoomScopedServiceTariffVersions`; nothing comes from the client. The existing `BM_2HVerifyRoomServiceInvoiceBinding` trigger stays as the last line of defence.
+- 11 domain Facts `DOSVC01–DOSVC11`: per-person 150k×2, target room's own rate rather than a foreign rate, metered unit quantity, empty no-fee schedule, future-appended version ignored, superseded-before-review refused, headcount under/overstatement refused, missing/foreign binding refused, cross-candidate issuance refused, malformed residency refused, schedule refused for a candidate it was not bound to.
+- Authenticated HTTP month-10 cycle in `SliceAStagingPostgreSqlHttp_Tests`: 2-occupant contract, 150,000 VND/person tariff, itemized fee candidate → independent review by `clientB` → issuance by `clientRoot`. Asserts the issued `amount` equals the frozen candidate amount, the bound line is exactly 2×150,000 with `TariffVersionId` matching, and that appending a 500,000 VND November version afterwards leaves the issued schedule unchanged.
+
+**Evidence (pushed `b18644b`, full acceptance harness at that exact SHA)**
+- `verify-phase-2h-financial-foundations.ps1` at `b18644b`: **all five groups PASS** — `=== PHASE 2H FINANCIAL FOUNDATIONS: ALL FIVE GROUPS PASSED ===`, `COMMIT=b18644b9610ba2ee8b6b7357736a5328f4d4f78d`
+- Group 1 — Domain 2H (incl. `DOSVC01–DOSVC11`): **188/188** PASS (`TRX VERIFIED: passed=188/188; failed=0; skipped=0`) — `~/NgocTrang-Test-Logs/15-2h-financial-domain.log` (+ `.trx`); log line 1 stamped `PHASE2H_COMMIT=b18644b…`
+- Group 2 — PG 2H concurrency (incl. `TRFBINDPG01–TRFBINDPG10`): **109/109** PASS (`TRX VERIFIED: passed=109/109`) — `16-2h-postgresql.log` / `.trx`; stamped `b18644b`
+- Group 3 — PG fresh disposable migration chain: 1/1 PASS (`PGMIG01`) — `17-2h-full-migration.log` / `.trx`; stamped `b18644b`
+- Group 4 — Authenticated two-PG HTTP + D03 service-pricing cycle: 1/1 PASS (2m30s) — `18-2h-auth-http.log` / `.trx`; stamped `b18644b`
+- Group 5 — Full regression: 743 Domain / 231 Application / 447 SQLite EF / 76 HTTP, 0 failed, 0 skipped — `19-2h-full-regression.log`
+- Solution build: 0 errors
+- Harness updated: 6 source gates + 2 verify bundles accept `feat/p2-2-service-pricing-official-invoice`; 2H domain count 177 → 188
+
+**Definition of Done status**
+- ✅ Pricing by `RoomId + ServiceId + effective version + unit` — `Bind` matches binding↔tariff version↔room and refuses any other combination
+- ✅ Actual occupant count from verified residency list — per-person multiplier equals `ContractTenant` count; mismatch refuses issuance
+- ✅ E/W meter actual readings — metered-unit path requires `VerifiedMeterQuantity`; a per-room fee cannot disguise one
+- ✅ Service fees appear in **official issued invoice** — proven over authenticated HTTP, issued amount includes the service line
+- ✅ Immutable when room/pricing changes (snapshot) — anchored to `candidate.ReviewedAtUtc`; later appended versions proven not to rewrite the issued schedule
+
+**Blocker:** none — P3.1 merged (PR #5 / `c499d89`); this supersedes the "staging tests only" state.  
 **Dependency:** P3.1
 
 ### P2.3 ⏳ H4 Settlement (D04 Business Flow)
@@ -397,7 +426,7 @@
 **Backlog Status Summary:**
 - P0: 6/6 closed (P0.1–P0.3 done, P0.4 not needed, P0.5 startup gate at `7621d8a`, P0.6 full bundle at `7621d8a`)
 - P1: 5/5 done (P1.1 official at `f30e14d`; P1.2 rehearsal gate at `d085d02`; P1.4 crash/recovery at `682613d`; P1.3 vault + restricted roles at `18fe521`, 64/64; P1.5 internal simulated payOS staging E2E at `e58b12c`, 20/20)
-- P2: 1/6 (P2.1 DONE at `d36edb5`, pushed to `origin/feat/p2-1-issued-invoice-correction`; P2.2–P2.6 outstanding)
+- P2: 2/6 (P2.1 DONE at `d36edb5`, pushed to `origin/feat/p2-1-issued-invoice-correction`; P2.2 DONE at `b18644b`, pushed to `origin/feat/p2-2-service-pricing-official-invoice`; P2.3–P2.6 outstanding)
 - P3: 4/4 done + **MERGED to main** (P3.1 merge `01cba31`; P3.2 DONE `1ddf2e6`; P3.3 matrix; **P3.4 CLOSED 2026-11-12: PR #10 → main merge commit `c499d89`, Owner §6 signed + §3.2 P2 deferral accepted; post-merge local regression + CI green 5/5 at the merge commit**)
 
-**Current Focus:** P3 COMPLETE. **`main` = program baseline at merge commit `c499d89`** (post-merge docs/guards `2149210`+). Evidence chain closed: CI billing unlocked card-free → run 384 green 5/5 at `c63d370` (ID 43240562191) → Owner §6 + §3.2 approved → PR #10 merged `c499d89` → local regression exit 0 + CI run 43247648066 green 5/5 at `c499d89`. **Next: P2.1–P2.6 on follow-up feature branches off `main`** (P2.1 issued-invoice D01/D02 correction; P2.2 service fees; P2.3 genuine bank evidence; P2.4 three-signature flow — Owner decision E-sign vs scanned; P2.5 move-out E2E; P2.6 frontend discovery). HOLD unchanged: real payOS money flow, TLS public callback, production vault/roles/secrets, production deploy.
+**Current Focus:** P3 COMPLETE. **`main` = program baseline at merge commit `c499d89`** (post-merge docs/guards `2149210`+). Evidence chain closed: CI billing unlocked card-free → run 384 green 5/5 at `c63d370` (ID 43240562191) → Owner §6 + §3.2 approved → PR #10 merged `c499d89` → local regression exit 0 + CI run 43247648066 green 5/5 at `c499d89`. **Next: P2.1–P2.6 on follow-up feature branches off `main`** (P2.1 issued-invoice D01/D02 correction — DONE; P2.2 service fees — DONE; P2.3 genuine bank evidence; P2.4 three-signature flow — Owner decision E-sign vs scanned; P2.5 move-out E2E; P2.6 frontend discovery). HOLD unchanged: real payOS money flow, TLS public callback, production vault/roles/secrets, production deploy.

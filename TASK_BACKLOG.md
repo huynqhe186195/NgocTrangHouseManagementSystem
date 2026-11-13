@@ -271,8 +271,8 @@
 **Blocker:** none — P3.1 merged (PR #5 / `c499d89`); this supersedes the "staging tests only" state.  
 **Dependency:** P3.1
 
-### P2.3 ⏳ H4 Settlement (D04 Business Flow)
-**Status:** TODO  
+### P2.3 ✅ H4 Settlement (D04 Business Flow) — COMPLETE (`aa3b9bb`, pushed)
+**Status:** DONE  
 **Definition of Done:**
 - Cash-backed top-up obligation with deadline ≤1 calendar month from move date
 - Track partial payment / missed deadline
@@ -282,7 +282,46 @@
 - Genuine bank evidence required
 - Prevent false receipts
 
-**Blocker:** P1.1, P1.2, P1.3 must pass  
+**Already in place before this phase (audited, unchanged)**
+- Obligation creation is atomic with the signed H4 completion: `BuildingManagementRoomChangeH4Obligations` is insert-only under `BM_2HGuardH4Obligation`, which re-derives kind/amount/due from the completion and refuses any drift. `CK_BM_2H_H4MoneyShape` enforces `top-up XOR (credit XOR refund)` on the completion itself, so "exactly one, never both" is a database fact, not a service-layer convention.
+- Partial installments accumulate through append-only `...H4SettlementPostings`; overpayment and replay are refused by `BM_D04GuardH4SettlementPosting`.
+- Dual approval: `ReviewH4BankEvidenceAsync` requires a scoped reviewer and forbids the Owner as reviewer; `PostH4SettlementAsync` requires the founding Owner plus `BootstrapOwner` and re-reads the live Identity record at commit.
+- False receipts: a receipt may be claimed once; a self-reviewed evidence row is refused by `BM_D04GuardH4SettlementReview` even from a privileged SQL session.
+- **Deadline ≤1 month:** `TRFH4PG03` proves a 2026-12-16 due date on a 2026-11-15 transfer is refused with `23514`.
+
+**Delivered (`aa3b9bb`)**
+- `RoomChangeH4ObligationAging` + `RoomChangeH4ObligationAgingEvaluator` (`modules/buildingmanagement/src/BuildingManagement.Domain/RoomChanges/`): read-only aging of an already committed obligation.
+  - Only `DepositTopUp` may carry a due date; a `NextMonthIssuedRentCredit` or `IndependentBankRefund` carrying one is refused, and those two kinds can never report overdue.
+  - Lateness starts the day **after** the due date; the outstanding remainder is what ages, so a partial installment shrinks the aging exposure; a fully settled obligation is never overdue.
+  - Rejects an empty obligation id, an undefined kind, a non-positive or fractional original amount, and a settled amount outside `[0, original]`.
+  - Surfaced as `isOverdue` / `daysPastDue` / `agedAsOfVietnam` on both `SliceBRoomChangeH4ObligationRead` and `SliceBRoomChangeD04BalanceRead`; the obligation read also carries `CanPostMoney => false`. Aging is presentation-only: it never creates a fee, penalty or new receivable.
+- Migration `20261113100000_Phase2HH4ObligationDisputes`: H4-scoped dispute lane. The existing move-out dispute lane is keyed to an `OfficialPostingId` **and** a `MoveOutRequestId`, so it structurally cannot represent an H4 obligation.
+  - `BuildingManagementRoomChangeH4ObligationDisputes` (one per obligation) and `...H4ObligationDisputeResolutions` (one per dispute), both append-only via `BM_GuardH4ObligationDispute`, which requires `transaction_isolation = serializable`, rechecks that the obligation's **source contract** matches, refuses a `OpenedAtUtc` in the future, and refuses a dispute once any settlement posting exists.
+  - `BM_DenyH4DisputeMutation` blocks `TRUNCATE` on both tables; `Down()` refuses to drop either table while evidence remains.
+- `SliceBStagingRoomChangeH4Disputes.cs` + 3 controller routes: `POST .../h4-obligation-disputes`, `POST .../h4-obligation-disputes/{disputeId}/resolve`, `GET .../h4-obligation-dispute-status` (`state` 0 none / 1 open / 2 accepted / 3 rejected; `isSettlementBlocked` true for 1 and 3).
+  - The resolver must be a **different** authenticated person from the opener; a second dispute of the same obligation and a second resolution of the same dispute are both refused.
+- `PostH4SettlementAsync` now refuses to post while a dispute is open or was rejected: a contest can never be silently settled in the building's favour.
+
+**Evidence (pushed `aa3b9bb`, full acceptance harness at that exact SHA)**
+- `verify-phase-2h-financial-foundations.ps1` at `aa3b9bb`: **all five groups PASS** — `=== PHASE 2H FINANCIAL FOUNDATIONS: ALL FIVE GROUPS PASSED ===`, `COMMIT=aa3b9bb578a1012a96d13204cc94d1a7f81a6809`
+- Group 1 — Domain 2H (incl. `H4AGE01–H4AGE14`, `DOSVC01–DOSVC11`): **202/202** PASS — `~/NgocTrang-Test-Logs/15-2h-financial-domain.log` (+ `.trx`); line 1 stamped `PHASE2H_COMMIT=aa3b9bb…`
+- Group 2 — PG 2H concurrency (incl. `TRFH4DSPG01–TRFH4DSPG10`): **119/119** PASS — `16-2h-postgresql.log` / `.trx`; stamped `aa3b9bb`
+- Group 3 — PG fresh disposable migration chain (`ExpectedLatestMigration = 20261113100000_Phase2HH4ObligationDisputes`): 1/1 PASS — `17-2h-full-migration.log` / `.trx`; stamped `aa3b9bb`
+- Group 4 — Authenticated two-PG HTTP + H4 dispute cycle + overdue aging under a moved fixture clock: 1/1 PASS (2m10s) — `18-2h-auth-http.log` / `.trx`; stamped `aa3b9bb`
+- Group 5 — Full regression: 757 Domain / 231 Application / 447 SQLite EF / 76 HTTP, 0 failed, 0 skipped — `19-2h-full-regression.log`
+- `LOG_DIRECTORY=C:\Users\Huynq\NgocTrang-Test-Logs`; solution build 0 errors
+- Harness updated: all 6 scripts with a branch allowlist accept `feat/p2-3-h4-settlement-d04` (3 `check-*-gate.ps1`, `verify-2g-security-batch.ps1`, `verify-phase-2g5-staging.ps1`, `verify-phase-2h-financial-foundations.ps1`); 2H domain count 188 → 202, PG count 109 → 119
+
+**Definition of Done status**
+- ✅ Cash-backed top-up obligation with deadline ≤1 calendar month — enforced by the signed completion cascade; over-long due date refused (`TRFH4PG03`)
+- ✅ Track partial payment / missed deadline — postings accumulate the settled amount; `RoomChangeH4ObligationAging` reports `isOverdue` / `daysPastDue` on both reads, proven over HTTP with a moved clock (35 days past due)
+- ✅ Credit to next month rent **OR** bank refund, exactly one — `CK_BM_2H_H4MoneyShape` (top-up XOR (credit XOR refund)) plus `BM_D04GuardH4SettlementPosting`
+- ✅ Refund/debt dispute reconciliation — new H4-scoped append-only dispute lane with independent resolution and a settlement block while contested
+- ✅ Dual approval: Owner + Reviewer — reviewer ≠ Owner on review, Owner + `BootstrapOwner` on posting
+- ✅ Genuine bank evidence required — manual independent attestation is mandatory and `IsBankApiVerified` is permanently `false`; real bank verification remains HOLD under the standing no-real-bank-transfer constraint
+- ✅ Prevent false receipts — one-claim-per-receipt, self-review refused at the trigger, append-only journal
+
+**Blocker:** none — P3.1 merged (PR #5 / `c499d89`); real bank settlement remains HOLD.  
 **Dependency:** P1.3, P2.1
 
 ### P2.4 ⏳ D06/H6 Three-Signature Process
@@ -426,7 +465,7 @@
 **Backlog Status Summary:**
 - P0: 6/6 closed (P0.1–P0.3 done, P0.4 not needed, P0.5 startup gate at `7621d8a`, P0.6 full bundle at `7621d8a`)
 - P1: 5/5 done (P1.1 official at `f30e14d`; P1.2 rehearsal gate at `d085d02`; P1.4 crash/recovery at `682613d`; P1.3 vault + restricted roles at `18fe521`, 64/64; P1.5 internal simulated payOS staging E2E at `e58b12c`, 20/20)
-- P2: 2/6 (P2.1 DONE at `d36edb5`, pushed to `origin/feat/p2-1-issued-invoice-correction`; P2.2 DONE at `b18644b`, pushed to `origin/feat/p2-2-service-pricing-official-invoice`; P2.3–P2.6 outstanding)
+- P2: 3/6 (P2.1 DONE at `d36edb5`, pushed to `origin/feat/p2-1-issued-invoice-correction`; P2.2 DONE at `b18644b`, pushed to `origin/feat/p2-2-service-pricing-official-invoice`; P2.3 DONE at `aa3b9bb`, pushed to `origin/feat/p2-3-h4-settlement-d04`; P2.4–P2.6 outstanding)
 - P3: 4/4 done + **MERGED to main** (P3.1 merge `01cba31`; P3.2 DONE `1ddf2e6`; P3.3 matrix; **P3.4 CLOSED 2026-11-12: PR #10 → main merge commit `c499d89`, Owner §6 signed + §3.2 P2 deferral accepted; post-merge local regression + CI green 5/5 at the merge commit**)
 
-**Current Focus:** P3 COMPLETE. **`main` = program baseline at merge commit `c499d89`** (post-merge docs/guards `2149210`+). Evidence chain closed: CI billing unlocked card-free → run 384 green 5/5 at `c63d370` (ID 43240562191) → Owner §6 + §3.2 approved → PR #10 merged `c499d89` → local regression exit 0 + CI run 43247648066 green 5/5 at `c499d89`. **Next: P2.1–P2.6 on follow-up feature branches off `main`** (P2.1 issued-invoice D01/D02 correction — DONE; P2.2 service fees — DONE; P2.3 genuine bank evidence; P2.4 three-signature flow — Owner decision E-sign vs scanned; P2.5 move-out E2E; P2.6 frontend discovery). HOLD unchanged: real payOS money flow, TLS public callback, production vault/roles/secrets, production deploy.
+**Current Focus:** P3 COMPLETE. **`main` = program baseline at merge commit `c499d89`** (post-merge docs/guards `2149210`+). Evidence chain closed: CI billing unlocked card-free → run 384 green 5/5 at `c63d370` (ID 43240562191) → Owner §6 + §3.2 approved → PR #10 merged `c499d89` → local regression exit 0 + CI run 43247648066 green 5/5 at `c499d89`. **P2 on follow-up feature branches off `main`** — P2.1 DONE (`d36edb5`), P2.2 DONE (`b18644b`), **P2.3 DONE (`aa3b9bb`, H4 settlement: obligation aging + H4-scoped dispute lane, harness 5/5 at the pushed SHA)**. Next: P2.4 three-signature flow (Owner decision E-sign vs scanned), P2.5 move-out E2E, P2.6 frontend discovery. HOLD unchanged: real payOS money flow, TLS public callback, production vault/roles/secrets, production deploy.

@@ -571,6 +571,24 @@
 
 ---
 
+### P4.3 ✅ Slice-A Staging Grant Gate (open deny-all with real data) — COMPLETE (`b769028`, pushed)
+**Status:** DONE — opened the building-scope grant gate on an isolated staging lane **with zero backend code change**: the Host's own Slice-A opt-in (`NgocTrangHouseManagementSystemHttpApiHostModule`, Staging + `I_ACCEPT_ISOLATED_SLICE_A_STAGING_WRITES` + two `bm_slicea_staging_*` databases + exactly one indexed `RootUserIds:0`) swaps `DenyAllBuildingOperatorGrantReader` for `SliceAStagingGrantReader`, `SliceAStagingFirstOwnerWriter` (POST building = atomic Building + first operator grant to the root), and `SliceAStagingWriteBoundary`. Harness `etc/scripts/verify-p43-slicea-staging-gate.ps1` proves the full path on a disposable lane (Host 44321 + Vite 5273; the Owner's dev instance 44311/5173 untouched): identity DB migrated by DbMigrator, **building DB migrated by `dotnet ef database update` on `BuildingManagementDbContext`** (DbMigrator only migrates the Identity context — key discovery), seeded admin id read back (GuidGenerator), 9 user-level BM permissions INSERTed into `AbpPermissionGrants` (`ProviderName='U'`, `gen_random_uuid()::uuid` for the default-less `Id` column), root bootstraps a building, creates floor + room, then **all three `GET /{building,floor,room}` return 200 with the real created rows** through the same Vite proxy the browser uses — and a random building id stays denied (302→403), proving the scope gate is open but still tight. Deliverable (b): self-service guide `docs/dev-staging-grant-lane.md` so the Owner can enable the same lane on their own 44311 instance (Claude does not touch that instance).
+**Evidence:**
+- ✅ Commit `b769028` pushed to `origin/main` (fast-forward `0cd518c..b769028`, no force)
+- ✅ E2E harness `verify-p43-slicea-staging-gate.ps1` — **ALL STEPS PASSED at the pushed SHA** (`b769028dda32876592c9ce9d4abe21bd8dd3da1b`): two disposable `bm_slicea_staging_*` databases on `bm-p21-pg-15432`, token via password grant through the proxy, POST building/floor/room 200/201, GET all three 200 with the created rows, negative control denied
+- ✅ LOG_DIRECTORY `C:\Users\Huynq\NgocTrang-Test-Logs\p43-slicea-staging-gate-20261113-235605` (pushed-SHA run; earlier iterations `...-233646`/`...-234220`/`...-234930`/`...-235156` record the RootUserIds binding, BM-migration and PS 5.1 array-unwrap fixes)
+- ✅ Admin password / token generated in-process, never echoed, never persisted; 15433, 5432, production DB, payOS untouched
+**Definition of Done:**
+- ✅ Gate opens through the server's own reviewed opt-in (no backend edit)
+- ✅ Real data returned and verified at the pushed SHA (200 + created rows on all three read endpoints)
+- ✅ Self-service guide for the Owner's 44311 dev instance committed
+- ✅ Untracked strays left uncommitted
+
+**Blocker:** None
+**Dependency:** P4.2 ✅ (screens + denial rendering)
+
+---
+
 ## NOT IN BACKLOG (Already Fixed — Do Not Repeat)
 
 - ❌ CS0117 Convert.TryFromHexString → Fixed at `0702e0db`
@@ -599,4 +617,4 @@
 - P2: 6/6 **MERGED INTO `main`** (PR #11 merge commit `72a0721`, 2026-11-13, no squash — P2.1 `d36edb5` / P2.2 `b18644b` / P2.3 `aa3b9bb` / P2.4 `950610a` / P2.5 `2d01952` / P2.6 `6c9852f`; local 5-group harness ALL PASSED at `72a0721`; post-merge CI stale-assertion fix `d364ee1` with CI run 43423912631 green 5/5)
 - P3: 4/4 done + **MERGED to main** (P3.1 merge `01cba31`; P3.2 DONE `1ddf2e6`; P3.3 matrix; **P3.4 CLOSED 2026-11-12: PR #10 → main merge commit `c499d89`, Owner §6 signed + §3.2 P2 deferral accepted; post-merge local regression + CI green 5/5 at the merge commit**)
 
-**Current Focus:** **P4.2 CLOSED (2026-11-13): Buildings & Rooms screens at `aea363c` pushed to `main`** — Vitest 28/28 + build PASS at the pushed SHA; e2e harness (`verify-p42-building-reads.ps1`) on an isolated lane (Host 44321 + Vite 5273, disposable `bm_p42_*` databases on 15432) confirms all three list endpoints answer the building-scope gate denial for a real token (raw 302 → `/Error?httpStatusCode=403`), and the frontend renders that as an honest access-denied notice (LOG_DIRECTORY `C:\Users\Huynq\NgocTrang-Test-Logs\p42-building-reads-20261113-230615`). P4.1 + P4.1b auth portal closed at `46f4dee`. P0→P3 + P2 all merged in `main` (baseline `c499d89`, P2 merge `72a0721`, CI fix `d364ee1`). Next: further business screens (Contracts/Invoices/Utilities) or enabling a staging grant path so the gate stops deny-all — needs an Owner decision; real payOS money flow, TLS public callback, production vault/roles/secrets, production deploy stay HOLD.
+**Current Focus:** **P4.3 CLOSED (2026-11-13): Slice-A staging grant gate opened with real data at `b769028` pushed to `main`** — the disposable-lane e2e (`verify-p43-slicea-staging-gate.ps1`, Host 44321 + Vite 5273, two `bm_slicea_staging_*` DBs on 15432) proves the gate opens via the server's own Staging opt-in with zero backend change: root bootstraps a building (atomic first-owner grant), floor + room CRUD, and all three list endpoints return 200 with the created rows; a random building id stays denied (LOG_DIRECTORY `C:\Users\Huynq\NgocTrang-Test-Logs\p43-slicea-staging-gate-20261113-235605`). Self-service guide `docs/dev-staging-grant-lane.md` lets the Owner enable the same lane on their own 44311 dev instance. P4.2 screens closed at `aea363c` (Vitest 28/28 + build PASS), P4.1 + P4.1b auth portal at `46f4dee`. P0→P3 + P2 all merged in `main` (baseline `c499d89`, P2 merge `72a0721`, CI fix `d364ee1`). Next: Owner runs the dev-lane guide on 44311 to see the P4.2 screens with real data, or further business screens (Contracts/Invoices/Utilities); real payOS money flow, TLS public callback, production vault/roles/secrets, production deploy stay HOLD.

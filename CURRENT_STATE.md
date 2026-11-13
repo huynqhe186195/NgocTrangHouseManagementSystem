@@ -1,12 +1,12 @@
 # CURRENT STATE — NgocTrangHouseManagementSystem
-**Snapshot:** 2026-11-13 (P2.1 domain layer DONE at `24216e2` on `feat/p2-1-issued-invoice-correction`; local PG/HTTP/concurrency evidence green; not yet pushed)  
+**Snapshot:** 2026-11-13 (P2.1 DONE at `f2665e0` on `feat/p2-1-issued-invoice-correction`; domain/PG/HTTP evidence green; not yet pushed)  
 **Verified by:** Claude Code audit  
 **Working Directory:** `D:\Dev\NgocTrangBuilding\Project\NgocTrangHouseManagementSystem`
 
 ## Git Status
 
 **Current Branch:** `feat/p2-1-issued-invoice-correction` (off `main` @ `2149210`)  
-**HEAD SHA:** `24216e2` (LOCAL ONLY — awaiting Owner push approval)  
+**HEAD SHA:** `f2665e0` (LOCAL ONLY — awaiting Owner push approval)  
 **Program baseline:** `c499d89` = merge commit "Merge pull request #10 from huynqhe186195/feat/local-safe-startup-20261109" (evidence chain: local regression exit 0 + CI workflow_dispatch run 43247648066 green 5/5 at `c499d89`)  
 **Untracked Files:** `etc/phase-audits/Phase2G3A7_RevisionLedger_Generated_Review.sql` (deliberate offline EF preview artifact — do not delete); `etc/test-results/` (local TRX output from this session)
 
@@ -126,6 +126,6 @@
 11. ✅ **P3.4 MERGE EXECUTED (2026-11-12, "Làm cả 2 đi")** — Owner approved §3.2 (P2 deferral: main = tested-staging-scope) + §6 (merge). PR #10 base re-targeted to `main` (was chain-segment `feat/d04b-operational-gates-20261108`), draft→ready, **merged as merge commit `c499d89`** (no squash, no force). Post-merge verification: local full regression at main exit 0 (720/720 + 231/231 + 447/447 + 76/76 + 3 source gates, QUALITY GATE PASS; guard-adapt for main at `2149210`); **CI on main: workflow_dispatch run 43247648066 green 5/5 at `c499d89`**. Program baseline = `c499d89`. P3.4 CLOSED; next: P2.1–P2.6 on follow-up branches off `main`
 
 ---
-**Last Updated:** 2026-11-12  
+**Last Updated:** 2026-11-13  
 **Verified Against:** local checkout + run 28 log/TRX evidence at pushed SHA `f30e14d` (P1.1), `-WriterOnly` run 5 at `d085d02` (P1.2), native JWT crash/recovery run 2 at pushed `682613d` (P1.4), native JWT restricted-roles run 4 at pushed `18fe521` (P1.3, 64/64), internal simulated payOS staging run 3 at pushed `e58b12c` (P1.5, 20/20), the P3.1-merged tree regression (module suites at `01cba31`, native JWT matrix at `38f0037`, D04 bundles at `7f48c59`, 2H foundations + 2g5 staging at `1ddf2e6`), the exact-final-SHA regression batch at `feb8938`, CI run 384 green 5/5 at pushed `c63d370` (ID 43240562191), **and the post-merge evidence at `main`: local full regression exit 0 (QUALITY GATE PASS) + CI workflow_dispatch run 43247648066 green 5/5 at merge commit `c499d89`**  
 **Confidence:** High for git state (**main = `c499d89` merge of PR #10, pushed; program baseline established**), the full local regression chain (build + 1474/1474 + all official payOS harnesses/bundles + 2H/2g/2g5 external lanes, re-run green at post-merge main), GitHub Actions CI at the merged main (5/5 jobs at the merge commit itself), the native JWT matrix + crash lane under restricted Host roles, least-privilege writer rehearsal, and the P1.5 internal simulated payOS E2E lane; production vault, production role provisioning, TLS public payOS callback, and real payOS money flow (ACC-08) remain HOLD/open — P2.1–P2.6 follow on feature branches off `main`

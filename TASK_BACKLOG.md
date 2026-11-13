@@ -183,8 +183,8 @@
 
 ## P2 — Complete Phase 2H/2G Business Logic (Still HOLD)
 
-### P2.1 🟡 D01/D02 Invoice Correction — domain layer DONE (`24216e2`)
-**Status:** IN PROGRESS on `feat/p2-1-issued-invoice-correction`. Domain planner + parity suite green; HTTP/PG parity and concurrency evidence re-run pending push.
+### P2.1 ✅ D01/D02 Invoice Correction — COMPLETE (`f2665e0`)
+**Status:** DONE on `feat/p2-1-issued-invoice-correction`. Domain planner, PG concurrency/rollback proof and per-month-length HTTP parity all green.
 
 **Delivered (`24216e2`)**
 - `RoomChangeIssuedInvoiceCorrectionPlanner` (`modules/buildingmanagement/src/BuildingManagement.Domain/RoomChanges/`): binds an approved D01/D02 quote to REAL `MonthlyIssuedInvoiceRecord`s and produces the ordered append-only `MonthlyInvoiceAdjustmentRecord` proposals (source credit → target debit).
@@ -197,24 +197,34 @@
   - `CanIssueInvoice` / `CanPostOfficialReceivable` / `CanExecuteRoomChange` all `false`.
 - 12 domain Facts `RICC01–RICC12`, incl. 118-scenario parity against an independent exact-rational oracle over 28/29/30/31-day months and leap year, the 0.5 away-from-zero boundary, full-month and day-1 edges, replay identity, and every fail-closed path.
 
-**Evidence**
-- Domain `BuildingManagement.Domain.Tests`: 732/732 PASS; 2H domain group 1 filter 177/177 (165 pre-existing preserved + 12 new) — TRX `etc/test-results/p21/p21-2h-domain-group1.trx`
-- PG 2H concurrency group: 103/103 PASS — TRX `etc/test-results/p21/p21-pg-2h-group2.trx`
+**Delivered (`f2665e0`)**
+- `RoomChangeIssuedInvoiceCorrectionPostgreSql_Tests` (6 Facts `RICCPG01–RICCPG06`): mounts the real `20261029223000_Phase2G3AuditedMonthlyAdjustments` migration into a throwaway schema, so the production trigger definitions are what is exercised.
+  - Two independent sessions proposing the same correction on one issued invoice serialize to exactly one row (`23505` for the loser), leaving no orphan decision journal.
+  - Replaying an identical correction cannot double-post.
+  - `UPDATE` / `DELETE` / `TRUNCATE … CASCADE` / hash-mismatched `INSERT` all refused with `23514`.
+  - The proposer cannot review their own correction; a credit that would drop the invoice below captured receipts is refused.
+  - Migration `Down()` is a clean, complete reversal with no history, and refuses with `23514` once a correction exists.
+- Month-length parity matrix inside the authenticated HTTP Fact: the D01 target-owns-handover-day quote is verified against calendar arithmetic alone across 28-day (2027-02), leap 29-day (2028-02), 30-day (2027-04) and 31-day (2027-01) transfer months at day 11, including day split, per-line VND, and a re-read that returns the same stored figures.
+
+**Evidence (`f2665e0`)**
+- Domain 2H group 1 filter: 177/177 PASS — TRX `etc/test-results/p21/p21-2h-domain-group1.trx` (`Assert-Phase2HTrx.ps1` verified)
+- PG 2H concurrency group incl. the 6 new Facts: 109/109 PASS — TRX `etc/test-results/p21/p21-pg-2h-group2.trx`
+- Authenticated HTTP/PG parity: 1/1 PASS — TRX `etc/test-results/p21/p21-http-parity.trx`
+- Concurrency Fact repeated 5× standalone: 5/5 PASS (no flakiness)
 - PG full migration chain: 1/1 PASS — TRX `etc/test-results/p21/p21-pg-group3.trx`
-- Authenticated HTTP/PG parity (`SliceAStagingPostgreSqlHttp_Tests`): 1/1 PASS — TRX `etc/test-results/p21/p21-http-parity.trx`
-- `verify-2g-security-batch.ps1 -Mode Full`: exit 0, QUALITY GATE PASS (Domain 732 / App 231 / EF 447 / HTTP 76)
+- `verify-2g-security-batch.ps1 -Mode Full`: exit 0, QUALITY GATE PASS (Domain 732 / App 231 / EF 447 / HTTP 76) — at `cc16422`
 - Solution build: 0 errors
-- Harness updated: 6 source gates + 2 verify bundles accept the new branch; 2H domain count 165 → 177
+- Harness updated: 6 source gates + 2 verify bundles accept the new branch; 2H domain count 165 → 177, 2H PG count 103 → 109
 
 **Definition of Done status**
 - ✅ Apply "target owns handover day" policy
 - ✅ VND rounding per line (0.5 → up for non-negative)
 - ✅ Signed pricing artifact, append-only adjustments
 - ✅ Receipt reconciliation (refuses to correct below captured receipts)
-- ✅ SQL bypass protection — pre-existing DB triggers on `BuildingManagementMonthlyInvoiceAdjustments` (append-only, no-truncate, independent reviewer, credit-vs-receipts ceiling) already enforced; planner produces records that satisfy them
+- ✅ SQL bypass protection — DB triggers on `BuildingManagementMonthlyInvoiceAdjustments` (append-only, no-truncate, independent reviewer, credit-vs-receipts ceiling), now proven against the shipped migration DDL
 - ✅ Test against **issued invoices**, not just staging
-- ✅ HTTP/PG parity for 28/29/30/31 days, leap year — domain parity exhaustive; HTTP/PG path exercised end-to-end at 14/31 days. **Remaining:** no per-month-length HTTP scenario matrix yet.
-- ⏳ Concurrency/rollback — PG group and migration-chain rollback green; a dedicated concurrent-correction scenario for this planner is not written yet.
+- ✅ HTTP/PG parity for 28/29/30/31 days, leap year — per-month-length HTTP matrix + exhaustive domain parity
+- ✅ Concurrency/rollback — dedicated concurrent-correction scenario, SQL-bypass refusals, and guarded migration rollback
 
 **Blocker:** none — P3.1 merged, PR #5 integrated.  
 **Shared spine:** `MonthlyInvoiceAdjustmentRecord` + DB append-only triggers (migration `20261029223000`); HTTP surface `contracts/{contractId}/monthly-issued/{issuedId}/adjustments` (+ `/review`) in `SliceBStagingFinalInvoiceController`.
@@ -386,7 +396,7 @@
 **Backlog Status Summary:**
 - P0: 6/6 closed (P0.1–P0.3 done, P0.4 not needed, P0.5 startup gate at `7621d8a`, P0.6 full bundle at `7621d8a`)
 - P1: 5/5 done (P1.1 official at `f30e14d`; P1.2 rehearsal gate at `d085d02`; P1.4 crash/recovery at `682613d`; P1.3 vault + restricted roles at `18fe521`, 64/64; P1.5 internal simulated payOS staging E2E at `e58b12c`, 20/20)
-- P2: 0.5/6 (P2.1 domain layer done at `24216e2` on `feat/p2-1-issued-invoice-correction`; HTTP month-length matrix + concurrent-correction scenario outstanding)
+- P2: 1/6 (P2.1 DONE at `f2665e0` on `feat/p2-1-issued-invoice-correction`; P2.2–P2.6 outstanding)
 - P3: 4/4 done + **MERGED to main** (P3.1 merge `01cba31`; P3.2 DONE `1ddf2e6`; P3.3 matrix; **P3.4 CLOSED 2026-11-12: PR #10 → main merge commit `c499d89`, Owner §6 signed + §3.2 P2 deferral accepted; post-merge local regression + CI green 5/5 at the merge commit**)
 
 **Current Focus:** P3 COMPLETE. **`main` = program baseline at merge commit `c499d89`** (post-merge docs/guards `2149210`+). Evidence chain closed: CI billing unlocked card-free → run 384 green 5/5 at `c63d370` (ID 43240562191) → Owner §6 + §3.2 approved → PR #10 merged `c499d89` → local regression exit 0 + CI run 43247648066 green 5/5 at `c499d89`. **Next: P2.1–P2.6 on follow-up feature branches off `main`** (P2.1 issued-invoice D01/D02 correction; P2.2 service fees; P2.3 genuine bank evidence; P2.4 three-signature flow — Owner decision E-sign vs scanned; P2.5 move-out E2E; P2.6 frontend discovery). HOLD unchanged: real payOS money flow, TLS public callback, production vault/roles/secrets, production deploy.

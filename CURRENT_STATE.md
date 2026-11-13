@@ -6,7 +6,7 @@
 ## Git Status
 
 **Current Branch:** `feat/p2-3-h4-settlement-d04` (off `feat/p2-2-service-pricing-official-invoice` @ `b18644b`)  
-**HEAD SHA:** `aa3b9bb578a1012a96d13204cc94d1a7f81a6809` — pushed; `git ls-remote origin refs/heads/feat/p2-3-h4-settlement-d04` matches (push authorized 2026-11-13)  
+**HEAD SHA:** `aa3b9bb578a1012a96d13204cc94d1a7f81a6809` — the P2.3 evidence SHA, pushed (`git ls-remote origin refs/heads/feat/p2-3-h4-settlement-d04` matched at push time 2026-11-13); the `docs(p23)` close-out commit layers on top and is docs-only  
 **Program baseline:** `c499d89` = merge commit "Merge pull request #10 from huynqhe186195/feat/local-safe-startup-20261109" (evidence chain: local regression exit 0 + CI workflow_dispatch run 43247648066 green 5/5 at `c499d89`)  
 **Untracked Files:** `etc/phase-audits/Phase2G3A7_RevisionLedger_Generated_Review.sql` (deliberate offline EF preview artifact — do not delete); `etc/test-results/` (local TRX output from this session)
 
@@ -20,13 +20,14 @@
 | `feat/d04b-protected-bank-evidence-20261108` | `66a62dc` | origin/feat/d04b-protected-bank-evidence-20261108 | ✅ Matches handoff |
 | `feat/p2-1-issued-invoice-correction` | `d36edb5` | origin/feat/p2-1-issued-invoice-correction | ✅ P2.1 DONE — pushed 2026-11-13, local == origin, full 2H harness green at that SHA |
 | `feat/p2-2-service-pricing-official-invoice` | `b18644b` | origin/feat/p2-2-service-pricing-official-invoice | ✅ P2.2 DONE — pushed 2026-11-13, local == origin, full 2H harness green at that SHA (188 domain) |
-| `feat/p2-3-h4-settlement-d04` | `aa3b9bb` | origin/feat/p2-3-h4-settlement-d04 | ✅ P2.3 DONE — pushed 2026-11-13, local == origin, full 2H harness green at that SHA (202 domain / 119 PG) |
+| `feat/p2-3-h4-settlement-d04` | `aa3b9bb` | origin/feat/p2-3-h4-settlement-d04 | ✅ P2.3 DONE — evidence SHA `aa3b9bb` pushed 2026-11-13 with the full 2H harness green (202 domain / 119 PG); docs close-out commits layer on top of it |
 | `feat/phase2h-payos-signature-foundation-20261106` | `7249c9f` | origin (behind 1) | ⚠️ Behind, differs from handoff `2de0f7e` |
 | `wip/phase-2g2` | `e8e4f29` | origin (behind 49) | ⚠️ Behind, differs from handoff `a951999` |
 | `main` | `3e3636c` | origin/main | ✅ Matches handoff |
 
 ### Recent Commits on Current Branch (since handoff)
 
+- `926b12f` — docs(p23): close P2.3 with five-group harness evidence at aa3b9bb (docs-only, layers on the evidence SHA)
 - `aa3b9bb` — fix(p23): bind the dispute guard to the obligation's source contract (found by the authenticated HTTP cycle: guard compared `NEW."ContractId"` against `TargetContractId`, refusing every genuine dispute)
 - `7f71cb5` — test(p23): bind the H4 dispute routes into the staging boundary test (route inventory 32 → 35)
 - `91426b8` — feat(p23): age H4 obligations and add dispute reconciliation (H4 obligation aging evaluator + H4-scoped append-only dispute lane, terminal migration `20261113100000_Phase2HH4ObligationDisputes`)

@@ -1,14 +1,14 @@
 # CURRENT STATE — NgocTrangHouseManagementSystem
-**Snapshot:** 2026-11-12 (P3 COMPLETE + MERGED: PR #10 → `main` at merge commit `c499d89`, Owner-authorized P3.4 §6 + §3.2; local regression + CI green at post-merge main; P2.1–P2.6 next on follow-up branches)  
+**Snapshot:** 2026-11-13 (P2.1 domain layer DONE at `24216e2` on `feat/p2-1-issued-invoice-correction`; local PG/HTTP/concurrency evidence green; not yet pushed)  
 **Verified by:** Claude Code audit  
 **Working Directory:** `D:\Dev\NgocTrangBuilding\Project\NgocTrangHouseManagementSystem`
 
 ## Git Status
 
-**Current Branch:** `main`  
-**HEAD SHA:** `2149210` (pushed to origin; guard-adapt for main over merge base `c499d89`)  
+**Current Branch:** `feat/p2-1-issued-invoice-correction` (off `main` @ `2149210`)  
+**HEAD SHA:** `24216e2` (LOCAL ONLY — awaiting Owner push approval)  
 **Program baseline:** `c499d89` = merge commit "Merge pull request #10 from huynqhe186195/feat/local-safe-startup-20261109" (evidence chain: local regression exit 0 + CI workflow_dispatch run 43247648066 green 5/5 at `c499d89`)  
-**Untracked Files:** `etc/phase-audits/Phase2G3A7_RevisionLedger_Generated_Review.sql`
+**Untracked Files:** `etc/phase-audits/Phase2G3A7_RevisionLedger_Generated_Review.sql` (deliberate offline EF preview artifact — do not delete); `etc/test-results/` (local TRX output from this session)
 
 ### Branch Inventory
 

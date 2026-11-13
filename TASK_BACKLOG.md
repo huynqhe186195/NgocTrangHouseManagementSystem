@@ -324,8 +324,8 @@
 **Blocker:** none — P3.1 merged (PR #5 / `c499d89`); real bank settlement remains HOLD.  
 **Dependency:** P1.3, P2.1
 
-### P2.4 ⏳ D06/H6 Three-Signature Process
-**Status:** TODO (bounded DOCX test exists on PR #5)  
+### P2.4 ✅ D06/H6 Three-Signature Process — COMPLETE (`950610a`, pushed)
+**Status:** DONE  
 **Definition of Done:**
 - 3 signatures: Owner, Staff, Tenant/Representative
 - Scan physical documents (accept scanned handwritten signatures)
@@ -333,7 +333,36 @@
 - Owner exports new contract DOCX/PDF with audit trail
 - Download access control with audit
 
-**Blocker:** PR #5 integration + E-sign or scan flow decision  
+**Already in place before this phase (audited, unchanged)**
+- The three-signature record itself — `RoomChangeHandoverThreePartySignoff.Sign` (PR #5 lane, tested by `RoomChangeFinalIndependentSignoffs_Tests`) — enforces distinct Owner / handover-staff / recorded primary-tenant ids, roster binding, the physical-handover evidence fingerprint, `CanExecuteTransfer => false` and `IsCryptographicallyAuthenticatedSignature => false`.
+- The signoff is archived append-only by `RoomChangeEvidenceArchiveRecord.CaptureThreePartyHandover` (Kind 4) and exposed over authenticated HTTP by `POST .../three-party-handover-archive` with the blank-signature and wrong-representative denials proven in the two-PG fixture.
+- The Owner's signed-document export (`GET .../export.docx`) with two-building scoping, live `BootstrapOwner` revocation and a non-caching response already exists (PR #5 lane).
+
+**Delivered (`950610a`)**
+- `RoomChangeSignedHandoverScanRecord` + `RoomChangeContractDocumentAccessRecord` (`modules/buildingmanagement/src/BuildingManagement.Domain/RoomChanges/`). The scan stores **only** the SHA-256 of the uploaded sheet, its media type/byte length and an opaque 32-hex vault handle — never the bytes. It must bind to the archived `ThreePartyPhysicalHandover` of the same request (`HandoverEvidenceSha256 = archive.RecordSha256`), accept only `application/pdf` / `image/png` / `image/jpeg`, 256 B – 5 MB, be uploaded at/after the archive time by a non-empty user, and stay one-per-handover and one-per-request. `ProvesSignerIdentity => false`, `CanExecuteRoomChange => false`. The access trail records actor, scope, purpose (12–300 chars), delivered digest and delivered size; `GrantsAccess => false`.
+- Migration `20261113150000_Phase2HD06SignedScanAndDownloadAudit`: `CK_BM_D06ScanShape` / `CK_BM_DocAccessShape`, unique `UX_BM_D06Scan_Handover` / `UX_BM_D06Scan_Request`, `BM_GuardD06SignedHandoverScan` (append-only + SERIALIZABLE + re-derives the archive binding), `BM_GuardContractDocumentAccess` (append-only + SERIALIZABLE/REPEATABLE READ + live non-deleted contract), TRUNCATE blockers, evidence-retaining `Down()`.
+- `D06DisposableEncryptedScanArchive` (`src/.../HttpApi.Host/Security/`): AES-256-GCM vault with its **own key ring and directory** (`*.d06scan`), separate from the D04 bank-evidence vault; magic-byte type verification; store-then-readback digest proof before the row is written. Fail-closed: without `BuildingManagement:SliceAStaging:D06ScanArchive:Root` + `:KeyBase64` (validated 32-byte key, absolute path) the routes stay unavailable.
+- `SliceBStagingRoomChangeD06SignedScan.cs` + 2 controller routes (`POST`/`GET `{requestId}/d06-signed-handover-scan``; 35 → 37 in the boundary inventory). The vault handle is bound to the uploader via AES-GCM associated data, so the Owner download opens it with the **original uploader identity** while the downloader is separately verified by the scoped Owner path. `GET .../export.docx` now takes an optional `purpose` and appends exactly one access-trail row per successful export inside the same transaction.
+
+**Evidence (pushed `950610a`, full acceptance harness at that exact SHA)**
+- `verify-phase-2h-financial-foundations.ps1` at `950610a`: **all five groups PASS** — `=== PHASE 2H FINANCIAL FOUNDATIONS: ALL FIVE GROUPS PASSED ===`, `COMMIT=950610a00d519d4b49b97b294cf94fcd0d427904`
+- Group 1 — Domain 2H (incl. `TRFD06S01–TRFD06S10`): **212/212** PASS — `~/NgocTrang-Test-Logs/15-2h-financial-domain.log` (+ `.trx`); stamped `PHASE2H_COMMIT=950610a…`
+- Group 2 — PG 2H concurrency (incl. `TRFD06PG01–TRFD06PG10`): **129/129** PASS — `16-2h-postgresql.log` / `.trx`; stamped `950610a`
+- Group 3 — PG fresh disposable migration chain (`ExpectedLatestMigration = 20261113150000_Phase2HD06SignedScanAndDownloadAudit`): 1/1 PASS — `17-2h-full-migration.log` / `.trx`; stamped `950610a`
+- Group 4 — Authenticated two-PG HTTP + D06 upload/download cycle (wrong media type 403, forged PDF magic bytes 409, duplicate scan 403, staff download 403, Owner download byte-exact + no-store + nosniff, stored row = digest + opaque handle, encrypted file on disk): 1/1 PASS — `18-2h-auth-http.log` / `.trx`; stamped `950610a`
+- Group 5 — Full regression: 767 Domain / 231 Application / 447 SQLite EF / 76 HTTP, 0 failed, 0 skipped — `19-2h-full-regression.log`
+- `LOG_DIRECTORY=C:\Users\Huynq\NgocTrang-Test-Logs`; solution build 0 errors
+- Harness updated: all 6 scripts with a branch allowlist accept `feat/p2-4-d06-three-signature`; 2H domain count 202 → 212, PG count 119 → 129
+
+**Definition of Done status**
+- ✅ 3 signatures: Owner, Staff, Tenant/Representative — pre-existing `RoomChangeHandoverThreePartySignoff` + `CaptureThreePartyHandover`, unchanged, re-verified
+- ✅ Scan physical documents (accept scanned handwritten signatures) — the 2026-11-04 Owner decision (scan accepted, cryptographic e-signing explicitly NOT required); scanned sheet archived in the encrypted D06 vault with digest binding
+- ✅ Permission and handover evidence verification — scoped `Contracts.Manage` upload, vault bound to the archived three-party handover, download requires the scoped Owner bootstrap
+- ✅ Owner exports new contract DOCX with audit trail — every successful `export.docx` appends one immutable `ContractDocumentAccess` row (actor, scope, purpose, delivered digest)
+- ✅ Download access control with audit — staff download 403; Owner download byte-exact, `no-store`/`nosniff`; access trail append-only with shape CHECK + trigger guards
+- PDF export remains DOCX-only by existing design (the DOCX is the Owner's working document; a PDF conversion lane is a separate future decision, not part of the D06 evidence chain)
+
+**Blocker:** none — P3.1 merged; the E-sign-vs-scan decision was closed by the Owner on 2026-11-04 (scan accepted, e-sign not required).  
 **Dependency:** P3.1
 
 ### P2.5 ⏳ Phase 2G.5 Ordinary Move-Out End-to-End
@@ -465,7 +494,7 @@
 **Backlog Status Summary:**
 - P0: 6/6 closed (P0.1–P0.3 done, P0.4 not needed, P0.5 startup gate at `7621d8a`, P0.6 full bundle at `7621d8a`)
 - P1: 5/5 done (P1.1 official at `f30e14d`; P1.2 rehearsal gate at `d085d02`; P1.4 crash/recovery at `682613d`; P1.3 vault + restricted roles at `18fe521`, 64/64; P1.5 internal simulated payOS staging E2E at `e58b12c`, 20/20)
-- P2: 3/6 (P2.1 DONE at `d36edb5`, pushed to `origin/feat/p2-1-issued-invoice-correction`; P2.2 DONE at `b18644b`, pushed to `origin/feat/p2-2-service-pricing-official-invoice`; P2.3 DONE at `aa3b9bb`, pushed to `origin/feat/p2-3-h4-settlement-d04`; P2.4–P2.6 outstanding)
+- P2: 4/6 (P2.1 DONE at `d36edb5`, pushed to `origin/feat/p2-1-issued-invoice-correction`; P2.2 DONE at `b18644b`, pushed to `origin/feat/p2-2-service-pricing-official-invoice`; P2.3 DONE at `aa3b9bb`, pushed to `origin/feat/p2-3-h4-settlement-d04`; P2.4 DONE at `950610a`, pushed to `origin/feat/p2-4-d06-three-signature`; P2.5–P2.6 outstanding)
 - P3: 4/4 done + **MERGED to main** (P3.1 merge `01cba31`; P3.2 DONE `1ddf2e6`; P3.3 matrix; **P3.4 CLOSED 2026-11-12: PR #10 → main merge commit `c499d89`, Owner §6 signed + §3.2 P2 deferral accepted; post-merge local regression + CI green 5/5 at the merge commit**)
 
-**Current Focus:** P3 COMPLETE. **`main` = program baseline at merge commit `c499d89`** (post-merge docs/guards `2149210`+). Evidence chain closed: CI billing unlocked card-free → run 384 green 5/5 at `c63d370` (ID 43240562191) → Owner §6 + §3.2 approved → PR #10 merged `c499d89` → local regression exit 0 + CI run 43247648066 green 5/5 at `c499d89`. **P2 on follow-up feature branches off `main`** — P2.1 DONE (`d36edb5`), P2.2 DONE (`b18644b`), **P2.3 DONE (`aa3b9bb`, H4 settlement: obligation aging + H4-scoped dispute lane, harness 5/5 at the pushed SHA)**. Next: P2.4 three-signature flow (Owner decision E-sign vs scanned), P2.5 move-out E2E, P2.6 frontend discovery. HOLD unchanged: real payOS money flow, TLS public callback, production vault/roles/secrets, production deploy.
+**Current Focus:** P3 COMPLETE. **`main` = program baseline at merge commit `c499d89`** (post-merge docs/guards `2149210`+). Evidence chain closed: CI billing unlocked card-free → run 384 green 5/5 at `c63d370` (ID 43240562191) → Owner §6 + §3.2 approved → PR #10 merged `c499d89` → local regression exit 0 + CI run 43247648066 green 5/5 at `c499d89`. **P2 on follow-up feature branches off `main`** — P2.1 DONE (`d36edb5`), P2.2 DONE (`b18644b`), P2.3 DONE (`aa3b9bb`, H4 settlement: obligation aging + H4-scoped dispute lane, harness 5/5 at the pushed SHA), **P2.4 DONE (`950610a`, D06 three-signature: scanned signed handover sheet archived in a dedicated AES-256-GCM vault + Owner document download audit trail)**. Next: P2.5 move-out E2E, P2.6 frontend discovery. HOLD unchanged: real payOS money flow, TLS public callback, production vault/roles/secrets, production deploy.

@@ -50,8 +50,8 @@ public sealed class RoomChangeH4ObligationDisputePostgreSql_Tests
             INSERT INTO "BuildingManagementRoomChangeH4Obligations"
              ("Id","RequestId","SourceContractId","TargetContractId",
               "Kind","AmountVnd","DueDateVietnam")
-            VALUES('{f.Obligation:D}','{Guid.NewGuid():D}','{Guid.NewGuid():D}',
-              '{f.Contract:D}',1,1000000,'2026-12-15');
+            VALUES('{f.Obligation:D}','{Guid.NewGuid():D}','{f.Contract:D}',
+              '{Guid.NewGuid():D}',1,1000000,'2026-12-15');
             """);
         if (settled)
             await Run(db, tx, $"""
@@ -153,7 +153,7 @@ public sealed class RoomChangeH4ObligationDisputePostgreSql_Tests
     }
 
     [Fact]
-    public async Task TRFH4DSPG03_Dispute_Must_Match_The_Obligation_Target_Contract()
+    public async Task TRFH4DSPG03_Dispute_Must_Match_The_Obligation_Source_Contract()
     {
         await Scratch(async (db, tx, _) =>
         {

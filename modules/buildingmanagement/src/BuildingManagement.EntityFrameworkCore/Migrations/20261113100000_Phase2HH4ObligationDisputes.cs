@@ -78,7 +78,7 @@ public sealed class Phase2HH4ObligationDisputes : Migration
               FROM "BuildingManagementRoomChangeH4Obligations"
              WHERE "Id"=NEW."ObligationId" FOR SHARE;
             IF obligation."Id" IS NULL
-               OR NEW."ContractId" IS DISTINCT FROM obligation."TargetContractId"
+               OR NEW."ContractId" IS DISTINCT FROM obligation."SourceContractId"
                OR NEW."OpenedAtUtc">clock_timestamp()
                OR EXISTS (SELECT 1
                             FROM "BuildingManagementRoomChangeH4SettlementPostings"

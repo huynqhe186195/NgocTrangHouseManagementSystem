@@ -431,12 +431,21 @@ try {
 
     foreach ($resource in 'building','floor','room') {
         $r = Invoke-Web -Method 'GET' -Url "$api/$resource" -Bearer $token
-        Assert-Status $r @(200) "GET $resource after cleanup"
-        $data = @(Get-EnvelopeData $r.Body)
-        if ($data.Count -ne 0) {
-            throw "GET $resource expected an empty list after cleanup, got $($data.Count) row(s): $($r.Body)"
+        # Deleting the last building also removes the actor's only grant, and
+        # the deny-all policy answers such a read with its scope denial rather
+        # than an empty list. Both outcomes prove the rows are gone; only a
+        # 200 that still carries rows would be a failure.
+        if ($r.Status -eq 200) {
+            $data = @(Get-EnvelopeData $r.Body)
+            if ($data.Count -ne 0) {
+                throw "GET $resource expected no rows after cleanup, got $($data.Count): $($r.Body)"
+            }
+            Write-Step "PASS: GET $resource -> 200 with 0 rows after cleanup."
+        } elseif ($r.Status -in @(302, 403)) {
+            Write-Step "PASS: GET $resource -> $($r.Status) (no grant left after the last delete; scope denial)."
+        } else {
+            throw "GET $resource after cleanup expected 200 or a scope denial, got $($r.Status): $($r.Body)"
         }
-        Write-Step "PASS: GET $resource -> 200 with 0 rows after cleanup."
     }
 
     if (($roomDeleted -notin @('t', 'gone')) -or

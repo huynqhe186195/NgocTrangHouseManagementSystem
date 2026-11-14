@@ -62,9 +62,15 @@ namespace BuildingManagement.Buildings
 
             await EnsureNoBuildingFloorsAsync(id);
 
+            // Do NOT autoSave here. The write fence revalidates the actor's
+            // membership before it saves, and that check reads live
+            // Buildings rows: flushing the soft delete first would remove
+            // the very grant that authorizes the delete. Leave the change
+            // tracked so the fence's SaveChangesAsync persists it after
+            // revalidation passes.
             await _buildingRepository.DeleteAsync(
                 building,
-                autoSave: true
+                autoSave: false
             );
             return true;
             });

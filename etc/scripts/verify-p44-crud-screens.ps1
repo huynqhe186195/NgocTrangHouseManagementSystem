@@ -107,8 +107,16 @@ function Invoke-Web {
                 $body = (New-Object IO.StreamReader($response.GetResponseStream())).ReadToEnd()
                 return @{ Status = [int]$response.StatusCode; Body = $body }
             } finally { $response.Dispose() }
-        } catch [System.Net.WebException] {
-            $response = $_.Exception.Response
+        } catch {
+            # A .NET method that throws inside PowerShell surfaces as
+            # MethodInvocationException, so catching WebException alone
+            # misses every non-2xx response. Unwrap first.
+            $ex = $_.Exception
+            if ($ex -is [System.Management.Automation.MethodInvocationException]) {
+                $ex = $ex.InnerException
+            }
+            if ($ex -isnot [System.Net.WebException]) { throw }
+            $response = $ex.Response
             if (-not $response) { throw }
             $body = (New-Object IO.StreamReader($response.GetResponseStream())).ReadToEnd()
             $status = [int]$response.StatusCode
@@ -259,8 +267,12 @@ try {
     $ready = $false
     for ($i = 0; $i -lt 150; $i++) {
         if ($hostProcess.HasExited) { throw "Host exited early with code $($hostProcess.ExitCode). See $hostLog" }
-        $probe = Invoke-Web -Method 'GET' -Url "https://localhost:$hostPort/health-status"
-        if ($probe.Status -eq 200) { $ready = $true; break }
+        # Kestrel logs "Now listening" before it accepts connections, so the
+        # first probes can fail to connect: that is expected, not a failure.
+        try {
+            $probe = Invoke-Web -Method 'GET' -Url "https://localhost:$hostPort/health-status"
+            if ($probe.Status -eq 200) { $ready = $true; break }
+        } catch { }
         Start-Sleep -Milliseconds 1000
     }
     if (-not $ready) { throw "Host not healthy within 150s. See $hostLog" }

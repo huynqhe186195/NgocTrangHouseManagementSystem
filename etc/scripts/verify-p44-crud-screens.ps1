@@ -396,14 +396,20 @@ try {
     # The HTTP status alone is not enough: a delete can answer 200 while the
     # row survives (or was never touched). Record the DB truth next to the
     # status so a masked failure cannot pass as success.
+    # Row absent => hard-deleted, reported as 'gone'. Building's table is
+    # unpredixed; Floor/Room use BuildingManagementDbProperties.DbTablePrefix.
     function Get-DeletedFlag([string]$Table, [string]$Id) {
         $sql = "SELECT ""IsDeleted"" FROM ""$Table"" WHERE ""Id"" = '$Id'"
-        return (Invoke-Db $buildingDb $sql).Trim()
+        $value = Invoke-Db $buildingDb $sql
+        # psql -t -A prints nothing for zero rows, which PowerShell surfaces
+        # as $null or an empty string depending on the call path.
+        if ($null -eq $value -or ([string]$value).Trim() -eq '') { return 'gone' }
+        return ([string]$value).Trim()
     }
 
     $r = Invoke-Web -Method 'DELETE' -Url "$api/room/$roomId" -Bearer $token
     Assert-Status $r @(200) 'DELETE room'
-    $roomDeleted = Get-DeletedFlag 'Rooms' $roomId
+    $roomDeleted = Get-DeletedFlag 'BuildingManagementRooms' $roomId
     Write-Step "DELETE room -> 200 (envelope data=$((Get-EnvelopeData $r.Body) | ConvertTo-Json -Compress)); DB Rooms.IsDeleted=$roomDeleted."
     $r = Invoke-Web -Method 'GET' -Url "$api/room/$roomId" -Bearer $token
     if ($r.Status -eq 200) {
@@ -413,7 +419,7 @@ try {
 
     $r = Invoke-Web -Method 'DELETE' -Url "$api/floor/$floorId" -Bearer $token
     Assert-Status $r @(200) 'DELETE floor'
-    $floorDeleted = Get-DeletedFlag 'Floors' $floorId
+    $floorDeleted = Get-DeletedFlag 'BuildingManagementFloors' $floorId
     Write-Step "DELETE floor -> 200; DB Floors.IsDeleted=$floorDeleted."
     Write-Step 'PASS: DELETE floor -> 200.'
 
@@ -433,8 +439,10 @@ try {
         Write-Step "PASS: GET $resource -> 200 with 0 rows after cleanup."
     }
 
-    if ($roomDeleted -ne 't' -or $floorDeleted -ne 't' -or $buildingDeleted -ne 't') {
-        throw ("DELETE returned 200 but did not soft-delete: room=$roomDeleted floor=$floorDeleted building=$buildingDeleted")
+    if (($roomDeleted -notin @('t', 'gone')) -or
+        ($floorDeleted -notin @('t', 'gone')) -or
+        ($buildingDeleted -notin @('t', 'gone'))) {
+        throw ("DELETE returned 200 but left live rows behind: room=$roomDeleted floor=$floorDeleted building=$buildingDeleted")
     }
 
     $summaryPath = Join-Path $logDir 'summary.json'

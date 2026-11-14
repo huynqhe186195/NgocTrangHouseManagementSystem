@@ -4,16 +4,23 @@ import { Alert } from '../../components/ui/Alert';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { StatusBadge } from '../../components/ui/StatusBadge';
+import { useAuth } from '../../lib/auth/AuthProvider';
+import { BuildingPolicies } from '../../lib/auth/policies';
 import { ApiError } from '../../lib/http';
 import { useBuildingSnapshot } from '../../lib/api/buildingQueries';
 import { roomStatusMeta } from '../../lib/api/types';
 import type { RoomDto } from '../../lib/api/types';
+import { RoomFormDialog } from '../rooms/RoomFormDialog';
 import { FloorPlan } from './FloorPlan';
 
 export function FloorPlanPage() {
   const { buildingId, floorId } = useParams<{ buildingId: string; floorId: string }>();
   const { snapshot, loading, error } = useBuildingSnapshot(buildingId);
+  const { hasPermission } = useAuth();
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
+  const [addRoomOpen, setAddRoomOpen] = useState(false);
+
+  const canManageRooms = hasPermission(BuildingPolicies.roomsManage);
 
   const floor = snapshot?.floors.find((item) => item.id === floorId) ?? null;
   const rooms = floorId ? snapshot?.roomsByFloor.get(floorId) ?? [] : [];
@@ -96,6 +103,20 @@ export function FloorPlanPage() {
               <div className="flex items-center gap-2">
                 <button
                   type="button"
+                  onClick={() => setAddRoomOpen(true)}
+                  disabled={!canManageRooms}
+                  title={
+                    canManageRooms
+                      ? undefined
+                      : 'Tài khoản này chưa được cấp quyền quản lý phòng trên máy chủ.'
+                  }
+                  className="flex h-9 items-center gap-1.5 rounded-lg bg-[#1d4ed8] px-3 text-xs font-semibold text-white transition hover:bg-[#1e40af] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <span className="material-symbols-outlined text-base">add</span>
+                  Thêm phòng
+                </button>
+                <button
+                  type="button"
                   disabled
                   title="Chức năng chỉnh sửa sơ đồ chưa được mở"
                   className="flex h-9 items-center gap-1.5 rounded-lg border border-outline-variant px-3 text-xs font-semibold text-on-surface-variant opacity-60"
@@ -137,6 +158,15 @@ export function FloorPlanPage() {
             )}
           </aside>
         </div>
+      )}
+
+      {floorId && (
+        <RoomFormDialog
+          open={addRoomOpen}
+          mode="create"
+          floorId={floorId}
+          onClose={() => setAddRoomOpen(false)}
+        />
       )}
     </div>
   );

@@ -1,15 +1,32 @@
-import { Link, useParams } from 'react-router-dom';
+import { useState } from 'react';
+import type { ReactNode } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Alert } from '../../components/ui/Alert';
+import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { StatTile } from '../../components/ui/StatTile';
 import { StatusBadge } from '../../components/ui/StatusBadge';
+import { useAuth } from '../../lib/auth/AuthProvider';
+import { BuildingPolicies } from '../../lib/auth/policies';
 import { ApiError } from '../../lib/http';
-import { useBuildingSnapshot, useBuildings } from '../../lib/api/buildingQueries';
-import type { RoomDto } from '../../lib/api/types';
+import {
+  useBuildingSnapshot,
+  useBuildings,
+  useDeleteBuilding,
+  useDeleteFloor,
+} from '../../lib/api/buildingQueries';
+import { describeMutationError } from '../../lib/api/mutationErrors';
+import type { FloorDto, RoomDto } from '../../lib/api/types';
+import { BuildingFormDialog } from './BuildingFormDialog';
+import { FloorFormDialog } from './FloorFormDialog';
 
 export function BuildingsPage() {
   const { data: buildings, isLoading, error } = useBuildings();
+  const { hasPermission } = useAuth();
+  const [createOpen, setCreateOpen] = useState(false);
+
+  const canCreate = hasPermission(BuildingPolicies.buildingsBootstrapOwner);
 
   return (
     <div className="mx-auto max-w-[1400px]">
@@ -18,15 +35,15 @@ export function BuildingsPage() {
         description="Quản lý thông tin tòa nhà và các tầng"
         breadcrumb={['Trang chủ', 'Tòa nhà']}
         actions={
-          <button
-            type="button"
-            disabled
-            title="Tạo tòa nhà cần quy trình cấp quyền chủ sở hữu chưa được phê duyệt"
-            className="flex h-10 items-center gap-2 rounded-lg bg-[#1d4ed8] px-4 text-sm font-semibold text-white opacity-50"
+          <ActionButton
+            onClick={() => setCreateOpen(true)}
+            allowed={canCreate}
+            deniedHint="Tài khoản này chưa được cấp quyền khởi tạo tòa nhà (BootstrapOwner) trên máy chủ."
+            icon="add"
+            primary
           >
-            <span className="material-symbols-outlined text-lg">add</span>
             Thêm tòa nhà
-          </button>
+          </ActionButton>
         }
       />
 
@@ -79,13 +96,62 @@ export function BuildingsPage() {
           ))}
         </div>
       )}
+
+      <BuildingFormDialog
+        open={createOpen}
+        mode="create"
+        onClose={() => setCreateOpen(false)}
+      />
     </div>
   );
 }
 
 export function BuildingDetailPage() {
   const { buildingId } = useParams<{ buildingId: string }>();
+  const navigate = useNavigate();
   const { snapshot, loading, error } = useBuildingSnapshot(buildingId);
+  const { hasPermission } = useAuth();
+
+  const canManageBuilding = hasPermission(BuildingPolicies.buildingsManage);
+  const canManageFloors = hasPermission(BuildingPolicies.floorsManage);
+
+  const [buildingDialogOpen, setBuildingDialogOpen] = useState(false);
+  const [floorDialog, setFloorDialog] = useState<
+    { mode: 'create' } | { mode: 'edit'; floor: FloorDto } | null
+  >(null);
+  const [floorDeleteTarget, setFloorDeleteTarget] = useState<FloorDto | null>(null);
+  const [buildingDeleteOpen, setBuildingDeleteOpen] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const deleteFloor = useDeleteFloor();
+  const deleteBuilding = useDeleteBuilding();
+
+  const floorDeleteError = describeMutationError(deleteFloor.error, 'floor', 'delete');
+  const buildingDeleteError = describeMutationError(deleteBuilding.error, 'building', 'delete');
+
+  function confirmFloorDelete() {
+    if (!floorDeleteTarget) {
+      return;
+    }
+    deleteFloor.mutate(floorDeleteTarget.id, {
+      onSuccess: () => {
+        setNotice(`Đã xoá tầng ${floorDeleteTarget.floorNumber}.`);
+        setFloorDeleteTarget(null);
+      },
+    });
+  }
+
+  function confirmBuildingDelete() {
+    if (!snapshot) {
+      return;
+    }
+    deleteBuilding.mutate(snapshot.building.id, {
+      onSuccess: () => {
+        setBuildingDeleteOpen(false);
+        navigate('/buildings');
+      },
+    });
+  }
 
   return (
     <div className="mx-auto max-w-[1400px]">
@@ -95,29 +161,44 @@ export function BuildingDetailPage() {
         breadcrumb={['Trang chủ', 'Tòa nhà', snapshot?.building.name ?? 'Chi tiết']}
         actions={
           <>
-            <button
-              type="button"
-              disabled
-              title="Chỉnh sửa tòa nhà cần quyền quản lý được cấp trên máy chủ"
-              className="flex h-10 items-center gap-2 rounded-lg border border-outline-variant px-4 text-sm font-semibold text-on-surface-variant opacity-60"
+            <ActionButton
+              onClick={() => setBuildingDialogOpen(true)}
+              allowed={canManageBuilding && snapshot !== null}
+              deniedHint="Tài khoản này chưa được cấp quyền quản lý tòa nhà trên máy chủ."
+              icon="edit"
+              variant="secondary"
             >
-              <span className="material-symbols-outlined text-lg">edit</span>
               Chỉnh sửa tòa nhà
-            </button>
-            <button
-              type="button"
-              disabled
-              title="Thêm tầng cần quyền quản lý được cấp trên máy chủ"
-              className="flex h-10 items-center gap-2 rounded-lg bg-[#1d4ed8] px-4 text-sm font-semibold text-white opacity-50"
+            </ActionButton>
+            <ActionButton
+              onClick={() => setBuildingDeleteOpen(true)}
+              allowed={canManageBuilding && snapshot !== null}
+              deniedHint="Tài khoản này chưa được cấp quyền quản lý tòa nhà trên máy chủ."
+              icon="delete"
+              variant="danger"
             >
-              <span className="material-symbols-outlined text-lg">add</span>
+              Xoá tòa nhà
+            </ActionButton>
+            <ActionButton
+              onClick={() => setFloorDialog({ mode: 'create' })}
+              allowed={canManageFloors && snapshot !== null}
+              deniedHint="Tài khoản này chưa được cấp quyền quản lý tầng trên máy chủ."
+              icon="add"
+              primary
+            >
               Thêm tầng
-            </button>
+            </ActionButton>
           </>
         }
       />
 
       <GateNotice error={error} />
+
+      {notice && (
+        <div className="mb-4">
+          <Alert tone="success">{notice}</Alert>
+        </div>
+      )}
 
       {loading && <LoadingBlock label="Đang tải thông tin tòa nhà…" />}
 
@@ -243,15 +324,26 @@ export function BuildingDetailPage() {
                                 <span className="material-symbols-outlined text-base">visibility</span>
                                 Xem sơ đồ
                               </Link>
-                              <button
-                                type="button"
-                                disabled
-                                title="Cần quyền quản lý tầng trên máy chủ"
-                                className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-outline-variant px-3 text-xs font-semibold text-on-surface-variant opacity-55"
+                              <SmallButton
+                                onClick={() => setFloorDialog({ mode: 'edit', floor })}
+                                allowed={canManageFloors}
+                                deniedHint="Tài khoản này chưa được cấp quyền quản lý tầng trên máy chủ."
+                                icon="edit"
                               >
-                                <span className="material-symbols-outlined text-base">edit</span>
                                 Chỉnh sửa
-                              </button>
+                              </SmallButton>
+                              <SmallButton
+                                onClick={() => {
+                                  deleteFloor.reset();
+                                  setFloorDeleteTarget(floor);
+                                }}
+                                allowed={canManageFloors}
+                                deniedHint="Tài khoản này chưa được cấp quyền quản lý tầng trên máy chủ."
+                                icon="delete"
+                                danger
+                              >
+                                Xoá
+                              </SmallButton>
                             </div>
                           </td>
                         </tr>
@@ -277,6 +369,67 @@ export function BuildingDetailPage() {
           }
         />
       )}
+
+      {snapshot && (
+        <BuildingFormDialog
+          open={buildingDialogOpen}
+          mode="edit"
+          initial={snapshot.building}
+          onClose={() => setBuildingDialogOpen(false)}
+        />
+      )}
+
+      {snapshot && floorDialog && (
+        <FloorFormDialog
+          open
+          mode={floorDialog.mode}
+          buildingId={snapshot.building.id}
+          initial={floorDialog.mode === 'edit' ? floorDialog.floor : null}
+          onClose={() => setFloorDialog(null)}
+        />
+      )}
+
+      <ConfirmDialog
+        open={floorDeleteTarget !== null}
+        title={floorDeleteTarget ? `Xoá tầng ${floorDeleteTarget.floorNumber}?` : 'Xoá tầng?'}
+        description={
+          <>
+            <p>
+              Tầng này sẽ bị xoá khỏi tòa nhà. Thao tác này không khôi phục được từ giao diện.
+            </p>
+            <p className="mt-2">
+              Máy chủ chỉ cho xoá khi tầng không còn phòng nào. Nếu còn phòng, hãy xoá hết phòng
+              của tầng trước.
+            </p>
+          </>
+        }
+        pending={deleteFloor.isPending}
+        error={floorDeleteError?.formError ?? null}
+        traceId={floorDeleteError?.traceId ?? null}
+        onCancel={() => setFloorDeleteTarget(null)}
+        onConfirm={confirmFloorDelete}
+      />
+
+      <ConfirmDialog
+        open={buildingDeleteOpen}
+        title={snapshot ? `Xoá tòa nhà «${snapshot.building.name}»?` : 'Xoá tòa nhà?'}
+        description={
+          <>
+            <p>
+              Tòa nhà sẽ bị xoá khỏi danh sách. Thao tác này không khôi phục được từ giao diện.
+            </p>
+            <p className="mt-2">
+              Máy chủ chỉ cho xoá khi tòa nhà không còn tầng nào. Nếu còn tầng, hãy xoá hết tầng
+              trước.
+            </p>
+          </>
+        }
+        pending={deleteBuilding.isPending}
+        error={buildingDeleteError?.formError ?? null}
+        traceId={buildingDeleteError?.traceId ?? null}
+        onCancel={() => setBuildingDeleteOpen(false)}
+        onConfirm={confirmBuildingDelete}
+      />
     </div>
   );
 }
@@ -307,6 +460,86 @@ function FloorThumbnail({ rooms }: { rooms: RoomDto[] }) {
         />
       ))}
     </div>
+  );
+}
+
+const BUTTON_BASE =
+  'inline-flex h-10 items-center gap-2 rounded-lg px-4 text-sm font-semibold transition ' +
+  'disabled:cursor-not-allowed disabled:opacity-50';
+
+const BUTTON_LOOKS = {
+  primary: 'bg-[#1d4ed8] text-white hover:bg-[#1e40af]',
+  secondary: 'border border-outline-variant bg-surface-lowest text-on-surface hover:bg-surface-low',
+  danger: 'border border-[#FECDD3] bg-[#FFF1F2] text-[#B91C1C] hover:bg-[#FFE4E6]',
+} as const;
+
+/**
+ * A missing server grant is the normal state on the production DI (deny-all),
+ * so the button stays visible but disabled with the reason in its tooltip.
+ */
+function ActionButton({
+  onClick,
+  allowed,
+  deniedHint,
+  icon,
+  primary = false,
+  variant,
+  children,
+}: {
+  onClick: () => void;
+  allowed: boolean;
+  deniedHint: string;
+  icon: string;
+  primary?: boolean;
+  variant?: 'secondary' | 'danger';
+  children: ReactNode;
+}) {
+  const look = primary ? BUTTON_LOOKS.primary : BUTTON_LOOKS[variant ?? 'secondary'];
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={!allowed}
+      title={allowed ? undefined : deniedHint}
+      className={`${BUTTON_BASE} ${look}`}
+    >
+      <span className="material-symbols-outlined text-lg">{icon}</span>
+      {children}
+    </button>
+  );
+}
+
+function SmallButton({
+  onClick,
+  allowed,
+  deniedHint,
+  icon,
+  danger = false,
+  children,
+}: {
+  onClick: () => void;
+  allowed: boolean;
+  deniedHint: string;
+  icon: string;
+  danger?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={!allowed}
+      title={allowed ? undefined : deniedHint}
+      className={
+        'inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-55 ' +
+        (danger
+          ? 'border-[#FECDD3] text-[#B91C1C] hover:bg-[#FFF1F2]'
+          : 'border-outline-variant text-on-surface-variant hover:bg-surface-low')
+      }
+    >
+      <span className="material-symbols-outlined text-base">{icon}</span>
+      {children}
+    </button>
   );
 }
 

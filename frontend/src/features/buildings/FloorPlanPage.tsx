@@ -182,15 +182,13 @@ export function FloorPlanPage() {
                   <span className="material-symbols-outlined text-base">add</span>
                   Thêm phòng
                 </button>
-                <button
-                  type="button"
-                  disabled
-                  title="Màn thiết kế sơ đồ (kéo thả, lưới) sẽ được mở ở giai đoạn tiếp theo."
-                  className="flex h-9 cursor-not-allowed items-center gap-1.5 rounded-lg border border-outline-variant px-3 text-xs font-semibold text-on-surface-variant opacity-60"
+                <Link
+                  to={`/buildings/${buildingId}/floors/${floorId}/design`}
+                  className="flex h-9 items-center gap-1.5 rounded-lg border border-outline-variant px-3 text-xs font-semibold text-on-surface-variant transition hover:bg-surface-low"
                 >
                   <span className="material-symbols-outlined text-base">edit</span>
                   Sửa sơ đồ
-                </button>
+                </Link>
               </div>
             </header>
 

@@ -131,14 +131,28 @@ export function zoomOut(zoom: number): number {
 
 /**
  * The SVG viewBox shrinks as zoom grows, so drawing one unit stays one metre
- * and only the visible window changes.
+ * and only the visible window changes. `offset` pans the window without
+ * touching the zoom.
  */
-export function viewBoxFor(bounds: PlanBounds, zoom: number): string {
+export function viewBoxRectFor(
+  bounds: PlanBounds,
+  zoom: number,
+  offset: { x: number; y: number } = { x: 0, y: 0 },
+): ViewBoxRect {
   const width = bounds.width / zoom;
   const height = bounds.height / zoom;
-  const x = bounds.minX + (bounds.width - width) / 2;
-  const y = bounds.minY + (bounds.height - height) / 2;
-  return `${x} ${y} ${width} ${height}`;
+  const x = bounds.minX + (bounds.width - width) / 2 + offset.x;
+  const y = bounds.minY + (bounds.height - height) / 2 + offset.y;
+  return { x, y, width, height };
+}
+
+export function viewBoxFor(
+  bounds: PlanBounds,
+  zoom: number,
+  offset?: { x: number; y: number },
+): string {
+  const box = viewBoxRectFor(bounds, zoom, offset);
+  return `${box.x} ${box.y} ${box.width} ${box.height}`;
 }
 
 /** `1` -> `100%`, `0.75` -> `75%`. */
@@ -153,4 +167,147 @@ export function formatZoom(zoom: number): string {
  */
 export function unplacedRooms(rooms: RoomDto[]): RoomDto[] {
   return rooms.filter((room) => !hasGeometry(room));
+}
+
+/* ------------------------------------------------------------------------ *
+ * Designer maths.
+ *
+ * The designer works in metres throughout, exactly like the stored columns,
+ * so nothing has to be converted when a drag ends and the value is saved.
+ * ------------------------------------------------------------------------ */
+
+export interface ViewBoxRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** The designer snaps to 10 cm; the server stores whatever it is given. */
+export const GRID_STEP_METRES = 0.1;
+
+/** Smallest box a room or object may be shrunk to, in metres. */
+export const MIN_SIZE_METRES = 0.5;
+
+/** The server rejects coordinates outside ±10000 m; stay well inside. */
+const MAX_COORDINATE_METRES = 10000;
+
+export interface Box {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export type ResizeHandle = 'nw' | 'ne' | 'se' | 'sw';
+
+/**
+ * Rounds to the nearest 10 cm. `toFixed` is applied after the rounding so a
+ * value that is already on the grid (2.3) does not come back as
+ * 2.3000000000000003 and fail an equality check.
+ */
+export function snapToGrid(value: number, step = GRID_STEP_METRES): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Number((Math.round(value / step) * step).toFixed(6));
+}
+
+export function clampToLimits(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.min(MAX_COORDINATE_METRES, Math.max(-MAX_COORDINATE_METRES, value));
+}
+
+/**
+ * Turns a pointer position into metres. `svgPoint` should come from
+ * `getScreenCTM().inverse()` applied to the client point, so it is already in
+ * the drawing's own coordinate space — no zoom or pan maths is needed here,
+ * and the result stays correct if the viewBox moves mid-drag.
+ */
+export function pointToMetres(svgPoint: { x: number; y: number }): { x: number; y: number } {
+  return {
+    x: Number.isFinite(svgPoint.x) ? svgPoint.x : 0,
+    y: Number.isFinite(svgPoint.y) ? svgPoint.y : 0,
+  };
+}
+
+/** Moves a box by a snapped delta, keeping its size and staying in range. */
+export function moveBox(box: Box, deltaX: number, deltaY: number): Box {
+  const snappedX = clampToLimits(snapToGrid(box.x + deltaX));
+  const snappedY = clampToLimits(snapToGrid(box.y + deltaY));
+  return { ...box, x: snappedX, y: snappedY };
+}
+
+/**
+ * Resizes from one corner: the opposite corner stays put, so the box grows or
+ * shrinks away from the handle the owner is dragging. Sizes never fall below
+ * `MIN_SIZE_METRES`, which keeps a stray click from collapsing a room to a
+ * sliver the server would still accept.
+ */
+export function resizeBox(box: Box, handle: ResizeHandle, point: { x: number; y: number }): Box {
+  const right = box.x + box.width;
+  const bottom = box.y + box.height;
+
+  const px = clampToLimits(snapToGrid(point.x));
+  const py = clampToLimits(snapToGrid(point.y));
+
+  let x = box.x;
+  let y = box.y;
+  let width = box.width;
+  let height = box.height;
+
+  if (handle === 'nw' || handle === 'sw') {
+    x = Math.min(px, right - MIN_SIZE_METRES);
+    width = right - x;
+  } else {
+    width = Math.max(MIN_SIZE_METRES, px - box.x);
+  }
+
+  if (handle === 'nw' || handle === 'ne') {
+    y = Math.min(py, bottom - MIN_SIZE_METRES);
+    height = bottom - y;
+  } else {
+    height = Math.max(MIN_SIZE_METRES, py - box.y);
+  }
+
+  return { x, y, width, height };
+}
+
+/** Keeps a freshly dropped object inside the drawing instead of off-canvas. */
+export function clampBoxToBounds(box: Box, bounds: PlanBounds): Box {
+  const width = Math.max(MIN_SIZE_METRES, Math.min(box.width, bounds.width));
+  const height = Math.max(MIN_SIZE_METRES, Math.min(box.height, bounds.height));
+  return {
+    width,
+    height,
+    x: clampToLimits(Math.min(Math.max(box.x, bounds.minX), bounds.maxX - width)),
+    y: clampToLimits(Math.min(Math.max(box.y, bounds.minY), bounds.maxY - height)),
+  };
+}
+
+/** A default box for a room that has never been placed, dropped in the middle. */
+export function defaultRoomBox(bounds: PlanBounds, width = 4, height = 3.5): Box {
+  return clampBoxToBounds(
+    {
+      width,
+      height,
+      x: bounds.minX + (bounds.width - width) / 2,
+      y: bounds.minY + (bounds.height - height) / 2,
+    },
+    bounds,
+  );
+}
+
+export function boxesEqual(a: Box, b: Box): boolean {
+  return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
+}
+
+/** `2.3` -> `2,3 m`, since the plan is read in Vietnamese. */
+export function formatMetres(value: number): string {
+  if (!Number.isFinite(value)) {
+    return '—';
+  }
+  return `${value.toLocaleString('vi-VN', { maximumFractionDigits: 2 })} m`;
 }

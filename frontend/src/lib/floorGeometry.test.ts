@@ -1,13 +1,24 @@
 import { describe, expect, it } from 'vitest';
 import {
+  GRID_STEP_METRES,
   MAX_ZOOM,
+  MIN_SIZE_METRES,
   MIN_ZOOM,
+  boxesEqual,
   buildPlanGeometry,
+  clampBoxToBounds,
   clampZoom,
+  defaultRoomBox,
+  formatMetres,
   formatZoom,
   hasGeometry,
+  moveBox,
+  pointToMetres,
+  resizeBox,
+  snapToGrid,
   unplacedRooms,
   viewBoxFor,
+  viewBoxRectFor,
   zoomIn,
   zoomOut,
 } from './floorGeometry';
@@ -152,6 +163,169 @@ describe('viewBoxFor', () => {
 
   it('widens the window when zoomed out', () => {
     expect(viewBoxFor(bounds, 0.5)).toBe('-5 -4 20 16');
+  });
+
+  it('pans the window without changing its size', () => {
+    const rest = viewBoxRectFor(bounds, 1);
+    const panned = viewBoxRectFor(bounds, 1, { x: 2, y: -1 });
+    expect(panned.width).toBe(rest.width);
+    expect(panned.height).toBe(rest.height);
+    expect(panned.x).toBe(rest.x + 2);
+    expect(panned.y).toBe(rest.y - 1);
+  });
+});
+
+describe('snapToGrid', () => {
+  it('rounds to the nearest 10 cm', () => {
+    expect(snapToGrid(2.34)).toBe(2.3);
+    expect(snapToGrid(2.36)).toBe(2.4);
+  });
+
+  it('leaves a value already on the grid untouched', () => {
+    expect(snapToGrid(2.3)).toBe(2.3);
+    expect(snapToGrid(0)).toBe(0);
+    expect(snapToGrid(-1.1)).toBe(-1.1);
+  });
+
+  it('never returns binary-float noise', () => {
+    for (const raw of [0.1, 0.2, 0.3, 1.1, 7.7]) {
+      expect(String(snapToGrid(raw)).length).toBeLessThanOrEqual(4);
+    }
+  });
+
+  it('treats a non-finite value as the origin', () => {
+    expect(snapToGrid(Number.NaN)).toBe(0);
+    expect(snapToGrid(Number.POSITIVE_INFINITY)).toBe(0);
+  });
+
+  it('accepts a coarser step', () => {
+    expect(snapToGrid(2.34, 0.5)).toBe(2.5);
+    expect(GRID_STEP_METRES).toBe(0.1);
+  });
+});
+
+describe('moveBox', () => {
+  const box = { x: 1, y: 2, width: 4, height: 3 };
+
+  it('moves by a snapped delta and keeps the size', () => {
+    const moved = moveBox(box, 0.53, -0.47);
+    expect(moved).toEqual({ x: 1.5, y: 1.5, width: 4, height: 3 });
+  });
+
+  it('does not change the box when the delta is under half a step', () => {
+    expect(moveBox(box, 0.04, 0.04)).toEqual(box);
+  });
+});
+
+describe('resizeBox', () => {
+  const box = { x: 1, y: 1, width: 4, height: 3 };
+
+  it('drags the south-east corner and keeps the north-west one', () => {
+    expect(resizeBox(box, 'se', { x: 6.02, y: 5.04 })).toEqual({
+      x: 1,
+      y: 1,
+      width: 5,
+      height: 4,
+    });
+  });
+
+  it('drags the north-west corner and keeps the south-east one', () => {
+    expect(resizeBox(box, 'nw', { x: 0.5, y: 0.5 })).toEqual({
+      x: 0.5,
+      y: 0.5,
+      width: 4.5,
+      height: 3.5,
+    });
+  });
+
+  it('drags the north-east corner: width grows, height moves up', () => {
+    expect(resizeBox(box, 'ne', { x: 6, y: 0 })).toEqual({
+      x: 1,
+      y: 0,
+      width: 5,
+      height: 4,
+    });
+  });
+
+  it('drags the south-west corner: width moves left, height grows', () => {
+    expect(resizeBox(box, 'sw', { x: 0, y: 5 })).toEqual({
+      x: 0,
+      y: 1,
+      width: 5,
+      height: 4,
+    });
+  });
+
+  it('refuses to shrink below the minimum size', () => {
+    const tiny = resizeBox(box, 'se', { x: 0.2, y: 0.2 });
+    expect(tiny.width).toBe(MIN_SIZE_METRES);
+    expect(tiny.height).toBe(MIN_SIZE_METRES);
+  });
+
+  it('refuses to drag a corner past the opposite edge', () => {
+    const flipped = resizeBox(box, 'nw', { x: 900, y: 900 });
+    expect(flipped.width).toBe(MIN_SIZE_METRES);
+    expect(flipped.height).toBe(MIN_SIZE_METRES);
+    expect(flipped.x).toBeCloseTo(5 - MIN_SIZE_METRES, 6);
+  });
+});
+
+describe('clampBoxToBounds', () => {
+  const bounds = { minX: 0, minY: 0, maxX: 10, maxY: 8, width: 10, height: 8 };
+
+  it('pulls an object back inside the drawing', () => {
+    const clamped = clampBoxToBounds({ x: 20, y: -5, width: 2, height: 2 }, bounds);
+    expect(clamped.x).toBe(8);
+    expect(clamped.y).toBe(0);
+  });
+
+  it('never returns a box larger than the drawing', () => {
+    const clamped = clampBoxToBounds({ x: 0, y: 0, width: 40, height: 40 }, bounds);
+    expect(clamped.width).toBe(10);
+    expect(clamped.height).toBe(8);
+  });
+});
+
+describe('defaultRoomBox', () => {
+  const bounds = { minX: 0, minY: 0, maxX: 10, maxY: 8, width: 10, height: 8 };
+
+  it('drops a new room in the middle of the plan', () => {
+    expect(defaultRoomBox(bounds, 4, 4)).toEqual({ x: 3, y: 2, width: 4, height: 4 });
+  });
+
+  it('shrinks the default size to fit a small drawing', () => {
+    const small = { minX: 0, minY: 0, maxX: 2, maxY: 2, width: 2, height: 2 };
+    const box = defaultRoomBox(small, 4, 4);
+    expect(box.width).toBe(2);
+    expect(box.height).toBe(2);
+  });
+});
+
+describe('pointToMetres', () => {
+  it('passes finite coordinates through unchanged', () => {
+    expect(pointToMetres({ x: 3.25, y: -1.5 })).toEqual({ x: 3.25, y: -1.5 });
+  });
+
+  it('treats a non-finite coordinate as the origin', () => {
+    expect(pointToMetres({ x: Number.NaN, y: undefined as unknown as number })).toEqual({
+      x: 0,
+      y: 0,
+    });
+  });
+});
+
+describe('boxesEqual / formatMetres', () => {
+  const box = { x: 1, y: 1, width: 2, height: 2 };
+
+  it('compares all four numbers', () => {
+    expect(boxesEqual(box, { ...box })).toBe(true);
+    expect(boxesEqual(box, { ...box, width: 2.1 })).toBe(false);
+  });
+
+  it('renders metres in Vietnamese grouping', () => {
+    expect(formatMetres(2.3)).toBe('2,3 m');
+    expect(formatMetres(12)).toBe('12 m');
+    expect(formatMetres(Number.NaN)).toBe('—');
   });
 });
 

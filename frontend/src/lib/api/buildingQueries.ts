@@ -183,6 +183,19 @@ export function useUpdateRoomLayout(roomId: string) {
   });
 }
 
+/**
+ * The designer saves a whole floor at once, so the room id arrives with the
+ * call instead of being bound when the hook is created. One mutation still
+ * refreshes every affected list, exactly like the per-room hook.
+ */
+export function useSaveRoomLayouts() {
+  const invalidateAll = useInvalidateAll();
+  return useMutation<RoomDto, unknown, { roomId: string; input: UpdateRoomLayoutInput }>({
+    mutationFn: ({ roomId, input }) => roomsApi.updateLayout(roomId, input),
+    onSuccess: invalidateAll,
+  });
+}
+
 export function useRoomEquipment(roomId: string | undefined) {
   return useQuery<RoomEquipmentDto[]>({
     queryKey: keys.roomEquipment(roomId ?? ''),

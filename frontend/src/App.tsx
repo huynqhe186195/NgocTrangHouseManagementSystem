@@ -5,6 +5,7 @@ import { LoginPage } from './features/auth/LoginPage';
 import { ResetPasswordPage } from './features/auth/ResetPasswordPage';
 import { VerifyOtpPage } from './features/auth/VerifyOtpPage';
 import { BuildingDetailPage, BuildingsPage } from './features/buildings/BuildingsPage';
+import { FloorDesignerPage } from './features/buildings/FloorDesignerPage';
 import { FloorPlanPage } from './features/buildings/FloorPlanPage';
 import { RoomDetailPage } from './features/rooms/RoomDetailPage';
 import { RoomsPage } from './features/rooms/RoomsPage';
@@ -26,6 +27,10 @@ export default function App() {
           <Route path="/buildings" element={<BuildingsPage />} />
           <Route path="/buildings/:buildingId" element={<BuildingDetailPage />} />
           <Route path="/buildings/:buildingId/floors/:floorId" element={<FloorPlanPage />} />
+          <Route
+            path="/buildings/:buildingId/floors/:floorId/design"
+            element={<FloorDesignerPage />}
+          />
           <Route path="/rooms" element={<RoomsPage />} />
           <Route path="/rooms/:roomId" element={<RoomDetailPage />} />
           <Route path="/forbidden" element={<ForbiddenPage />} />

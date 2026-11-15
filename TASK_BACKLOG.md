@@ -611,6 +611,52 @@
 
 ---
 
+### P4.5 ⏳ Five Figma Mockups — PHASE 1 DONE (`3adf6f6`, pushed); Phases 2–5 awaiting approval
+**Status:** PHASE 1 DONE. The five mockups in `D:\Dev\NgocTrangBuilding\Docs\front-end\building_rooms\` assume data the backend had nowhere to put: rent, equipment per room, photos, and room/object geometry. Phase 1 adds exactly that layer and stops before any UI work.
+
+**What Phase 1 added:**
+- `Room` gains `MonthlyRent` plus `LayoutX/Y/Width/Height/Shape/RotationDegrees/Points`, written by two dedicated methods (`UpdateRent`, `UpdateLayout`) so the designer can move a room without resending its whole profile. `Room.Update(...)` is untouched.
+- Three new aggregates, all `FullAuditedAggregateRoot<Guid>`: `RoomEquipment`, `RoomPhoto` (+ `RoomPhotoContent` sibling table for bytes), `FloorLayoutItem`.
+- Thirteen new endpoints, **all on the three services the controller convention whitelists** (`BuildingAppService`/`FloorAppService`/`RoomAppService`); every one opens with `_access.EnsureResourceAsync(...)` and wraps its mutation in `_writes.ExecuteBuildingAsync(...)`. No new app service, no new permission.
+
+**Two design corrections forced by the codebase:**
+- Photo bytes cannot use ABP `IBlobContainer`: `AbpBlobs` lives in the **Identity** database, so a photo write would need a cross-database transaction. Bytes therefore live in `BuildingManagementRoomPhotoContents`, in the same database, one-to-one on the photo id with `ON DELETE CASCADE`.
+- The migration is **hand-written raw SQL**. The committed `BuildingManagementDbContextModelSnapshot.cs` is deliberately stale (42 entities vs 112 in the model), so `dotnet ef migrations add` emits a 2165-line migration recreating ~70 tables. Everything after `20261021085624` follows the raw-SQL, no-Designer convention.
+
+**Photo safety:** acceptance is decided from the payload's magic bytes (PNG/JPEG/WebP) and never from the client-declared type; SVG is rejected by omission so stored content can never execute as a document; file names are rebuilt from the sniffed type after `Path.GetFileName`, so a client path cannot reach storage; a 5 MB cap is enforced in the application and again by a `CHECK (octet_length(...) BETWEEN 1 AND 5242880)` in the schema.
+
+**Two defects the harness caught (both fixed before the commit):**
+- `RoomPhotoContent` inherited `Entity<Guid>`, so EF mapped the key to a column named `Id`, while the migration created `PhotoId` — the first upload failed with `42703: column "Id" of relation "BuildingManagementRoomPhotoContents" does not exist`. Fixed by mapping the property to `PhotoId`.
+- The new business error codes had no `AbpExceptionHttpStatusCodeOptions` mapping, so a rejected upload answered **403** (ABP's default) instead of 400. Ten mappings were added in `NgocTrangHouseManagementSystemHttpApiHostModule`.
+
+**Evidence:**
+- ✅ Commit `3adf6f6` pushed to `origin/main`, fast-forward only
+- ✅ E2E harness `etc/scripts/verify-p45-mockup-screens.ps1` — **ALL STEPS PASSED at the pushed SHA** (`3adf6f68eb7a2270326664c9f62489a8046c9fd0`)
+- ✅ Schema proven in PostgreSQL, not just by exit code: the four P45 tables exist and `BuildingManagementRooms` has all 8 new columns
+- ✅ Rent `3500000` round-trips through `PUT /room/{id}/rent` and agrees with `BuildingManagementRooms.MonthlyRent`
+- ✅ Equipment: 2 created, 1 updated (quantity 3, condition 1), 1 deleted with `IsDeleted=true` read from the DB; only 1 row remains
+- ✅ Photo: a 1×1 PNG built in-process uploads as `image/png` with `FileName` sanitised from `../../etc/evil.png` to `evil.png`; `GET .../photo-content/{id}` returns **byte-for-byte identical** bytes; a text payload named `fake.png` is rejected **400 `BuildingManagement:InvalidRoomPhotoContent` and writes no row**
+- ✅ `PUT /room/{id}/layout` round-trips (2.5, 3, 6, 4.5) and `EquipmentCount`/`PhotoCount` are accurate on the same read
+- ✅ `POST`/`GET` floor layout item round-trips; negative control on a random building id still denied
+- ✅ Cleanup verified row-by-row in PostgreSQL: equipment/photo/layout-item `IsDeleted=t`, the bytes row **hard-deleted**, rooms/floor/building soft-deleted
+- ✅ LOG_DIRECTORY `C:\Users\Huynq\NgocTrang-Test-Logs\p45-mockup-screens-20261115-134953` (earlier iterations `...-131531`/`...-132051`/`...-132313`/`...-134056` record the `::text` boolean spelling, the `PhotoId` column mismatch, and the 403-before-mapping diagnosis)
+- ✅ `dotnet build -c Release`: 0 errors (34 pre-existing warnings); host test suite **76/76**
+- ✅ Disposable lane only: Host 44321 + Vite 5273, two `bm_slicea_staging_*` DBs on `bm-p21-pg-15432`, both dropped in `finally`; 44311/5173, 15433, 5432, production DB, payOS untouched; admin password generated in-process, never echoed
+
+**Known limitations (recorded in `summary.json`):** photo bytes come back base64-encoded inside the JSON envelope via `RoomPhotoFileDto` rather than as a binary stream, so the frontend phase must decode them client-side (a real stream endpoint is deferred and would need its own probe through the conventional controller). Floor objects support only the 7 kinds in `FloorLayoutItemKind`; free-form shapes in the mockup (trees, balconies) are out of scope.
+
+**Definition of Done (Phase 1):**
+- ✅ Rent, equipment, photos, room geometry and floor objects persist and read back
+- ✅ Every new endpoint sits on an already-whitelisted app service and reuses existing permissions
+- ✅ Photo acceptance proven from magic bytes, with the fake-`.png` rejection asserted end-to-end
+- ✅ Schema and deletes proven in PostgreSQL, not by HTTP status
+- ✅ Harness run at the pushed SHA
+
+**Blocker:** None for Phase 1. **Phases 2–5 are deliberately NOT started** — per the approved plan, the Owner reviews the data layer first.
+**Dependency:** P4.4 ✅ (the CRUD screens whose resources this extends)
+
+---
+
 ## NOT IN BACKLOG (Already Fixed — Do Not Repeat)
 
 - ❌ CS0117 Convert.TryFromHexString → Fixed at `0702e0db`
@@ -639,4 +685,4 @@
 - P2: 6/6 **MERGED INTO `main`** (PR #11 merge commit `72a0721`, 2026-11-13, no squash — P2.1 `d36edb5` / P2.2 `b18644b` / P2.3 `aa3b9bb` / P2.4 `950610a` / P2.5 `2d01952` / P2.6 `6c9852f`; local 5-group harness ALL PASSED at `72a0721`; post-merge CI stale-assertion fix `d364ee1` with CI run 43423912631 green 5/5)
 - P3: 4/4 done + **MERGED to main** (P3.1 merge `01cba31`; P3.2 DONE `1ddf2e6`; P3.3 matrix; **P3.4 CLOSED 2026-11-12: PR #10 → main merge commit `c499d89`, Owner §6 signed + §3.2 P2 deferral accepted; post-merge local regression + CI green 5/5 at the merge commit**)
 
-**Current Focus:** **P4.4 CLOSED (2026-11-14): create/edit/delete screens for Buildings, Floors and Rooms at `5427d4a` pushed to `main`** — the six buttons P4.2 left `disabled` are live and drive the nine existing endpoints; the disposable-lane e2e (`verify-p44-crud-screens.ps1`, Host 44321 + Vite 5273, two `bm_slicea_staging_*` DBs on 15432) proves create/update for all three resources, all four business guards (400 `RoomNumberDoesNotMatchFloor`, 409 `RoomNumberAlreadyExists`, 409 `FloorHasRooms`, 409 `BuildingHasFloors`), the negative control, and delete-then-gone with the `IsDeleted` flag read straight from PostgreSQL (LOG_DIRECTORY `C:\Users\Huynq\NgocTrang-Test-Logs\p44-crud-screens-20261114-214439`); Vitest 47/47 + `tsc` + `vite build` green at the pushed SHA. That DB probe caught a real backend defect: `DELETE building` flushed its soft delete before the write fence revalidated membership, destroying its own grant mid-flight, so the API answered 200 while `Buildings.IsDeleted` stayed `f` — fixed with a one-line `autoSave: false` at `7b80ce3` (Owner-authorized; the only C# touched). P4.3 gate at `b769028`, P4.2 screens at `aea363c`, P4.1 auth portal at `46f4dee`. Next: Owner tries the CRUD screens on their own lane, or further business screens (Contracts/Invoices/Utilities); real payOS money flow, TLS public callback, production vault/roles/secrets, production deploy stay HOLD.
+**Current Focus:** **P4.5 PHASE 1 DONE (2026-11-15): backend data layer for the five Figma screens at `3adf6f6` pushed to `main`** — rent, equipment, photos, room geometry and floor-plan objects now exist in the BuildingManagement schema, all on the three app services the authenticated-controller convention whitelists. Migration `20261115120000_P45RoomRentEquipmentPhotosLayout` is hand-written raw SQL (the committed model snapshot is deliberately stale, so `dotnet ef migrations add` would recreate ~70 tables). The disposable-lane e2e (`verify-p45-mockup-screens.ps1`, Host 44321 + Vite 5273, two `bm_slicea_staging_*` DBs on 15432) proves: rent round-trip agrees between API and PostgreSQL; 2 equipment rows add/update/delete with `IsDeleted` read from the DB; a 1×1 PNG uploads and downloads byte-for-byte identical; a text payload named `fake.png` is rejected 400 `InvalidRoomPhotoContent` with no row written (magic-byte check proven); room layout round-trip with accurate `EquipmentCount`/`PhotoCount`; a floor layout item creates and lists; a random building id is denied; then cleanup verified row-by-row in PostgreSQL (LOG_DIRECTORY `C:\Users\Huynq\NgocTrang-Test-Logs\p45-mockup-screens-20261115-134953`); `dotnet build` Release 0 errors, host tests 76/76 green at the pushed SHA. Two defects the harness caught: `RoomPhotoContent.Id` was mapped to `Id` while the migration created `PhotoId` (500 on first upload), and the new business error codes fell through to ABP's default 403 instead of 400/404/409 until they were mapped in the host module. **Phases 2–5 (frontend) are NOT started — awaiting Owner approval of the data layer.** P4.4 CLOSED (2026-11-14): create/edit/delete screens at `5427d4a`; its harness caught the `autoSave: false` soft-delete defect fixed at `7b80ce3`. P4.3 gate at `b769028`, P4.2 screens at `aea363c`, P4.1 auth portal at `46f4dee`. Real payOS money flow, TLS public callback, production vault/roles/secrets, production deploy stay HOLD.

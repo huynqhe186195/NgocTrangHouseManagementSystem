@@ -72,6 +72,7 @@ const floor: FloorDto = {
   floorNumber: 1,
   name: 'Tầng 1',
   description: null,
+  status: 1,
 };
 
 function renderPage() {
@@ -123,6 +124,7 @@ beforeEach(() => {
       name: 'Tòa nhà A',
       address: '1 Đường A',
       description: null,
+      hasPhoto: false,
     },
     floors: [floor],
     rooms: [room()],

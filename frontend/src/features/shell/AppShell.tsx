@@ -1,40 +1,30 @@
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../lib/auth/AuthProvider';
+import { navigationFor, resolveShellRole, type NavItem } from './navigation';
 
-interface NavItem {
-  to: string;
-  label: string;
-  icon: string;
-  /** BuildingManagement permission that reveals the entry; absent = always. */
-  policy?: string;
-}
-
-const sections: { title?: string; items: NavItem[] }[] = [
-  {
-    items: [
-      { to: '/', label: 'Tổng quan', icon: 'home' },
-      { to: '/search', label: 'Tìm phòng', icon: 'search' },
-    ],
-  },
-  {
-    title: 'Quản lý',
-    // Only routes that exist are listed; every omitted module would 404.
-    // Buildings and Rooms are shown without a policy gate because the server
-    // denies these calls today and the screen must be able to say so.
-    items: [
-      { to: '/buildings', label: 'Tòa nhà', icon: 'apartment' },
-      { to: '/rooms', label: 'Phòng', icon: 'meeting_room' },
-    ],
-  },
-  {
-    title: 'Hệ thống',
-    items: [{ to: '/', label: 'Tài khoản', icon: 'settings' }],
-  },
-];
-
+/**
+ * Two shells, not one: the mockup draws a different sidebar for the
+ * administration and the tenant. Which one is shown comes from the claims the
+ * server issued; the backend remains the final authority on every call.
+ */
 export function AppShell() {
   const { user, signOut, hasPermission } = useAuth();
   const navigate = useNavigate();
+
+  const role = resolveShellRole(user, hasPermission);
+  const sections = navigationFor(role);
+
+  // Desktop: collapse the sidebar to an icon rail. Mobile: slide it over the
+  // content. One flag drives both because only one mode is reachable at a time.
+  const [navOpen, setNavOpen] = useState(true);
+  const [mobileOpen, setMobileOpen] = useState(false);
+
+  // A route change on a phone should not leave the drawer covering the page.
+  const location = useLocation();
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [location.pathname]);
 
   function handleSignOut() {
     signOut();
@@ -52,47 +42,55 @@ export function AppShell() {
 
   return (
     <div className="flex min-h-screen bg-surface">
-      <aside className="hidden w-[238px] shrink-0 flex-col bg-navy text-white lg:flex">
-        <div className="flex items-center gap-3 px-5 py-5">
+      {mobileOpen && (
+        <div
+          className="fixed inset-0 z-30 bg-black/40 lg:hidden"
+          aria-hidden
+          onClick={() => setMobileOpen(false)}
+        />
+      )}
+
+      <aside
+        className={
+          'flex shrink-0 flex-col bg-navy text-white ' +
+          (mobileOpen
+            ? 'fixed inset-y-0 left-0 z-40 w-[238px] '
+            : 'hidden w-[238px] lg:flex ') +
+          (navOpen ? 'lg:w-[238px]' : 'lg:w-[76px]')
+        }
+      >
+        <div className={'flex items-center gap-3 py-5 ' + (navOpen ? 'px-5' : 'lg:justify-center lg:px-2')}>
           <img
             src="/ngoc-trang-logo.png"
             alt=""
             className="h-9 w-9 shrink-0 rounded-lg bg-white object-contain p-0.5"
           />
-          <div className="leading-tight">
-            <p className="font-display text-sm font-bold">Ngọc Trang</p>
-            <p className="text-[10px] text-white/60">Hệ thống quản lý nhà trọ</p>
-          </div>
+          {navOpen && (
+            <div className="leading-tight">
+              <p className="font-display text-sm font-bold">Ngọc Trang</p>
+              <p className="text-[10px] text-white/60">Hệ thống quản lý nhà trọ</p>
+            </div>
+          )}
         </div>
 
         <nav className="flex-1 overflow-y-auto px-3 py-2">
           {sections.map((section, index) => (
             <div key={section.title ?? `s${index}`} className="mb-4">
-              {section.title && (
+              {section.title && navOpen && (
                 <p className="px-3 py-2 text-[10px] font-semibold tracking-widest text-white/40 uppercase">
                   {section.title}
                 </p>
               )}
               <ul className="flex flex-col gap-0.5">
-                {section.items
-                  .filter((item) => !item.policy || hasPermission(item.policy))
-                  .map((item) => (
-                    <li key={item.to}>
-                      <NavLink
-                        to={item.to}
-                        end={item.to === '/'}
-                        className={({ isActive }) =>
-                          'flex items-center gap-3 rounded-[0.5rem] px-3 py-2.5 text-sm transition ' +
-                          (isActive
-                            ? 'bg-[#1d4ed8] font-semibold text-white'
-                            : 'text-white/75 hover:bg-navy-hover hover:text-white')
-                        }
-                      >
-                        <span className="material-symbols-outlined text-[20px]">{item.icon}</span>
-                        <span>{item.label}</span>
-                      </NavLink>
-                    </li>
-                  ))}
+                {section.items.map((item) => (
+                  <li key={item.label}>
+                    <NavRow
+                      item={item}
+                      collapsed={!navOpen}
+                      onNavigate={() => setMobileOpen(false)}
+                    />
+                  </li>
+                ))}
               </ul>
             </div>
           ))}
@@ -103,8 +101,18 @@ export function AppShell() {
         <header className="flex h-[70px] items-center gap-4 border-b border-outline-variant bg-surface-lowest px-4 sm:px-5">
           <button
             type="button"
-            aria-label="Mở menu"
-            className="rounded-lg p-2 text-on-surface-variant transition hover:bg-surface-low lg:hidden"
+            aria-label={mobileOpen || navOpen ? 'Thu gọn menu' : 'Mở menu'}
+            aria-expanded={mobileOpen || navOpen}
+            onClick={() => {
+              // Only one of the two can be on screen at a time, so the same
+              // button is the drawer toggle below `lg` and the rail toggle above.
+              if (window.matchMedia('(min-width: 1024px)').matches) {
+                setNavOpen((open) => !open);
+              } else {
+                setMobileOpen((open) => !open);
+              }
+            }}
+            className="rounded-lg p-2 text-on-surface-variant transition hover:bg-surface-low"
           >
             <span className="material-symbols-outlined text-xl">menu</span>
           </button>
@@ -113,10 +121,18 @@ export function AppShell() {
             <span className="material-symbols-outlined pointer-events-none absolute top-1/2 left-3.5 -translate-y-1/2 text-xl text-outline">
               search
             </span>
+            {/*
+              The mockup shows a search box, but no search endpoint exists yet.
+              Leaving it enabled would make typing look meaningful when nothing
+              is queried, so it is disabled and says why.
+            */}
             <input
               type="search"
-              placeholder="Tìm kiếm tòa nhà, tầng, phòng..."
-              className="h-10 w-full rounded-lg border border-outline-variant bg-surface-low pl-11 pr-4 text-sm text-on-surface transition-colors placeholder:text-outline focus:border-primary focus:bg-surface-lowest focus:outline-none"
+              disabled
+              title="Tìm kiếm chưa được nối với máy chủ."
+              placeholder="Tìm kiếm tòa nhà, tầng, phòng… (chưa khả dụng)"
+              aria-label="Tìm kiếm tòa nhà, tầng, phòng (chưa khả dụng)"
+              className="h-10 w-full cursor-not-allowed rounded-lg border border-outline-variant bg-surface-low pr-4 pl-11 text-sm text-on-surface placeholder:text-outline"
             />
           </div>
 
@@ -124,6 +140,7 @@ export function AppShell() {
             <button
               type="button"
               aria-label="Thông báo"
+              title="Máy chủ chưa có nguồn thông báo."
               className="relative rounded-lg p-2 text-on-surface-variant transition hover:bg-surface-low"
             >
               <span className="material-symbols-outlined text-xl">notifications</span>
@@ -136,7 +153,7 @@ export function AppShell() {
               <div className="leading-tight">
                 <p className="text-sm font-semibold text-on-surface">{displayName}</p>
                 <p className="text-[11px] text-on-surface-variant">
-                  {user?.roles?.[0] ?? user?.email ?? 'Quản trị viên'}
+                  {role === 'admin' ? 'Quản trị viên' : 'Người thuê'}
                 </p>
               </div>
             </div>
@@ -156,5 +173,50 @@ export function AppShell() {
         </main>
       </div>
     </div>
+  );
+}
+
+function NavRow({
+  item,
+  collapsed,
+  onNavigate,
+}: {
+  item: NavItem;
+  collapsed: boolean;
+  onNavigate: () => void;
+}) {
+  if (!item.to) {
+    return (
+      <span
+        title={item.unavailableHint}
+        aria-disabled
+        className={
+          'flex cursor-not-allowed items-center gap-3 rounded-[0.5rem] px-3 py-2.5 text-sm text-white/35 ' +
+          (collapsed ? 'lg:justify-center lg:px-2' : '')
+        }
+      >
+        <span className="material-symbols-outlined text-[20px]">{item.icon}</span>
+        {!collapsed && <span>{item.label}</span>}
+      </span>
+    );
+  }
+
+  return (
+    <NavLink
+      to={item.to}
+      end={item.to === '/'}
+      onClick={onNavigate}
+      title={collapsed ? item.label : undefined}
+      className={({ isActive }) =>
+        'flex items-center gap-3 rounded-[0.5rem] px-3 py-2.5 text-sm transition ' +
+        (collapsed ? 'lg:justify-center lg:px-2 ' : '') +
+        (isActive
+          ? 'bg-[#1d4ed8] font-semibold text-white'
+          : 'text-white/75 hover:bg-navy-hover hover:text-white')
+      }
+    >
+      <span className="material-symbols-outlined text-[20px]">{item.icon}</span>
+      {!collapsed && <span>{item.label}</span>}
+    </NavLink>
   );
 }

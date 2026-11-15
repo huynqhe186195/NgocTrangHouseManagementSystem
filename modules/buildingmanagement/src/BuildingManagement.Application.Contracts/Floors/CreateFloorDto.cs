@@ -17,5 +17,7 @@ namespace BuildingManagement.Floors
 
         [MaxLength(500)]
         public string? Description { get; set; }
+
+        public FloorStatus Status { get; set; } = FloorStatus.Active;
     }
 }

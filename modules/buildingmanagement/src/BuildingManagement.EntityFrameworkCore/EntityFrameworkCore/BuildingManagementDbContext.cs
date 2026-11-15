@@ -26,6 +26,8 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
     public DbSet<Building> Buildings { get; set; } = default!;
     // Schema-only rollout; runtime grant/account/writer DI remains DenyAll.
     public DbSet<BuildingOperatorAccessGrant> OperatorBuildingGrants { get; set; } = default!;
+    public DbSet<BuildingPhoto> BuildingPhotos { get; set; } = default!;
+    public DbSet<BuildingPhotoContent> BuildingPhotoContents { get; set; } = default!;
     public DbSet<Floor> Floors { get; set; } = default!;
     public DbSet<Room> Rooms { get; set; } = default!;
     public DbSet<RoomEquipment> RoomEquipment { get; set; } = default!;

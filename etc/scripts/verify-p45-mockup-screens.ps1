@@ -14,6 +14,9 @@ param()
 #   DELETE 1 equipment   -> DB IsDeleted = t, GET no longer lists it
 #   POST a real 1x1 PNG  -> GET .../photo-content returns the SAME bytes
 #   POST text pretending to be .png  -> REJECTED, proving the magic-byte check
+#   floor status 2 -> stored in PostgreSQL and survives an update that omits it
+#   POST a building cover PNG -> byte-identical read-back, replaces on re-upload,
+#     rejects a text payload named .png, and DELETE removes the bytes
 #   PUT  room layout     -> GET shows the geometry
 #   POST a floor layout item -> GET shows it
 #   negative control: a random building id is still denied
@@ -230,6 +233,23 @@ try {
     if ($p45Columns -ne '8') { throw "Expected 8 P45 columns on BuildingManagementRooms, found $p45Columns." }
     Write-Step 'PASS: P45 schema verified (4 tables + 8 Room columns) in PostgreSQL.'
 
+    # The building mockup needs two things P45 did not model: a status badge on
+    # every floor row and a cover image per building. Both were added by
+    # 20261116100000_P46FloorStatusAndBuildingPhoto; read the schema back so a
+    # migration that silently no-ops cannot pass this lane.
+    $p46Tables = (Invoke-Db -Database $buildingDb -Sql (
+        "SELECT string_agg(table_name, ',' ORDER BY table_name) FROM information_schema.tables " +
+        "WHERE table_schema='public' AND table_name IN " +
+        "('BuildingManagementBuildingPhotos','BuildingManagementBuildingPhotoContents')") | Out-String).Trim()
+    if ($p46Tables -ne 'BuildingManagementBuildingPhotoContents,BuildingManagementBuildingPhotos') {
+        throw "P46 photo tables missing from the migrated schema (found '$p46Tables')."
+    }
+    $floorStatusColumn = (Invoke-Db -Database $buildingDb -Sql (
+        "SELECT count(*) FROM information_schema.columns WHERE table_name='BuildingManagementFloors' " +
+        "AND column_name='Status'") | Out-String).Trim()
+    if ($floorStatusColumn -ne '1') { throw 'P46 added no Status column to BuildingManagementFloors.' }
+    Write-Step 'PASS: P46 schema verified (2 photo tables + Floor.Status) in PostgreSQL.'
+
     # --- 3. Read the seeded admin id and grant the BM permissions -----------
     $adminId = (Invoke-Db -Database $identityDb `
         -Sql 'SELECT "Id"::text FROM "AbpUsers" WHERE "UserName" = ''admin'' LIMIT 1' | Out-String).Trim()
@@ -332,11 +352,42 @@ try {
     Write-Step "PASS: POST building -> $($r.Status) (id $buildingId)."
 
     $r = Invoke-Web -Method 'POST' -Url "$api/floor" -Bearer $token `
-        -JsonBody ('{{"buildingId":"{0}","floorNumber":1,"name":"Tang 1","description":null}}' -f $buildingId)
+        -JsonBody ('{{"buildingId":"{0}","floorNumber":1,"name":"Tang 1","description":null,"status":2}}' -f $buildingId)
     Assert-Status $r @(200,201) 'POST floor'
     $floorId = (Get-EnvelopeData $r.Body).id
     if (-not $floorId) { throw "POST floor returned no id: $($r.Body)" }
-    Write-Step "PASS: POST floor -> $($r.Status) (id $floorId)."
+    if ((Get-EnvelopeData $r.Body).status -ne 2) {
+        throw "POST floor did not store status 2 (got '$((Get-EnvelopeData $r.Body).status)')."
+    }
+    Write-Step "PASS: POST floor -> $($r.Status) (id $floorId, status 2)."
+
+    # The building mockup draws the status as a badge on every row, so it has
+    # to survive the round trip and reach PostgreSQL, not just the DTO.
+    $r = Invoke-Web -Method 'GET' -Url "$api/floor/$floorId" -Bearer $token
+    Assert-Status $r @(200) 'GET floor after create'
+    if ((Get-EnvelopeData $r.Body).status -ne 2) { throw 'Floor status did not read back as 2.' }
+    $statusInDb = (Invoke-Db $buildingDb `
+        "SELECT ""Status""::text FROM ""BuildingManagementFloors"" WHERE ""Id"" = '$floorId'" | Out-String).Trim()
+    if ($statusInDb -ne '2') { throw "Floor Status in PostgreSQL is '$statusInDb', expected 2." }
+
+    # A PUT without the field must leave the stored status alone: an older
+    # client that predates the field cannot silently retire a floor.
+    $r = Invoke-Web -Method 'PUT' -Url "$api/floor/$floorId" -Bearer $token `
+        -JsonBody ('{{"buildingId":"{0}","floorNumber":1,"name":"Tang 1","description":null}}' -f $buildingId)
+    Assert-Status $r @(200) 'PUT floor without status'
+    $statusAfterOmit = (Invoke-Db $buildingDb `
+        "SELECT ""Status""::text FROM ""BuildingManagementFloors"" WHERE ""Id"" = '$floorId'" | Out-String).Trim()
+    if ($statusAfterOmit -ne '2') {
+        throw "Omitting Status on update reset it to '$statusAfterOmit'; it must stay 2."
+    }
+
+    $r = Invoke-Web -Method 'PUT' -Url "$api/floor/$floorId" -Bearer $token `
+        -JsonBody ('{{"buildingId":"{0}","floorNumber":1,"name":"Tang 1","description":null,"status":3}}' -f $buildingId)
+    Assert-Status $r @(200) 'PUT floor status 3'
+    $statusChanged = (Invoke-Db $buildingDb `
+        "SELECT ""Status""::text FROM ""BuildingManagementFloors"" WHERE ""Id"" = '$floorId'" | Out-String).Trim()
+    if ($statusChanged -ne '3') { throw "Floor Status is '$statusChanged' after update, expected 3." }
+    Write-Step 'PASS: floor status round-trips (create 2, omitted on update stays 2, update 3).'
 
     $roomIds = @()
     foreach ($number in '101','102') {
@@ -454,6 +505,100 @@ try {
     $photoCount = (Invoke-Db $buildingDb "SELECT count(*)::text FROM ""BuildingManagementRoomPhotos"" WHERE ""RoomId""='$roomId'" | Out-String).Trim()
     if ($photoCount -ne '1') { throw "A rejected upload still wrote a row (count=$photoCount)." }
     Write-Step "PASS: text payload named fake.png rejected with 400 ($errorCode) and no row written."
+
+    # --- 12b. Building cover image: upload, replace, reject, delete ---------
+    # The mockup's top card shows a real photo behind "Thay đổi ảnh". There is
+    # one per building, so the interesting parts are that a second upload
+    # replaces the first rather than piling up, and that the same magic-byte
+    # guard that protects room photos protects this one.
+    $r = Invoke-Web -Method 'GET' -Url "$api/building/$buildingId" -Bearer $token
+    Assert-Status $r @(200) 'GET building before photo'
+    if ((Get-EnvelopeData $r.Body).hasPhoto -ne $false) {
+        throw 'hasPhoto was not false on a building with no cover image.'
+    }
+
+    $r = Invoke-Web -Method 'POST' -Url "$api/building/$buildingId/upload-photo" -Bearer $token `
+        -JsonBody ('{{"base64Content":"{0}","fileName":"cover.png"}}' -f $pngBase64)
+    Assert-Status $r @(200,201) 'POST building photo'
+    $buildingPhoto = Get-EnvelopeData $r.Body
+    if ($buildingPhoto.contentType -ne 'image/png') {
+        throw "Building photo content type is '$($buildingPhoto.contentType)', expected image/png."
+    }
+    if ([long]$buildingPhoto.sizeBytes -ne $pngBytes.LongLength) {
+        throw "Building photo SizeBytes is $($buildingPhoto.sizeBytes), expected $($pngBytes.LongLength)."
+    }
+
+    $r = Invoke-Web -Method 'GET' -Url "$api/building/$buildingId/photo-content" -Bearer $token
+    Assert-Status $r @(200) 'GET building photo content'
+    $buildingFile = Get-EnvelopeData $r.Body
+    if ($buildingFile.content -ne $pngBase64) {
+        throw 'The building photo bytes differ from what was uploaded.'
+    }
+
+    $r = Invoke-Web -Method 'GET' -Url "$api/building/$buildingId" -Bearer $token
+    Assert-Status $r @(200) 'GET building after photo'
+    if ((Get-EnvelopeData $r.Body).hasPhoto -ne $true) {
+        throw 'hasPhoto did not flip to true after the upload.'
+    }
+    Write-Step 'PASS: building photo upload -> byte-identical read-back and hasPhoto true.'
+
+    # Replace: a different 1x1 PNG. The first row must be gone, not joined.
+    $secondPngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+    $secondPngBytes = [Convert]::FromBase64String($secondPngBase64)
+    $r = Invoke-Web -Method 'POST' -Url "$api/building/$buildingId/upload-photo" -Bearer $token `
+        -JsonBody ('{{"base64Content":"{0}","fileName":"cover2.png"}}' -f $secondPngBase64)
+    Assert-Status $r @(200,201) 'POST replacement building photo'
+
+    $livePhotos = (Invoke-Db $buildingDb (
+        "SELECT count(*)::text FROM ""BuildingManagementBuildingPhotos"" " +
+        "WHERE ""BuildingId""='$buildingId' AND ""IsDeleted""=FALSE") | Out-String).Trim()
+    if ($livePhotos -ne '1') {
+        throw "A replacement upload left $livePhotos live photo rows; expected exactly 1."
+    }
+    $r = Invoke-Web -Method 'GET' -Url "$api/building/$buildingId/photo-content" -Bearer $token
+    Assert-Status $r @(200) 'GET building photo content after replace'
+    if ((Get-EnvelopeData $r.Body).content -ne $secondPngBase64) {
+        throw 'The replacement upload did not become the served image.'
+    }
+    Write-Step 'PASS: second upload replaced the cover (1 live row, new bytes served).'
+
+    $fakeBuildingBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('not an image either'))
+    $r = Invoke-Web -Method 'POST' -Url "$api/building/$buildingId/upload-photo" -Bearer $token `
+        -JsonBody ('{{"base64Content":"{0}","fileName":"cover.png"}}' -f $fakeBuildingBase64)
+    if ($r.Status -ne 400) {
+        throw "A text payload named cover.png was expected to be rejected with 400, got $($r.Status): $($r.Body)"
+    }
+    $buildingErrorCode = Get-ErrorCode $r.Body
+    if ($buildingErrorCode -notmatch 'BuildingPhoto') {
+        throw "Rejection did not carry a building-photo error code (got '$buildingErrorCode'): $($r.Body)"
+    }
+    $stillServing = (Invoke-Db $buildingDb (
+        "SELECT count(*)::text FROM ""BuildingManagementBuildingPhotos"" " +
+        "WHERE ""BuildingId""='$buildingId' AND ""IsDeleted""=FALSE") | Out-String).Trim()
+    if ($stillServing -ne '1') {
+        throw "A rejected upload disturbed the live cover (live rows=$stillServing)."
+    }
+    Write-Step "PASS: text payload named cover.png rejected with 400 ($buildingErrorCode), cover untouched."
+
+    $r = Invoke-Web -Method 'DELETE' -Url "$api/building/$buildingId/photo" -Bearer $token
+    Assert-Status $r @(200) 'DELETE building photo'
+    $coverLeft = (Invoke-Db $buildingDb (
+        "SELECT count(*)::text FROM ""BuildingManagementBuildingPhotos"" " +
+        "WHERE ""BuildingId""='$buildingId' AND ""IsDeleted""=FALSE") | Out-String).Trim()
+    if ($coverLeft -ne '0') { throw "Building photo soft-delete did not take (live rows=$coverLeft)." }
+    $coverBytesLeft = (Invoke-Db $buildingDb (
+        "SELECT count(*)::text FROM ""BuildingManagementBuildingPhotoContents"" c " +
+        "JOIN ""BuildingManagementBuildingPhotos"" p ON p.""Id"" = c.""PhotoId"" " +
+        "WHERE p.""BuildingId""='$buildingId'") | Out-String).Trim()
+    if ($coverBytesLeft -ne '0') {
+        throw "Building photo bytes survived the delete (leftover content rows=$coverBytesLeft)."
+    }
+    $r = Invoke-Web -Method 'GET' -Url "$api/building/$buildingId" -Bearer $token
+    Assert-Status $r @(200) 'GET building after photo delete'
+    if ((Get-EnvelopeData $r.Body).hasPhoto -ne $false) {
+        throw 'hasPhoto stayed true after the cover was deleted.'
+    }
+    Write-Step 'PASS: DELETE building photo -> soft-deleted, bytes gone, hasPhoto false.'
 
     # --- 13. Room layout round-trip ------------------------------------------
     $r = Invoke-Web -Method 'PUT' -Url "$api/room/$roomId/layout" -Bearer $token `

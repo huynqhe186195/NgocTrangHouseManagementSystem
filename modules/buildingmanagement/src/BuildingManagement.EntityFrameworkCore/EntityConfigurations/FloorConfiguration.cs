@@ -33,6 +33,9 @@ namespace BuildingManagement.EntityConfigurations
             builder.Property(x => x.Description)
                 .HasMaxLength(500);
 
+            builder.Property(x => x.Status)
+                .IsRequired();
+
             // Within the same building, there cannot be two instances where FloorNumber = 1
             builder.HasIndex(x => new
             {

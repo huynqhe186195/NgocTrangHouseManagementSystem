@@ -2,6 +2,7 @@ import { ApiError } from '../http';
 
 export type MutationEntity =
   | 'building'
+  | 'buildingPhoto'
   | 'floor'
   | 'room'
   | 'equipment'
@@ -27,6 +28,7 @@ const CODE_TO_FIELD: Record<string, string> = {
   'BuildingManagement:InvalidRoomLayout': 'layout',
   'BuildingManagement:InvalidFloorLayoutItem': 'layout',
   'BuildingManagement:InvalidRoomPhotoContent': 'photo',
+  'BuildingManagement:InvalidBuildingPhotoContent': 'buildingPhoto',
 };
 
 const DELETE_GUARD_HINTS: Record<string, string> = {
@@ -46,6 +48,10 @@ const CODE_MESSAGES: Record<string, string> = {
   'BuildingManagement:InvalidRoomPhotoContent':
     'Tệp không phải ảnh PNG, JPEG hoặc WebP hợp lệ. Ảnh SVG và tệp đổi đuôi không được chấp nhận.',
   'BuildingManagement:RoomPhotoTooLarge': 'Ảnh vượt quá giới hạn 5 MB.',
+  'BuildingManagement:InvalidBuildingPhotoContent':
+    'Tệp không phải ảnh PNG, JPEG hoặc WebP hợp lệ. Ảnh SVG và tệp đổi đuôi không được chấp nhận.',
+  'BuildingManagement:BuildingPhotoTooLarge': 'Ảnh vượt quá giới hạn 5 MB.',
+  'BuildingManagement:BuildingPhotoNotFound': 'Tòa nhà này chưa có ảnh.',
   'BuildingManagement:InvalidRoomLayout':
     'Toạ độ sơ đồ không hợp lệ: cần đủ X/Y/rộng/cao trong khoảng cho phép.',
   'BuildingManagement:InvalidMonthlyRentAmount': 'Giá thuê không hợp lệ.',

@@ -34,11 +34,11 @@ function aggregate(buildingId: string, floors: FloorDto[], rooms: RoomDto[]) {
 const T0 = '2026-11-13T00:00:00Z';
 
 function building(id: string, name: string): BuildingDto {
-  return { id, name, address: 'x', description: null, creationTime: T0, creatorId: null, lastModificationTime: null, lastModifierId: null };
+  return { id, name, address: 'x', description: null, hasPhoto: false, creationTime: T0, creatorId: null, lastModificationTime: null, lastModifierId: null };
 }
 
 function floor(id: string, buildingId: string, floorNumber: number): FloorDto {
-  return { id, buildingId, floorNumber, name: `Tầng ${floorNumber}`, description: null, creationTime: T0, creatorId: null, lastModificationTime: null, lastModifierId: null };
+  return { id, buildingId, floorNumber, name: `Tầng ${floorNumber}`, description: null, status: 1, creationTime: T0, creatorId: null, lastModificationTime: null, lastModifierId: null };
 }
 
 function room(id: string, floorId: string, roomNumber: string, status: 1 | 2 | 3 | 4 | 5): RoomDto {

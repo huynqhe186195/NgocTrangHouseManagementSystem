@@ -12,5 +12,8 @@ namespace BuildingManagement.Buildings
         public string Address { get; set; } = default!;
 
         public string? Description { get; set; }
+
+        /// <summary>True when a cover image is stored for this building.</summary>
+        public bool HasPhoto { get; set; }
     }
 }

@@ -15,5 +15,8 @@ namespace BuildingManagement.Floors
 
         [MaxLength(500)]
         public string? Description { get; set; }
+
+        /// <summary>Null keeps the stored status unchanged.</summary>
+        public FloorStatus? Status { get; set; }
     }
 }

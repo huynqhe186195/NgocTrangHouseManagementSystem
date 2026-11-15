@@ -1,7 +1,9 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueries, useQueryClient } from '@tanstack/react-query';
 import { buildingsApi, floorsApi, roomsApi } from '../api/buildingApi';
 import type {
   BuildingDto,
+  BuildingPhotoDto,
+  BuildingPhotoFileDto,
   CreateBuildingInput,
   CreateFloorInput,
   CreateFloorLayoutItemInput,
@@ -19,6 +21,7 @@ import type {
   UpdateRoomEquipmentInput,
   UpdateRoomInput,
   UpdateRoomLayoutInput,
+  UploadBuildingPhotoInput,
   UploadRoomPhotoInput,
 } from '../api/types';
 
@@ -31,6 +34,8 @@ const keys = {
   roomPhotoContent: (roomId: string, photoId: string) =>
     ['room-photo-content', roomId, photoId] as const,
   floorLayout: (floorId: string) => ['floor-layout', floorId] as const,
+  buildingPhotoContent: (buildingId: string) =>
+    ['building-photo-content', buildingId] as const,
 };
 
 /**
@@ -116,6 +121,45 @@ export function useDeleteBuilding() {
   return useMutation<void, unknown, string>({
     mutationFn: (id) => buildingsApi.remove(id),
     onSuccess: invalidate,
+  });
+}
+
+/**
+ * The cover image bytes. A building has at most one, so there is no photo id
+ * in the key. `enabled` lets the screen skip the call when the server already
+ * said `hasPhoto` is false.
+ */
+export function useBuildingPhotoContent(buildingId: string | undefined, enabled = true) {
+  return useQuery<BuildingPhotoFileDto>({
+    queryKey: keys.buildingPhotoContent(buildingId ?? ''),
+    queryFn: () => buildingsApi.getPhotoContent(buildingId as string),
+    enabled: Boolean(buildingId) && enabled,
+  });
+}
+
+export function useUploadBuildingPhoto(buildingId: string) {
+  const queryClient = useQueryClient();
+  const invalidate = useInvalidateAll();
+  return useMutation<BuildingPhotoDto, unknown, UploadBuildingPhotoInput>({
+    mutationFn: (input) => buildingsApi.uploadPhoto(buildingId, input),
+    onSuccess: () =>
+      Promise.all([
+        invalidate(),
+        queryClient.invalidateQueries({ queryKey: keys.buildingPhotoContent(buildingId) }),
+      ]),
+  });
+}
+
+export function useDeleteBuildingPhoto(buildingId: string) {
+  const queryClient = useQueryClient();
+  const invalidate = useInvalidateAll();
+  return useMutation<void, unknown, void>({
+    mutationFn: () => buildingsApi.removePhoto(buildingId),
+    onSuccess: () =>
+      Promise.all([
+        invalidate(),
+        queryClient.invalidateQueries({ queryKey: keys.buildingPhotoContent(buildingId) }),
+      ]),
   });
 }
 
@@ -273,6 +317,30 @@ export function useFloorLayoutItems(floorId: string | undefined) {
     queryFn: () => floorsApi.listLayoutItems(floorId as string),
     enabled: Boolean(floorId),
   });
+}
+
+/**
+ * Layout objects for several floors at once, keyed by floor id. The building
+ * screen renders one miniature plan per row and each needs its own objects;
+ * one `useQueries` call keeps that to a single hook instead of N components
+ * each fetching on their own.
+ */
+export function useFloorLayoutItemsFor(floorIds: string[]) {
+  const results = useQueries({
+    queries: floorIds.map((floorId) => ({
+      queryKey: keys.floorLayout(floorId),
+      queryFn: () => floorsApi.listLayoutItems(floorId),
+    })),
+  });
+
+  const byFloor = new Map<string, FloorLayoutItemDto[]>();
+  results.forEach((result, index) => {
+    const floorId = floorIds[index];
+    if (floorId && result.data) {
+      byFloor.set(floorId, result.data);
+    }
+  });
+  return byFloor;
 }
 
 export function useCreateFloorLayoutItem(floorId: string) {

@@ -1203,6 +1203,24 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule // syst
                 HttpStatusCode.BadRequest
             );
 
+            // The building cover image reuses the same rules, but without its
+            // own mapping ABP answers 403 for an unmapped BusinessException —
+            // which reads as "you lack permission" instead of "bad image".
+            options.Map(
+                BuildingManagementErrorCodes.BuildingPhotoNotFound,
+                HttpStatusCode.NotFound
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.InvalidBuildingPhotoContent,
+                HttpStatusCode.BadRequest
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.BuildingPhotoTooLarge,
+                HttpStatusCode.BadRequest
+            );
+
             options.Map(
                 BuildingManagementErrorCodes.InvalidRoomLayout,
                 HttpStatusCode.BadRequest

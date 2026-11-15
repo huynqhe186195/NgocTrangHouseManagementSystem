@@ -16,6 +16,27 @@ export interface BuildingDto extends AuditedEntity {
   name: string;
   address: string;
   description: string | null;
+  /** True when the server holds a cover image for this building. */
+  hasPhoto: boolean;
+}
+
+export interface BuildingPhotoDto extends AuditedEntity {
+  buildingId: string;
+  fileName: string;
+  contentType: string;
+  sizeBytes: number;
+}
+
+export interface BuildingPhotoFileDto {
+  /** Base64, no data-URL prefix. */
+  content: string;
+  contentType: string;
+  fileName: string;
+}
+
+export interface UploadBuildingPhotoInput {
+  base64Content: string;
+  fileName: string | null;
 }
 
 export interface CreateBuildingInput {
@@ -31,6 +52,7 @@ export interface FloorDto extends AuditedEntity {
   floorNumber: number;
   name: string;
   description: string | null;
+  status: FloorStatus;
 }
 
 export interface CreateFloorInput {
@@ -38,16 +60,22 @@ export interface CreateFloorInput {
   floorNumber: number;
   name: string;
   description: string | null;
+  status: FloorStatus;
 }
 
 export interface UpdateFloorInput {
   floorNumber: number;
   name: string;
   description: string | null;
+  /** Omit to leave the stored status unchanged. */
+  status?: FloorStatus;
 }
 
 /** Server enum: Available=1, Occupied=2, Reserved=3, Maintenance=4, Inactive=5. */
 export type RoomStatus = 1 | 2 | 3 | 4 | 5;
+
+/** Server enum: Active=1, Maintenance=2, Inactive=3. */
+export type FloorStatus = 1 | 2 | 3;
 
 /** Server enum: Rectangle=1, Polygon=2. */
 export type RoomLayoutShape = 1 | 2;
@@ -176,6 +204,15 @@ export const roomStatusMeta: Record<RoomStatus, { label: string; tone: 'success'
   3: { label: 'Đã đặt', tone: 'warning' },
   4: { label: 'Bảo trì', tone: 'warning' },
   5: { label: 'Ngừng dùng', tone: 'neutral' },
+};
+
+export const floorStatusMeta: Record<
+  FloorStatus,
+  { label: string; tone: 'success' | 'warning' | 'neutral' }
+> = {
+  1: { label: 'Hoạt động', tone: 'success' },
+  2: { label: 'Bảo trì', tone: 'warning' },
+  3: { label: 'Ngừng dùng', tone: 'neutral' },
 };
 
 export const equipmentConditionMeta: Record<

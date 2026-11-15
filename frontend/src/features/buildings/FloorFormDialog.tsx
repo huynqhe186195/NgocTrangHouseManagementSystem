@@ -2,11 +2,18 @@ import { useEffect, useState } from 'react';
 import { Dialog } from '../../components/ui/Dialog';
 import { Button } from '../../components/ui/Button';
 import { Field } from '../../components/ui/Field';
+import { SelectField } from '../../components/ui/SelectField';
 import { TextareaField } from '../../components/ui/TextareaField';
 import { Alert } from '../../components/ui/Alert';
 import { describeMutationError } from '../../lib/api/mutationErrors';
 import { useCreateFloor, useRooms, useUpdateFloor } from '../../lib/api/buildingQueries';
-import type { FloorDto } from '../../lib/api/types';
+import { floorStatusMeta } from '../../lib/api/types';
+import type { FloorDto, FloorStatus } from '../../lib/api/types';
+
+const STATUS_OPTIONS = ([1, 2, 3] as FloorStatus[]).map((value) => ({
+  value: String(value),
+  label: floorStatusMeta[value].label,
+}));
 
 interface FloorFormDialogProps {
   open: boolean;
@@ -25,6 +32,7 @@ export function FloorFormDialog({ open, mode, buildingId, initial, onClose }: Fl
   const [floorNumber, setFloorNumber] = useState('0');
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [status, setStatus] = useState<FloorStatus>(1);
   const [touched, setTouched] = useState(false);
 
   useEffect(() => {
@@ -34,6 +42,7 @@ export function FloorFormDialog({ open, mode, buildingId, initial, onClose }: Fl
     setFloorNumber(String(initial?.floorNumber ?? 0));
     setName(initial?.name ?? '');
     setDescription(initial?.description ?? '');
+    setStatus(initial?.status ?? 1);
     setTouched(false);
     create.reset();
     update.reset();
@@ -86,6 +95,7 @@ export function FloorFormDialog({ open, mode, buildingId, initial, onClose }: Fl
       name: name.trim(),
       description: description.trim().length === 0 ? null : description.trim(),
       floorNumber: parsedFloor,
+      status,
     };
 
     if (mode === 'create') {
@@ -161,6 +171,15 @@ export function FloorFormDialog({ open, mode, buildingId, initial, onClose }: Fl
           onChange={(event) => setDescription(event.target.value)}
           error={view?.fieldErrors.description}
           hint="Không bắt buộc, tối đa 500 ký tự."
+        />
+        <SelectField
+          label="Trạng thái"
+          required
+          options={STATUS_OPTIONS}
+          value={String(status)}
+          onChange={(event) => setStatus(Number(event.target.value) as FloorStatus)}
+          error={view?.fieldErrors.status}
+          hint="Ngừng dùng chỉ là nhãn quản lý — máy chủ vẫn cho phép thao tác trên tầng này."
         />
       </form>
     </Dialog>

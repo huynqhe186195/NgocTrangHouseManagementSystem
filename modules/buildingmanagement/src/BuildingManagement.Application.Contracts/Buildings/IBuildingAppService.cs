@@ -22,5 +22,14 @@ namespace BuildingManagement.Buildings
 
         Task DeleteAsync(
             Guid id);
+
+        Task<BuildingPhotoDto?> GetPhotoAsync(Guid id);
+
+        Task<BuildingPhotoDto> UploadPhotoAsync(
+            Guid id, UploadBuildingPhotoDto input);
+
+        Task<BuildingPhotoFileDto> GetPhotoContentAsync(Guid id);
+
+        Task DeletePhotoAsync(Guid id);
     }
 }

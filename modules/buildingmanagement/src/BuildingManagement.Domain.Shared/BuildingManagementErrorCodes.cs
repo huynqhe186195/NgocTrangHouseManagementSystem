@@ -348,6 +348,15 @@ public static class BuildingManagementErrorCodes
     public const string RoomPhotoTooLarge =
         "BuildingManagement:RoomPhotoTooLarge";
 
+    public const string BuildingPhotoNotFound =
+        "BuildingManagement:BuildingPhotoNotFound";
+
+    public const string InvalidBuildingPhotoContent =
+        "BuildingManagement:InvalidBuildingPhotoContent";
+
+    public const string BuildingPhotoTooLarge =
+        "BuildingManagement:BuildingPhotoTooLarge";
+
     public const string InvalidRoomLayout =
         "BuildingManagement:InvalidRoomLayout";
 

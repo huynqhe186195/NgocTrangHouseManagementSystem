@@ -42,6 +42,9 @@ public static class BuildingManagementDbContextModelCreatingExtensions
         builder.ApplyConfiguration(new RoomPhotoConfiguration());
         builder.ApplyConfiguration(new RoomPhotoContentConfiguration());
         builder.ApplyConfiguration(new FloorLayoutItemConfiguration());
+        // P4.6 building mockup: one cover image per building.
+        builder.ApplyConfiguration(new BuildingPhotoConfiguration());
+        builder.ApplyConfiguration(new BuildingPhotoContentConfiguration());
         /* Configure all entities here. Example:
 
         builder.Entity<Question>(b => 

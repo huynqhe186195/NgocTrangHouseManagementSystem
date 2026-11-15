@@ -14,5 +14,7 @@ namespace BuildingManagement.Floors
         public string Name { get; set; } = default!;
 
         public string? Description { get; set; }
+
+        public FloorStatus Status { get; set; } = FloorStatus.Active;
     }
 }

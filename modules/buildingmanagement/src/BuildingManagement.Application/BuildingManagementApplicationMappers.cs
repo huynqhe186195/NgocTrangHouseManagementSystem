@@ -23,6 +23,17 @@ public partial class BuildingManagementApplicationMapper
 }
 
 [Mapper(RequiredMappingStrategy = RequiredMappingStrategy.Target)]
+public partial class BuildingPhotoToBuildingPhotoDtoMapper
+    : MapperBase<BuildingPhoto, BuildingPhotoDto>
+{
+    public override partial BuildingPhotoDto Map(BuildingPhoto source);
+
+    public override partial void Map(
+        BuildingPhoto source,
+        BuildingPhotoDto destination);
+}
+
+[Mapper(RequiredMappingStrategy = RequiredMappingStrategy.Target)]
 public partial class FloorToFloorDtoMapper
     : MapperBase<Floor, FloorDto>
 {

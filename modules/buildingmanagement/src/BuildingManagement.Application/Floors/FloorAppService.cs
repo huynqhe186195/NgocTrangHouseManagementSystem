@@ -57,7 +57,7 @@ namespace BuildingManagement.Floors
                 await EnsureFloorNumberUniqueAsync(
                     input.BuildingId, input.FloorNumber);
                 var created = new Floor(GuidGenerator.Create(), input.BuildingId,
-                    input.FloorNumber, input.Name, input.Description);
+                    input.FloorNumber, input.Name, input.Description, input.Status);
                 await _floorRepository.InsertAsync(created, autoSave: true);
                 return ObjectMapper.Map<Floor, FloorDto>(created);
             }, BuildingScopedMutationKind.Floor);
@@ -114,7 +114,8 @@ namespace BuildingManagement.Floors
                     throw new AbpAuthorizationException("Floor scope changed.");
                 await EnsureFloorNumberUniqueAsync(
                     buildingId, input.FloorNumber, floor.Id);
-                floor.Update(input.FloorNumber, input.Name, input.Description);
+                floor.Update(
+                    input.FloorNumber, input.Name, input.Description, input.Status);
                 await _floorRepository.UpdateAsync(floor, autoSave: true);
                 return ObjectMapper.Map<Floor, FloorDto>(floor);
             }, BuildingScopedMutationKind.Floor);

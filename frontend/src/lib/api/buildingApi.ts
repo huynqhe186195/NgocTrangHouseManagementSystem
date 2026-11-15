@@ -1,6 +1,8 @@
 import { request } from '../http';
 import type {
   BuildingDto,
+  BuildingPhotoDto,
+  BuildingPhotoFileDto,
   CreateBuildingInput,
   CreateFloorInput,
   CreateFloorLayoutItemInput,
@@ -18,6 +20,7 @@ import type {
   UpdateRoomEquipmentInput,
   UpdateRoomInput,
   UpdateRoomLayoutInput,
+  UploadBuildingPhotoInput,
   UploadRoomPhotoInput,
 } from './types';
 
@@ -50,6 +53,25 @@ export const buildingsApi = {
   update: (id: string, input: UpdateBuildingInput) =>
     request<BuildingDto>(`${base}/building/${id}`, { method: 'PUT', body: input }),
   remove: (id: string) => request<void>(`${base}/building/${id}`, { method: 'DELETE' }),
+
+  /**
+   * Route segments come from the method names, matching the room photo
+   * convention the P4.5 harness read off the running host:
+   *   GetPhotoAsync         -> /photo
+   *   UploadPhotoAsync      -> /upload-photo
+   *   GetPhotoContentAsync  -> /photo-content
+   *   DeletePhotoAsync      -> /photo
+   */
+  getPhoto: (id: string) => request<BuildingPhotoDto | null>(`${base}/building/${id}/photo`),
+  uploadPhoto: (id: string, input: UploadBuildingPhotoInput) =>
+    request<BuildingPhotoDto>(`${base}/building/${id}/upload-photo`, {
+      method: 'POST',
+      body: input,
+    }),
+  getPhotoContent: (id: string) =>
+    request<BuildingPhotoFileDto>(`${base}/building/${id}/photo-content`),
+  removePhoto: (id: string) =>
+    request<void>(`${base}/building/${id}/photo`, { method: 'DELETE' }),
 };
 
 export const floorsApi = {

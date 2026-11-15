@@ -23,7 +23,8 @@ interface FloorPlanProps {
   compact?: boolean;
 }
 
-const statusStyles: Record<number, { fill: string; stroke: string; label: string }> = {
+/** Shared with the building screen's miniature, so both read the same colours. */
+export const statusStyles: Record<number, { fill: string; stroke: string; label: string }> = {
   1: { fill: '#E9F7E7', stroke: '#9BD69B', label: 'Trống' },
   2: { fill: '#FDE2E1', stroke: '#F2A9A6', label: 'Đang thuê' },
   3: { fill: '#FDF0CC', stroke: '#EBCB7A', label: 'Đã đặt' },

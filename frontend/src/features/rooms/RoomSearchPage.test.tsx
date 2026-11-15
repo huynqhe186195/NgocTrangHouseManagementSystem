@@ -80,6 +80,7 @@ const floor: FloorDto = {
   floorNumber: 2,
   name: 'Tầng 2',
   description: null,
+  status: 1,
 };
 
 function renderPage() {

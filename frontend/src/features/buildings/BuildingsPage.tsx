@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Alert } from '../../components/ui/Alert';
@@ -11,16 +11,24 @@ import { useAuth } from '../../lib/auth/AuthProvider';
 import { BuildingPolicies } from '../../lib/auth/policies';
 import { ApiError } from '../../lib/http';
 import {
+  useBuildingPhotoContent,
   useBuildingSnapshot,
   useBuildings,
   useDeleteBuilding,
   useDeleteFloor,
+  useDeleteBuildingPhoto,
+  useFloorLayoutItemsFor,
+  useUploadBuildingPhoto,
 } from '../../lib/api/buildingQueries';
+import { fileToBase64 } from '../../lib/api/buildingApi';
 import { describeMutationError } from '../../lib/api/mutationErrors';
-import type { FloorDto, RoomDto } from '../../lib/api/types';
-import { formatVnd } from '../../lib/format';
+import { floorStatusMeta } from '../../lib/api/types';
+import type { FloorDto, FloorStatus } from '../../lib/api/types';
 import { BuildingFormDialog } from './BuildingFormDialog';
 import { FloorFormDialog } from './FloorFormDialog';
+import { FloorMiniPlan } from './FloorMiniPlan';
+
+const PAGE_SIZE = 5;
 
 export function BuildingsPage() {
   const { data: buildings, isLoading, error } = useBuildings();
@@ -123,12 +131,24 @@ export function BuildingDetailPage() {
   const [floorDeleteTarget, setFloorDeleteTarget] = useState<FloorDto | null>(null);
   const [buildingDeleteOpen, setBuildingDeleteOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const [photoError, setPhotoError] = useState<string | null>(null);
 
   const deleteFloor = useDeleteFloor();
   const deleteBuilding = useDeleteBuilding();
 
   const floorDeleteError = describeMutationError(deleteFloor.error, 'floor', 'delete');
   const buildingDeleteError = describeMutationError(deleteBuilding.error, 'building', 'delete');
+
+  const floors = snapshot?.floors ?? [];
+  const floorIds = floors.map((floor) => floor.id);
+  const layoutByFloor = useFloorLayoutItemsFor(floorIds);
+
+  const pageCount = Math.max(1, Math.ceil(floors.length / PAGE_SIZE));
+  const currentPage = Math.min(page, pageCount);
+  const from = floors.length === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1;
+  const to = Math.min(currentPage * PAGE_SIZE, floors.length);
+  const visibleFloors = floors.slice(from === 0 ? 0 : from - 1, to);
 
   function confirmFloorDelete() {
     if (!floorDeleteTarget) {
@@ -160,37 +180,7 @@ export function BuildingDetailPage() {
         title="Quản lý tòa nhà"
         description="Quản lý thông tin tòa nhà và các tầng"
         breadcrumb={['Trang chủ', 'Tòa nhà', snapshot?.building.name ?? 'Chi tiết']}
-        actions={
-          <>
-            <ActionButton
-              onClick={() => setBuildingDialogOpen(true)}
-              allowed={canManageBuilding && snapshot !== null}
-              deniedHint="Tài khoản này chưa được cấp quyền quản lý tòa nhà trên máy chủ."
-              icon="edit"
-              variant="secondary"
-            >
-              Chỉnh sửa tòa nhà
-            </ActionButton>
-            <ActionButton
-              onClick={() => setBuildingDeleteOpen(true)}
-              allowed={canManageBuilding && snapshot !== null}
-              deniedHint="Tài khoản này chưa được cấp quyền quản lý tòa nhà trên máy chủ."
-              icon="delete"
-              variant="danger"
-            >
-              Xoá tòa nhà
-            </ActionButton>
-            <ActionButton
-              onClick={() => setFloorDialog({ mode: 'create' })}
-              allowed={canManageFloors && snapshot !== null}
-              deniedHint="Tài khoản này chưa được cấp quyền quản lý tầng trên máy chủ."
-              icon="add"
-              primary
-            >
-              Thêm tầng
-            </ActionButton>
-          </>
-        }
+        breadcrumbAlign="right"
       />
 
       <GateNotice error={error} />
@@ -206,25 +196,61 @@ export function BuildingDetailPage() {
       {!loading && snapshot && (
         <>
           <section className="mb-4 rounded-xl border border-outline-variant bg-surface-lowest p-5">
-            <div className="flex flex-col gap-5 lg:flex-row">
-              <div className="relative flex h-48 w-full shrink-0 items-center justify-center overflow-hidden rounded-lg bg-gradient-to-br from-[#0f766e] via-[#0b5f5a] to-[#0b1c30] lg:h-44 lg:w-72">
-                <span className="material-symbols-outlined text-6xl text-white/25">apartment</span>
-                <div className="absolute inset-0 flex items-end justify-start bg-gradient-to-t from-black/45 to-transparent p-2.5">
-                  <span className="inline-flex items-center gap-1.5 rounded-md bg-black/40 px-2.5 py-1 text-[11px] font-semibold text-white backdrop-blur-sm">
-                    <span className="material-symbols-outlined text-sm">image</span>
-                    Chưa có ảnh tòa nhà
-                  </span>
-                </div>
-              </div>
+            <div className="flex flex-col gap-5 lg:flex-row lg:items-start">
+              <BuildingCover
+                buildingId={snapshot.building.id}
+                hasPhoto={snapshot.building.hasPhoto}
+                canManage={canManageBuilding}
+                onError={setPhotoError}
+              />
 
               <div className="min-w-0 flex-1">
-                <h2 className="font-display text-2xl font-bold tracking-tight text-on-surface">
-                  {snapshot.building.name}
-                </h2>
-                <p className="mt-1.5 flex items-start gap-1.5 text-sm text-on-surface-variant">
-                  <span className="material-symbols-outlined text-base">location_on</span>
-                  <span>{snapshot.building.address}</span>
-                </p>
+                <div className="flex flex-col gap-3 md:flex-row md:flex-wrap md:items-start md:justify-between">
+                  <div className="min-w-[220px] flex-1">
+                    <h2 className="font-display text-2xl font-bold tracking-tight text-on-surface">
+                      {snapshot.building.name}
+                    </h2>
+                    <p className="mt-1.5 flex items-start gap-1.5 text-sm text-on-surface-variant">
+                      <span className="material-symbols-outlined text-base">location_on</span>
+                      <span>{snapshot.building.address}</span>
+                    </p>
+                  </div>
+
+                  <div className="flex shrink-0 items-center gap-2">
+                    <ActionButton
+                      onClick={() => setBuildingDialogOpen(true)}
+                      allowed={canManageBuilding}
+                      deniedHint="Tài khoản này chưa được cấp quyền quản lý tòa nhà trên máy chủ."
+                      icon="edit"
+                    >
+                      Chỉnh sửa tòa nhà
+                    </ActionButton>
+                    <ActionButton
+                      onClick={() => setFloorDialog({ mode: 'create' })}
+                      allowed={canManageFloors}
+                      deniedHint="Tài khoản này chưa được cấp quyền quản lý tầng trên máy chủ."
+                      icon="add"
+                      primary
+                    >
+                      Thêm tầng
+                    </ActionButton>
+                    <RowMenu
+                      label="Thao tác khác của tòa nhà"
+                      items={[
+                        {
+                          label: 'Xoá tòa nhà',
+                          icon: 'delete',
+                          danger: true,
+                          disabled: !canManageBuilding,
+                          disabledHint:
+                            'Tài khoản này chưa được cấp quyền quản lý tòa nhà trên máy chủ.',
+                          onSelect: () => setBuildingDeleteOpen(true),
+                        },
+                      ]}
+                    />
+                  </div>
+                </div>
+
                 {snapshot.building.description && (
                   <p className="mt-3 rounded-lg bg-surface-low px-4 py-3 text-sm leading-relaxed text-on-surface-variant">
                     {snapshot.building.description}
@@ -259,6 +285,12 @@ export function BuildingDetailPage() {
                 </div>
               </div>
             </div>
+
+            {photoError && (
+              <div className="mt-4">
+                <Alert tone="error">{photoError}</Alert>
+              </div>
+            )}
           </section>
 
           <section className="overflow-hidden rounded-xl border border-outline-variant bg-surface-lowest">
@@ -272,7 +304,7 @@ export function BuildingDetailPage() {
               </div>
             </header>
 
-            {snapshot.floors.length === 0 ? (
+            {floors.length === 0 ? (
               <div className="p-6">
                 <EmptyState
                   icon="layers"
@@ -281,82 +313,141 @@ export function BuildingDetailPage() {
                 />
               </div>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[1000px] border-collapse text-sm">
-                  <thead>
-                    <tr className="bg-surface-low text-left text-xs font-semibold text-on-surface-variant">
-                      <th className="px-5 py-3">Tầng</th>
-                      <th className="px-5 py-3">Sơ đồ mặt bằng</th>
-                      <th className="px-5 py-3">Số phòng</th>
-                      <th className="px-5 py-3">Giá thuê từ</th>
-                      <th className="px-5 py-3">Trạng thái</th>
-                      <th className="px-5 py-3">Ghi chú</th>
-                      <th className="px-5 py-3">Hành động</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {snapshot.floors.map((floor) => {
-                      const floorRooms = snapshot.roomsByFloor.get(floor.id) ?? [];
-                      return (
-                        <tr key={floor.id} className="border-t border-outline-variant">
-                          <td className="px-5 py-3.5">
-                            <p className="font-semibold text-on-surface">Tầng {floor.floorNumber}</p>
-                            <p className="text-xs text-on-surface-variant">
-                              {floor.floorNumber === 0 ? 'Tầng trệt' : floor.name}
-                            </p>
-                          </td>
-                          <td className="px-5 py-3.5">
-                            <FloorThumbnail rooms={floorRooms} />
-                          </td>
-                          <td className="px-5 py-3.5 tnum text-on-surface">{floorRooms.length}</td>
-                          <td className="px-5 py-3.5 tnum text-on-surface">
-                            {cheapestRent(floorRooms)}
-                          </td>
-                          <td className="px-5 py-3.5">
-                            <StatusBadge tone="success" withDot>
-                              Hoạt động
-                            </StatusBadge>
-                          </td>
-                          <td className="max-w-[260px] px-5 py-3.5 text-xs leading-relaxed text-on-surface-variant">
-                            {floor.description ?? '—'}
-                          </td>
-                          <td className="px-5 py-3.5">
-                            <div className="flex items-center gap-2">
-                              <Link
-                                to={`/buildings/${snapshot.building.id}/floors/${floor.id}`}
-                                className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-outline-variant px-3 text-xs font-semibold text-[#1d4ed8] transition hover:bg-surface-low"
-                              >
-                                <span className="material-symbols-outlined text-base">visibility</span>
-                                Xem sơ đồ
-                              </Link>
-                              <SmallButton
-                                onClick={() => setFloorDialog({ mode: 'edit', floor })}
-                                allowed={canManageFloors}
-                                deniedHint="Tài khoản này chưa được cấp quyền quản lý tầng trên máy chủ."
-                                icon="edit"
-                              >
-                                Chỉnh sửa
-                              </SmallButton>
-                              <SmallButton
-                                onClick={() => {
-                                  deleteFloor.reset();
-                                  setFloorDeleteTarget(floor);
-                                }}
-                                allowed={canManageFloors}
-                                deniedHint="Tài khoản này chưa được cấp quyền quản lý tầng trên máy chủ."
-                                icon="delete"
-                                danger
-                              >
-                                Xoá
-                              </SmallButton>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+              <>
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[980px] border-collapse text-sm">
+                    <thead>
+                      <tr className="bg-[#EFF4FF] text-left text-xs font-semibold text-on-surface-variant">
+                        <th className="whitespace-nowrap px-4 py-3">Tầng</th>
+                        <th className="whitespace-nowrap px-4 py-3">Sơ đồ mặt bằng</th>
+                        <th className="whitespace-nowrap px-4 py-3">Số phòng</th>
+                        <th className="whitespace-nowrap px-4 py-3">Trạng thái</th>
+                        <th className="whitespace-nowrap px-4 py-3">Ghi chú</th>
+                        <th className="whitespace-nowrap px-4 py-3">Hành động</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {visibleFloors.map((floor) => {
+                        const floorRooms = snapshot.roomsByFloor.get(floor.id) ?? [];
+                        return (
+                          <tr key={floor.id} className="border-t border-outline-variant">
+                            <td className="px-4 py-3.5">
+                              <p className="font-semibold text-on-surface">
+                                Tầng {floor.floorNumber}
+                              </p>
+                              {floor.name !== `Tầng ${floor.floorNumber}` && (
+                                <p className="text-xs text-on-surface-variant">{floor.name}</p>
+                              )}
+                            </td>
+                            <td className="px-4 py-3.5">
+                              <FloorMiniPlan
+                                rooms={floorRooms}
+                                items={layoutByFloor.get(floor.id) ?? []}
+                              />
+                            </td>
+                            <td className="px-4 py-3.5 tnum text-on-surface">{floorRooms.length}</td>
+                            <td className="px-4 py-3.5">
+                              <FloorStatusBadge status={floor.status} />
+                            </td>
+                            <td className="max-w-[240px] px-4 py-3.5 text-xs leading-relaxed text-on-surface-variant">
+                              {floor.description ?? '—'}
+                            </td>
+                            <td className="px-4 py-3.5">
+                              <div className="flex items-center gap-2 whitespace-nowrap">
+                                <Link
+                                  to={`/buildings/${snapshot.building.id}/floors/${floor.id}`}
+                                  className="inline-flex h-9 items-center gap-1.5 whitespace-nowrap rounded-lg border border-outline-variant px-3 text-xs font-semibold text-[#1d4ed8] transition hover:bg-surface-low"
+                                >
+                                  <span className="material-symbols-outlined text-base">
+                                    visibility
+                                  </span>
+                                  Xem sơ đồ
+                                </Link>
+                                <SmallButton
+                                  onClick={() => setFloorDialog({ mode: 'edit', floor })}
+                                  allowed={canManageFloors}
+                                  deniedHint="Tài khoản này chưa được cấp quyền quản lý tầng trên máy chủ."
+                                  icon="edit"
+                                >
+                                  Chỉnh sửa
+                                </SmallButton>
+                                <RowMenu
+                                  label={`Thao tác khác của tầng ${floor.floorNumber}`}
+                                  items={[
+                                    {
+                                      label: 'Thiết kế sơ đồ',
+                                      icon: 'design_services',
+                                      onSelect: () =>
+                                        navigate(
+                                          `/buildings/${snapshot.building.id}/floors/${floor.id}/design`,
+                                        ),
+                                    },
+                                    {
+                                      label: 'Xoá tầng',
+                                      icon: 'delete',
+                                      danger: true,
+                                      disabled: !canManageFloors,
+                                      disabledHint:
+                                        'Tài khoản này chưa được cấp quyền quản lý tầng trên máy chủ.',
+                                      onSelect: () => {
+                                        deleteFloor.reset();
+                                        setFloorDeleteTarget(floor);
+                                      },
+                                    },
+                                  ]}
+                                />
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-outline-variant px-5 py-3.5 text-xs text-on-surface-variant">
+                  <span>
+                    Hiển thị {from} - {to} của {floors.length} tầng
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      aria-label="Trang trước"
+                      disabled={currentPage <= 1}
+                      onClick={() => setPage(currentPage - 1)}
+                      className="flex h-8 w-8 items-center justify-center rounded-lg border border-outline-variant text-on-surface-variant transition hover:bg-surface-low disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <span className="material-symbols-outlined text-base">chevron_left</span>
+                    </button>
+                    {Array.from({ length: pageCount }, (_, index) => index + 1).map((number) => (
+                      <button
+                        key={number}
+                        type="button"
+                        aria-label={`Trang ${number}`}
+                        aria-current={number === currentPage ? 'page' : undefined}
+                        onClick={() => setPage(number)}
+                        className={
+                          'flex h-8 min-w-8 items-center justify-center rounded-lg px-2 text-xs font-semibold transition ' +
+                          (number === currentPage
+                            ? 'bg-[#1d4ed8] text-white'
+                            : 'border border-outline-variant text-on-surface-variant hover:bg-surface-low')
+                        }
+                      >
+                        {number}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      aria-label="Trang sau"
+                      disabled={currentPage >= pageCount}
+                      onClick={() => setPage(currentPage + 1)}
+                      className="flex h-8 w-8 items-center justify-center rounded-lg border border-outline-variant text-on-surface-variant transition hover:bg-surface-low disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <span className="material-symbols-outlined text-base">chevron_right</span>
+                    </button>
+                  </div>
+                </footer>
+              </>
             )}
           </section>
         </>
@@ -439,42 +530,196 @@ export function BuildingDetailPage() {
   );
 }
 
-/** The cheapest rent the floor offers, so the building list can advertise it. */
-function cheapestRent(rooms: RoomDto[]): string {
-  const rents = rooms
-    .map((room) => room.monthlyRent)
-    .filter((rent): rent is number => rent !== null && rent > 0);
-  if (rents.length === 0) {
-    return '—';
-  }
-  return formatVnd(Math.min(...rents));
+function FloorStatusBadge({ status }: { status: FloorStatus }) {
+  const meta = floorStatusMeta[status] ?? floorStatusMeta[1];
+  return (
+    <StatusBadge tone={meta.tone} withDot>
+      {meta.label}
+    </StatusBadge>
+  );
 }
 
-/** Miniature floor plan: one tinted block per room, ordered by room number. */
-function FloorThumbnail({ rooms }: { rooms: RoomDto[] }) {
-  if (rooms.length === 0) {
-    return <span className="text-xs text-outline">Chưa có phòng</span>;
+/**
+ * The cover image. Uploads go through the same base64 JSON envelope the room
+ * photos use, and the server sniffs the payload — a renamed text file is
+ * rejected there, not here.
+ */
+function BuildingCover({
+  buildingId,
+  hasPhoto,
+  canManage,
+  onError,
+}: {
+  buildingId: string;
+  hasPhoto: boolean;
+  canManage: boolean;
+  onError: (message: string | null) => void;
+}) {
+  const fileInput = useRef<HTMLInputElement>(null);
+  const photo = useBuildingPhotoContent(buildingId, hasPhoto);
+  const upload = useUploadBuildingPhoto(buildingId);
+  const remove = useDeleteBuildingPhoto(buildingId);
+
+  const src = photo.data
+    ? `data:${photo.data.contentType};base64,${photo.data.content}`
+    : null;
+
+  async function handleFile(file: File | undefined) {
+    onError(null);
+    if (!file) {
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      onError('Ảnh vượt quá giới hạn 5 MB.');
+      return;
+    }
+    try {
+      const base64Content = await fileToBase64(file);
+      upload.mutate(
+        { base64Content, fileName: file.name },
+        {
+          onSuccess: () => onError(null),
+          onError: (error) => {
+            const view = describeMutationError(error, 'buildingPhoto', 'edit');
+            onError(view?.formError ?? 'Không tải được ảnh tòa nhà.');
+          },
+        },
+      );
+    } catch {
+      onError('Không đọc được tệp ảnh.');
+    }
   }
+
   return (
-    <div className="flex max-w-[190px] flex-wrap gap-0.5 rounded border border-outline bg-surface p-1">
-      {rooms.slice(0, 24).map((room) => (
-        <span
-          key={room.id}
-          title={`${room.roomNumber} — ${room.area ?? '?'} m²`}
-          className={
-            'h-3.5 min-w-3.5 rounded-[1px] ' +
-            (room.status === 2
-              ? 'bg-[#C6E7C1]'
-              : room.status === 1
-                ? 'bg-[#FBE7A1]'
-                : room.status === 3
-                  ? 'bg-[#F7C6B8]'
-                  : room.status === 4
-                    ? 'bg-[#CBD5E1]'
-                    : 'bg-[#E2E8F0]')
-          }
-        />
-      ))}
+    <div className="relative h-56 w-full shrink-0 overflow-hidden rounded-lg bg-surface-low lg:h-[225px] lg:w-[255px]">
+      {src ? (
+        <img src={src} alt={`Ảnh tòa nhà`} className="h-full w-full object-cover" />
+      ) : (
+        <div className="flex h-full w-full flex-col items-center justify-center gap-1 bg-gradient-to-br from-[#e8eef7] to-[#d7e2f0] text-on-surface-variant">
+          <span className="material-symbols-outlined text-4xl text-[#94a3b8]">apartment</span>
+          <span className="text-[11px]">
+            {photo.isLoading ? 'Đang tải ảnh…' : 'Chưa có ảnh tòa nhà'}
+          </span>
+        </div>
+      )}
+
+      <input
+        ref={fileInput}
+        type="file"
+        accept="image/png,image/jpeg,image/webp"
+        className="hidden"
+        onChange={(event) => {
+          void handleFile(event.target.files?.[0]);
+          event.target.value = '';
+        }}
+      />
+
+      <div className="absolute inset-x-2 bottom-2 flex gap-2">
+        <button
+          type="button"
+          disabled={!canManage || upload.isPending}
+          title={canManage ? undefined : 'Tài khoản này chưa được cấp quyền quản lý tòa nhà.'}
+          onClick={() => fileInput.current?.click()}
+          className="inline-flex items-center gap-1.5 rounded-md bg-black/55 px-2.5 py-1.5 text-[11px] font-semibold text-white backdrop-blur-sm transition hover:bg-black/70 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <span className="material-symbols-outlined text-sm">photo_camera</span>
+          {upload.isPending ? 'Đang tải lên…' : 'Thay đổi ảnh'}
+        </button>
+        {hasPhoto && (
+          <button
+            type="button"
+            disabled={!canManage || remove.isPending}
+            title={canManage ? undefined : 'Tài khoản này chưa được cấp quyền quản lý tòa nhà.'}
+            onClick={() =>
+              remove.mutate(undefined, {
+                onError: (error) => {
+                  const view = describeMutationError(error, 'buildingPhoto', 'delete');
+                  onError(view?.formError ?? 'Không xoá được ảnh tòa nhà.');
+                },
+              })
+            }
+            className="rounded-md bg-black/55 px-2.5 py-1.5 text-[11px] font-semibold text-white backdrop-blur-sm transition hover:bg-black/70 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            Xoá ảnh
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+interface MenuItem {
+  label: string;
+  icon: string;
+  danger?: boolean;
+  disabled?: boolean;
+  disabledHint?: string;
+  onSelect: () => void;
+}
+
+/**
+ * The mockup's "..." button. It is a real menu: it opens on click, closes on
+ * outside click or Escape, and every entry performs the action it names.
+ */
+function RowMenu({ label, items }: { label: string; items: MenuItem[] }) {
+  const [open, setOpen] = useState(false);
+  const wrapper = useRef<HTMLDivElement>(null);
+
+  return (
+    <div
+      ref={wrapper}
+      className="relative"
+      onBlur={(event) => {
+        if (!wrapper.current?.contains(event.relatedTarget as Node)) {
+          setOpen(false);
+        }
+      }}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape') {
+          setOpen(false);
+        }
+      }}
+    >
+      <button
+        type="button"
+        aria-label={label}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+        className="flex h-9 w-9 items-center justify-center rounded-lg border border-outline-variant text-on-surface-variant transition hover:bg-surface-low"
+      >
+        <span className="material-symbols-outlined text-base">more_horiz</span>
+      </button>
+
+      {open && (
+        <div
+          role="menu"
+          className="absolute right-0 z-20 mt-1 w-44 overflow-hidden rounded-lg border border-outline-variant bg-surface-lowest shadow-card"
+        >
+          {items.map((item) => (
+            <button
+              key={item.label}
+              type="button"
+              role="menuitem"
+              disabled={item.disabled}
+              title={item.disabled ? item.disabledHint : undefined}
+              onClick={() => {
+                setOpen(false);
+                item.onSelect();
+              }}
+              className={
+                'flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ' +
+                (item.danger
+                  ? 'text-[#B91C1C] hover:bg-[#FFF1F2]'
+                  : 'text-on-surface hover:bg-surface-low')
+              }
+            >
+              <span className="material-symbols-outlined text-base">{item.icon}</span>
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -486,7 +731,6 @@ const BUTTON_BASE =
 const BUTTON_LOOKS = {
   primary: 'bg-[#1d4ed8] text-white hover:bg-[#1e40af]',
   secondary: 'border border-outline-variant bg-surface-lowest text-on-surface hover:bg-surface-low',
-  danger: 'border border-[#FECDD3] bg-[#FFF1F2] text-[#B91C1C] hover:bg-[#FFE4E6]',
 } as const;
 
 /**
@@ -499,7 +743,6 @@ function ActionButton({
   deniedHint,
   icon,
   primary = false,
-  variant,
   children,
 }: {
   onClick: () => void;
@@ -507,10 +750,9 @@ function ActionButton({
   deniedHint: string;
   icon: string;
   primary?: boolean;
-  variant?: 'secondary' | 'danger';
   children: ReactNode;
 }) {
-  const look = primary ? BUTTON_LOOKS.primary : BUTTON_LOOKS[variant ?? 'secondary'];
+  const look = primary ? BUTTON_LOOKS.primary : BUTTON_LOOKS.secondary;
   return (
     <button
       type="button"
@@ -530,14 +772,12 @@ function SmallButton({
   allowed,
   deniedHint,
   icon,
-  danger = false,
   children,
 }: {
   onClick: () => void;
   allowed: boolean;
   deniedHint: string;
   icon: string;
-  danger?: boolean;
   children: ReactNode;
 }) {
   return (
@@ -546,12 +786,7 @@ function SmallButton({
       onClick={onClick}
       disabled={!allowed}
       title={allowed ? undefined : deniedHint}
-      className={
-        'inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-55 ' +
-        (danger
-          ? 'border-[#FECDD3] text-[#B91C1C] hover:bg-[#FFF1F2]'
-          : 'border-outline-variant text-on-surface-variant hover:bg-surface-low')
-      }
+      className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-outline-variant px-3 text-xs font-semibold text-on-surface-variant transition hover:bg-surface-low disabled:cursor-not-allowed disabled:opacity-55"
     >
       <span className="material-symbols-outlined text-base">{icon}</span>
       {children}

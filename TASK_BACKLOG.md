@@ -611,8 +611,8 @@
 
 ---
 
-### P4.5 ⏳ Five Figma Mockups — PHASE 1 DONE (`3adf6f6`, pushed); Phases 2–5 awaiting approval
-**Status:** PHASE 1 DONE. The five mockups in `D:\Dev\NgocTrangBuilding\Docs\front-end\building_rooms\` assume data the backend had nowhere to put: rent, equipment per room, photos, and room/object geometry. Phase 1 adds exactly that layer and stops before any UI work.
+### P4.5 ⏳ Five Figma Mockups — PHASE 1 DONE (`3adf6f6`), PHASE 2 DONE (`a9f424a`); Phases 3–5 awaiting approval
+**Status:** PHASE 1 + PHASE 2 DONE. The five mockups in `D:\Dev\NgocTrangBuilding\Docs\front-end\building_rooms\` assume data the backend had nowhere to put: rent, equipment per room, photos, and room/object geometry. Phase 1 added exactly that layer; Phase 2 gave the frontend the typed client, query hooks and primitives the screens are built from.
 
 **What Phase 1 added:**
 - `Room` gains `MonthlyRent` plus `LayoutX/Y/Width/Height/Shape/RotationDegrees/Points`, written by two dedicated methods (`UpdateRent`, `UpdateLayout`) so the designer can move a room without resending its whole profile. `Room.Update(...)` is untouched.
@@ -652,8 +652,41 @@
 - ✅ Schema and deletes proven in PostgreSQL, not by HTTP status
 - ✅ Harness run at the pushed SHA
 
-**Blocker:** None for Phase 1. **Phases 2–5 are deliberately NOT started** — per the approved plan, the Owner reviews the data layer first.
-**Dependency:** P4.4 ✅ (the CRUD screens whose resources this extends)
+---
+
+#### Phase 2 — frontend data layer (DONE at `a9f424a`)
+
+**What Phase 2 added (11 files, +969/−3):**
+- `frontend/src/lib/api/types.ts` — DTOs for `RoomEquipment`, `RoomPhoto` (+ `RoomPhotoFileDto` for the base64 bytes), `FloorLayoutItem`, the matching create/update inputs and `UpdateRoomLayoutInput`; three enum unions (`RoomLayoutShape`, `RoomEquipmentCondition`, `FloorLayoutItemKind`); two metadata maps the screens render from (`equipmentConditionMeta`, `floorLayoutKindMeta`). `RoomDto` gains the ten P4.5 fields as **required** properties.
+- `frontend/src/lib/api/buildingApi.ts` — 13 new calls + `fileToBase64()`. The route map in the header comment was read off the running host during Phase 1 rather than guessed from action names.
+- `frontend/src/lib/api/buildingQueries.ts` — three scoped query keys (`room-equipment`, `room-photos`, `room-photo-content`, `floor-layout`), 13 hooks, and two invalidation helpers. Every room write refreshes the room's equipment, photo list **and** photo bytes; every floor-layout write refreshes the floor's layout items.
+- `frontend/src/lib/api/mutationErrors.ts` — `MutationEntity` widened with `equipment | photo | layout | rent`; new codes mapped to fields (`quantity`, `monthlyRent`, `layout`, `photo`) and eight new Vietnamese explanations.
+- `frontend/src/lib/format.ts` + 12 tests — `formatNumber`, `formatVnd`, `parseVndInput`, `formatMillions`.
+- `frontend/src/components/ui/Tabs.tsx` (WAI-ARIA tablist + `TabPanel`), `PhotoGallery.tsx` (large frame + thumbnail strip + "+N"), `MoneyInput.tsx` (grouped VND box).
+
+**Decisions worth recording:**
+- The ten new `RoomDto` fields are **required, not optional**. Making them optional would let a server-side DTO regression render blanks instead of failing to compile; the snapshot test fixture was updated instead.
+- `parseVndInput` accepts the grouped form `formatNumber` itself emits (`3.500.000`) and a trailing currency word, so a value can be pasted back into the box without being rejected — the round-trip is the property that matters, not strictness.
+- The soft-deleted-number 500 explanation is now scoped to `floor`/`room` create only. Previously any non-building create got it; an equipment failure would have been mislabelled as a reused room number.
+- Photo bytes are fetched per-photo (`useRoomPhotoContent`, `staleTime` 5 min) rather than all in the gallery query, so a room with many photos does not pull megabytes before the first paint.
+
+**Evidence:**
+- ✅ Commit `a9f424a` pushed to `origin/main`, fast-forward only (`907f0da..a9f424a`), no `Co-Authored-By` trailer
+- ✅ `npm run test`: **64/64 passing** (7 files) — the 47 pre-existing, 12 new `format.test.ts`, 5 new `mutationErrors` cases
+- ✅ `npm run build` (`tsc --noEmit && vite build`): exit 0, 126 modules, 415.86 kB JS / 52.19 kB CSS
+- ✅ Phase 1 harness re-run **at the pushed SHA `a9f424a`**: **ALL STEPS PASSED**, LOG_DIRECTORY `C:\Users\Huynq\NgocTrang-Test-Logs\p45-mockup-screens-20261115-140935` — proving the frontend slice touched nothing on the server side
+- ✅ Two TS defects caught by `tsc` and fixed before the commit (`Tabs.tsx` arrow-key cursor typed `number | null` when `enabled[]` can yield `undefined`, and an unchecked index into `items[]`)
+- ✅ No file outside `frontend/` touched; the untracked strays (`etc/phase-audits/…sql`, `etc/scripts/start-p43-dev-lane.ps1`, `etc/scripts/verify-p41-frontend-auth-e2e.ps1`, `etc/test-results/`, root `package-lock.json`) left uncommitted
+
+**Definition of Done (Phase 2):**
+- ✅ Every Phase 1 endpoint has a typed client call and a query/mutation hook
+- ✅ Writes invalidate the scoped keys, not just the three flat lists
+- ✅ New error codes surface as Vietnamese messages on the right field
+- ✅ Vitest + `tsc` + production build green at the pushed SHA
+- ✅ Phase 1 harness still passes at the Phase 2 SHA
+
+**Blocker:** None. **Phases 3–5 (the screens themselves) are NOT started** — per the approved plan, the Owner reviews each phase before the next.
+**Dependency:** P4.4 ✅ (the CRUD screens whose resources this extends); Phase 1 ✅ (`3adf6f6`)
 
 ---
 
@@ -685,4 +718,4 @@
 - P2: 6/6 **MERGED INTO `main`** (PR #11 merge commit `72a0721`, 2026-11-13, no squash — P2.1 `d36edb5` / P2.2 `b18644b` / P2.3 `aa3b9bb` / P2.4 `950610a` / P2.5 `2d01952` / P2.6 `6c9852f`; local 5-group harness ALL PASSED at `72a0721`; post-merge CI stale-assertion fix `d364ee1` with CI run 43423912631 green 5/5)
 - P3: 4/4 done + **MERGED to main** (P3.1 merge `01cba31`; P3.2 DONE `1ddf2e6`; P3.3 matrix; **P3.4 CLOSED 2026-11-12: PR #10 → main merge commit `c499d89`, Owner §6 signed + §3.2 P2 deferral accepted; post-merge local regression + CI green 5/5 at the merge commit**)
 
-**Current Focus:** **P4.5 PHASE 1 DONE (2026-11-15): backend data layer for the five Figma screens at `3adf6f6` pushed to `main`** — rent, equipment, photos, room geometry and floor-plan objects now exist in the BuildingManagement schema, all on the three app services the authenticated-controller convention whitelists. Migration `20261115120000_P45RoomRentEquipmentPhotosLayout` is hand-written raw SQL (the committed model snapshot is deliberately stale, so `dotnet ef migrations add` would recreate ~70 tables). The disposable-lane e2e (`verify-p45-mockup-screens.ps1`, Host 44321 + Vite 5273, two `bm_slicea_staging_*` DBs on 15432) proves: rent round-trip agrees between API and PostgreSQL; 2 equipment rows add/update/delete with `IsDeleted` read from the DB; a 1×1 PNG uploads and downloads byte-for-byte identical; a text payload named `fake.png` is rejected 400 `InvalidRoomPhotoContent` with no row written (magic-byte check proven); room layout round-trip with accurate `EquipmentCount`/`PhotoCount`; a floor layout item creates and lists; a random building id is denied; then cleanup verified row-by-row in PostgreSQL (LOG_DIRECTORY `C:\Users\Huynq\NgocTrang-Test-Logs\p45-mockup-screens-20261115-134953`); `dotnet build` Release 0 errors, host tests 76/76 green at the pushed SHA. Two defects the harness caught: `RoomPhotoContent.Id` was mapped to `Id` while the migration created `PhotoId` (500 on first upload), and the new business error codes fell through to ABP's default 403 instead of 400/404/409 until they were mapped in the host module. **Phases 2–5 (frontend) are NOT started — awaiting Owner approval of the data layer.** P4.4 CLOSED (2026-11-14): create/edit/delete screens at `5427d4a`; its harness caught the `autoSave: false` soft-delete defect fixed at `7b80ce3`. P4.3 gate at `b769028`, P4.2 screens at `aea363c`, P4.1 auth portal at `46f4dee`. Real payOS money flow, TLS public callback, production vault/roles/secrets, production deploy stay HOLD.
+**Current Focus:** **P4.5 PHASE 2 DONE (2026-11-15): the frontend data layer for the five Figma screens at `a9f424a` pushed to `main`** — `types.ts` mirrors all four new server surfaces plus the two enum unions and metadata maps, with the ten new `RoomDto` fields **required** so DTO drift fails to compile rather than rendering blanks; `buildingApi.ts` targets the routes read off the running host in Phase 1 (`upload-photo`, `photo-content/{id}`, `photo/{id}`, `layout`, `rent`, `layout-items`, `layout-item`) with photos travelling as base64 in the JSON envelope because the conventional controller has no multipart pipeline; `buildingQueries.ts` adds four scoped query keys, 13 hooks and two invalidation helpers, so a room write refreshes that room's equipment, photo list and photo bytes, and a layout write refreshes the floor's items; `mutationErrors.ts` learns the new codes and now scopes the soft-deleted-number 500 explanation to floor/room create only; new `format.ts` (grouped VND, paste-tolerant parser) and the `Tabs`/`PhotoGallery`/`MoneyInput` primitives. `npm run test` 64/64, `npm run build` exit 0, and the Phase 1 harness re-run **at the pushed SHA `a9f424a`** passed every step (LOG_DIRECTORY `p45-mockup-screens-20261115-140935`), proving the frontend slice changed nothing server-side. **Phases 3–5 (the screens) are NOT started — awaiting Owner approval.** P4.5 PHASE 1 DONE (2026-11-15): backend data layer at `3adf6f6` — rent, equipment, photos, room geometry and floor-plan objects on the three whitelisted app services, hand-written raw-SQL migration (the committed model snapshot is deliberately stale), magic-byte photo validation, `PhotoId`/`Id` dialect and 403-fallthrough defects caught by the harness (LOG_DIRECTORY `p45-mockup-screens-20261115-134953`). P4.4 CLOSED (2026-11-14): create/edit/delete screens at `5427d4a`; its harness caught the `autoSave: false` soft-delete defect fixed at `7b80ce3`. P4.3 gate at `b769028`, P4.2 screens at `aea363c`, P4.1 auth portal at `46f4dee`. Real payOS money flow, TLS public callback, production vault/roles/secrets, production deploy stay HOLD.

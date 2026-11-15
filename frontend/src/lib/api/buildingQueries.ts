@@ -4,18 +4,33 @@ import type {
   BuildingDto,
   CreateBuildingInput,
   CreateFloorInput,
+  CreateFloorLayoutItemInput,
+  CreateRoomEquipmentInput,
   CreateRoomInput,
   FloorDto,
+  FloorLayoutItemDto,
   RoomDto,
+  RoomEquipmentDto,
+  RoomPhotoDto,
+  RoomPhotoFileDto,
   UpdateBuildingInput,
   UpdateFloorInput,
+  UpdateFloorLayoutItemInput,
+  UpdateRoomEquipmentInput,
   UpdateRoomInput,
+  UpdateRoomLayoutInput,
+  UploadRoomPhotoInput,
 } from '../api/types';
 
 const keys = {
   buildings: ['buildings'] as const,
   floors: ['floors'] as const,
   rooms: ['rooms'] as const,
+  roomEquipment: (roomId: string) => ['room-equipment', roomId] as const,
+  roomPhotos: (roomId: string) => ['room-photos', roomId] as const,
+  roomPhotoContent: (roomId: string, photoId: string) =>
+    ['room-photo-content', roomId, photoId] as const,
+  floorLayout: (floorId: string) => ['floor-layout', floorId] as const,
 };
 
 /**
@@ -30,6 +45,32 @@ function useInvalidateAll() {
       queryClient.invalidateQueries({ queryKey: keys.buildings }),
       queryClient.invalidateQueries({ queryKey: keys.floors }),
       queryClient.invalidateQueries({ queryKey: keys.rooms }),
+    ]);
+}
+
+/**
+ * A room write also changes that room's own sub-resources surface (counts on
+ * the card, the detail tabs), so the room-scoped keys are refreshed too.
+ */
+function useInvalidateRoom(roomId: string) {
+  const invalidateAll = useInvalidateAll();
+  const queryClient = useQueryClient();
+  return () =>
+    Promise.all([
+      invalidateAll(),
+      queryClient.invalidateQueries({ queryKey: keys.roomEquipment(roomId) }),
+      queryClient.invalidateQueries({ queryKey: keys.roomPhotos(roomId) }),
+      queryClient.invalidateQueries({ queryKey: ['room-photo-content', roomId] }),
+    ]);
+}
+
+function useInvalidateFloor(floorId: string) {
+  const invalidateAll = useInvalidateAll();
+  const queryClient = useQueryClient();
+  return () =>
+    Promise.all([
+      invalidateAll(),
+      queryClient.invalidateQueries({ queryKey: keys.floorLayout(floorId) }),
     ]);
 }
 
@@ -122,6 +163,129 @@ export function useDeleteRoom() {
   const invalidate = useInvalidateAll();
   return useMutation<void, unknown, string>({
     mutationFn: (id) => roomsApi.remove(id),
+    onSuccess: invalidate,
+  });
+}
+
+export function useUpdateRoomRent(roomId: string) {
+  const invalidate = useInvalidateRoom(roomId);
+  return useMutation<RoomDto, unknown, number | null>({
+    mutationFn: (monthlyRent) => roomsApi.updateRent(roomId, monthlyRent),
+    onSuccess: invalidate,
+  });
+}
+
+export function useUpdateRoomLayout(roomId: string) {
+  const invalidate = useInvalidateRoom(roomId);
+  return useMutation<RoomDto, unknown, UpdateRoomLayoutInput>({
+    mutationFn: (input) => roomsApi.updateLayout(roomId, input),
+    onSuccess: invalidate,
+  });
+}
+
+export function useRoomEquipment(roomId: string | undefined) {
+  return useQuery<RoomEquipmentDto[]>({
+    queryKey: keys.roomEquipment(roomId ?? ''),
+    queryFn: () => roomsApi.listEquipment(roomId as string),
+    enabled: Boolean(roomId),
+  });
+}
+
+export function useCreateRoomEquipment(roomId: string) {
+  const invalidate = useInvalidateRoom(roomId);
+  return useMutation<RoomEquipmentDto, unknown, CreateRoomEquipmentInput>({
+    mutationFn: (input) => roomsApi.createEquipment(roomId, input),
+    onSuccess: invalidate,
+  });
+}
+
+export function useUpdateRoomEquipment(roomId: string) {
+  const invalidate = useInvalidateRoom(roomId);
+  return useMutation<
+    RoomEquipmentDto,
+    unknown,
+    { equipmentId: string; input: UpdateRoomEquipmentInput }
+  >({
+    mutationFn: ({ equipmentId, input }) =>
+      roomsApi.updateEquipment(roomId, equipmentId, input),
+    onSuccess: invalidate,
+  });
+}
+
+export function useDeleteRoomEquipment(roomId: string) {
+  const invalidate = useInvalidateRoom(roomId);
+  return useMutation<void, unknown, string>({
+    mutationFn: (equipmentId) => roomsApi.removeEquipment(roomId, equipmentId),
+    onSuccess: invalidate,
+  });
+}
+
+export function useRoomPhotos(roomId: string | undefined) {
+  return useQuery<RoomPhotoDto[]>({
+    queryKey: keys.roomPhotos(roomId ?? ''),
+    queryFn: () => roomsApi.listPhotos(roomId as string),
+    enabled: Boolean(roomId),
+  });
+}
+
+/** Photo bytes; fetched only for the photos the gallery actually renders. */
+export function useRoomPhotoContent(roomId: string, photoId: string, enabled = true) {
+  return useQuery<RoomPhotoFileDto>({
+    queryKey: keys.roomPhotoContent(roomId, photoId),
+    queryFn: () => roomsApi.getPhotoContent(roomId, photoId),
+    enabled,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+export function useUploadRoomPhoto(roomId: string) {
+  const invalidate = useInvalidateRoom(roomId);
+  return useMutation<RoomPhotoDto, unknown, UploadRoomPhotoInput>({
+    mutationFn: (input) => roomsApi.uploadPhoto(roomId, input),
+    onSuccess: invalidate,
+  });
+}
+
+export function useDeleteRoomPhoto(roomId: string) {
+  const invalidate = useInvalidateRoom(roomId);
+  return useMutation<void, unknown, string>({
+    mutationFn: (photoId) => roomsApi.removePhoto(roomId, photoId),
+    onSuccess: invalidate,
+  });
+}
+
+export function useFloorLayoutItems(floorId: string | undefined) {
+  return useQuery<FloorLayoutItemDto[]>({
+    queryKey: keys.floorLayout(floorId ?? ''),
+    queryFn: () => floorsApi.listLayoutItems(floorId as string),
+    enabled: Boolean(floorId),
+  });
+}
+
+export function useCreateFloorLayoutItem(floorId: string) {
+  const invalidate = useInvalidateFloor(floorId);
+  return useMutation<FloorLayoutItemDto, unknown, CreateFloorLayoutItemInput>({
+    mutationFn: (input) => floorsApi.createLayoutItem(floorId, input),
+    onSuccess: invalidate,
+  });
+}
+
+export function useUpdateFloorLayoutItem(floorId: string) {
+  const invalidate = useInvalidateFloor(floorId);
+  return useMutation<
+    FloorLayoutItemDto,
+    unknown,
+    { itemId: string; input: UpdateFloorLayoutItemInput }
+  >({
+    mutationFn: ({ itemId, input }) => floorsApi.updateLayoutItem(floorId, itemId, input),
+    onSuccess: invalidate,
+  });
+}
+
+export function useDeleteFloorLayoutItem(floorId: string) {
+  const invalidate = useInvalidateFloor(floorId);
+  return useMutation<void, unknown, string>({
+    mutationFn: (itemId) => floorsApi.removeLayoutItem(floorId, itemId),
     onSuccess: invalidate,
   });
 }

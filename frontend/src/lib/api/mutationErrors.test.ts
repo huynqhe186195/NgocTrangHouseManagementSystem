@@ -104,4 +104,56 @@ describe('describeMutationError', () => {
     const view = describeMutationError(apiError('X', 'y', 400), 'room');
     expect(view?.traceId).toBe('trace-1');
   });
+
+  it('explains a rejected photo upload in the owner-facing words', () => {
+    const view = describeMutationError(
+      apiError(
+        'BuildingManagement:InvalidRoomPhotoContent',
+        'Nội dung tệp không phải ảnh hợp lệ.',
+        400,
+      ),
+      'photo',
+      'create',
+    );
+    expect(view?.formError).toContain('SVG');
+    expect(view?.formError).toContain('Nội dung tệp không phải ảnh hợp lệ.');
+    expect(view?.fieldErrors.photo).toBe('Nội dung tệp không phải ảnh hợp lệ.');
+  });
+
+  it('reports an oversized photo', () => {
+    const view = describeMutationError(
+      apiError('BuildingManagement:RoomPhotoTooLarge', 'Tệp quá lớn.', 400),
+      'photo',
+      'create',
+    );
+    expect(view?.formError).toContain('5 MB');
+  });
+
+  it('does not treat an equipment create failure as a reused room code', () => {
+    const view = describeMutationError(
+      apiError('Common:InternalServerError', 'Có lỗi nội bộ.', 500),
+      'equipment',
+      'create',
+    );
+    expect(view?.formError).toBe('Có lỗi nội bộ.');
+  });
+
+  it('maps an invalid layout payload to the layout field', () => {
+    const view = describeMutationError(
+      apiError('BuildingManagement:InvalidRoomLayout', 'Toạ độ sai.', 400),
+      'layout',
+      'edit',
+    );
+    expect(view?.fieldErrors.layout).toBe('Toạ độ sai.');
+    expect(view?.formError).toContain('X/Y/rộng/cao');
+  });
+
+  it('maps a missing equipment row to the equipmentId-free message', () => {
+    const view = describeMutationError(
+      apiError('BuildingManagement:RoomEquipmentNotFound', 'Không tìm thấy.', 404),
+      'equipment',
+      'delete',
+    );
+    expect(view?.formError).toContain('thiết bị');
+  });
 });

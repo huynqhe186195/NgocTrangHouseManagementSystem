@@ -1,6 +1,13 @@
 import { ApiError } from '../http';
 
-export type MutationEntity = 'building' | 'floor' | 'room';
+export type MutationEntity =
+  | 'building'
+  | 'floor'
+  | 'room'
+  | 'equipment'
+  | 'photo'
+  | 'layout'
+  | 'rent';
 
 export interface MutationErrorView {
   /** Per-field messages keyed by the camelCase DTO property the form uses. */
@@ -15,6 +22,11 @@ const CODE_TO_FIELD: Record<string, string> = {
   'BuildingManagement:RoomNumberAlreadyExists': 'roomNumber',
   'BuildingManagement:RoomNumberDoesNotMatchFloor': 'roomNumber',
   'BuildingManagement:InvalidRoomNumber': 'roomNumber',
+  'BuildingManagement:InvalidRoomEquipmentQuantity': 'quantity',
+  'BuildingManagement:InvalidMonthlyRentAmount': 'monthlyRent',
+  'BuildingManagement:InvalidRoomLayout': 'layout',
+  'BuildingManagement:InvalidFloorLayoutItem': 'layout',
+  'BuildingManagement:InvalidRoomPhotoContent': 'photo',
 };
 
 const DELETE_GUARD_HINTS: Record<string, string> = {
@@ -24,6 +36,27 @@ const DELETE_GUARD_HINTS: Record<string, string> = {
   'BuildingManagement:RoomHasActiveUtilityMeter':
     'Ngừng hoạt động đồng hồ điện/nước của phòng rồi thử lại.',
 };
+
+/**
+ * Codes the server rejects with a plain-language explanation of its own, but
+ * where the raw message ("Có một lỗi nội bộ xảy ra…" is the ABP envelope
+ * text) is less useful than what the screen can say.
+ */
+const CODE_MESSAGES: Record<string, string> = {
+  'BuildingManagement:InvalidRoomPhotoContent':
+    'Tệp không phải ảnh PNG, JPEG hoặc WebP hợp lệ. Ảnh SVG và tệp đổi đuôi không được chấp nhận.',
+  'BuildingManagement:RoomPhotoTooLarge': 'Ảnh vượt quá giới hạn 5 MB.',
+  'BuildingManagement:InvalidRoomLayout':
+    'Toạ độ sơ đồ không hợp lệ: cần đủ X/Y/rộng/cao trong khoảng cho phép.',
+  'BuildingManagement:InvalidMonthlyRentAmount': 'Giá thuê không hợp lệ.',
+  'BuildingManagement:InvalidFloorLayoutItem': 'Vật thể sơ đồ không hợp lệ.',
+  'BuildingManagement:RoomPhotoNotFound': 'Không tìm thấy ảnh này.',
+  'BuildingManagement:RoomEquipmentNotFound': 'Không tìm thấy thiết bị này.',
+  'BuildingManagement:FloorLayoutItemNotFound': 'Không tìm thấy vật thể sơ đồ này.',
+};
+
+/** Entities whose create failures can be the soft-deleted-index 500. */
+const RENAMEABLE_CREATE_ENTITIES: MutationEntity[] = ['floor', 'room'];
 
 const FORBIDDEN_MESSAGE = 'Máy chủ từ chối quyền ghi trên tài nguyên này.';
 
@@ -74,11 +107,16 @@ export function describeMutationError(
   let formError: string;
   if (error.status === 403) {
     formError = FORBIDDEN_MESSAGE;
-  } else if (action === 'create' && entity !== 'building' && error.status >= 500) {
+  } else if (action === 'create' && RENAMEABLE_CREATE_ENTITIES.includes(entity) && error.status >= 500) {
     formError = REUSED_SOFT_DELETED_CODE_MESSAGE;
   } else {
     const hint = DELETE_GUARD_HINTS[error.code];
-    formError = hint ? `${error.message} ${hint}` : error.message;
+    const explanation = CODE_MESSAGES[error.code];
+    formError = hint
+      ? `${error.message} ${hint}`
+      : explanation
+        ? `${explanation} (${error.message})`
+        : error.message;
   }
 
   return { fieldErrors, formError, traceId: error.traceId };

@@ -43,6 +43,29 @@ namespace BuildingManagement.EntityConfigurations
             builder.Property(x => x.Description)
                 .HasMaxLength(500);
 
+            builder.Property(x => x.MonthlyRent)
+                .HasPrecision(18, 0);
+
+            builder.Property(x => x.LayoutX)
+                .HasPrecision(10, 2);
+
+            builder.Property(x => x.LayoutY)
+                .HasPrecision(10, 2);
+
+            builder.Property(x => x.LayoutWidth)
+                .HasPrecision(10, 2);
+
+            builder.Property(x => x.LayoutHeight)
+                .HasPrecision(10, 2);
+
+            builder.Property(x => x.LayoutShape);
+
+            builder.Property(x => x.LayoutRotationDegrees)
+                .HasPrecision(6, 2);
+
+            builder.Property(x => x.LayoutPoints)
+                .HasMaxLength(4000);
+
             builder.HasIndex(x => new
             {
                 x.FloorId,

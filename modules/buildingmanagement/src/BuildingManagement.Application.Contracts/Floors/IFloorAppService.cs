@@ -22,5 +22,15 @@ namespace BuildingManagement.Floors
 
         Task DeleteAsync(
             Guid id);
+
+        Task<List<FloorLayoutItemDto>> GetLayoutItemsAsync(Guid id);
+
+        Task<FloorLayoutItemDto> CreateLayoutItemAsync(
+            Guid id, CreateFloorLayoutItemDto input);
+
+        Task<FloorLayoutItemDto> UpdateLayoutItemAsync(
+            Guid id, Guid itemId, UpdateFloorLayoutItemDto input);
+
+        Task DeleteLayoutItemAsync(Guid id, Guid itemId);
     }
 }

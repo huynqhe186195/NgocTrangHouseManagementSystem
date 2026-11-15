@@ -37,6 +37,11 @@ public static class BuildingManagementDbContextModelCreatingExtensions
         //This code use register configuration entity framework core for entity Payment Tenant into Dbcontext
         builder.ApplyConfiguration(new PaymentConfiguration());
         builder.ApplyConfiguration(new DepositSettlementConfiguration());
+        // P4.5 room detail/designer data: equipment, photos and floor layout objects.
+        builder.ApplyConfiguration(new RoomEquipmentConfiguration());
+        builder.ApplyConfiguration(new RoomPhotoConfiguration());
+        builder.ApplyConfiguration(new RoomPhotoContentConfiguration());
+        builder.ApplyConfiguration(new FloorLayoutItemConfiguration());
         /* Configure all entities here. Example:
 
         builder.Entity<Question>(b => 

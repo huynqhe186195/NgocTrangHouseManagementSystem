@@ -22,6 +22,7 @@ namespace BuildingManagement.Floors
         private readonly IRepository<Floor, Guid> _floorRepository;
         private readonly IRepository<Building, Guid> _buildingRepository;
         private readonly IRepository<Room, Guid> _roomRepository;
+        private readonly IRepository<FloorLayoutItem, Guid> _layoutItemRepository;
         private readonly IBuildingCrudAccessPolicy _access;
         private readonly IBuildingBusinessResourceScopeReader _resourceScope;
         private readonly IBuildingScopedWriteBoundary _writes;
@@ -30,6 +31,7 @@ namespace BuildingManagement.Floors
             IRepository<Floor, Guid> floorRepository,
             IRepository<Building, Guid> buildingRepository,
             IRepository<Room, Guid> roomRepository,
+            IRepository<FloorLayoutItem, Guid> layoutItemRepository,
             IBuildingCrudAccessPolicy access,
             IBuildingBusinessResourceScopeReader resourceScope,
             IBuildingScopedWriteBoundary writes)
@@ -37,6 +39,7 @@ namespace BuildingManagement.Floors
             _floorRepository = floorRepository;
             _buildingRepository = buildingRepository;
             _roomRepository = roomRepository;
+            _layoutItemRepository = layoutItemRepository;
             _access = access;
             _resourceScope = resourceScope;
             _writes = writes;
@@ -135,6 +138,97 @@ namespace BuildingManagement.Floors
                 await _floorRepository.DeleteAsync(floor, autoSave: true);
                 return true;
             }, BuildingScopedMutationKind.Floor);
+        }
+
+        public async Task<List<FloorLayoutItemDto>> GetLayoutItemsAsync(Guid id)
+        {
+            await _access.EnsureResourceAsync(
+                BuildingBusinessResourceKind.Floor, id,
+                BuildingBusinessCapability.ReadFloor);
+            var items = await _layoutItemRepository.GetListAsync(
+                x => x.FloorId == id);
+            return ObjectMapper.Map<List<FloorLayoutItem>, List<FloorLayoutItemDto>>(
+                items.ToList());
+        }
+
+        public async Task<FloorLayoutItemDto> CreateLayoutItemAsync(
+            Guid id, CreateFloorLayoutItemDto input)
+        {
+            await _access.EnsureResourceAsync(
+                BuildingBusinessResourceKind.Floor, id,
+                BuildingBusinessCapability.ManageFloor);
+            var buildingId = await ResolveBuildingAsync(
+                BuildingBusinessResourceKind.Floor, id);
+            return await _writes.ExecuteBuildingAsync(buildingId, async () =>
+            {
+                var floor = await _floorRepository.GetAsync(id);
+                if (floor.BuildingId != buildingId)
+                    throw new AbpAuthorizationException("Floor scope changed.");
+                ValidateLayoutItem(input.Kind, input.X, input.Y,
+                    input.Width, input.Height);
+                var created = new FloorLayoutItem(GuidGenerator.Create(), id,
+                    input.Kind, input.Label, input.X, input.Y,
+                    input.Width, input.Height);
+                await _layoutItemRepository.InsertAsync(created, autoSave: true);
+                return ObjectMapper.Map<FloorLayoutItem, FloorLayoutItemDto>(
+                    created);
+            }, BuildingScopedMutationKind.Floor);
+        }
+
+        public async Task<FloorLayoutItemDto> UpdateLayoutItemAsync(
+            Guid id, Guid itemId, UpdateFloorLayoutItemDto input)
+        {
+            await _access.EnsureResourceAsync(
+                BuildingBusinessResourceKind.Floor, id,
+                BuildingBusinessCapability.ManageFloor);
+            var buildingId = await ResolveBuildingAsync(
+                BuildingBusinessResourceKind.Floor, id);
+            return await _writes.ExecuteBuildingAsync(buildingId, async () =>
+            {
+                var floor = await _floorRepository.GetAsync(id);
+                if (floor.BuildingId != buildingId)
+                    throw new AbpAuthorizationException("Floor scope changed.");
+                var item = await _layoutItemRepository.FindAsync(itemId);
+                if (item is null || item.FloorId != id)
+                    throw new BusinessException(
+                        BuildingManagementErrorCodes.FloorLayoutItemNotFound);
+                ValidateLayoutItem(input.Kind, input.X, input.Y,
+                    input.Width, input.Height);
+                item.Update(input.Kind, input.Label, input.X, input.Y,
+                    input.Width, input.Height);
+                await _layoutItemRepository.UpdateAsync(item, autoSave: true);
+                return ObjectMapper.Map<FloorLayoutItem, FloorLayoutItemDto>(item);
+            }, BuildingScopedMutationKind.Floor);
+        }
+
+        public async Task DeleteLayoutItemAsync(Guid id, Guid itemId)
+        {
+            await _access.EnsureResourceAsync(
+                BuildingBusinessResourceKind.Floor, id,
+                BuildingBusinessCapability.ManageFloor);
+            var buildingId = await ResolveBuildingAsync(
+                BuildingBusinessResourceKind.Floor, id);
+            await _writes.ExecuteBuildingAsync(buildingId, async () =>
+            {
+                var item = await _layoutItemRepository.FindAsync(itemId);
+                if (item is null || item.FloorId != id)
+                    throw new BusinessException(
+                        BuildingManagementErrorCodes.FloorLayoutItemNotFound);
+                await _layoutItemRepository.DeleteAsync(item, autoSave: true);
+                return true;
+            }, BuildingScopedMutationKind.Floor);
+        }
+
+        private static void ValidateLayoutItem(
+            FloorLayoutItemKind kind,
+            decimal x, decimal y, decimal width, decimal height)
+        {
+            if (!Enum.IsDefined(kind) ||
+                width < 0 || height < 0 ||
+                width > 10000 || height > 10000 ||
+                x < -10000 || x > 10000 || y < -10000 || y > 10000)
+                throw new BusinessException(
+                    BuildingManagementErrorCodes.InvalidFloorLayoutItem);
         }
 
         private async Task<Guid> ResolveBuildingAsync(

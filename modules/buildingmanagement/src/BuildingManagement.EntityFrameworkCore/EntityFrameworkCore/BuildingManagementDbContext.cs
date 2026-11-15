@@ -28,6 +28,10 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
     public DbSet<BuildingOperatorAccessGrant> OperatorBuildingGrants { get; set; } = default!;
     public DbSet<Floor> Floors { get; set; } = default!;
     public DbSet<Room> Rooms { get; set; } = default!;
+    public DbSet<RoomEquipment> RoomEquipment { get; set; } = default!;
+    public DbSet<RoomPhoto> RoomPhotos { get; set; } = default!;
+    public DbSet<RoomPhotoContent> RoomPhotoContents { get; set; } = default!;
+    public DbSet<FloorLayoutItem> FloorLayoutItems { get; set; } = default!;
     public DbSet<Tenant> Tenants { get; set; } = default!;
     public DbSet<Contract> Contracts { get; set; } = default!;
     public DbSet<ContractTenant> ContractTenants { get; set; } = default!;

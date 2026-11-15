@@ -1177,6 +1177,51 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule // syst
                 BuildingManagementErrorCodes.FloorHasRooms,
                 HttpStatusCode.Conflict
             );
+
+            options.Map(
+                BuildingManagementErrorCodes.RoomEquipmentNotFound,
+                HttpStatusCode.NotFound
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.InvalidRoomEquipmentQuantity,
+                HttpStatusCode.BadRequest
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.RoomPhotoNotFound,
+                HttpStatusCode.NotFound
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.InvalidRoomPhotoContent,
+                HttpStatusCode.BadRequest
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.RoomPhotoTooLarge,
+                HttpStatusCode.BadRequest
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.InvalidRoomLayout,
+                HttpStatusCode.BadRequest
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.InvalidMonthlyRentAmount,
+                HttpStatusCode.BadRequest
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.FloorLayoutItemNotFound,
+                HttpStatusCode.NotFound
+            );
+
+            options.Map(
+                BuildingManagementErrorCodes.InvalidFloorLayoutItem,
+                HttpStatusCode.BadRequest
+            );
         });
     }
 

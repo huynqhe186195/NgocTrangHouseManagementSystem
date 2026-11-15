@@ -26,6 +26,9 @@ namespace BuildingManagement.Rooms
         private readonly IRepository<Contract, Guid>_contractRepository;
         private readonly IRepository<UtilityMeter, Guid> _utilityMeterRepository;
         private readonly IRepository<Building, Guid> _buildingRepository;
+        private readonly IRepository<RoomEquipment, Guid> _equipmentRepository;
+        private readonly IRepository<RoomPhoto, Guid> _photoRepository;
+        private readonly IRepository<RoomPhotoContent, Guid> _photoContentRepository;
         private readonly IBuildingCrudAccessPolicy _access;
         private readonly IBuildingBusinessResourceScopeReader _resourceScope;
         private readonly IBuildingScopedWriteBoundary _writes;
@@ -36,6 +39,9 @@ namespace BuildingManagement.Rooms
     IRepository<Contract, Guid> contractRepository,
     IRepository<UtilityMeter, Guid> utilityMeterRepository,
     IRepository<Building, Guid> buildingRepository,
+    IRepository<RoomEquipment, Guid> equipmentRepository,
+    IRepository<RoomPhoto, Guid> photoRepository,
+    IRepository<RoomPhotoContent, Guid> photoContentRepository,
     IBuildingCrudAccessPolicy access,
     IBuildingBusinessResourceScopeReader resourceScope,
     IBuildingScopedWriteBoundary writes)
@@ -45,6 +51,9 @@ namespace BuildingManagement.Rooms
             _contractRepository = contractRepository;
             _utilityMeterRepository = utilityMeterRepository;
             _buildingRepository = buildingRepository;
+            _equipmentRepository = equipmentRepository;
+            _photoRepository = photoRepository;
+            _photoContentRepository = photoContentRepository;
             _access = access;
             _resourceScope = resourceScope;
             _writes = writes;
@@ -81,10 +90,7 @@ namespace BuildingManagement.Rooms
             var room =
                 await GetExistingRoomAsync(id);
 
-            return ObjectMapper.Map<
-                Room,
-                RoomDto
-            >(room);
+            return await MapRoomWithCountsAsync(room);
         }
 
         public async Task<List<RoomDto>> GetListAsync()
@@ -171,6 +177,251 @@ namespace BuildingManagement.Rooms
                 }
                 return true;
             }, BuildingScopedMutationKind.Room);
+        }
+
+        public async Task<List<RoomEquipmentDto>> GetEquipmentAsync(Guid id)
+        {
+            await _access.EnsureResourceAsync(
+                BuildingBusinessResourceKind.Room, id,
+                BuildingBusinessCapability.ReadRoom);
+            var items = await _equipmentRepository.GetListAsync(
+                x => x.RoomId == id);
+            return ObjectMapper.Map<List<RoomEquipment>, List<RoomEquipmentDto>>(
+                items.OrderBy(x => x.Name).ToList());
+        }
+
+        public async Task<RoomEquipmentDto> CreateEquipmentAsync(
+            Guid id, CreateRoomEquipmentDto input)
+        {
+            await _access.EnsureResourceAsync(
+                BuildingBusinessResourceKind.Room, id,
+                BuildingBusinessCapability.ManageRoom);
+            var buildingId = await ResolveBuildingAsync(
+                BuildingBusinessResourceKind.Room, id);
+            return await _writes.ExecuteBuildingAsync(buildingId, async () =>
+            {
+                var room = await GetExistingRoomAsync(id);
+                var floor = await GetExistingFloorAsync(room.FloorId);
+                if (floor.BuildingId != buildingId)
+                    throw new AbpAuthorizationException("Room scope changed.");
+                ValidateEquipmentQuantity(input.Quantity);
+                var created = new RoomEquipment(GuidGenerator.Create(), id,
+                    input.Name, input.Category, input.Quantity,
+                    input.Condition, input.InstalledDate, input.Notes);
+                await _equipmentRepository.InsertAsync(created, autoSave: true);
+                return ObjectMapper.Map<RoomEquipment, RoomEquipmentDto>(created);
+            }, BuildingScopedMutationKind.Room);
+        }
+
+        public async Task<RoomEquipmentDto> UpdateEquipmentAsync(
+            Guid id, Guid equipmentId, UpdateRoomEquipmentDto input)
+        {
+            await _access.EnsureResourceAsync(
+                BuildingBusinessResourceKind.Room, id,
+                BuildingBusinessCapability.ManageRoom);
+            var buildingId = await ResolveBuildingAsync(
+                BuildingBusinessResourceKind.Room, id);
+            return await _writes.ExecuteBuildingAsync(buildingId, async () =>
+            {
+                var room = await GetExistingRoomAsync(id);
+                var floor = await GetExistingFloorAsync(room.FloorId);
+                if (floor.BuildingId != buildingId)
+                    throw new AbpAuthorizationException("Room scope changed.");
+                var equipment = await _equipmentRepository.FindAsync(equipmentId);
+                if (equipment is null || equipment.RoomId != id)
+                    throw new BusinessException(
+                        BuildingManagementErrorCodes.RoomEquipmentNotFound);
+                ValidateEquipmentQuantity(input.Quantity);
+                equipment.Update(input.Name, input.Category, input.Quantity,
+                    input.Condition, input.InstalledDate, input.Notes);
+                await _equipmentRepository.UpdateAsync(equipment, autoSave: true);
+                return ObjectMapper.Map<RoomEquipment, RoomEquipmentDto>(equipment);
+            }, BuildingScopedMutationKind.Room);
+        }
+
+        public async Task DeleteEquipmentAsync(Guid id, Guid equipmentId)
+        {
+            await _access.EnsureResourceAsync(
+                BuildingBusinessResourceKind.Room, id,
+                BuildingBusinessCapability.ManageRoom);
+            var buildingId = await ResolveBuildingAsync(
+                BuildingBusinessResourceKind.Room, id);
+            await _writes.ExecuteBuildingAsync(buildingId, async () =>
+            {
+                var equipment = await _equipmentRepository.FindAsync(equipmentId);
+                if (equipment is null || equipment.RoomId != id)
+                    throw new BusinessException(
+                        BuildingManagementErrorCodes.RoomEquipmentNotFound);
+                await _equipmentRepository.DeleteAsync(equipment, autoSave: true);
+                return true;
+            }, BuildingScopedMutationKind.Room);
+        }
+
+        public async Task<List<RoomPhotoDto>> GetPhotosAsync(Guid id)
+        {
+            await _access.EnsureResourceAsync(
+                BuildingBusinessResourceKind.Room, id,
+                BuildingBusinessCapability.ReadRoom);
+            var photos = await _photoRepository.GetListAsync(x => x.RoomId == id);
+            return ObjectMapper.Map<List<RoomPhoto>, List<RoomPhotoDto>>(
+                photos.OrderBy(x => x.DisplayOrder).ThenBy(x => x.CreationTime)
+                    .ToList());
+        }
+
+        public async Task<RoomPhotoDto> UploadPhotoAsync(
+            Guid id, UploadRoomPhotoDto input)
+        {
+            await _access.EnsureResourceAsync(
+                BuildingBusinessResourceKind.Room, id,
+                BuildingBusinessCapability.ManageRoom);
+            byte[] bytes;
+            try
+            {
+                bytes = Convert.FromBase64String(input.Base64Content ?? "");
+            }
+            catch (FormatException)
+            {
+                throw new BusinessException(
+                    BuildingManagementErrorCodes.InvalidRoomPhotoContent);
+            }
+
+            // Sniff the payload itself: a client-supplied type is never trusted.
+            var contentType = RoomPhotoRules.DetectContentType(bytes);
+            if (contentType is null)
+                throw new BusinessException(
+                    BuildingManagementErrorCodes.InvalidRoomPhotoContent);
+
+            var buildingId = await ResolveBuildingAsync(
+                BuildingBusinessResourceKind.Room, id);
+            return await _writes.ExecuteBuildingAsync(buildingId, async () =>
+            {
+                var room = await GetExistingRoomAsync(id);
+                var floor = await GetExistingFloorAsync(room.FloorId);
+                if (floor.BuildingId != buildingId)
+                    throw new AbpAuthorizationException("Room scope changed.");
+                var existing = await _photoRepository.GetListAsync(
+                    x => x.RoomId == id);
+                var photo = new RoomPhoto(GuidGenerator.Create(), id,
+                    RoomPhotoRules.SafeFileName(input.FileName, contentType),
+                    contentType, bytes.LongLength,
+                    existing.Count == 0
+                        ? 0
+                        : existing.Max(x => x.DisplayOrder) + 1,
+                    GuidGenerator.Create().ToString("N"));
+                await _photoRepository.InsertAsync(photo, autoSave: false);
+                await _photoContentRepository.InsertAsync(
+                    new RoomPhotoContent(photo.Id, bytes), autoSave: true);
+                return ObjectMapper.Map<RoomPhoto, RoomPhotoDto>(photo);
+            }, BuildingScopedMutationKind.Room);
+        }
+
+        public async Task<RoomPhotoFileDto> GetPhotoContentAsync(
+            Guid id, Guid photoId)
+        {
+            await _access.EnsureResourceAsync(
+                BuildingBusinessResourceKind.Room, id,
+                BuildingBusinessCapability.ReadRoom);
+            var photo = await _photoRepository.FindAsync(photoId);
+            if (photo is null || photo.RoomId != id)
+                throw new BusinessException(
+                    BuildingManagementErrorCodes.RoomPhotoNotFound);
+            var content = await _photoContentRepository.FindAsync(photoId);
+            if (content is null)
+                throw new BusinessException(
+                    BuildingManagementErrorCodes.RoomPhotoNotFound);
+            return new RoomPhotoFileDto
+            {
+                Content = content.Content,
+                ContentType = photo.ContentType,
+                FileName = photo.FileName
+            };
+        }
+
+        public async Task DeletePhotoAsync(Guid id, Guid photoId)
+        {
+            await _access.EnsureResourceAsync(
+                BuildingBusinessResourceKind.Room, id,
+                BuildingBusinessCapability.ManageRoom);
+            var buildingId = await ResolveBuildingAsync(
+                BuildingBusinessResourceKind.Room, id);
+            await _writes.ExecuteBuildingAsync(buildingId, async () =>
+            {
+                var photo = await _photoRepository.FindAsync(photoId);
+                if (photo is null || photo.RoomId != id)
+                    throw new BusinessException(
+                        BuildingManagementErrorCodes.RoomPhotoNotFound);
+                var content = await _photoContentRepository.FindAsync(photoId);
+                if (content is not null)
+                {
+                    await _photoContentRepository.DeleteAsync(content,
+                        autoSave: false);
+                }
+                await _photoRepository.DeleteAsync(photo, autoSave: true);
+                return true;
+            }, BuildingScopedMutationKind.Room);
+        }
+
+        public async Task<RoomDto> UpdateLayoutAsync(
+            Guid id, UpdateRoomLayoutDto input)
+        {
+            await _access.EnsureResourceAsync(
+                BuildingBusinessResourceKind.Room, id,
+                BuildingBusinessCapability.ManageRoom);
+            var buildingId = await ResolveBuildingAsync(
+                BuildingBusinessResourceKind.Room, id);
+            return await _writes.ExecuteBuildingAsync(buildingId, async () =>
+            {
+                var room = await GetExistingRoomAsync(id);
+                var floor = await GetExistingFloorAsync(room.FloorId);
+                if (floor.BuildingId != buildingId)
+                    throw new AbpAuthorizationException("Room scope changed.");
+                RoomLayoutRules.Validate(input);
+                room.UpdateLayout(input.X, input.Y, input.Width, input.Height,
+                    input.Shape, input.RotationDegrees, input.Points);
+                await _roomRepository.UpdateAsync(room, autoSave: true);
+                return await MapRoomWithCountsAsync(room);
+            }, BuildingScopedMutationKind.Room);
+        }
+
+        public async Task<RoomDto> UpdateRentAsync(
+            Guid id, UpdateRoomRentDto input)
+        {
+            await _access.EnsureResourceAsync(
+                BuildingBusinessResourceKind.Room, id,
+                BuildingBusinessCapability.ManageRoom);
+            var buildingId = await ResolveBuildingAsync(
+                BuildingBusinessResourceKind.Room, id);
+            return await _writes.ExecuteBuildingAsync(buildingId, async () =>
+            {
+                var room = await GetExistingRoomAsync(id);
+                var floor = await GetExistingFloorAsync(room.FloorId);
+                if (floor.BuildingId != buildingId)
+                    throw new AbpAuthorizationException("Room scope changed.");
+                if (input.MonthlyRent is < 0 or > 10_000_000_000m)
+                    throw new BusinessException(
+                        BuildingManagementErrorCodes.InvalidMonthlyRentAmount);
+                room.UpdateRent(input.MonthlyRent);
+                await _roomRepository.UpdateAsync(room, autoSave: true);
+                return await MapRoomWithCountsAsync(room);
+            }, BuildingScopedMutationKind.Room);
+        }
+
+        private async Task<RoomDto> MapRoomWithCountsAsync(Room room)
+        {
+            var dto = ObjectMapper.Map<Room, RoomDto>(room);
+            dto.EquipmentCount = await _equipmentRepository.CountAsync(
+                x => x.RoomId == room.Id);
+            dto.PhotoCount = await _photoRepository.CountAsync(
+                x => x.RoomId == room.Id);
+            return dto;
+        }
+
+        private static void ValidateEquipmentQuantity(int quantity)
+        {
+            if (quantity < 0 || quantity > 1000)
+                throw new BusinessException(
+                    BuildingManagementErrorCodes.InvalidRoomEquipmentQuantity)
+                    .WithData("Quantity", quantity);
         }
 
         private async Task<Guid> ResolveBuildingAsync(

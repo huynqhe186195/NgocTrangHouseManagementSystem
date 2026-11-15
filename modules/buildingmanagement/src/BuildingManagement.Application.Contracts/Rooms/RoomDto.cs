@@ -20,5 +20,25 @@ namespace BuildingManagement.Rooms
         public RoomStatus Status { get; set; }
 
         public string? Description { get; set; }
+
+        public decimal? MonthlyRent { get; set; }
+
+        public decimal? LayoutX { get; set; }
+
+        public decimal? LayoutY { get; set; }
+
+        public decimal? LayoutWidth { get; set; }
+
+        public decimal? LayoutHeight { get; set; }
+
+        public RoomLayoutShape? LayoutShape { get; set; }
+
+        public decimal? LayoutRotationDegrees { get; set; }
+
+        public string? LayoutPoints { get; set; }
+
+        public int EquipmentCount { get; set; }
+
+        public int PhotoCount { get; set; }
     }
 }

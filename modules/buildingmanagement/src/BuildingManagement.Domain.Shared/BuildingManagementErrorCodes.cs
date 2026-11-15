@@ -332,4 +332,31 @@ public static class BuildingManagementErrorCodes
     public const string
     InvalidReservationDepositPaymentAmount =
         "BuildingManagement:InvalidReservationDepositPaymentAmount";
+
+    public const string RoomEquipmentNotFound =
+        "BuildingManagement:RoomEquipmentNotFound";
+
+    public const string InvalidRoomEquipmentQuantity =
+        "BuildingManagement:InvalidRoomEquipmentQuantity";
+
+    public const string RoomPhotoNotFound =
+        "BuildingManagement:RoomPhotoNotFound";
+
+    public const string InvalidRoomPhotoContent =
+        "BuildingManagement:InvalidRoomPhotoContent";
+
+    public const string RoomPhotoTooLarge =
+        "BuildingManagement:RoomPhotoTooLarge";
+
+    public const string InvalidRoomLayout =
+        "BuildingManagement:InvalidRoomLayout";
+
+    public const string InvalidMonthlyRentAmount =
+        "BuildingManagement:InvalidMonthlyRentAmount";
+
+    public const string FloorLayoutItemNotFound =
+        "BuildingManagement:FloorLayoutItemNotFound";
+
+    public const string InvalidFloorLayoutItem =
+        "BuildingManagement:InvalidFloorLayoutItem";
 } // Consolidate all of the module's error codes in one place.

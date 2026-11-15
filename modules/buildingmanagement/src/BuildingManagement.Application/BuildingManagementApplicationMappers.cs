@@ -45,6 +45,39 @@ public partial class RoomToRoomDtoMapper
 }
 
 [Mapper(RequiredMappingStrategy = RequiredMappingStrategy.Target)]
+public partial class RoomEquipmentToRoomEquipmentDtoMapper
+    : MapperBase<RoomEquipment, RoomEquipmentDto>
+{
+    public override partial RoomEquipmentDto Map(RoomEquipment source);
+
+    public override partial void Map(
+        RoomEquipment source,
+        RoomEquipmentDto destination);
+}
+
+[Mapper(RequiredMappingStrategy = RequiredMappingStrategy.Target)]
+public partial class RoomPhotoToRoomPhotoDtoMapper
+    : MapperBase<RoomPhoto, RoomPhotoDto>
+{
+    public override partial RoomPhotoDto Map(RoomPhoto source);
+
+    public override partial void Map(
+        RoomPhoto source,
+        RoomPhotoDto destination);
+}
+
+[Mapper(RequiredMappingStrategy = RequiredMappingStrategy.Target)]
+public partial class FloorLayoutItemToFloorLayoutItemDtoMapper
+    : MapperBase<FloorLayoutItem, FloorLayoutItemDto>
+{
+    public override partial FloorLayoutItemDto Map(FloorLayoutItem source);
+
+    public override partial void Map(
+        FloorLayoutItem source,
+        FloorLayoutItemDto destination);
+}
+
+[Mapper(RequiredMappingStrategy = RequiredMappingStrategy.Target)]
 public partial class TenantToTenantDtoMapper
     : MapperBase<Tenant, TenantDto>
 {

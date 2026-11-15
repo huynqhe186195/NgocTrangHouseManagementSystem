@@ -21,6 +21,22 @@ namespace BuildingManagement.Rooms
 
         public string? Description { get; private set; }
 
+        public decimal? MonthlyRent { get; private set; }
+
+        public decimal? LayoutX { get; private set; }
+
+        public decimal? LayoutY { get; private set; }
+
+        public decimal? LayoutWidth { get; private set; }
+
+        public decimal? LayoutHeight { get; private set; }
+
+        public RoomLayoutShape? LayoutShape { get; private set; }
+
+        public decimal? LayoutRotationDegrees { get; private set; }
+
+        public string? LayoutPoints { get; private set; }
+
         protected Room()
         {
         }
@@ -64,6 +80,29 @@ namespace BuildingManagement.Rooms
         public void ChangeStatus(RoomStatus status)
         {
             Status = status;
+        }
+
+        public void UpdateRent(decimal? monthlyRent)
+        {
+            MonthlyRent = monthlyRent;
+        }
+
+        public void UpdateLayout(
+            decimal? x,
+            decimal? y,
+            decimal? width,
+            decimal? height,
+            RoomLayoutShape? shape,
+            decimal? rotationDegrees,
+            string? points)
+        {
+            LayoutX = x;
+            LayoutY = y;
+            LayoutWidth = width;
+            LayoutHeight = height;
+            LayoutShape = shape;
+            LayoutRotationDegrees = rotationDegrees;
+            LayoutPoints = points;
         }
     }
 }

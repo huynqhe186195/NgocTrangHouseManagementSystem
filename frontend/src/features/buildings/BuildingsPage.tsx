@@ -18,6 +18,7 @@ import {
 } from '../../lib/api/buildingQueries';
 import { describeMutationError } from '../../lib/api/mutationErrors';
 import type { FloorDto, RoomDto } from '../../lib/api/types';
+import { formatVnd } from '../../lib/format';
 import { BuildingFormDialog } from './BuildingFormDialog';
 import { FloorFormDialog } from './FloorFormDialog';
 
@@ -281,12 +282,13 @@ export function BuildingDetailPage() {
               </div>
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[900px] border-collapse text-sm">
+                <table className="w-full min-w-[1000px] border-collapse text-sm">
                   <thead>
                     <tr className="bg-surface-low text-left text-xs font-semibold text-on-surface-variant">
                       <th className="px-5 py-3">Tầng</th>
                       <th className="px-5 py-3">Sơ đồ mặt bằng</th>
                       <th className="px-5 py-3">Số phòng</th>
+                      <th className="px-5 py-3">Giá thuê từ</th>
                       <th className="px-5 py-3">Trạng thái</th>
                       <th className="px-5 py-3">Ghi chú</th>
                       <th className="px-5 py-3">Hành động</th>
@@ -307,6 +309,9 @@ export function BuildingDetailPage() {
                             <FloorThumbnail rooms={floorRooms} />
                           </td>
                           <td className="px-5 py-3.5 tnum text-on-surface">{floorRooms.length}</td>
+                          <td className="px-5 py-3.5 tnum text-on-surface">
+                            {cheapestRent(floorRooms)}
+                          </td>
                           <td className="px-5 py-3.5">
                             <StatusBadge tone="success" withDot>
                               Hoạt động
@@ -432,6 +437,17 @@ export function BuildingDetailPage() {
       />
     </div>
   );
+}
+
+/** The cheapest rent the floor offers, so the building list can advertise it. */
+function cheapestRent(rooms: RoomDto[]): string {
+  const rents = rooms
+    .map((room) => room.monthlyRent)
+    .filter((rent): rent is number => rent !== null && rent > 0);
+  if (rents.length === 0) {
+    return '—';
+  }
+  return formatVnd(Math.min(...rents));
 }
 
 /** Miniature floor plan: one tinted block per room, ordered by room number. */

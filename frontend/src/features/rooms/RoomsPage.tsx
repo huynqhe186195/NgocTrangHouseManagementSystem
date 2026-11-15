@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Alert } from '../../components/ui/Alert';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { EmptyState } from '../../components/ui/EmptyState';
@@ -11,6 +12,7 @@ import { useBuildings, useDeleteRoom, useFloors, useRooms } from '../../lib/api/
 import { describeMutationError } from '../../lib/api/mutationErrors';
 import { roomStatusMeta } from '../../lib/api/types';
 import type { RoomDto, RoomStatus } from '../../lib/api/types';
+import { formatVnd } from '../../lib/format';
 import { RoomFormDialog } from './RoomFormDialog';
 
 const statusFilters: { value: RoomStatus | 'all'; label: string }[] = [
@@ -223,9 +225,12 @@ export function RoomsPage() {
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <p className="font-display text-base font-bold text-on-surface">
+                        <Link
+                          to={`/rooms/${room.id}`}
+                          className="font-display text-base font-bold text-on-surface hover:text-primary hover:underline"
+                        >
                           Phòng {room.roomNumber}
-                        </p>
+                        </Link>
                         <p className="truncate text-xs text-on-surface-variant">{room.name}</p>
                       </div>
                       <StatusBadge tone={meta?.tone ?? 'neutral'} withDot>
@@ -248,6 +253,14 @@ export function RoomsPage() {
                       <div className="flex items-center gap-1">
                         <span className="material-symbols-outlined text-sm">group</span>
                         <span>{room.capacity} người</span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <span className="material-symbols-outlined text-sm">payments</span>
+                        <span className="tnum">
+                          {room.monthlyRent === null
+                            ? 'Chưa có giá'
+                            : `${formatVnd(room.monthlyRent)}/tháng`}
+                        </span>
                       </div>
                     </dl>
                     <div className="mt-1 flex items-center gap-2 border-t border-outline-variant pt-2">

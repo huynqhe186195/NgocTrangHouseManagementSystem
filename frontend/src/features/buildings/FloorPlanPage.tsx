@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useMemo, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Alert } from '../../components/ui/Alert';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { PageHeader } from '../../components/ui/PageHeader';
@@ -7,15 +7,23 @@ import { StatusBadge } from '../../components/ui/StatusBadge';
 import { useAuth } from '../../lib/auth/AuthProvider';
 import { BuildingPolicies } from '../../lib/auth/policies';
 import { ApiError } from '../../lib/http';
-import { useBuildingSnapshot } from '../../lib/api/buildingQueries';
+import {
+  useBuildingSnapshot,
+  useBuildings,
+  useFloorLayoutItems,
+} from '../../lib/api/buildingQueries';
 import { roomStatusMeta } from '../../lib/api/types';
 import type { RoomDto } from '../../lib/api/types';
+import { formatMillions, formatNumber } from '../../lib/format';
 import { RoomFormDialog } from '../rooms/RoomFormDialog';
 import { FloorPlan } from './FloorPlan';
 
 export function FloorPlanPage() {
   const { buildingId, floorId } = useParams<{ buildingId: string; floorId: string }>();
+  const navigate = useNavigate();
   const { snapshot, loading, error } = useBuildingSnapshot(buildingId);
+  const buildings = useBuildings();
+  const layoutItems = useFloorLayoutItems(floorId);
   const { hasPermission } = useAuth();
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
   const [addRoomOpen, setAddRoomOpen] = useState(false);
@@ -25,6 +33,18 @@ export function FloorPlanPage() {
   const floor = snapshot?.floors.find((item) => item.id === floorId) ?? null;
   const rooms = floorId ? snapshot?.roomsByFloor.get(floorId) ?? [] : [];
   const selectedRoom = rooms.find((room) => room.id === selectedRoomId) ?? null;
+
+  const unplacedCount = useMemo(
+    () =>
+      rooms.filter(
+        (room) =>
+          room.layoutX === null ||
+          room.layoutY === null ||
+          room.layoutWidth === null ||
+          room.layoutHeight === null,
+      ).length,
+    [rooms],
+  );
 
   return (
     <div className="mx-auto max-w-[1400px]">
@@ -47,6 +67,53 @@ export function FloorPlanPage() {
           </Link>
         }
       />
+
+      <div className="mb-4 grid gap-3 rounded-xl border border-outline-variant bg-surface-lowest p-3 sm:grid-cols-2 lg:max-w-xl">
+        <label className="flex flex-col gap-1.5">
+          <span className="text-[11px] font-semibold tracking-[0.06em] text-on-surface-variant uppercase">
+            Tòa nhà
+          </span>
+          <select
+            value={buildingId ?? ''}
+            onChange={(event) => {
+              setSelectedRoomId(null);
+              navigate(`/buildings/${event.target.value}`);
+            }}
+            className="h-9 w-full rounded-lg border border-outline-variant bg-surface-lowest px-2.5 text-sm text-on-surface focus:border-primary focus:outline-none"
+          >
+            {(buildings.data ?? []).map((building) => (
+              <option key={building.id} value={building.id}>
+                {building.name}
+              </option>
+            ))}
+            {buildingId && !(buildings.data ?? []).some((b) => b.id === buildingId) && (
+              <option value={buildingId}>{snapshot?.building.name ?? 'Tòa nhà hiện tại'}</option>
+            )}
+          </select>
+        </label>
+
+        <label className="flex flex-col gap-1.5">
+          <span className="text-[11px] font-semibold tracking-[0.06em] text-on-surface-variant uppercase">
+            Tầng
+          </span>
+          <select
+            value={floorId ?? ''}
+            onChange={(event) => {
+              setSelectedRoomId(null);
+              navigate(`/buildings/${buildingId}/floors/${event.target.value}`);
+            }}
+            disabled={!snapshot || snapshot.floors.length === 0}
+            className="h-9 w-full rounded-lg border border-outline-variant bg-surface-lowest px-2.5 text-sm text-on-surface focus:border-primary focus:outline-none disabled:opacity-60"
+          >
+            {!floor && <option value="">Chọn tầng</option>}
+            {(snapshot?.floors ?? []).map((item) => (
+              <option key={item.id} value={item.id}>
+                Tầng {item.floorNumber} — {item.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
 
       {error && (
         <div className="mb-4">
@@ -86,7 +153,7 @@ export function FloorPlanPage() {
       {!loading && floor && (
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
           <section className="rounded-xl border border-outline-variant bg-surface-lowest p-5">
-            <header className="mb-4 flex items-center justify-between gap-3">
+            <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2.5">
                 <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface-low text-primary">
                   <span className="material-symbols-outlined text-xl">map</span>
@@ -118,8 +185,8 @@ export function FloorPlanPage() {
                 <button
                   type="button"
                   disabled
-                  title="Chức năng chỉnh sửa sơ đồ chưa được mở"
-                  className="flex h-9 items-center gap-1.5 rounded-lg border border-outline-variant px-3 text-xs font-semibold text-on-surface-variant opacity-60"
+                  title="Màn thiết kế sơ đồ (kéo thả, lưới) sẽ được mở ở giai đoạn tiếp theo."
+                  className="flex h-9 cursor-not-allowed items-center gap-1.5 rounded-lg border border-outline-variant px-3 text-xs font-semibold text-on-surface-variant opacity-60"
                 >
                   <span className="material-symbols-outlined text-base">edit</span>
                   Sửa sơ đồ
@@ -128,16 +195,17 @@ export function FloorPlanPage() {
             </header>
 
             <FloorPlan
-              rooms={rooms.map((room) => ({
-                id: room.id,
-                roomNumber: room.roomNumber,
-                area: room.area ?? 0,
-                status: room.status,
-                capacity: room.capacity,
-              }))}
+              rooms={rooms}
+              items={layoutItems.data ?? []}
               selectedId={selectedRoomId}
               onSelect={setSelectedRoomId}
             />
+
+            {unplacedCount > 0 && unplacedCount < rooms.length && (
+              <p className="mt-3 rounded-lg bg-[#FFFBEB] px-3 py-2 text-xs leading-relaxed text-[#B45309]">
+                {unplacedCount} phòng chưa có toạ độ trên sơ đồ nên không được vẽ.
+              </p>
+            )}
           </section>
 
           <aside className="rounded-xl border border-outline-variant bg-surface-lowest p-5">
@@ -145,6 +213,7 @@ export function FloorPlanPage() {
               <RoomPanel
                 room={selectedRoom}
                 floorNumber={floor.floorNumber}
+                buildingId={buildingId ?? ''}
                 onClose={() => setSelectedRoomId(null)}
               />
             ) : (
@@ -175,10 +244,12 @@ export function FloorPlanPage() {
 function RoomPanel({
   room,
   floorNumber,
+  buildingId,
   onClose,
 }: {
   room: RoomDto;
   floorNumber: number;
+  buildingId: string;
   onClose: () => void;
 }) {
   const meta = roomStatusMeta[room.status];
@@ -212,22 +283,52 @@ function RoomPanel({
 
       <dl className="flex flex-col gap-2.5 text-sm">
         <Row icon="layers" label="Tầng" value={`Tầng ${floorNumber}`} />
-        <Row icon="square_foot" label="Diện tích" value={room.area ? `${room.area} m²` : 'Chưa khai báo'} />
+        <Row
+          icon="square_foot"
+          label="Diện tích"
+          value={room.area ? `${room.area} m²` : 'Chưa khai báo'}
+        />
         <Row icon="category" label="Tên phòng" value={room.name} />
+        <Row
+          icon="payments"
+          label="Giá thuê"
+          value={
+            room.monthlyRent === null
+              ? 'Chưa khai báo'
+              : `${formatNumber(room.monthlyRent)} đ/tháng`
+          }
+        />
         <Row icon="group" label="Sức chứa" value={`${room.capacity} người`} />
-        <Row icon="tag" label="Mã phòng" value={room.roomNumber} />
+        <Row icon="handyman" label="Thiết bị" value={`${room.equipmentCount} món`} />
+        <Row icon="photo_camera" label="Ảnh" value={`${room.photoCount} ảnh`} />
       </dl>
 
+      {room.monthlyRent !== null && (
+        <p className="mt-3 rounded-lg bg-[#ECFDF5] px-3 py-2 text-xs font-semibold text-[#047857] tnum">
+          Khoảng {formatMillions(room.monthlyRent)} / tháng
+        </p>
+      )}
+
       {room.description && (
-        <p className="mt-4 rounded-lg bg-surface-low px-3 py-2.5 text-xs leading-relaxed text-on-surface-variant">
+        <p className="mt-3 rounded-lg bg-surface-low px-3 py-2.5 text-xs leading-relaxed text-on-surface-variant">
           {room.description}
         </p>
       )}
 
-      <p className="mt-4 border-t border-outline-variant pt-3 text-[11px] leading-relaxed text-on-surface-variant">
-        Giá thuê, hợp đồng và thiết bị chưa có API công khai trên máy chủ nên chưa hiển
-        thị ở đây.
-      </p>
+      <Link
+        to={`/rooms/${room.id}`}
+        className="mt-4 flex h-9 items-center justify-center gap-1.5 rounded-lg bg-[#1d4ed8] text-xs font-semibold text-white transition hover:bg-[#1e40af]"
+      >
+        <span className="material-symbols-outlined text-base">open_in_new</span>
+        Xem chi tiết phòng
+      </Link>
+
+      {buildingId && (
+        <p className="mt-3 border-t border-outline-variant pt-3 text-[11px] leading-relaxed text-on-surface-variant">
+          Hợp đồng, hoá đơn và bảo trì chưa có API công khai trên máy chủ nên chưa hiển thị ở
+          đây.
+        </p>
+      )}
     </div>
   );
 }

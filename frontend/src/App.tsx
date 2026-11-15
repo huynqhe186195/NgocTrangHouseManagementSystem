@@ -8,6 +8,7 @@ import { BuildingDetailPage, BuildingsPage } from './features/buildings/Building
 import { FloorDesignerPage } from './features/buildings/FloorDesignerPage';
 import { FloorPlanPage } from './features/buildings/FloorPlanPage';
 import { RoomDetailPage } from './features/rooms/RoomDetailPage';
+import { RoomSearchPage } from './features/rooms/RoomSearchPage';
 import { RoomsPage } from './features/rooms/RoomsPage';
 import { AppShell } from './features/shell/AppShell';
 import { ForbiddenPage } from './features/shell/ForbiddenPage';
@@ -33,6 +34,7 @@ export default function App() {
           />
           <Route path="/rooms" element={<RoomsPage />} />
           <Route path="/rooms/:roomId" element={<RoomDetailPage />} />
+          <Route path="/search" element={<RoomSearchPage />} />
           <Route path="/forbidden" element={<ForbiddenPage />} />
         </Route>
       </Route>

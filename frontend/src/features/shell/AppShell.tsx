@@ -11,7 +11,10 @@ interface NavItem {
 
 const sections: { title?: string; items: NavItem[] }[] = [
   {
-    items: [{ to: '/', label: 'Tổng quan', icon: 'home' }],
+    items: [
+      { to: '/', label: 'Tổng quan', icon: 'home' },
+      { to: '/search', label: 'Tìm phòng', icon: 'search' },
+    ],
   },
   {
     title: 'Quản lý',

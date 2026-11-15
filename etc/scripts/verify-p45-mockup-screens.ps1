@@ -486,6 +486,24 @@ try {
     }
     Write-Step 'PASS: floor layout item create + list round-trip.'
 
+    # --- 14b. The widened kinds (8..11) actually persist -------------------
+    # CK_BM_FloorLayoutItem_Kind used to pin Kind to 1..7, so the four kinds
+    # mockup 3 draws but P4.5 Phase 1 omitted would be rejected by PostgreSQL
+    # even though the C# enum accepted them. Proving one of them round-trips
+    # is what shows the companion migration moved the constraint.
+    $r = Invoke-Web -Method 'POST' -Url "$api/floor/$floorId/layout-item" -Bearer $token `
+        -JsonBody '{"kind":9,"label":"Kho sau","x":2,"y":2,"width":1.5,"height":1.5}'
+    Assert-Status $r @(200,201) 'POST floor layout item of the new kind 9 (Storage)'
+    $storageItemId = (Get-EnvelopeData $r.Body).id
+    if (-not $storageItemId) { throw "POST kind-9 item returned no id: $($r.Body)" }
+
+    $kindInDb = (Invoke-Db $buildingDb `
+        "SELECT ""Kind""::text FROM ""BuildingManagementFloorLayoutItems"" WHERE ""Id"" = '$storageItemId'" | Out-String).Trim()
+    if ($kindInDb -ne '9') {
+        throw "Kind 9 was not stored (row Kind='$kindInDb'). Did the widen migration run?"
+    }
+    Write-Step 'PASS: layout item kind 9 (Storage) accepted and stored - the widened CHECK is in force.'
+
     # --- 15. Negative control: an unknown building id is denied -------------
     $randomId = [Guid]::NewGuid().ToString()
     $r = Invoke-Web -Method 'GET' -Url "$api/building/$randomId" -Bearer $token
@@ -522,7 +540,12 @@ try {
     Assert-Status $r @(200) 'DELETE floor layout item'
     $itemFlag = Get-DeletedFlag 'BuildingManagementFloorLayoutItems' $layoutItemId
     if ($itemFlag -notin @('t', 'gone')) { throw "Layout item IsDeleted='$itemFlag', expected 't' or gone." }
-    Write-Step 'PASS: DELETE floor layout item.'
+
+    $r = Invoke-Web -Method 'DELETE' -Url "$api/floor/$floorId/layout-item/$storageItemId" -Bearer $token
+    Assert-Status $r @(200) 'DELETE the kind-9 layout item'
+    $storageFlag = Get-DeletedFlag 'BuildingManagementFloorLayoutItems' $storageItemId
+    if ($storageFlag -notin @('t', 'gone')) { throw "Kind-9 item IsDeleted='$storageFlag', expected 't' or gone." }
+    Write-Step 'PASS: DELETE floor layout item (including the kind-9 item).'
 
     # The remaining equipment row must go too, or the room delete would leave
     # a live child behind.

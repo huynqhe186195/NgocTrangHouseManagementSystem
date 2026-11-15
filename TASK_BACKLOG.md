@@ -611,8 +611,8 @@
 
 ---
 
-### P4.5 ⏳ Five Figma Mockups — PHASE 1 DONE (`3adf6f6`), PHASE 2 DONE (`a9f424a`), PHASE 3 DONE (`3c3e2ea`); Phases 4–5 awaiting approval
-**Status:** PHASE 1 + PHASE 2 + PHASE 3 DONE. The five mockups in `D:\Dev\NgocTrangBuilding\Docs\front-end\building_rooms\` assume data the backend had nowhere to put: rent, equipment per room, photos, and room/object geometry. Phase 1 added exactly that layer; Phase 2 gave the frontend the typed client, query hooks and primitives the screens are built from; Phase 3 built screens 1, 2 and 4 on top of them.
+### P4.5 ⏳ Five Figma Mockups — PHASE 1 DONE (`3adf6f6`), PHASE 2 DONE (`a9f424a`), PHASE 3 DONE (`3c3e2ea`), PHASE 4 DONE (`0620fd4`); Phase 5 awaiting approval
+**Status:** PHASE 1 + PHASE 2 + PHASE 3 + PHASE 4 DONE. The five mockups in `D:\Dev\NgocTrangBuilding\Docs\front-end\building_rooms\` assume data the backend had nowhere to put: rent, equipment per room, photos, and room/object geometry. Phase 1 added exactly that layer; Phase 2 gave the frontend the typed client, query hooks and primitives the screens are built from; Phase 3 built screens 1, 2 and 4 on top of them; Phase 4 built screen 3, the floor-plan designer.
 
 **What Phase 1 added:**
 - `Room` gains `MonthlyRent` plus `LayoutX/Y/Width/Height/Shape/RotationDegrees/Points`, written by two dedicated methods (`UpdateRent`, `UpdateLayout`) so the designer can move a room without resending its whole profile. `Room.Update(...)` is untouched.
@@ -719,8 +719,48 @@
 
 **Not verified by this phase:** the screens were type-checked and built, but not driven in a browser — the Owner opens the dev lane and clicks through by hand.
 
-**Blocker:** None. **Phases 4–5 (the designer and the tenant search screen) are NOT started** — per the approved plan, the Owner reviews each phase before the next.
+**Blocker:** None. **Phase 5 (the tenant search screen) is NOT started** — per the approved plan, the Owner reviews each phase before the next.
 **Dependency:** P4.4 ✅ (the CRUD screens whose resources this extends); Phase 1 ✅ (`3adf6f6`); Phase 2 ✅ (`a9f424a`)
+
+#### Phase 4 — screen 3, the floor-plan designer (DONE at `0620fd4`)
+
+**What Phase 4 added (8 files, +1959/−11):**
+
+- `frontend/src/lib/floorGeometry.ts` — extended with the designer's maths: `GRID_STEP_METRES = 0.1`, `MIN_SIZE_METRES = 0.5`, `snapToGrid`, `clampToLimits`, `pointToMetres`, `moveBox`, `resizeBox` (opposite corner fixed, minimum-size floor), `clampBoxToBounds`, `defaultRoomBox`, `boxesEqual`, `formatMetres`, and `viewBoxRectFor` split out of `viewBoxFor` so panning is testable.
+- `frontend/src/lib/floorGeometry.test.ts` — 37 tests (22 new) covering the snap, all four resize corners, the corner-past-the-opposite-edge guard, clamping to the drawing, and pan.
+- `frontend/src/features/buildings/FloorDesignerCanvas.tsx` — the drawing surface. Hand-written SVG, no new dependency. Renders a 1 m minor grid and a 5 m major grid, draws rooms and objects with the same status colours as `FloorPlan`, and handles `move` / `resize` / `pan` drags through one `DragState` union. Pointer positions are converted with `getScreenCTM().inverse()`, so the maths is identical at any zoom or pan. Live feedback is local preview state; exactly one write is issued when the pointer is released.
+- `frontend/src/features/buildings/FloorDesignerPage.tsx` — new route `/buildings/:buildingId/floors/:floorId/design`. Left palette lists the floor's rooms (placed vs unplaced) and the seven object kinds, all draggable onto the canvas. Right panel edits the selection numerically (label for objects; X/Y/width/height for both, plus room number, area, status, rent read-out). "Lưu sơ đồ" saves only the dirty records, sequentially, and names the record that failed.
+- `frontend/src/features/buildings/FloorDesignerPage.test.tsx` — 5 component tests: the unplaced/placed counter, a drop reaching the layout endpoint with the expected payload, a palette drop creating the right object kind, a rejected create keeping its draft so a retry does not duplicate it, and a partial failure dropping only the drafts that reached the server.
+- `frontend/src/lib/api/buildingQueries.ts` — `useSaveRoomLayouts`, a mutation that takes the room id with each call because the designer saves a whole floor at once.
+- `frontend/src/features/buildings/FloorPlanPage.tsx` — "Sửa sơ đồ" is now a `Link` to the designer route.
+- `frontend/src/App.tsx` — the designer route.
+
+**Four defects caught in this phase's own review (all fixed before the commit):**
+- **Bounds computed from drafts made the box run away from the cursor.** Growing the viewBox mid-drag rescales the drawing under the pointer. Bounds now follow saved geometry only, so the drawing grows when the change is saved.
+- **A partially failed save could duplicate a created object.** The first draft cleared every draft on success and kept every draft on the first failure, so a new object that *had* been created stayed in the draft list, drew twice, and was posted again on the next save — creating a duplicate. Each record is now dropped the moment its own write succeeds.
+- **Saving a room would have erased its polygon.** The payload hard-coded `shape: 1, rotationDegrees: 0, points: null`, which flattens any room already drawn as a `Polygon`. The existing shape, rotation and points are now carried through unchanged.
+- **`getScreenCTM` was assumed to exist.** jsdom (and some embedded webviews) do not implement it, so the first drop threw instead of returning a point. Now called optionally with an origin fallback.
+
+**Evidence:**
+- ✅ Commit `0620fd4` pushed to `origin/main`, fast-forward only (`ae9f461..0620fd4`), no `Co-Authored-By` trailer
+- ✅ `npm run test`: **106/106 passing** (9 files) — the 79 from Phase 3 plus 22 `floorGeometry` designer cases and 5 designer-page cases
+- ✅ `npm run build` (`tsc --noEmit && vite build`): exit 0, 135 modules, 480.90 kB JS / 53.62 kB CSS
+- ✅ Phase 1 harness re-run **at the pushed SHA `0620fd4`**: **ALL STEPS PASSED**, LOG_DIRECTORY `C:\Users\Huynq\NgocTrang-Test-Logs\p45-mockup-screens-20261115-144211` — the designer saves through the same `PUT /room/{id}/layout` and floor-layout-item routes the harness proves
+- ✅ No file outside `frontend/` touched; no backend or migration change
+
+**Definition of Done (Phase 4):**
+- ✅ Drag to move, corner handles to resize, 0.1 m snap, pan, zoom, metre grid
+- ✅ Left palette drops both rooms and the seven object kinds
+- ✅ Right panel edits geometry numerically and can unplace a room / delete an object
+- ✅ Save sends only dirty records and reports per-record failures
+- ✅ Vitest + `tsc` + production build green, harness green at the pushed SHA
+
+**Not verified by this phase:** the designer was driven by component tests and the harness, **not clicked through in a real browser** — pointer capture and `getScreenCTM` behave differently under jsdom, so dragging must be confirmed by hand on the dev lane. Polygon editing on canvas is also not implemented (the designer edits the bounding rectangle and preserves the polygon fields).
+
+**Known limitations stated in the UI:**
+- Only the seven `FloorLayoutItemKind` values can be added; free-form shapes from mockup 3 (trees, balconies) are not supported.
+- No optimistic locking: two tabs editing one floor resolve last-write-wins.
+- The declared area (`room.area`) and the drawn size are independent; the designer does not rewrite the area.
 
 ---
 

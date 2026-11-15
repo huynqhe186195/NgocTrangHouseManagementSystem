@@ -18,6 +18,7 @@ import {
   useUpdateFloorLayoutItem,
 } from '../../lib/api/buildingQueries';
 import { describeMutationError } from '../../lib/api/mutationErrors';
+import { formatVnd } from '../../lib/format';
 import { floorLayoutKindMeta, roomStatusMeta } from '../../lib/api/types';
 import type { FloorLayoutItemDto, FloorLayoutItemKind, RoomDto } from '../../lib/api/types';
 import {
@@ -464,7 +465,7 @@ export function FloorDesignerPage() {
 
   if (loading) {
     return (
-      <div className="mx-auto max-w-[1500px]">
+      <div className="mx-auto max-w-[1720px]">
         <div className="flex items-center gap-2.5 rounded-xl border border-outline-variant bg-surface-lowest px-5 py-8 text-sm text-on-surface-variant">
           <span className="material-symbols-outlined animate-spin text-lg">sync</span>
           Đang tải sơ đồ tầng…
@@ -475,7 +476,7 @@ export function FloorDesignerPage() {
 
   if (error) {
     return (
-      <div className="mx-auto max-w-[1500px]">
+      <div className="mx-auto max-w-[1720px]">
         <Alert tone={error instanceof ApiError && error.status === 403 ? 'warning' : 'error'}>
           {error instanceof ApiError && error.status === 403
             ? 'Máy chủ đang từ chối truy cập dữ liệu tòa nhà (403).'
@@ -489,7 +490,7 @@ export function FloorDesignerPage() {
 
   if (!floor) {
     return (
-      <div className="mx-auto max-w-[1500px]">
+      <div className="mx-auto max-w-[1720px]">
         <EmptyState
           icon="layers"
           title="Không tìm thấy tầng"
@@ -587,7 +588,7 @@ export function FloorDesignerPage() {
         </div>
       )}
 
-      <div className="grid gap-4 xl:grid-cols-[250px_minmax(0,1fr)_300px]">
+      <div className="grid gap-4 xl:grid-cols-[230px_minmax(0,1fr)_290px]">
         <Palette
           rooms={serverRooms}
           placedIds={new Set(allRooms.filter((entry) => entry.box).map((entry) => entry.room.id))}
@@ -621,7 +622,7 @@ export function FloorDesignerPage() {
           <p className="mt-3 rounded-lg bg-surface-low px-3 py-2 text-[11px] leading-relaxed text-on-surface-variant">
             {draft
               ? `${draft.label}: x ${formatMetres(draft.box.x)}, y ${formatMetres(draft.box.y)} · ${formatMetres(draft.box.width)} × ${formatMetres(draft.box.height)}`
-              : 'Sơ đồ chỉ hỗ trợ hình chữ nhật và 7 loại vật thể cố định (hành lang, cầu thang, thang máy, khu dịch vụ, nhà vệ sinh, cửa ra vào, chú thích).'}
+              : 'Sơ đồ chỉ vẽ phòng bằng hình chữ nhật. Mười một loại vật thể cố định có thể đặt thêm; hình dạng tuỳ ý (cây, ban công vẽ tay) chưa hỗ trợ.'}
           </p>
         </section>
 
@@ -658,7 +659,7 @@ function Palette({
         <p className="mb-2 text-[11px] leading-relaxed text-on-surface-variant">
           {`Kéo một phòng vào sơ đồ để đặt vị trí. ${placedIds.size}/${rooms.length} phòng đã đặt.`}
         </p>
-        <ul className="flex max-h-[280px] flex-col gap-1.5 overflow-y-auto">
+        <ul className="flex max-h-[300px] flex-col gap-1.5 overflow-y-auto">
           {rooms.map((room) => {
             const placed = placedIds.has(room.id);
             return (
@@ -690,14 +691,15 @@ function Palette({
       </section>
 
       <section className="rounded-xl border border-outline-variant bg-surface-lowest p-4">
-        <h2 className="mb-2 font-display text-sm font-bold text-on-surface">Vật thể</h2>
+        <h2 className="mb-2 font-display text-sm font-bold text-on-surface">Thành phần</h2>
         <p className="mb-2 text-[11px] leading-relaxed text-on-surface-variant">
-          Kéo vào sơ đồ để thêm hành lang, cầu thang, nhà vệ sinh…
+          Kéo vào sơ đồ để thêm hành lang, cầu thang, kho, ban công, cây xanh…
         </p>
         <ul className="grid grid-cols-2 gap-1.5">
           {(Object.keys(floorLayoutKindMeta) as unknown as string[]).map((key) => {
             const kind = Number(key) as FloorLayoutItemKind;
-            const meta = floorLayoutKindMeta[kind];            return (
+            const meta = floorLayoutKindMeta[kind];
+            return (
               <li key={key}>
                 <div
                   draggable={canDesign}
@@ -766,7 +768,7 @@ function PropertyPanel({
         <div className="mb-3 flex items-start justify-between gap-2">
           <div>
             <p className="text-[11px] font-semibold tracking-[0.06em] text-on-surface-variant uppercase">
-              Phòng
+              Thông tin phòng
             </p>
             <h2 className="mt-0.5 font-display text-lg font-bold text-on-surface">
               {room.roomNumber}
@@ -776,6 +778,23 @@ function PropertyPanel({
             {meta?.label ?? '—'}
           </StatusBadge>
         </div>
+
+        {/* Read-only profile, the same rows mockup 3 shows above the geometry. */}
+        <dl className="mb-4 flex flex-col gap-1.5 border-b border-outline-variant pb-3 text-xs">
+          <SummaryRow label="Tên phòng" value={room.name} />
+          <SummaryRow label="Diện tích" value={room.area ? `${room.area} m²` : '—'} />
+          <SummaryRow
+            label="Giá thuê"
+            value={room.monthlyRent === null ? '—' : `${formatVnd(room.monthlyRent)}/tháng`}
+          />
+          <SummaryRow label="Sức chứa" value={`${room.capacity} người`} />
+          <SummaryRow
+            label="Hình dạng"
+            value={
+              room.layoutShape === 2 ? 'Đa giác' : room.layoutShape === 1 ? 'Hình chữ nhật' : '—'
+            }
+          />
+        </dl>
 
         {roomBox ? (
           <BoxFields
@@ -790,8 +809,9 @@ function PropertyPanel({
         )}
 
         <p className="mt-3 text-[11px] leading-relaxed text-on-surface-variant">
-          Diện tích khai báo: {room.area ? `${room.area} m²` : '—'}. Kích thước sơ đồ và diện
-          tích là hai thông tin độc lập — sơ đồ không tự sửa diện tích.
+          Diện tích khai báo và kích thước vẽ là hai thông tin độc lập — sơ đồ không tự sửa diện
+          tích.
+          {room.description ? ` Ghi chú: ${room.description}` : ''}
         </p>
 
         {canDesign && roomBox && (
@@ -901,6 +921,17 @@ function BoxFields({
         {field('Cao (m)', 'height')}
       </div>
       {localError && <Alert tone="error">{localError}</Alert>}
+    </div>
+  );
+}
+
+function SummaryRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3">
+      <dt className="shrink-0 text-on-surface-variant">{label}</dt>
+      <dd className="truncate text-right font-medium text-on-surface" title={value}>
+        {value}
+      </dd>
     </div>
   );
 }

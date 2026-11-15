@@ -104,7 +104,12 @@ export function FloorDesignerCanvas({
     null,
   );
 
+  // The drawing fills the available height instead of shrinking to its own
+  // aspect ratio: a shallow floor used to paint as a thin strip with empty
+  // space below it. `preserveAspectRatio="xMidYMid meet"` keeps metres square
+  // and centres the plan, so the extra space shows grid rather than distortion.
   const viewBox = useMemo(() => viewBoxRectFor(bounds, zoom, offset), [bounds, zoom, offset]);
+  const gridStep = useMemo(() => tickStep(bounds, zoom), [bounds.width, zoom]);
 
   const toMetres = useCallback((clientX: number, clientY: number) => {
     const svg = svgRef.current;
@@ -291,8 +296,8 @@ export function FloorDesignerCanvas({
         <svg
           ref={svgRef}
           viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`}
-          className="h-auto w-full touch-none select-none"
-          style={{ aspectRatio: `${bounds.width} / ${bounds.height}` }}
+          preserveAspectRatio="xMidYMid meet"
+          className="h-[clamp(480px,calc(100vh-310px),900px)] w-full touch-none select-none"
           role="application"
           aria-label="Khu vực thiết kế sơ đồ tầng"
           onPointerDown={startPan}
@@ -307,7 +312,7 @@ export function FloorDesignerCanvas({
               height={1}
               patternUnits="userSpaceOnUse"
             >
-              <path d="M 1 0 L 0 0 0 1" fill="none" stroke="#eef2f7" strokeWidth="0.02" />
+              <path d="M 1 0 L 0 0 0 1" fill="none" stroke="#e4eaf2" strokeWidth="0.018" />
             </pattern>
             <pattern
               id="designer-grid-major"
@@ -315,7 +320,7 @@ export function FloorDesignerCanvas({
               height={5}
               patternUnits="userSpaceOnUse"
             >
-              <path d="M 5 0 L 0 0 0 5" fill="none" stroke="#dbe4ee" strokeWidth="0.04" />
+              <path d="M 5 0 L 0 0 0 5" fill="none" stroke="#cbd6e4" strokeWidth="0.04" />
             </pattern>
           </defs>
 
@@ -340,6 +345,8 @@ export function FloorDesignerCanvas({
             height={viewBox.height}
             fill="url(#designer-grid-major)"
           />
+
+          <MeasureRulers viewBox={viewBox} step={gridStep} />
 
           {items.map((item) => {
             const active = selection?.kind === 'item' && selection.id === item.id;
@@ -377,6 +384,7 @@ export function FloorDesignerCanvas({
                     ? formatMetres(box.width * box.height)
                     : `${room.area} m²`
                 }
+                walled
                 onPointerDown={(event) => startMove(event, 'room', room.id, box)}
                 onResizeStart={(event, handle) => startResize(event, 'room', room.id, handle, box)}
               />
@@ -395,6 +403,7 @@ function DesignerShape({
   selected,
   label,
   sublabel,
+  walled = false,
   onPointerDown,
   onResizeStart,
 }: {
@@ -404,12 +413,18 @@ function DesignerShape({
   selected: boolean;
   label: string;
   sublabel?: string;
+  /** Rooms read as walls + door; objects read as a light outlined box. */
+  walled?: boolean;
   onPointerDown: (event: React.PointerEvent) => void;
   onResizeStart: (event: React.PointerEvent, handle: ResizeHandle) => void;
 }) {
   const unit = Math.min(box.width, box.height);
   const titleSize = Math.max(0.22, Math.min(unit * 0.3, box.width * 0.16));
   const subSize = titleSize * 0.72;
+  // The mockup draws rooms as thick walls with a gap for the door. The wall is
+  // capped in metres so it never swallows a small room at high zoom.
+  const wall = Math.max(0.06, Math.min(0.16, unit * 0.06));
+  const door = Math.min(box.width * 0.38, Math.max(0.7, Math.min(1.1, box.width * 0.3)));
 
   return (
     <g>
@@ -420,11 +435,33 @@ function DesignerShape({
         height={box.height}
         rx={0.08}
         fill={fill}
-        stroke={selected ? SELECTED_STROKE : stroke}
-        strokeWidth={selected ? 0.1 : 0.05}
+        stroke={walled ? 'none' : selected ? SELECTED_STROKE : stroke}
+        strokeWidth={walled ? 0 : selected ? 0.1 : 0.05}
         style={{ cursor: 'move' }}
         onPointerDown={onPointerDown}
       />
+
+      {walled && (
+        <>
+          {/* Wall ring, drawn as four edges so the bottom one can break for the door. */}
+          <path
+            d={wallPath(box, wall, door)}
+            fill="none"
+            stroke={selected ? SELECTED_STROKE : '#3d3d3d'}
+            strokeWidth={wall}
+            strokeLinecap="square"
+            pointerEvents="none"
+          />
+          {/* Door leaf, the thin arc mockup 3 draws at each opening. */}
+          <path
+            d={`M ${box.x + (box.width - door) / 2} ${box.y + box.height - wall / 2} a ${door} ${door} 0 0 1 ${door} 0`}
+            fill="none"
+            stroke={selected ? SELECTED_STROKE : '#8a8a8a'}
+            strokeWidth={Math.max(0.02, wall * 0.28)}
+            pointerEvents="none"
+          />
+        </>
+      )}
 
       <text
         x={box.x + box.width / 2}
@@ -452,6 +489,20 @@ function DesignerShape({
         </text>
       )}
 
+      {/* The selected outline sits inside the wall so it never hides it. */}
+      <rect
+        x={box.x}
+        y={box.y}
+        width={box.width}
+        height={box.height}
+        rx={0.08}
+        fill="none"
+        stroke={selected ? SELECTED_STROKE : 'transparent'}
+        strokeWidth={0.05}
+        strokeDasharray={selected ? '0.4 0.3' : undefined}
+        pointerEvents="none"
+      />
+
       {selected &&
         RESIZE_HANDLES.map(({ handle, cx, cy }) => (
           <rect
@@ -469,6 +520,115 @@ function DesignerShape({
         ))}
     </g>
   );
+}
+
+/** Four walls with a door gap in the middle of the bottom edge. */
+function wallPath(box: Box, wall: number, door: number): string {
+  const inset = wall / 2;
+  const left = box.x + inset;
+  const right = box.x + box.width - inset;
+  const top = box.y + inset;
+  const bottom = box.y + box.height - inset;
+  const doorStart = box.x + (box.width - door) / 2;
+  const doorEnd = doorStart + door;
+  return (
+    `M ${left} ${top} H ${right} V ${bottom} H ${doorEnd} ` +
+    `M ${doorStart} ${bottom} H ${left} Z`
+  );
+}
+
+/**
+ * Metric rulers along the top and left edges, mirroring the dimension lines in
+ * mockup 3. Tick spacing widens with zoom so labels never collide.
+ */
+function MeasureRulers({
+  viewBox,
+  step,
+}: {
+  viewBox: { x: number; y: number; width: number; height: number };
+  step: number;
+}) {
+  const fontSize = Math.max(0.26, viewBox.width * 0.012);
+  const tick = fontSize * 0.5;
+
+  const xTicks: number[] = [];
+  for (let value = Math.ceil(viewBox.x / step) * step; value <= viewBox.x + viewBox.width; value += step) {
+    xTicks.push(value);
+  }
+  const yTicks: number[] = [];
+  for (let value = Math.ceil(viewBox.y / step) * step; value <= viewBox.y + viewBox.height; value += step) {
+    yTicks.push(value);
+  }
+
+  return (
+    <g pointerEvents="none" fontFamily="Inter, sans-serif">
+      {xTicks.map((value) => (
+        <g key={`x${value}`}>
+          <line
+            x1={value}
+            y1={viewBox.y}
+            x2={value}
+            y2={viewBox.y + tick}
+            stroke="#94a3b8"
+            strokeWidth={fontSize * 0.06}
+          />
+          <text
+            x={value}
+            y={viewBox.y + tick * 2.1}
+            textAnchor="middle"
+            fontSize={fontSize}
+            fill="#64748b"
+          >
+            {formatTick(value)}
+          </text>
+        </g>
+      ))}
+      {yTicks.map((value) => (
+        <g key={`y${value}`}>
+          <line
+            x1={viewBox.x}
+            y1={value}
+            x2={viewBox.x + tick}
+            y2={value}
+            stroke="#94a3b8"
+            strokeWidth={fontSize * 0.06}
+          />
+          <text
+            x={viewBox.x + tick * 1.5}
+            y={value + fontSize * 0.35}
+            fontSize={fontSize}
+            fill="#64748b"
+          >
+            {formatTick(value)}
+          </text>
+        </g>
+      ))}
+      <text
+        x={viewBox.x + viewBox.width - fontSize * 0.4}
+        y={viewBox.y + tick * 2.1}
+        textAnchor="end"
+        fontSize={fontSize}
+        fill="#64748b"
+      >
+        (m)
+      </text>
+    </g>
+  );
+}
+
+function formatTick(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+/** Keeps ruler labels readable: a tick every 1, 2, 5 or 10 m. */
+function tickStep(bounds: { width: number }, zoom: number): number {
+  const perTick = bounds.width / zoom / 12;
+  for (const candidate of [1, 2, 5, 10, 20, 50]) {
+    if (perTick <= candidate) {
+      return candidate;
+    }
+  }
+  return 100;
 }
 
 /** Half a metre is the floor; the handles themselves are fixed in metres. */

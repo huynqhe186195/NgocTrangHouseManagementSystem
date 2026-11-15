@@ -55,8 +55,8 @@ export type RoomLayoutShape = 1 | 2;
 /** Server enum: Good=1, NeedsRepair=2, Broken=3. */
 export type RoomEquipmentCondition = 1 | 2 | 3;
 
-/** Server enum: Corridor=1, Staircase=2, Elevator=3, ServiceArea=4, Restroom=5, Entrance=6, Label=7. */
-export type FloorLayoutItemKind = 1 | 2 | 3 | 4 | 5 | 6 | 7;
+/** Server enum: Corridor=1, Staircase=2, Elevator=3, ServiceArea=4, Restroom=5, Entrance=6, Label=7, Laundry=8, Storage=9, Balcony=10, Tree=11. */
+export type FloorLayoutItemKind = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11;
 
 export interface RoomDto extends AuditedEntity {
   floorId: string;
@@ -195,5 +195,9 @@ export const floorLayoutKindMeta: Record<FloorLayoutItemKind, { label: string; i
   5: { label: 'Nhà vệ sinh', icon: 'wc' },
   6: { label: 'Cửa ra vào', icon: 'door_front' },
   7: { label: 'Nhãn chú thích', icon: 'label' },
+  8: { label: 'Phòng giặt', icon: 'local_laundry_service' },
+  9: { label: 'Kho', icon: 'inventory_2' },
+  10: { label: 'Ban công', icon: 'balcony' },
+  11: { label: 'Cây xanh', icon: 'park' },
 };
 

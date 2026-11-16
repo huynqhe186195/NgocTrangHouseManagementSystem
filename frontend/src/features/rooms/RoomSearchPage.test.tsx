@@ -118,7 +118,8 @@ describe('RoomSearchPage', () => {
     renderPage();
 
     expect(screen.getByText('Phòng đang trống (1)')).toBeTruthy();
-    expect(screen.getByText('Phòng A203')).toBeTruthy();
+    // The room also titles the page now, so it appears more than once.
+    expect(screen.getAllByText('Phòng A203').length).toBeGreaterThan(0);
     expect(screen.queryByText('Phòng A204')).toBeNull();
     expect(screen.queryByText('Phòng A205')).toBeNull();
 

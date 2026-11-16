@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Alert } from '../../components/ui/Alert';
 import { EmptyState } from '../../components/ui/EmptyState';
@@ -27,6 +27,34 @@ export function FloorPlanPage() {
   const { hasPermission } = useAuth();
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
   const [addRoomOpen, setAddRoomOpen] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
+  const planFrameRef = useRef<HTMLDivElement>(null);
+
+  // Escape and the browser's own "leave fullscreen" both fire this, so the
+  // button's label stays truthful whichever way the owner exits.
+  useEffect(() => {
+    function sync() {
+      setFullscreen(document.fullscreenElement === planFrameRef.current);
+    }
+    document.addEventListener('fullscreenchange', sync);
+    return () => document.removeEventListener('fullscreenchange', sync);
+  }, []);
+
+  const toggleFullscreen = useCallback(async () => {
+    const frame = planFrameRef.current;
+    if (!frame) {
+      return;
+    }
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+      } else {
+        await frame.requestFullscreen();
+      }
+    } catch {
+      setFullscreen(Boolean(document.fullscreenElement));
+    }
+  }, []);
 
   const canManageRooms = hasPermission(BuildingPolicies.roomsManage);
 
@@ -108,7 +136,8 @@ export function FloorPlanPage() {
             {!floor && <option value="">Chọn tầng</option>}
             {(snapshot?.floors ?? []).map((item) => (
               <option key={item.id} value={item.id}>
-                Tầng {item.floorNumber} — {item.name}
+                Tầng {item.floorNumber}
+                {item.name !== `Tầng ${item.floorNumber}` ? ` — ${item.name}` : ''}
               </option>
             ))}
           </select>
@@ -170,6 +199,17 @@ export function FloorPlanPage() {
               <div className="flex items-center gap-2">
                 <button
                   type="button"
+                  onClick={() => void toggleFullscreen()}
+                  aria-label={fullscreen ? 'Thoát toàn màn hình' : 'Xem sơ đồ toàn màn hình'}
+                  title={fullscreen ? 'Thoát toàn màn hình' : 'Xem sơ đồ toàn màn hình'}
+                  className="flex h-9 w-9 items-center justify-center rounded-lg border border-outline-variant text-on-surface-variant transition hover:bg-surface-low"
+                >
+                  <span className="material-symbols-outlined text-base">
+                    {fullscreen ? 'fullscreen_exit' : 'fullscreen'}
+                  </span>
+                </button>
+                <button
+                  type="button"
                   onClick={() => setAddRoomOpen(true)}
                   disabled={!canManageRooms}
                   title={
@@ -192,18 +232,28 @@ export function FloorPlanPage() {
               </div>
             </header>
 
-            <FloorPlan
-              rooms={rooms}
-              items={layoutItems.data ?? []}
-              selectedId={selectedRoomId}
-              onSelect={setSelectedRoomId}
-            />
+            <div
+              ref={planFrameRef}
+              className={
+                fullscreen
+                  ? 'flex h-full flex-col overflow-auto bg-surface-lowest p-5'
+                  : undefined
+              }
+            >
+              <FloorPlan
+                rooms={rooms}
+                items={layoutItems.data ?? []}
+                selectedId={selectedRoomId}
+                onSelect={setSelectedRoomId}
+                fill={fullscreen}
+              />
 
-            {unplacedCount > 0 && unplacedCount < rooms.length && (
-              <p className="mt-3 rounded-lg bg-[#FFFBEB] px-3 py-2 text-xs leading-relaxed text-[#B45309]">
-                {unplacedCount} phòng chưa có toạ độ trên sơ đồ nên không được vẽ.
-              </p>
-            )}
+              {unplacedCount > 0 && unplacedCount < rooms.length && (
+                <p className="mt-3 rounded-lg bg-[#FFFBEB] px-3 py-2 text-xs leading-relaxed text-[#B45309]">
+                  {unplacedCount} phòng chưa có toạ độ trên sơ đồ nên không được vẽ.
+                </p>
+              )}
+            </div>
           </section>
 
           <aside className="rounded-xl border border-outline-variant bg-surface-lowest p-5">

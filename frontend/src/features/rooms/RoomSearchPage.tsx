@@ -22,6 +22,7 @@ import { equipmentConditionMeta, roomStatusMeta } from '../../lib/api/types';
 import type { RoomPhotoDto } from '../../lib/api/types';
 import { formatVnd } from '../../lib/format';
 import { FloorPlan } from '../buildings/FloorPlan';
+import { RoomSaveShare } from './RoomSaveShare';
 
 const LEASE_MONTHS = [3, 6, 12];
 const DEFAULT_LEASE_MONTHS = 6;
@@ -134,9 +135,14 @@ export function RoomSearchPage() {
   return (
     <div className="mx-auto max-w-[1400px]">
       <PageHeader
-        title="Tìm phòng"
-        description="Xem các phòng đang trống và ước tính chi phí nhận phòng"
+        title={room ? `Phòng ${room.roomNumber}` : 'Tìm phòng'}
+        description={
+          room
+            ? room.name
+            : 'Xem các phòng đang trống và ước tính chi phí nhận phòng'
+        }
         breadcrumb={breadcrumb}
+        actions={room ? <RoomSaveShare roomId={room.id} roomNumber={room.roomNumber} /> : undefined}
       />
 
       {error && (

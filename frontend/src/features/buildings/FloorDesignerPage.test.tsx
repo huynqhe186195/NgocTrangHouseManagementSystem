@@ -212,4 +212,55 @@ describe('FloorDesignerPage', () => {
       expect(screen.getByRole('button', { name: /Lưu sơ đồ \(1\)/ })).toBeTruthy(),
     );
   });
+
+  it('undoes one step at a time rather than throwing the whole draft away', () => {
+    snapshot = {
+      ...snapshot,
+      rooms: [room(), room({ id: 'r2', roomNumber: 'A102' })],
+      roomsByFloor: new Map([['f1', [room(), room({ id: 'r2', roomNumber: 'A102' })]]]),
+    };
+    renderPage();
+
+    const undoButton = screen.getByRole('button', { name: 'Hoàn tác bước trước' }) as HTMLButtonElement;
+    const redoButton = screen.getByRole('button', {
+      name: 'Làm lại bước vừa hoàn tác',
+    }) as HTMLButtonElement;
+    expect(undoButton.disabled).toBe(true);
+
+    dropOnCanvas({ 'application/x-room-id': 'r1' });
+    dropOnCanvas({ 'application/x-room-id': 'r2' });
+    expect(screen.getByText(/2\/2 phòng đã đặt\./)).toBeTruthy();
+
+    // Two steps, so one undo must leave the second room still placed.
+    fireEvent.click(undoButton);
+    expect(screen.getByText(/1\/2 phòng đã đặt\./)).toBeTruthy();
+
+    fireEvent.click(undoButton);
+    expect(screen.getByText(/0\/2 phòng đã đặt\./)).toBeTruthy();
+    expect(undoButton.disabled).toBe(true);
+
+    fireEvent.click(redoButton);
+    expect(screen.getByText(/1\/2 phòng đã đặt\./)).toBeTruthy();
+  });
+
+  it('only enables rotate once something is selected and saves the turned angle', async () => {
+    renderPage();
+
+    const rotate = screen.getByRole('button', { name: /Xoay 90°/ }) as HTMLButtonElement;
+    expect(rotate.disabled).toBe(true);
+
+    // Dropping a room selects it, which is what unlocks the rotate control.
+    dropOnCanvas({ 'application/x-room-id': 'r1' });
+    expect(rotate.disabled).toBe(false);
+
+    fireEvent.click(rotate);
+    expect(screen.getByText('90°')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: /Lưu sơ đồ/ }));
+    await waitFor(() => expect(saveRoomLayout).toHaveBeenCalledTimes(1));
+    expect(saveRoomLayout.mock.calls[0]![0]).toMatchObject({
+      roomId: 'r1',
+      input: { rotationDegrees: 90 },
+    });
+  });
 });

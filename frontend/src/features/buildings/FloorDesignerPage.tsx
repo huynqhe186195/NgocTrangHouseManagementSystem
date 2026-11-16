@@ -37,6 +37,7 @@ import {
   type DesignerItem,
   type DesignerRoom,
   type DesignerSelection,
+  type MeasureInfo,
 } from './FloorDesignerCanvas';
 
 const PADDING_METRES = 1.5;
@@ -103,6 +104,32 @@ interface DraftItem {
   isNew: boolean;
 }
 
+/** Where a room sits and how far it is turned; both are saved together. */
+interface RoomDraft {
+  box: Box | null;
+  rotation: number;
+}
+
+/** Everything unsaved on this floor, in the form the history stack stores. */
+interface DraftState {
+  rooms: Record<string, RoomDraft>;
+  items: Record<string, DraftItem>;
+  removed: string[];
+}
+
+const EMPTY_DRAFTS: DraftState = { rooms: {}, items: {}, removed: [] };
+
+/** Deep enough to cover an editing session, shallow enough to stay in memory. */
+const HISTORY_LIMIT = 50;
+
+interface DraftHistory {
+  past: DraftState[];
+  present: DraftState;
+  future: DraftState[];
+}
+
+const EMPTY_HISTORY: DraftHistory = { past: [], present: EMPTY_DRAFTS, future: [] };
+
 /** Drops the drafts that just reached the server, keeping the failed ones. */
 function withoutKeys<T>(record: Record<string, T>, keys: string[]): Record<string, T> {
   if (keys.length === 0) {
@@ -113,6 +140,12 @@ function withoutKeys<T>(record: Record<string, T>, keys: string[]): Record<strin
     delete next[key];
   }
   return next;
+}
+
+/** Turns an angle into (-180, 180] so the stored column stays readable. */
+function normaliseDegrees(degrees: number): number {
+  const wrapped = ((degrees % 360) + 360) % 360;
+  return wrapped > 180 ? wrapped - 360 : wrapped;
 }
 
 export function FloorDesignerPage() {
@@ -128,14 +161,15 @@ export function FloorDesignerPage() {
   const canDesign =
     hasPermission(BuildingPolicies.roomsManage) && hasPermission(BuildingPolicies.floorsManage);
 
-  const [roomDrafts, setRoomDrafts] = useState<Record<string, Box | null>>({});
-  const [itemDrafts, setItemDrafts] = useState<Record<string, DraftItem>>({});
-  const [removedItemIds, setRemovedItemIds] = useState<string[]>([]);
+  const [history, setHistory] = useState<DraftHistory>(EMPTY_HISTORY);
   const [selection, setSelection] = useState<DesignerSelection>(null);
   const [draft, setDraft] = useState<{ label: string; box: Box } | null>(null);
   const [saveErrors, setSaveErrors] = useState<string[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [measure, setMeasure] = useState<MeasureInfo | null>(null);
+
+  const { rooms: roomDrafts, items: itemDrafts, removed: removedItemIds } = history.present;
 
   const floor = snapshot?.floors.find((item) => item.id === floorId) ?? null;
   const serverRooms = useMemo(
@@ -166,10 +200,16 @@ export function FloorDesignerPage() {
 
   const allRooms = useMemo(
     () =>
-      serverRooms.map((room) => ({
-        room,
-        box: room.id in roomDrafts ? roomDrafts[room.id]! : roomBox(room),
-      })),
+      serverRooms.map((room) => {
+        const roomDraft = roomDrafts[room.id];
+        return {
+          room,
+          box: roomDraft ? roomDraft.box : roomBox(room),
+          rotation: roomDraft
+            ? roomDraft.rotation
+            : normaliseDegrees(room.layoutRotationDegrees ?? 0),
+        };
+      }),
     [serverRooms, roomDrafts],
   );
 
@@ -192,15 +232,19 @@ export function FloorDesignerPage() {
     () =>
       serverRooms
         .filter((room) => {
-          if (!(room.id in roomDrafts)) {
+          const roomDraft = roomDrafts[room.id];
+          if (!roomDraft) {
             return false;
           }
           const before = roomBox(room);
-          const after = roomDrafts[room.id]!;
+          const after = roomDraft.box;
           if (before === null || after === null) {
             return before !== after;
           }
-          return !boxesEqual(before, after);
+          return (
+            !boxesEqual(before, after) ||
+            normaliseDegrees(room.layoutRotationDegrees ?? 0) !== roomDraft.rotation
+          );
         })
         .map((room) => room.id),
     [serverRooms, roomDrafts],
@@ -244,34 +288,114 @@ export function FloorDesignerPage() {
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
   }, [dirtyCount]);
 
-  function setRoomBox(roomId: string, box: Box | null) {
+  /**
+   * Every draft edit goes through here, so the history stack always holds the
+   * state before the edit — that is what makes Undo a real undo rather than a
+   * reset of the whole drawing.
+   */
+  function commitDraft(update: (current: DraftState) => DraftState) {
     setNotice(null);
-    setRoomDrafts((current) => ({ ...current, [roomId]: box }));
+    setHistory((current) => {
+      const next = update(current.present);
+      if (next === current.present) {
+        return current;
+      }
+      return {
+        past: [...current.past, current.present].slice(-HISTORY_LIMIT),
+        present: next,
+        future: [],
+      };
+    });
+  }
+
+  function undo() {
+    setNotice(null);
+    setHistory((current) => {
+      const previous = current.past.at(-1);
+      if (!previous) {
+        return current;
+      }
+      return {
+        past: current.past.slice(0, -1),
+        present: previous,
+        future: [current.present, ...current.future],
+      };
+    });
+  }
+
+  function redo() {
+    setNotice(null);
+    setHistory((current) => {
+      const [next, ...rest] = current.future;
+      if (!next) {
+        return current;
+      }
+      return {
+        past: [...current.past, current.present].slice(-HISTORY_LIMIT),
+        present: next,
+        future: rest,
+      };
+    });
+  }
+
+  function setRoomBox(roomId: string, box: Box | null) {
+    commitDraft((current) => {
+      const existing = current.rooms[roomId];
+      const room = serverRooms.find((item) => item.id === roomId);
+      const rotation = existing
+        ? existing.rotation
+        : normaliseDegrees(room?.layoutRotationDegrees ?? 0);
+      return { ...current, rooms: { ...current.rooms, [roomId]: { box, rotation } } };
+    });
+  }
+
+  function rotateSelectedRoom() {
+    if (selection?.kind !== 'room') {
+      return;
+    }
+    const roomId = selection.id;
+    commitDraft((current) => {
+      const entry = allRooms.find((candidate) => candidate.room.id === roomId);
+      if (!entry || !entry.box) {
+        return current;
+      }
+      return {
+        ...current,
+        rooms: {
+          ...current.rooms,
+          [roomId]: { box: entry.box, rotation: normaliseDegrees(entry.rotation + 90) },
+        },
+      };
+    });
   }
 
   function setItemBox(itemId: string, box: Box) {
-    setNotice(null);
-    setItemDrafts((current) => {
-      const existing = current[itemId];
+    commitDraft((current) => {
+      const existing = current.items[itemId];
       const baseline = baselineItems.find((item) => item.id === itemId);
       const source = existing ?? baseline;
       if (!source) {
         return current;
       }
-      return { ...current, [itemId]: { ...source, box, isNew: existing?.isNew ?? false } };
+      return {
+        ...current,
+        items: {
+          ...current.items,
+          [itemId]: { ...source, box, isNew: existing?.isNew ?? false },
+        },
+      };
     });
   }
 
   function setItemLabel(itemId: string, label: string | null) {
-    setNotice(null);
-    setItemDrafts((current) => {
-      const existing = current[itemId];
+    commitDraft((current) => {
+      const existing = current.items[itemId];
       const baseline = baselineItems.find((item) => item.id === itemId);
       const source = existing ?? baseline;
       if (!source) {
         return current;
       }
-      return { ...current, [itemId]: { ...source, label } };
+      return { ...current, items: { ...current.items, [itemId]: { ...source, label } } };
     });
   }
 
@@ -307,31 +431,40 @@ export function FloorDesignerPage() {
       bounds,
     );
     const id = `new-${crypto.randomUUID()}`;
-    setItemDrafts((current) => ({
+    commitDraft((current) => ({
       ...current,
-      [id]: { id, kind, label: null, box, isNew: true },
+      items: { ...current.items, [id]: { id, kind, label: null, box, isNew: true } },
     }));
     setSelection({ kind: 'item', id });
   }
 
   function removeSelectedItem(itemId: string) {
-    const draftItem = itemDrafts[itemId];
-    if (draftItem?.isNew) {
-      setItemDrafts((current) => {
-        const next = { ...current };
-        delete next[itemId];
-        return next;
-      });
-    } else {
-      setRemovedItemIds((current) => [...current, itemId]);
-    }
+    commitDraft((current) => {
+      const draftItem = current.items[itemId];
+      if (draftItem?.isNew) {
+        return { ...current, items: withoutKeys(current.items, [itemId]) };
+      }
+      return { ...current, removed: [...current.removed, itemId] };
+    });
     setSelection(null);
   }
 
-  function resetDrafts() {
-    setRoomDrafts({});
-    setItemDrafts({});
-    setRemovedItemIds([]);
+  function deleteSelection() {
+    if (!selection) {
+      return;
+    }
+    if (selection.kind === 'item') {
+      removeSelectedItem(selection.id);
+      return;
+    }
+    // Removing a room from the plan is a draft like any other, so Undo restores it.
+    setRoomBox(selection.id, null);
+    setSelection(null);
+  }
+
+  /** Throws the whole draft away — the one action Undo must not be confused with. */
+  function discardDrafts() {
+    setHistory({ past: [], present: EMPTY_DRAFTS, future: [] });
     setSaveErrors([]);
     setNotice(null);
   }
@@ -352,7 +485,8 @@ export function FloorDesignerPage() {
     try {
       for (const roomId of dirtyRoomIds) {
         const room = serverRooms.find((item) => item.id === roomId);
-        const box = roomDrafts[roomId]!;
+        const roomDraft = roomDrafts[roomId];
+        const box = roomDraft?.box ?? null;
         try {
           await saveLayouts.mutateAsync({
             roomId,
@@ -365,7 +499,7 @@ export function FloorDesignerPage() {
                   // A room drawn as a polygon keeps its extra fields; the
                   // designer only ever edits the bounding rectangle.
                   shape: room?.layoutShape ?? 1,
-                  rotationDegrees: room?.layoutRotationDegrees ?? 0,
+                  rotationDegrees: roomDraft?.rotation ?? 0,
                   points: room?.layoutPoints ?? null,
                 }
               : {
@@ -392,8 +526,7 @@ export function FloorDesignerPage() {
         const item = itemDrafts[itemId];
         if (!item) {
           continue;
-        }
-        try {
+        }        try {
           await updateItem.mutateAsync({
             itemId,
             input: {
@@ -452,9 +585,18 @@ export function FloorDesignerPage() {
       setSaving(false);
     }
 
-    setRoomDrafts((current) => withoutKeys(current, savedRooms));
-    setItemDrafts((current) => withoutKeys(current, [...savedUpdates, ...savedNewItems]));
-    setRemovedItemIds((current) => current.filter((id) => !savedDeletes.includes(id)));
+    // Saved drafts leave the stack for good: their baseline is now the server
+    // state, and undoing back to a stale box would show a drawing the server
+    // no longer agrees with.
+    setHistory((current) => ({
+      past: [],
+      present: {
+        rooms: withoutKeys(current.present.rooms, savedRooms),
+        items: withoutKeys(current.present.items, [...savedUpdates, ...savedNewItems]),
+        removed: current.present.removed.filter((id) => !savedDeletes.includes(id)),
+      },
+      future: [],
+    }));
 
     if (failures.length === 0) {
       setNotice('Đã lưu sơ đồ tầng.');
@@ -543,12 +685,43 @@ export function FloorDesignerPage() {
               <span className="material-symbols-outlined text-lg">map</span>
               Xem sơ đồ
             </Link>
+            <div className="flex items-center gap-1 rounded-lg border border-outline-variant p-0.5">
+              <button
+                type="button"
+                onClick={undo}
+                disabled={history.past.length === 0 || saving}
+                aria-label="Hoàn tác bước trước"
+                title={
+                  history.past.length === 0
+                    ? 'Chưa có thay đổi nào để hoàn tác'
+                    : `Hoàn tác (còn ${history.past.length} bước)`
+                }
+                className="flex h-9 w-9 items-center justify-center rounded-md text-on-surface-variant transition hover:bg-surface-low disabled:opacity-40"
+              >
+                <span className="material-symbols-outlined text-lg">undo</span>
+              </button>
+              <button
+                type="button"
+                onClick={redo}
+                disabled={history.future.length === 0 || saving}
+                aria-label="Làm lại bước vừa hoàn tác"
+                title={
+                  history.future.length === 0
+                    ? 'Không còn bước nào để làm lại'
+                    : `Làm lại (còn ${history.future.length} bước)`
+                }
+                className="flex h-9 w-9 items-center justify-center rounded-md text-on-surface-variant transition hover:bg-surface-low disabled:opacity-40"
+              >
+                <span className="material-symbols-outlined text-lg">redo</span>
+              </button>
+            </div>
             <Button
               variant="secondary"
-              onClick={resetDrafts}
+              onClick={discardDrafts}
               disabled={dirtyCount === 0 || saving}
+              title="Bỏ toàn bộ thay đổi chưa lưu — khác với Hoàn tác từng bước"
             >
-              Hoàn tác thay đổi
+              Bỏ thay đổi
             </Button>
             <Button
               onClick={saveAll}
@@ -595,14 +768,17 @@ export function FloorDesignerPage() {
           canDesign={canDesign}
         />
 
-        <section className="rounded-xl border border-outline-variant bg-surface-lowest p-4">
+        {/* Below xl the columns stack; the canvas goes first so the drawing is
+            not pushed off-screen by the room and object palettes. */}
+        <section className="order-first rounded-xl border border-outline-variant bg-surface-lowest p-4 xl:order-none">
           <FloorDesignerCanvas
-            rooms={allRooms.map<DesignerRoom>(({ room, box }) => ({
+            rooms={allRooms.map<DesignerRoom>(({ room, box, rotation }) => ({
               id: room.id,
               roomNumber: room.roomNumber,
               area: room.area,
               status: room.status,
               box,
+              rotationDegrees: rotation,
             }))}
             items={allItems.map<DesignerItem>((item) => ({
               id: item.id,
@@ -618,11 +794,16 @@ export function FloorDesignerPage() {
             onDropRoom={dropRoom}
             onDropItem={dropItem}
             onDraftChange={setDraft}
+            onRotate={canDesign ? rotateSelectedRoom : undefined}
+            onDeleteSelection={canDesign ? deleteSelection : undefined}
+            onMeasure={setMeasure}
           />
           <p className="mt-3 rounded-lg bg-surface-low px-3 py-2 text-[11px] leading-relaxed text-on-surface-variant">
             {draft
               ? `${draft.label}: x ${formatMetres(draft.box.x)}, y ${formatMetres(draft.box.y)} · ${formatMetres(draft.box.width)} × ${formatMetres(draft.box.height)}`
-              : 'Sơ đồ chỉ vẽ phòng bằng hình chữ nhật. Mười một loại vật thể cố định có thể đặt thêm; hình dạng tuỳ ý (cây, ban công vẽ tay) chưa hỗ trợ.'}
+              : measure
+                ? `Đo được ${formatMetres(measure.distance)} (Δx ${formatMetres(Math.abs(measure.dx))}, Δy ${formatMetres(Math.abs(measure.dy))}).`
+                : 'Sơ đồ chỉ vẽ phòng bằng hình chữ nhật. Mười một loại vật thể cố định có thể đặt thêm; hình dạng tuỳ ý (cây, ban công vẽ tay) chưa hỗ trợ.'}
           </p>
         </section>
 
@@ -631,10 +812,16 @@ export function FloorDesignerPage() {
           room={selectedRoom}
           item={selectedItem}
           roomBox={selectedRoom ? (allRooms.find((e) => e.room.id === selectedRoom.id)?.box ?? null) : null}
+          rotation={
+            selectedRoom
+              ? (allRooms.find((e) => e.room.id === selectedRoom.id)?.rotation ?? 0)
+              : 0
+          }
           canDesign={canDesign}
           onChangeRoomBox={(box) => selectedRoom && setRoomBox(selectedRoom.id, box)}
           onChangeItemLabel={(label) => selectedItem && setItemLabel(selectedItem.id, label)}
           onChangeItemBox={(box) => selectedItem && setItemBox(selectedItem.id, box)}
+          onRotate={rotateSelectedRoom}
           onRemoveFromPlan={() => selectedRoom && setRoomBox(selectedRoom.id, null)}
           onDeleteItem={() => selectedItem && removeSelectedItem(selectedItem.id)}
         />
@@ -729,10 +916,12 @@ function PropertyPanel({
   room,
   item,
   roomBox,
+  rotation,
   canDesign,
   onChangeRoomBox,
   onChangeItemLabel,
   onChangeItemBox,
+  onRotate,
   onRemoveFromPlan,
   onDeleteItem,
 }: {
@@ -740,10 +929,12 @@ function PropertyPanel({
   room: RoomDto | null;
   item: DesignerItem | null;
   roomBox: Box | null;
+  rotation: number;
   canDesign: boolean;
   onChangeRoomBox: (box: Box) => void;
   onChangeItemLabel: (label: string | null) => void;
   onChangeItemBox: (box: Box) => void;
+  onRotate: () => void;
   onRemoveFromPlan: () => void;
   onDeleteItem: () => void;
 }) {
@@ -797,11 +988,28 @@ function PropertyPanel({
         </dl>
 
         {roomBox ? (
-          <BoxFields
-            box={roomBox}
-            disabled={!canDesign}
-            onChange={onChangeRoomBox}
-          />
+          <>
+            <BoxFields
+              box={roomBox}
+              disabled={!canDesign}
+              onChange={onChangeRoomBox}
+            />
+            <div className="mt-3 flex items-center justify-between gap-2 rounded-lg bg-surface-low px-3 py-2">
+              <div>
+                <p className="text-[11px] font-semibold text-on-surface">Hướng xoay</p>
+                <p className="tnum text-xs text-on-surface-variant">{rotation}°</p>
+              </div>
+              <button
+                type="button"
+                onClick={onRotate}
+                disabled={!canDesign}
+                className="flex h-8 items-center gap-1 rounded-md border border-outline-variant bg-surface-lowest px-2.5 text-[11px] font-semibold text-on-surface-variant transition hover:bg-surface-low disabled:opacity-40"
+              >
+                <span className="material-symbols-outlined text-base">rotate_90_degrees_cw</span>
+                Xoay 90°
+              </button>
+            </div>
+          </>
         ) : (
           <p className="rounded-lg bg-[#FFFBEB] px-3 py-2 text-xs leading-relaxed text-[#B45309]">
             Phòng này chưa có toạ độ. Kéo từ danh sách bên trái vào sơ đồ để đặt vị trí.

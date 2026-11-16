@@ -146,6 +146,41 @@ export function viewBoxRectFor(
   return { x, y, width, height };
 }
 
+/**
+ * Grows the viewBox to the frame's aspect ratio while keeping the plan inside
+ * it. Without this a wide floor is letterboxed into a tall canvas: the grid
+ * and the drawing end up as a strip in the middle with bare space above and
+ * below.
+ */
+export function fitViewBoxToAspect(
+  box: ViewBoxRect,
+  aspectRatio: number,
+): ViewBoxRect {
+  if (!Number.isFinite(aspectRatio) || aspectRatio <= 0) {
+    return box;
+  }
+  const current = box.width / box.height;
+  if (Math.abs(current - aspectRatio) < 0.001) {
+    return box;
+  }
+  if (current > aspectRatio) {
+    const height = box.width / aspectRatio;
+    return {
+      x: box.x,
+      y: box.y - (height - box.height) / 2,
+      width: box.width,
+      height,
+    };
+  }
+  const width = box.height * aspectRatio;
+  return {
+    x: box.x - (width - box.width) / 2,
+    y: box.y,
+    width,
+    height: box.height,
+  };
+}
+
 export function viewBoxFor(
   bounds: PlanBounds,
   zoom: number,

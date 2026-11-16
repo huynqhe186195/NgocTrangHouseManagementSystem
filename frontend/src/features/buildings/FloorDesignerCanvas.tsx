@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FloorLayoutItemDto } from '../../lib/api/types';
 import { floorLayoutKindMeta } from '../../lib/api/types';
 import {
@@ -7,6 +7,7 @@ import {
   MIN_SIZE_METRES,
   clampBoxToBounds,
   clampZoom,
+  fitViewBoxToAspect,
   formatMetres,
   formatZoom,
   moveBox,
@@ -19,6 +20,18 @@ import {
   type PlanBounds,
   type ResizeHandle,
 } from '../../lib/floorGeometry';
+import {
+  PlanCompass,
+  PlanDimensions,
+  PlanRulers,
+  SELECTED_STROKE,
+  WALL_COLOR,
+  doorArcPath,
+  doorWidth,
+  tickStep,
+  wallPath,
+  wallThickness,
+} from './planDrawing';
 
 export interface DesignerRoom {
   id: string;
@@ -27,6 +40,8 @@ export interface DesignerRoom {
   status: number;
   /** null when the room has never been placed on the plan. */
   box: Box | null;
+  /** Degrees clockwise about the box centre; the stored column is -360..360. */
+  rotationDegrees?: number;
 }
 
 export interface DesignerItem extends Box {
@@ -47,6 +62,12 @@ interface FloorDesignerCanvasProps {
   onDropItem: (kind: FloorLayoutItemDto['kind'], point: { x: number; y: number }) => void;
   /** "Room dragging still in progress" — the page shows the running numbers. */
   onDraftChange?: (draft: { label: string; box: Box } | null) => void;
+  /** Turns the selected room a quarter turn and records it as a draft change. */
+  onRotate?: () => void;
+  /** Removes the selected room or layout item from the plan. */
+  onDeleteSelection?: () => void;
+  /** Reports the running tape while measuring; `null` clears it. */
+  onMeasure?: (info: MeasureInfo | null) => void;
 }
 
 export type DesignerSelection =
@@ -68,12 +89,27 @@ const statusStroke: Record<number, string> = {
   4: '#B3C4D8',
   5: '#CBD5E1',
 };
-const SELECTED_STROKE = '#1d4ed8';
 
 type DragState =
   | { type: 'move'; target: 'room' | 'item'; id: string; origin: Box; startX: number; startY: number }
   | { type: 'resize'; target: 'room' | 'item'; id: string; handle: ResizeHandle; origin: Box }
-  | { type: 'pan'; startX: number; startY: number; originOffset: { x: number; y: number } };
+  | { type: 'pan'; startX: number; startY: number; originOffset: { x: number; y: number } }
+  | { type: 'measure'; startX: number; startY: number; endX: number; endY: number };
+
+/** The three pointer modes the toolbar switches between. */
+export type DesignerMode = 'select' | 'move' | 'measure';
+
+const DESIGNER_MODES: { mode: DesignerMode; icon: string; label: string; hint: string }[] = [
+  { mode: 'select', icon: 'arrow_selector_tool', label: 'Chọn', hint: 'Bấm để chọn, không kéo' },
+  { mode: 'move', icon: 'open_with', label: 'Di chuyển', hint: 'Kéo để dời phòng và vật thể' },
+  { mode: 'measure', icon: 'straighten', label: 'Đo', hint: 'Kéo một đường để đo chiều dài' },
+];
+
+export interface MeasureInfo {
+  dx: number;
+  dy: number;
+  distance: number;
+}
 
 /**
  * The designer's drawing surface. Pointer handling is split between live
@@ -95,20 +131,52 @@ export function FloorDesignerCanvas({
   onDropRoom,
   onDropItem,
   onDraftChange,
+  onRotate,
+  onDeleteSelection,
+  onMeasure,
 }: FloorDesignerCanvasProps) {
   const svgRef = useRef<SVGSVGElement>(null);
+  const frameRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const [drag, setDrag] = useState<DragState | null>(null);
+  const [mode, setMode] = useState<DesignerMode>('select');
+  const [fullscreen, setFullscreen] = useState(false);
   const [preview, setPreview] = useState<{ kind: 'room' | 'item'; id: string; box: Box } | null>(
     null,
   );
+  const [measure, setMeasure] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(
+    null,
+  );
+  const [frameSize, setFrameSize] = useState({ width: 0, height: 0 });
+
+  // The canvas is sized by CSS, so its pixel size is only known after layout.
+  // Watching the element keeps the drawing fitted through every resize.
+  useEffect(() => {
+    const frame = frameRef.current;
+    if (!frame || typeof ResizeObserver === 'undefined') {
+      return;
+    }
+    const observer = new ResizeObserver((entries) => {
+      const rect = entries[0]?.contentRect;
+      if (rect) {
+        setFrameSize({ width: rect.width, height: rect.height });
+      }
+    });
+    observer.observe(frame);
+    return () => observer.disconnect();
+  }, []);
 
   // The drawing fills the available height instead of shrinking to its own
   // aspect ratio: a shallow floor used to paint as a thin strip with empty
-  // space below it. `preserveAspectRatio="xMidYMid meet"` keeps metres square
-  // and centres the plan, so the extra space shows grid rather than distortion.
-  const viewBox = useMemo(() => viewBoxRectFor(bounds, zoom, offset), [bounds, zoom, offset]);
+  // space above and below it. Widening the viewBox to the frame's ratio keeps
+  // metres square and fills the whole canvas with grid.
+  const viewBox = useMemo(() => {
+    const box = viewBoxRectFor(bounds, zoom, offset);
+    return frameSize.width > 0 && frameSize.height > 0
+      ? fitViewBoxToAspect(box, frameSize.width / frameSize.height)
+      : box;
+  }, [bounds, zoom, offset, frameSize]);
   const gridStep = useMemo(() => tickStep(bounds, zoom), [bounds.width, zoom]);
 
   const toMetres = useCallback((clientX: number, clientY: number) => {
@@ -147,10 +215,15 @@ export function FloorDesignerCanvas({
     box: Box,
   ) {
     event.stopPropagation();
+    // In "select" the pointer only picks; in "move" it drags. Both modes let
+    // the corner handles resize, so a selected box is always adjustable.
+    onSelect({ kind: target, id });
+    if (mode === 'select') {
+      return;
+    }
     (event.target as Element).setPointerCapture?.(event.pointerId);
     const start = toMetres(event.clientX, event.clientY);
     setDrag({ type: 'move', target, id, origin: box, startX: start.x, startY: start.y });
-    onSelect({ kind: target, id });
   }
 
   function startResize(
@@ -179,6 +252,14 @@ export function FloorDesignerCanvas({
       return;
     }
 
+    if (drag.type === 'measure') {
+      const point = toMetres(event.clientX, event.clientY);
+      const next = { x1: drag.startX, y1: drag.startY, x2: point.x, y2: point.y };
+      setMeasure(next);
+      onMeasure?.(measureInfo(next));
+      return;
+    }
+
     const point = toMetres(event.clientX, event.clientY);
     let box: Box;
     if (drag.type === 'move') {
@@ -201,7 +282,7 @@ export function FloorDesignerCanvas({
     if (!drag) {
       return;
     }
-    if (drag.type === 'pan') {
+    if (drag.type === 'pan' || drag.type === 'measure') {
       setDrag(null);
       return;
     }
@@ -225,6 +306,16 @@ export function FloorDesignerCanvas({
       return;
     }
     const start = toMetres(event.clientX, event.clientY);
+
+    if (mode === 'measure') {
+      (event.target as Element).setPointerCapture?.(event.pointerId);
+      const next = { x1: start.x, y1: start.y, x2: start.x, y2: start.y };
+      setMeasure(next);
+      onMeasure?.(measureInfo(next));
+      setDrag({ type: 'measure', startX: start.x, startY: start.y, endX: start.x, endY: start.y });
+      return;
+    }
+
     setDrag({ type: 'pan', startX: start.x, startY: start.y, originOffset: offset });
     onSelect(null);
   }
@@ -244,13 +335,78 @@ export function FloorDesignerCanvas({
     onDropItem(Number(itemKind) as FloorLayoutItemDto['kind'], point);
   }
 
+  function chooseMode(next: DesignerMode) {
+    setMode(next);
+    if (next !== 'measure') {
+      setMeasure(null);
+      onMeasure?.(null);
+    }
+  }
+
+  async function toggleFullscreen() {
+    const frame = frameRef.current;
+    if (!frame) {
+      return;
+    }
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+        setFullscreen(false);
+      } else {
+        await frame.requestFullscreen();
+        setFullscreen(true);
+      }
+    } catch {
+      // A denied or unsupported request leaves the canvas where it was; the
+      // toolbar still shows the plan at its normal size.
+      setFullscreen(Boolean(document.fullscreenElement));
+    }
+  }
+
+  const hasSelection = selection !== null;
+
   return (
     <div>
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <p className="text-xs text-on-surface-variant">
-          Kéo phòng để di chuyển, kéo tay nắm góc để đổi kích thước, kéo nền để di chuyển khung
-          nhìn. Lưới bám 0,1 m.
-        </p>
+      <div className="mb-2 flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
+        <div className="flex flex-wrap items-center gap-1 rounded-lg border border-outline-variant bg-surface-lowest p-0.5">
+          {DESIGNER_MODES.map((option) => (
+            <button
+              key={option.mode}
+              type="button"
+              onClick={() => chooseMode(option.mode)}
+              aria-pressed={mode === option.mode}
+              title={option.hint}
+              className={`flex h-7 items-center gap-1 rounded-md px-2 text-xs font-medium transition ${
+                mode === option.mode
+                  ? 'bg-primary-container text-on-primary-container'
+                  : 'text-on-surface-variant hover:bg-surface-low'
+              }`}
+            >
+              <span className="material-symbols-outlined text-base">{option.icon}</span>
+              {option.label}
+            </button>
+          ))}
+          <span className="mx-1 h-5 w-px bg-outline-variant" />
+          <ToolbarButton
+            icon="rotate_90_degrees_cw"
+            label="Xoay 90°"
+            onClick={() => onRotate?.()}
+            disabled={!hasSelection || selection.kind !== 'room' || !onRotate}
+          />
+          <ToolbarButton
+            icon="delete"
+            label="Xoá vật thể"
+            onClick={() => onDeleteSelection?.()}
+            disabled={!hasSelection || !onDeleteSelection}
+          />
+          <span className="mx-1 h-5 w-px bg-outline-variant" />
+          <ToolbarButton
+            icon="fullscreen"
+            label={fullscreen ? 'Thoát toàn màn hình' : 'Toàn màn hình'}
+            onClick={() => void toggleFullscreen()}
+          />
+        </div>
+
         <div className="flex items-center gap-1 rounded-lg border border-outline-variant bg-surface-lowest p-0.5">
           <button
             type="button"
@@ -288,7 +444,15 @@ export function FloorDesignerCanvas({
         </div>
       </div>
 
+      <p className="mb-2 text-xs text-on-surface-variant">
+        {mode === 'select' && 'Chọn: bấm để chọn phòng hoặc vật thể. Kéo nền để di chuyển khung nhìn.'}
+        {mode === 'move' && 'Di chuyển: kéo phòng để đổi vị trí, kéo tay nắm góc để đổi kích thước.'}
+        {mode === 'measure' && 'Đo: kéo một đường trên sơ đồ để đọc chiều dài thật (mét).'}
+        {' '}Lưới bám 0,1 m.
+      </p>
+
       <div
+        ref={frameRef}
         className="overflow-hidden rounded-lg border border-outline-variant bg-white"
         onDragOver={(event) => event.preventDefault()}
         onDrop={handleDrop}
@@ -346,7 +510,12 @@ export function FloorDesignerCanvas({
             fill="url(#designer-grid-major)"
           />
 
-          <MeasureRulers viewBox={viewBox} step={gridStep} />
+          <PlanRulers viewBox={viewBox} step={gridStep} />
+          <PlanDimensions bounds={bounds} inset={Math.max(0.8, Math.min(bounds.width, bounds.height) * 0.06)} />
+          <PlanCompass
+            viewBox={viewBox}
+            size={Math.max(0.9, Math.min(viewBox.width, viewBox.height) * 0.09)}
+          />
 
           {items.map((item) => {
             const active = selection?.kind === 'item' && selection.id === item.id;
@@ -358,6 +527,7 @@ export function FloorDesignerCanvas({
                 fill="#EEF2F7"
                 stroke="#cbd5e1"
                 selected={active}
+                interactive={mode !== 'measure'}
                 label={item.label ?? floorLayoutKindMeta[item.kind]?.label ?? ''}
                 onPointerDown={(event) => startMove(event, 'item', item.id, box)}
                 onResizeStart={(event, handle) => startResize(event, 'item', item.id, handle, box)}
@@ -378,6 +548,8 @@ export function FloorDesignerCanvas({
                 fill={statusFill[room.status] ?? statusFill[5]!}
                 stroke={statusStroke[room.status] ?? statusStroke[5]!}
                 selected={active}
+                rotation={room.rotationDegrees ?? 0}
+                interactive={mode !== 'measure'}
                 label={room.roomNumber}
                 sublabel={
                   room.area === null
@@ -390,9 +562,117 @@ export function FloorDesignerCanvas({
               />
             );
           })}
+
+          {measure && <MeasureOverlay segment={measure} viewBox={viewBox} />}
         </svg>
       </div>
     </div>
+  );
+}
+
+/** A toolbar button that says why it is disabled instead of silently doing nothing. */
+function ToolbarButton({
+  icon,
+  label,
+  onClick,
+  disabled = false,
+}: {
+  icon: string;
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={label}
+      className="flex h-7 items-center gap-1 rounded-md px-2 text-xs font-medium text-on-surface-variant transition hover:bg-surface-low disabled:cursor-not-allowed disabled:opacity-40"
+    >
+      <span className="material-symbols-outlined text-base">{icon}</span>
+      {label}
+    </button>
+  );
+}
+
+/** The running tape: a dashed line between the two points and its length. */
+function MeasureOverlay({
+  segment,
+  viewBox,
+}: {
+  segment: { x1: number; y1: number; x2: number; y2: number };
+  viewBox: { x: number; y: number; width: number; height: number };
+}) {
+  const info = measureInfo(segment);
+  if (info.distance < 0.05) {
+    return null;
+  }
+  const fontSize = Math.max(0.3, viewBox.width * 0.014);
+  const midX = (segment.x1 + segment.x2) / 2;
+  const midY = (segment.y1 + segment.y2) / 2;
+
+  const label = `${formatMetres(info.distance)}  ·  Δx ${formatMetres(Math.abs(info.dx))}  Δy ${formatMetres(Math.abs(info.dy))}`;
+
+  // The label sits just off the line's midpoint, on the side the segment
+  // leans away from, so it never covers the measurement it describes.
+  const nx = -info.dy / info.distance;
+  const ny = info.dx / info.distance;
+  const offset = fontSize * 2.1;
+  const labelX = midX + nx * offset;
+  const labelY = midY + ny * offset;
+
+  return (
+    <g pointerEvents="none" fontFamily="Inter, sans-serif">
+      <line
+        x1={segment.x1}
+        y1={segment.y1}
+        x2={segment.x2}
+        y2={segment.y2}
+        stroke={SELECTED_STROKE}
+        strokeWidth={fontSize * 0.09}
+        strokeDasharray={`${fontSize * 1.4} ${fontSize * 0.9}`}
+      />
+      <circle cx={segment.x1} cy={segment.y1} r={fontSize * 0.22} fill={SELECTED_STROKE} />
+      <circle cx={segment.x2} cy={segment.y2} r={fontSize * 0.22} fill={SELECTED_STROKE} />
+      <MeasureLabel label={label} fontSize={fontSize} cx={labelX} cy={labelY} />
+    </g>
+  );
+}
+
+/**
+ * The measurement readout. A white halo is painted under the glyphs instead of
+ * a sized plate: the halo tracks the text exactly whatever the font metrics,
+ * so the number stays readable over corridors and room labels without a box
+ * that could be too small on some machine.
+ */
+function MeasureLabel({
+  label,
+  fontSize,
+  cx,
+  cy,
+}: {
+  label: string;
+  fontSize: number;
+  cx: number;
+  cy: number;
+}) {
+  return (
+    <text
+      x={cx}
+      y={cy}
+      dominantBaseline="middle"
+      textAnchor="middle"
+      fontSize={fontSize}
+      fontWeight={700}
+      fill={SELECTED_STROKE}
+      stroke="#ffffff"
+      strokeWidth={fontSize * 0.34}
+      strokeLinejoin="round"
+      paintOrder="stroke"
+    >
+      {label}
+    </text>
   );
 }
 
@@ -404,6 +684,8 @@ function DesignerShape({
   label,
   sublabel,
   walled = false,
+  rotation = 0,
+  interactive = true,
   onPointerDown,
   onResizeStart,
 }: {
@@ -415,19 +697,22 @@ function DesignerShape({
   sublabel?: string;
   /** Rooms read as walls + door; objects read as a light outlined box. */
   walled?: boolean;
+  /** Degrees clockwise about the box centre, matching the stored column. */
+  rotation?: number;
+  interactive?: boolean;
   onPointerDown: (event: React.PointerEvent) => void;
   onResizeStart: (event: React.PointerEvent, handle: ResizeHandle) => void;
 }) {
   const unit = Math.min(box.width, box.height);
   const titleSize = Math.max(0.22, Math.min(unit * 0.3, box.width * 0.16));
   const subSize = titleSize * 0.72;
-  // The mockup draws rooms as thick walls with a gap for the door. The wall is
-  // capped in metres so it never swallows a small room at high zoom.
-  const wall = Math.max(0.06, Math.min(0.16, unit * 0.06));
-  const door = Math.min(box.width * 0.38, Math.max(0.7, Math.min(1.1, box.width * 0.3)));
+  const wall = wallThickness(box);
+  const door = doorWidth(box);
+  const centreX = box.x + box.width / 2;
+  const centreY = box.y + box.height / 2;
 
   return (
-    <g>
+    <g transform={rotation ? `rotate(${rotation} ${centreX} ${centreY})` : undefined}>
       <rect
         x={box.x}
         y={box.y}
@@ -437,8 +722,11 @@ function DesignerShape({
         fill={fill}
         stroke={walled ? 'none' : selected ? SELECTED_STROKE : stroke}
         strokeWidth={walled ? 0 : selected ? 0.1 : 0.05}
-        style={{ cursor: 'move' }}
-        onPointerDown={onPointerDown}
+        style={{ cursor: interactive ? 'move' : 'default' }}
+        onPointerDown={interactive ? onPointerDown : undefined}
+        role={interactive ? 'button' : undefined}
+        aria-label={interactive ? label : undefined}
+        aria-pressed={interactive ? selected : undefined}
       />
 
       {walled && (
@@ -447,14 +735,14 @@ function DesignerShape({
           <path
             d={wallPath(box, wall, door)}
             fill="none"
-            stroke={selected ? SELECTED_STROKE : '#3d3d3d'}
+            stroke={selected ? SELECTED_STROKE : WALL_COLOR}
             strokeWidth={wall}
             strokeLinecap="square"
             pointerEvents="none"
           />
-          {/* Door leaf, the thin arc mockup 3 draws at each opening. */}
+          {/* Door leaf, the thin arc the mockup draws at each opening. */}
           <path
-            d={`M ${box.x + (box.width - door) / 2} ${box.y + box.height - wall / 2} a ${door} ${door} 0 0 1 ${door} 0`}
+            d={doorArcPath(box, wall, door)}
             fill="none"
             stroke={selected ? SELECTED_STROKE : '#8a8a8a'}
             strokeWidth={Math.max(0.02, wall * 0.28)}
@@ -463,31 +751,39 @@ function DesignerShape({
         </>
       )}
 
-      <text
-        x={box.x + box.width / 2}
-        y={box.y + box.height / 2 + titleSize * 0.35}
-        textAnchor="middle"
-        fontSize={titleSize}
-        fontWeight={700}
-        fill="#0b1c30"
-        fontFamily="Plus Jakarta Sans, sans-serif"
-        pointerEvents="none"
+      {/* Counter-rotated so a turned room keeps its label readable instead of
+          printing the number on its side. */}
+      <g
+        transform={
+          rotation ? `rotate(${-rotation} ${centreX} ${centreY})` : undefined
+        }
       >
-        {label}
-      </text>
-      {sublabel && box.height > 1.6 && (
         <text
-          x={box.x + box.width / 2}
-          y={box.y + box.height / 2 + titleSize * 0.35 + subSize * 1.5}
+          x={centreX}
+          y={centreY + titleSize * 0.35}
           textAnchor="middle"
-          fontSize={subSize}
-          fill="#475569"
-          fontFamily="Inter, sans-serif"
+          fontSize={titleSize}
+          fontWeight={700}
+          fill="#0b1c30"
+          fontFamily="Plus Jakarta Sans, sans-serif"
           pointerEvents="none"
         >
-          {sublabel}
+          {label}
         </text>
-      )}
+        {sublabel && box.height > 1.6 && (
+          <text
+            x={centreX}
+            y={centreY + titleSize * 0.35 + subSize * 1.5}
+            textAnchor="middle"
+            fontSize={subSize}
+            fill="#475569"
+            fontFamily="Inter, sans-serif"
+            pointerEvents="none"
+          >
+            {sublabel}
+          </text>
+        )}
+      </g>
 
       {/* The selected outline sits inside the wall so it never hides it. */}
       <rect
@@ -504,6 +800,7 @@ function DesignerShape({
       />
 
       {selected &&
+        interactive &&
         RESIZE_HANDLES.map(({ handle, cx, cy }) => (
           <rect
             key={handle}
@@ -522,117 +819,14 @@ function DesignerShape({
   );
 }
 
-/** Four walls with a door gap in the middle of the bottom edge. */
-function wallPath(box: Box, wall: number, door: number): string {
-  const inset = wall / 2;
-  const left = box.x + inset;
-  const right = box.x + box.width - inset;
-  const top = box.y + inset;
-  const bottom = box.y + box.height - inset;
-  const doorStart = box.x + (box.width - door) / 2;
-  const doorEnd = doorStart + door;
-  return (
-    `M ${left} ${top} H ${right} V ${bottom} H ${doorEnd} ` +
-    `M ${doorStart} ${bottom} H ${left} Z`
-  );
-}
-
-/**
- * Metric rulers along the top and left edges, mirroring the dimension lines in
- * mockup 3. Tick spacing widens with zoom so labels never collide.
- */
-function MeasureRulers({
-  viewBox,
-  step,
-}: {
-  viewBox: { x: number; y: number; width: number; height: number };
-  step: number;
-}) {
-  const fontSize = Math.max(0.26, viewBox.width * 0.012);
-  const tick = fontSize * 0.5;
-
-  const xTicks: number[] = [];
-  for (let value = Math.ceil(viewBox.x / step) * step; value <= viewBox.x + viewBox.width; value += step) {
-    xTicks.push(value);
-  }
-  const yTicks: number[] = [];
-  for (let value = Math.ceil(viewBox.y / step) * step; value <= viewBox.y + viewBox.height; value += step) {
-    yTicks.push(value);
-  }
-
-  return (
-    <g pointerEvents="none" fontFamily="Inter, sans-serif">
-      {xTicks.map((value) => (
-        <g key={`x${value}`}>
-          <line
-            x1={value}
-            y1={viewBox.y}
-            x2={value}
-            y2={viewBox.y + tick}
-            stroke="#94a3b8"
-            strokeWidth={fontSize * 0.06}
-          />
-          <text
-            x={value}
-            y={viewBox.y + tick * 2.1}
-            textAnchor="middle"
-            fontSize={fontSize}
-            fill="#64748b"
-          >
-            {formatTick(value)}
-          </text>
-        </g>
-      ))}
-      {yTicks.map((value) => (
-        <g key={`y${value}`}>
-          <line
-            x1={viewBox.x}
-            y1={value}
-            x2={viewBox.x + tick}
-            y2={value}
-            stroke="#94a3b8"
-            strokeWidth={fontSize * 0.06}
-          />
-          <text
-            x={viewBox.x + tick * 1.5}
-            y={value + fontSize * 0.35}
-            fontSize={fontSize}
-            fill="#64748b"
-          >
-            {formatTick(value)}
-          </text>
-        </g>
-      ))}
-      <text
-        x={viewBox.x + viewBox.width - fontSize * 0.4}
-        y={viewBox.y + tick * 2.1}
-        textAnchor="end"
-        fontSize={fontSize}
-        fill="#64748b"
-      >
-        (m)
-      </text>
-    </g>
-  );
-}
-
-function formatTick(value: number): string {
-  return Number.isInteger(value) ? String(value) : value.toFixed(1);
-}
-
-/** Keeps ruler labels readable: a tick every 1, 2, 5 or 10 m. */
-function tickStep(bounds: { width: number }, zoom: number): number {
-  const perTick = bounds.width / zoom / 12;
-  for (const candidate of [1, 2, 5, 10, 20, 50]) {
-    if (perTick <= candidate) {
-      return candidate;
-    }
-  }
-  return 100;
-}
-
 /** Half a metre is the floor; the handles themselves are fixed in metres. */
 const HANDLE_SIZE = Math.min(0.32, MIN_SIZE_METRES * 0.4);
+
+function measureInfo(segment: { x1: number; y1: number; x2: number; y2: number }): MeasureInfo {
+  const dx = segment.x2 - segment.x1;
+  const dy = segment.y2 - segment.y1;
+  return { dx, dy, distance: Math.hypot(dx, dy) };
+}
 
 const RESIZE_HANDLES: { handle: ResizeHandle; cx: number; cy: number }[] = [
   { handle: 'nw', cx: 0, cy: 0 },

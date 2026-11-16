@@ -8,11 +8,23 @@ import {
   formatZoom,
   hasGeometry,
   unplacedRooms,
-  viewBoxFor,
+  viewBoxRectFor,
   zoomIn,
   zoomOut,
   type PlanRoom,
 } from '../../lib/floorGeometry';
+import {
+  PlanCompass,
+  PlanDimensions,
+  PlanRulers,
+  SELECTED_STROKE,
+  WALL_COLOR,
+  doorArcPath,
+  doorWidth,
+  tickStep,
+  wallPath,
+  wallThickness,
+} from './planDrawing';
 
 interface FloorPlanProps {
   rooms: RoomDto[];
@@ -21,6 +33,8 @@ interface FloorPlanProps {
   onSelect: (roomId: string) => void;
   /** Hides the zoom controls and legend, for the small locator plan. */
   compact?: boolean;
+  /** Stretches the drawing over the whole screen while in fullscreen. */
+  fill?: boolean;
 }
 
 /** Shared with the building screen's miniature, so both read the same colours. */
@@ -32,14 +46,23 @@ export const statusStyles: Record<number, { fill: string; stroke: string; label:
   5: { fill: '#F1F5F9', stroke: '#CBD5E1', label: 'Ngừng dùng' },
 };
 
-const SELECTED_STROKE = '#1d4ed8';
+// The shared drawing module owns the palette; this re-export keeps the
+// existing import sites (the building table's miniature) working.
+export { SELECTED_STROKE } from './planDrawing';
 
 /**
  * Draws the floor plan from the geometry the designer saved. When no room on
  * the floor carries coordinates yet, it falls back to the area-proportional
  * schematic the screen shipped with, and says which one is on screen.
  */
-export function FloorPlan({ rooms, items = [], selectedId, onSelect, compact = false }: FloorPlanProps) {
+export function FloorPlan({
+  rooms,
+  items = [],
+  selectedId,
+  onSelect,
+  compact = false,
+  fill = false,
+}: FloorPlanProps) {
   const [zoom, setZoom] = useState(1);
 
   function resetZoom() {
@@ -65,9 +88,19 @@ export function FloorPlan({ rooms, items = [], selectedId, onSelect, compact = f
   const unit = Math.min(bounds.width, bounds.height);
   const titleSize = Math.max(0.28, unit * 0.028);
   const metaSize = Math.max(0.22, unit * 0.021);
+  const viewBox = viewBoxRectFor(bounds, zoom);
+  // The rules and the compass are drawn outside the plan's own bounds, so the
+  // view widens to make room for them.
+  const margin = Math.max(1.1, unit * 0.09);
+  const framed = {
+    x: viewBox.x - margin,
+    y: viewBox.y - margin,
+    width: viewBox.width + margin * 2,
+    height: viewBox.height + margin * 2,
+  };
 
   return (
-    <div>
+    <div className={fill ? 'flex min-h-0 flex-1 flex-col' : undefined}>
       {!compact && (
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <p className="text-xs text-on-surface-variant">
@@ -78,11 +111,17 @@ export function FloorPlan({ rooms, items = [], selectedId, onSelect, compact = f
         </div>
       )}
 
-      <div className="overflow-hidden rounded-lg border border-outline-variant bg-white">
+      <div
+        className={
+          'overflow-hidden rounded-lg border border-outline-variant bg-white' +
+          (fill ? ' min-h-0 flex-1' : '')
+        }
+      >
         <svg
-          viewBox={viewBoxFor(bounds, zoom)}
-          className="h-auto w-full"
-          style={{ aspectRatio: `${bounds.width} / ${bounds.height}` }}
+          viewBox={`${framed.x} ${framed.y} ${framed.width} ${framed.height}`}
+          className={fill ? 'h-full w-full' : 'h-auto w-full'}
+          style={fill ? undefined : { aspectRatio: `${framed.width} / ${framed.height}` }}
+          preserveAspectRatio={fill ? 'xMidYMid meet' : undefined}
           role="group"
           aria-label="Sơ đồ mặt bằng tầng"
         >
@@ -93,12 +132,14 @@ export function FloorPlan({ rooms, items = [], selectedId, onSelect, compact = f
           </defs>
 
           <rect
-            x={bounds.minX}
-            y={bounds.minY}
-            width={bounds.width}
-            height={bounds.height}
+            x={framed.x}
+            y={framed.y}
+            width={framed.width}
+            height={framed.height}
             fill="url(#plan-grid)"
           />
+
+          <PlanRulers viewBox={framed} step={tickStep(bounds, zoom)} />
 
           {plan.items.map((floorItem) => (
             <LayoutItemShape
@@ -118,6 +159,9 @@ export function FloorPlan({ rooms, items = [], selectedId, onSelect, compact = f
               metaSize={metaSize}
             />
           ))}
+
+          <PlanDimensions bounds={bounds} inset={margin * 0.62} />
+          <PlanCompass viewBox={framed} size={margin * 0.85} />
         </svg>
       </div>
 
@@ -204,6 +248,8 @@ function RoomShape({
   const centreX = room.x + room.width / 2;
   const centreY = room.y + room.height / 2;
   const polygon = parsePolygon(room.layoutPoints);
+  const wall = wallThickness(room);
+  const door = doorWidth(room);
 
   const label = room.roomNumber;
   const sub = room.area ? `${room.area} m²` : null;
@@ -224,25 +270,47 @@ function RoomShape({
       transform={rotation ? `rotate(${rotation} ${centreX} ${centreY})` : undefined}
     >
       {polygon ? (
-        <polygon
-          points={polygon
-            .map((point) => `${room.x + point.x},${room.y + point.y}`)
-            .join(' ')}
-          fill={style.fill}
-          stroke={selected ? SELECTED_STROKE : style.stroke}
-          strokeWidth={selected ? 0.1 : 0.05}
-        />
+        <>
+          <polygon
+            points={polygon
+              .map((point) => `${room.x + point.x},${room.y + point.y}`)
+              .join(' ')}
+            fill={style.fill}
+          />
+          <polygon
+            points={polygon
+              .map((point) => `${room.x + point.x},${room.y + point.y}`)
+              .join(' ')}
+            fill="none"
+            stroke={selected ? SELECTED_STROKE : WALL_COLOR}
+            strokeWidth={selected ? 0.1 : wall}
+            strokeLinejoin="miter"
+          />
+        </>
       ) : (
-        <rect
-          x={room.x}
-          y={room.y}
-          width={room.width}
-          height={room.height}
-          rx={0.08}
-          fill={style.fill}
-          stroke={selected ? SELECTED_STROKE : style.stroke}
-          strokeWidth={selected ? 0.1 : 0.05}
-        />
+        <>
+          <rect
+            x={room.x}
+            y={room.y}
+            width={room.width}
+            height={room.height}
+            fill={style.fill}
+          />
+          {/* Four walls broken by a door opening, then the leaf that swings from it. */}
+          <path
+            d={wallPath(room, wall, door)}
+            fill="none"
+            stroke={selected ? SELECTED_STROKE : WALL_COLOR}
+            strokeWidth={wall}
+            strokeLinecap="square"
+          />
+          <path
+            d={doorArcPath(room, wall, door)}
+            fill="none"
+            stroke={selected ? SELECTED_STROKE : '#8a8a8a'}
+            strokeWidth={Math.max(0.02, wall * 0.28)}
+          />
+        </>
       )}
 
       <text

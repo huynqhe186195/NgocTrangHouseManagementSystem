@@ -18,7 +18,7 @@ import {
   LINE_COLOR,
   PlanCompass,
   PlanDimensions,
-  PlanPerimeter,
+  PlanEnvelope,
   PlanRulers,
   SELECTED_STROKE,
   WALL_COLOR,
@@ -85,7 +85,10 @@ export function FloorPlan({
   // Exterior walls run a touch heavier than the partitions, as they do on the
   // drawing sheet; partitions are what each room strokes for itself.
   const roomWall = wallThickness(plan.rooms[0] ?? { x: 0, y: 0, width: 4, height: 4 });
-  const perimeter = roomWall * 1.35;
+  // The envelope wraps the whole storey — rooms, corridor, stairwell — so it
+  // is a proper building wall and runs heavier than the partitions.
+  const perimeter = Math.max(0.2, roomWall * 1.6);
+  const footprint = [...plan.rooms, ...plan.items];
   const viewBox = viewBoxRectFor(bounds, zoom);
   // The rules and the compass are drawn outside the plan's own bounds, so the
   // view widens to make room for them.
@@ -139,9 +142,10 @@ export function FloorPlan({
 
           <PlanRulers viewBox={framed} step={tickStep(bounds, zoom)} />
 
-          {/* Exterior walls first, so room fills sit on top of them and the
-              band reads as masonry running outside the rooms. */}
-          <PlanPerimeter rooms={plan.rooms} wall={perimeter} />
+          {/* The building's own wall, running around everything the floor
+              occupies, with its windows. Drawn first so room fills sit on top
+              of the inner face. */}
+          <PlanEnvelope boxes={footprint} wall={perimeter} />
 
           {plan.items.map((floorItem) => (
             <LayoutItemShape key={floorItem.id} item={floorItem} />

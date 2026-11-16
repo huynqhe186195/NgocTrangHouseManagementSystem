@@ -25,7 +25,7 @@ import {
   LINE_COLOR,
   PlanCompass,
   PlanDimensions,
-  PlanPerimeter,
+  PlanEnvelope,
   PlanRulers,
   SELECTED_STROKE,
   WALL_COLOR,
@@ -196,15 +196,22 @@ export function FloorDesignerCanvas({
       : box;
   }, [bounds, zoom, offset, frameSize]);
   const gridStep = useMemo(() => tickStep(bounds, zoom), [bounds.width, zoom]);
-  // One thickness for the whole floor's exterior walls, so the enclosure looks
-  // like masonry rather than a per-room outline.
+  // One thickness for the whole floor's envelope, so the storey reads as a
+  // walled building rather than a set of separately outlined boxes.
   const perimeterWall = useMemo(() => {
     const units = rooms
       .flatMap((room) => (room.box ? [Math.min(room.box.width, room.box.height)] : []))
       .sort((a, b) => a - b);
     const median = units.length > 0 ? units[Math.floor(units.length / 2)]! : 4;
-    return Math.max(0.12, Math.min(0.3, median * 0.075));
+    return Math.max(0.2, Math.min(0.34, median * 0.085));
   }, [rooms]);
+
+  // The envelope wraps rooms *and* floor objects: the corridor and the
+  // stairwell are part of the storey, so leaving them out broke the outline.
+  const envelopeBoxes = useMemo(
+    () => [...rooms.flatMap((room) => (room.box ? [room.box] : [])), ...items],
+    [rooms, items],
+  );
 
   const toMetres = useCallback((clientX: number, clientY: number) => {
     const svg = svgRef.current;
@@ -583,13 +590,7 @@ export function FloorDesignerCanvas({
             size={Math.max(0.9, Math.min(viewBox.width, viewBox.height) * 0.09)}
           />
 
-          <PlanPerimeter
-            rooms={rooms.flatMap((room) => {
-              const box = currentBox('room', room.id) ?? room.box;
-              return box ? [box] : [];
-            })}
-            wall={perimeterWall}
-          />
+          <PlanEnvelope boxes={envelopeBoxes} wall={perimeterWall} />
 
           {items.map((item) => {
             const active = selection?.kind === 'item' && selection.id === item.id;

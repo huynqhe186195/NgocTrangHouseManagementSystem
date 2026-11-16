@@ -25,13 +25,14 @@ export const statusStyles: Record<number, { fill: string; stroke: string; label:
 };
 
 /**
- * Wall thickness in metres. The mockup draws masonry at roughly 0.27 m on a
- * 4 m room, so the wall has to be a real band rather than the hairline this
- * used to draw — a 6 cm line reads as a pencil outline, not as a wall.
+ * Wall thickness in metres for a partition between two rooms. The mockup sets
+ * partitions noticeably lighter than the building envelope, so this stays at
+ * roughly half the envelope's weight — otherwise the plan reads as a grid of
+ * equally heavy boxes instead of a walled floor.
  */
 export function wallThickness(box: Box): number {
   const unit = Math.min(box.width, box.height);
-  return Math.max(0.12, Math.min(0.3, unit * 0.075));
+  return Math.max(0.1, Math.min(0.2, unit * 0.055));
 }
 
 /** Door opening on the bottom wall, wide enough to read but never the whole side. */
@@ -74,106 +75,276 @@ export function innerBox(box: Box, wall: number): Box {
 }
 
 /**
- * The building's own walls: every room edge that no other room sits against.
- * Rooms draw a half-thickness band inside themselves, so the two rooms either
- * side of a partition add up to one wall; an exterior edge would only get that
- * half, which is why it is stroked again at full thickness from outside.
+ * One straight run of the building envelope, with the side the band sits on.
+ * `-1` is above/left of the footprint, `1` is below/right; the band always
+ * lies outside the floor, so the drawn wall never eats into a room.
  */
-export function exteriorWallSegments(rooms: Box[], wall: number): WallSegment[] {
-  const segments: WallSegment[] = [];
+export interface EnvelopeRun {
+  orientation: 'h' | 'v';
+  /** The footprint's own boundary line the band is fixed to. */
+  at: number;
+  from: number;
+  to: number;
+  side: 1 | -1;
+}
 
-  for (const room of rooms) {
-    const edges: { segment: WallSegment; probe: Box }[] = [
-      {
-        segment: { x1: room.x, y1: room.y, x2: room.x + room.width, y2: room.y },
-        probe: { x: room.x, y: room.y - wall, width: room.width, height: wall },
-      },
-      {
-        segment: {
-          x1: room.x,
-          y1: room.y + room.height,
-          x2: room.x + room.width,
-          y2: room.y + room.height,
-        },
-        probe: {
-          x: room.x,
-          y: room.y + room.height,
-          width: room.width,
-          height: wall,
-        },
-      },
-      {
-        segment: { x1: room.x, y1: room.y, x2: room.x, y2: room.y + room.height },
-        probe: { x: room.x - wall, y: room.y, width: wall, height: room.height },
-      },
-      {
-        segment: {
-          x1: room.x + room.width,
-          y1: room.y,
-          x2: room.x + room.width,
-          y2: room.y + room.height,
-        },
-        probe: {
-          x: room.x + room.width,
-          y: room.y,
-          width: wall,
-          height: room.height,
-        },
-      },
-    ];
+const OUTLINE_EPSILON = 0.005;
 
-    for (const { segment, probe } of edges) {
-      const shared = rooms.some(
-        (other) =>
-          other !== room &&
-          other.x < probe.x + probe.width - 0.001 &&
-          other.x + other.width > probe.x + 0.001 &&
-          other.y < probe.y + probe.height - 0.001 &&
-          other.y + other.height > probe.y + 0.001,
+function uniqueEdges(values: number[]): number[] {
+  const sorted = [...values].sort((a, b) => a - b);
+  const out: number[] = [];
+  for (const value of sorted) {
+    const last = out[out.length - 1];
+    if (last === undefined || value - last > OUTLINE_EPSILON) {
+      out.push(value);
+    }
+  }
+  return out;
+}
+
+/**
+ * The outline of the whole floor, not of one room.
+ *
+ * The mockup encloses the entire storey — rooms, corridor, stairwell — in one
+ * continuous wall, the way a building is actually drawn. Stroking each room's
+ * own edges cannot produce that: the corridor's ends and the gaps between
+ * room blocks have no room to stroke them, so the envelope came out broken.
+ *
+ * The boxes are rasterised onto their own coordinate grid and every cell edge
+ * that faces open space is kept, then collinear neighbours are merged back
+ * into long runs. That handles the L-shapes and the notches between blocks
+ * without needing a polygon clipper.
+ *
+ * `gap` closes slots narrower than itself before the outline is taken. Designed
+ * plans leave a few tens of centimetres between blocks, which would otherwise
+ * cut a sawtooth of 40 cm notches into a wall that a building simply does not
+ * have; the mockup draws one clean footprint for the same reason.
+ */
+export function envelopeRuns(boxes: Box[], gap = 0): EnvelopeRun[] {
+  if (boxes.length === 0) {
+    return [];
+  }
+  const grow = Math.max(0, gap) / 2;
+  const grown = boxes.map((box) => ({
+    x: box.x - grow,
+    y: box.y - grow,
+    width: box.width + grow * 2,
+    height: box.height + grow * 2,
+  }));
+
+  const xs = uniqueEdges(grown.flatMap((box) => [box.x, box.x + box.width]));
+  const ys = uniqueEdges(grown.flatMap((box) => [box.y, box.y + box.height]));
+  if (xs.length < 2 || ys.length < 2) {
+    return [];
+  }
+
+  const cols = xs.length - 1;
+  const rows = ys.length - 1;
+  const covered: boolean[] = new Array<boolean>(cols * rows).fill(false);
+
+  for (let row = 0; row < rows; row += 1) {
+    for (let col = 0; col < cols; col += 1) {
+      const cx = (xs[col]! + xs[col + 1]!) / 2;
+      const cy = (ys[row]! + ys[row + 1]!) / 2;
+      covered[row * cols + col] = grown.some(
+        (box) =>
+          cx > box.x + OUTLINE_EPSILON &&
+          cx < box.x + box.width - OUTLINE_EPSILON &&
+          cy > box.y + OUTLINE_EPSILON &&
+          cy < box.y + box.height - OUTLINE_EPSILON,
       );
-      if (!shared) {
-        segments.push(segment);
+    }
+  }
+
+  const filled = (col: number, row: number): boolean =>
+    col >= 0 && col < cols && row >= 0 && row < rows && covered[row * cols + col] === true;
+
+  const horizontal: { at: number; from: number; to: number; side: 1 | -1 }[] = [];
+  const vertical: { at: number; from: number; to: number; side: 1 | -1 }[] = [];
+
+  for (let row = 0; row < rows; row += 1) {
+    for (let col = 0; col < cols; col += 1) {
+      if (!filled(col, row)) {
+        continue;
+      }
+      if (!filled(col, row - 1)) {
+        horizontal.push({ at: ys[row]!, from: xs[col]!, to: xs[col + 1]!, side: -1 });
+      }
+      if (!filled(col, row + 1)) {
+        horizontal.push({ at: ys[row + 1]!, from: xs[col]!, to: xs[col + 1]!, side: 1 });
+      }
+      if (!filled(col - 1, row)) {
+        vertical.push({ at: xs[col]!, from: ys[row]!, to: ys[row + 1]!, side: -1 });
+      }
+      if (!filled(col + 1, row)) {
+        vertical.push({ at: xs[col + 1]!, from: ys[row]!, to: ys[row + 1]!, side: 1 });
       }
     }
   }
 
-  return segments;
+  return [
+    ...mergeRuns(horizontal, 'h'),
+    ...mergeRuns(vertical, 'v'),
+  ];
 }
 
-export interface WallSegment {
-  x1: number;
-  y1: number;
-  x2: number;
-  y2: number;
+function mergeRuns(
+  runs: { at: number; from: number; to: number; side: 1 | -1 }[],
+  orientation: 'h' | 'v',
+): EnvelopeRun[] {
+  const groups = new Map<string, { at: number; from: number; to: number; side: 1 | -1 }[]>();
+  for (const run of runs) {
+    const key = `${run.at}|${run.side}`;
+    const bucket = groups.get(key);
+    if (bucket) {
+      bucket.push(run);
+    } else {
+      groups.set(key, [run]);
+    }
+  }
+
+  const merged: EnvelopeRun[] = [];
+  for (const bucket of groups.values()) {
+    bucket.sort((a, b) => a.from - b.from);
+    let current = { ...bucket[0]! };
+    for (let index = 1; index < bucket.length; index += 1) {
+      const next = bucket[index]!;
+      if (next.from - current.to <= OUTLINE_EPSILON) {
+        current.to = Math.max(current.to, next.to);
+      } else {
+        merged.push({ orientation, ...current });
+        current = { ...next };
+      }
+    }
+    merged.push({ orientation, ...current });
+  }
+  return merged;
 }
 
-/** Draws the exterior walls; `square` caps close the corners. */
-export function PlanPerimeter({
-  rooms,
+/** The wall band a run draws, lying entirely outside the footprint. */
+export function envelopeBand(run: EnvelopeRun, wall: number): Box {
+  if (run.orientation === 'h') {
+    return {
+      x: run.from,
+      y: run.side === -1 ? run.at - wall : run.at,
+      width: run.to - run.from,
+      height: wall,
+    };
+  }
+  return {
+    x: run.side === -1 ? run.at - wall : run.at,
+    y: run.from,
+    width: wall,
+    height: run.to - run.from,
+  };
+}
+
+const WINDOW_FILL = '#dce8f5';
+const WINDOW_STROKE = '#aec3d9';
+
+/**
+ * Windows punched through an exterior run, spaced the way the mockup spaces
+ * them. Only runs wide enough to hold a whole window get any, so a short
+ * return beside a notch is left solid rather than split into slivers.
+ */
+function windowOpenings(
+  run: EnvelopeRun,
+  wall: number,
+): { box: Box; frame: Box }[] {
+  const span = run.to - run.from;
+  const width = Math.min(2.2, Math.max(1.2, span * 0.32));
+  const gap = 3.4;
+  if (span < width + 0.8) {
+    return [];
+  }
+
+  const count = Math.max(1, Math.floor((span - width) / gap) + 1);
+  const used = width * count;
+  const spare = span - used;
+  const step = spare / (count + 1);
+  const openings: { box: Box; frame: Box }[] = [];
+
+  for (let index = 0; index < count; index += 1) {
+    const start = run.from + step * (index + 1) + width * index;
+    const inset = Math.min(wall * 0.22, 0.06);
+    if (run.orientation === 'h') {
+      const y = run.side === -1 ? run.at - wall : run.at;
+      openings.push({
+        box: { x: start + inset, y: y + inset, width: width - inset * 2, height: wall - inset * 2 },
+        frame: { x: start, y, width, height: wall },
+      });
+    } else {
+      const x = run.side === -1 ? run.at - wall : run.at;
+      openings.push({
+        box: { x: x + inset, y: start + inset, width: wall - inset * 2, height: width - inset * 2 },
+        frame: { x, y: start, width: wall, height: width },
+      });
+    }
+  }
+  return openings;
+}
+
+/**
+ * The building envelope: one continuous wall around everything the floor
+ * actually occupies, with window openings on its exterior. This is the band
+ * the mockup draws around the whole storey — it is the reason the plan reads
+ * as a floor of a building rather than a scatter of separate boxes.
+ */
+export function PlanEnvelope({
+  boxes,
   wall,
   selected,
+  gap = 0.8,
 }: {
-  rooms: Box[];
+  boxes: Box[];
   wall: number;
   selected?: boolean;
+  /** Slots narrower than this are bridged, so the outline reads as one block. */
+  gap?: number;
 }) {
-  if (rooms.length === 0) {
+  const runs = envelopeRuns(boxes, gap);
+  if (runs.length === 0) {
     return null;
   }
+  const color = selected ? SELECTED_STROKE : WALL_COLOR;
+
   return (
     <g pointerEvents="none">
-      {exteriorWallSegments(rooms, wall).map((segment, index) => (
-        <line
-          key={index}
-          x1={segment.x1}
-          y1={segment.y1}
-          x2={segment.x2}
-          y2={segment.y2}
-          stroke={selected ? SELECTED_STROKE : WALL_COLOR}
-          strokeWidth={wall}
-          strokeLinecap="square"
-        />
-      ))}
+      {runs.map((run, index) => {
+        const band = envelopeBand(run, wall);
+        return (
+          <rect
+            key={`band-${index}`}
+            x={band.x}
+            y={band.y}
+            width={band.width}
+            height={band.height}
+            fill={color}
+          />
+        );
+      })}
+      {runs.flatMap((run, index) =>
+        windowOpenings(run, wall).map((opening, openingIndex) => (
+          <g key={`win-${index}-${openingIndex}`}>
+            <rect
+              x={opening.frame.x}
+              y={opening.frame.y}
+              width={opening.frame.width}
+              height={opening.frame.height}
+              fill="none"
+              stroke={selected ? SELECTED_STROKE : WINDOW_STROKE}
+              strokeWidth={Math.max(0.02, wall * 0.12)}
+            />
+            <rect
+              x={opening.box.x}
+              y={opening.box.y}
+              width={opening.box.width}
+              height={opening.box.height}
+              fill={WINDOW_FILL}
+            />
+          </g>
+        )),
+      )}
     </g>
   );
 }
@@ -410,15 +581,43 @@ function BalconyArt({ box, wall }: { box: Box; wall: number }) {
   );
 }
 
+/** Leaf colours, taken from the plants the mockup scatters through the rooms. */
+const LEAF_FILL = '#8CC63F';
+const LEAF_SHADE = '#6FA82E';
+const LEAF_STROKE = '#4C7A22';
+
+/**
+ * A potted plant: overlapping oval leaves fanning out from a small centre,
+ * drawn the way the mockup does. The old three grey circles read as a diagram
+ * symbol rather than as the greenery the reference puts beside each window.
+ */
 function TreeArt({ box }: { box: Box }) {
   const cx = box.x + box.width / 2;
   const cy = box.y + box.height / 2;
   const r = Math.min(box.width, box.height) * 0.46;
+  const leaves = 7;
+
   return (
-    <g fill="#CBD5E1" stroke="#94A3B8" strokeWidth={r * 0.06}>
-      <circle cx={cx} cy={cy} r={r} />
-      <circle cx={cx - r * 0.55} cy={cy + r * 0.32} r={r * 0.55} />
-      <circle cx={cx + r * 0.5} cy={cy - r * 0.42} r={r * 0.48} />
+    <g>
+      {Array.from({ length: leaves }, (_, index) => {
+        const angle = (360 / leaves) * index - 90;
+        const distance = r * 0.5;
+        const radians = (angle * Math.PI) / 180;
+        return (
+          <ellipse
+            key={index}
+            cx={cx + Math.cos(radians) * distance}
+            cy={cy + Math.sin(radians) * distance}
+            rx={r * 0.44}
+            ry={r * 0.26}
+            fill={index % 2 === 0 ? LEAF_FILL : LEAF_SHADE}
+            stroke={LEAF_STROKE}
+            strokeWidth={r * 0.055}
+            transform={`rotate(${angle} ${cx + Math.cos(radians) * distance} ${cy + Math.sin(radians) * distance})`}
+          />
+        );
+      })}
+      <circle cx={cx} cy={cy} r={r * 0.13} fill={LEAF_STROKE} />
     </g>
   );
 }

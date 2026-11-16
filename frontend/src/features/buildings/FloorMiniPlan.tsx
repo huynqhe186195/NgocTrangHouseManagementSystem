@@ -4,6 +4,7 @@ import { floorLayoutKindMeta } from '../../lib/api/types';
 import { buildPlanGeometry } from '../../lib/floorGeometry';
 import {
   LayoutObjectArt,
+  PlanEnvelope,
   WALL_COLOR,
   innerBox,
   statusStyles,
@@ -51,6 +52,7 @@ export function FloorMiniPlan({ rooms, items = [], height = 62 }: FloorMiniPlanP
   const detail = Math.max(bounds.width, bounds.height);
   const wall = detail * 0.012;
   const hairline = detail * 0.003;
+  const envelope = detail * 0.022;
 
   return (
     <svg
@@ -61,6 +63,10 @@ export function FloorMiniPlan({ rooms, items = [], height = 62 }: FloorMiniPlanP
       aria-label={`Sơ đồ mặt bằng thu nhỏ: ${plan.rooms.length} phòng`}
       className="rounded border border-outline-variant bg-white"
     >
+      {/* The storey outline first — rooms, corridor and stairwell together —
+          so the thumbnail reads as a floor of a building, not a grid of tiles. */}
+      <PlanEnvelope boxes={[...plan.rooms, ...plan.items]} wall={envelope} />
+
       {/* Walls are filled rather than stroked: the floor is then painted on
           top at the same rect, so shared partitions stay one band wide and the
           perimeter is whatever the band could not cover. */}

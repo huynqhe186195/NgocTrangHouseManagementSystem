@@ -41,9 +41,26 @@ import {
 } from './FloorDesignerCanvas';
 
 const PADDING_METRES = 1.5;
-/** Corridors are the one object that reads wrong at a square default size. */
-const CORRIDOR_KIND: FloorLayoutItemKind = 1;
 const DEFAULT_ROOM_SIZE = { width: 4, height: 3.5 };
+
+/**
+ * The size each palette object lands at. A stairwell is not the same shape as
+ * a WC, and dropping every kind as a 1.6 m cube made the plan look like a pile
+ * of identical blocks; these are the real footprints from the mockup.
+ */
+const ITEM_DEFAULT_SIZE: Record<FloorLayoutItemKind, { width: number; height: number }> = {
+  1: { width: 8, height: 1.8 }, // Hành lang
+  2: { width: 2.6, height: 4.2 }, // Cầu thang
+  3: { width: 1.8, height: 2.2 }, // Thang máy
+  4: { width: 3, height: 3 }, // Khu dịch vụ
+  5: { width: 2, height: 2.6 }, // Nhà vệ sinh
+  6: { width: 1.2, height: 0.3 }, // Cửa ra vào
+  7: { width: 2.4, height: 0.8 }, // Nhãn chú thích
+  8: { width: 2.4, height: 2.6 }, // Phòng giặt
+  9: { width: 2.4, height: 2.6 }, // Kho
+  10: { width: 3.4, height: 1.5 }, // Ban công
+  11: { width: 1.2, height: 1.2 }, // Cây xanh
+};
 const EMPTY_FLOOR_BOUNDS: PlanBounds = {
   minX: 0,
   minY: 0,
@@ -420,8 +437,7 @@ export function FloorDesignerPage() {
   }
 
   function dropItem(kind: FloorLayoutItemKind, point: { x: number; y: number }) {
-    const isCorridor = kind === CORRIDOR_KIND;
-    const size = isCorridor ? { width: 6, height: 1.4 } : { width: 1.6, height: 1.6 };
+    const size = ITEM_DEFAULT_SIZE[kind] ?? { width: 2, height: 2 };
     const box = clampBoxToBounds(
       {
         ...size,
@@ -803,7 +819,7 @@ export function FloorDesignerPage() {
               ? `${draft.label}: x ${formatMetres(draft.box.x)}, y ${formatMetres(draft.box.y)} · ${formatMetres(draft.box.width)} × ${formatMetres(draft.box.height)}`
               : measure
                 ? `Đo được ${formatMetres(measure.distance)} (Δx ${formatMetres(Math.abs(measure.dx))}, Δy ${formatMetres(Math.abs(measure.dy))}).`
-                : 'Sơ đồ chỉ vẽ phòng bằng hình chữ nhật. Mười một loại vật thể cố định có thể đặt thêm; hình dạng tuỳ ý (cây, ban công vẽ tay) chưa hỗ trợ.'}
+                : 'Mười một loại vật thể (hành lang, cầu thang, thang máy, nhà vệ sinh, ban công, cây xanh…) vẽ bằng ký hiệu kiến trúc riêng. Phòng và vật thể đều là hình chữ nhật; vẽ tay đa giác chưa hỗ trợ.'}
           </p>
         </section>
 

@@ -1,4 +1,5 @@
 import { formatMetres, type Box } from '../../lib/floorGeometry';
+import type { FloorLayoutItemKind } from '../../lib/api/types';
 
 /**
  * The architectural primitives both floor-plan screens draw with. The
@@ -7,15 +8,30 @@ import { formatMetres, type Box } from '../../lib/floorGeometry';
  * either screen.
  */
 
-export const WALL_COLOR = '#3d3d3d';
+export const WALL_COLOR = '#2b2b2b';
 export const SELECTED_STROKE = '#1d4ed8';
 const RULE_COLOR = '#94a3b8';
 const RULE_TEXT = '#64748b';
+/** Hairlines inside a plan: stair treads, door leaves, railings. */
+export const LINE_COLOR = '#8a939e';
 
-/** Wall thickness in metres, capped so it never swallows a small room. */
+/** Shared status palette, so every drawing of a floor reads the same colours. */
+export const statusStyles: Record<number, { fill: string; stroke: string; label: string }> = {
+  1: { fill: '#E9F7E7', stroke: '#9BD69B', label: 'Trống' },
+  2: { fill: '#FDE2E1', stroke: '#F2A9A6', label: 'Đang thuê' },
+  3: { fill: '#FDF0CC', stroke: '#EBCB7A', label: 'Đã đặt' },
+  4: { fill: '#E8EEF5', stroke: '#B3C4D8', label: 'Bảo trì' },
+  5: { fill: '#F1F5F9', stroke: '#CBD5E1', label: 'Ngừng dùng' },
+};
+
+/**
+ * Wall thickness in metres. The mockup draws masonry at roughly 0.27 m on a
+ * 4 m room, so the wall has to be a real band rather than the hairline this
+ * used to draw — a 6 cm line reads as a pencil outline, not as a wall.
+ */
 export function wallThickness(box: Box): number {
   const unit = Math.min(box.width, box.height);
-  return Math.max(0.06, Math.min(0.16, unit * 0.06));
+  return Math.max(0.12, Math.min(0.3, unit * 0.075));
 }
 
 /** Door opening on the bottom wall, wide enough to read but never the whole side. */
@@ -44,6 +60,461 @@ export function doorArcPath(box: Box, wall: number, door: number): string {
   const hingeX = box.x + (box.width - door) / 2;
   const bottom = box.y + box.height - wall / 2;
   return `M ${hingeX} ${bottom} a ${door} ${door} 0 0 1 ${door} 0`;
+}
+
+/** The room's floor, inset so the wall band reads as masonry around it. */
+export function innerBox(box: Box, wall: number): Box {
+  const inset = wall / 2;
+  return {
+    x: box.x + inset,
+    y: box.y + inset,
+    width: Math.max(0.1, box.width - wall),
+    height: Math.max(0.1, box.height - wall),
+  };
+}
+
+/**
+ * The building's own walls: every room edge that no other room sits against.
+ * Rooms draw a half-thickness band inside themselves, so the two rooms either
+ * side of a partition add up to one wall; an exterior edge would only get that
+ * half, which is why it is stroked again at full thickness from outside.
+ */
+export function exteriorWallSegments(rooms: Box[], wall: number): WallSegment[] {
+  const segments: WallSegment[] = [];
+
+  for (const room of rooms) {
+    const edges: { segment: WallSegment; probe: Box }[] = [
+      {
+        segment: { x1: room.x, y1: room.y, x2: room.x + room.width, y2: room.y },
+        probe: { x: room.x, y: room.y - wall, width: room.width, height: wall },
+      },
+      {
+        segment: {
+          x1: room.x,
+          y1: room.y + room.height,
+          x2: room.x + room.width,
+          y2: room.y + room.height,
+        },
+        probe: {
+          x: room.x,
+          y: room.y + room.height,
+          width: room.width,
+          height: wall,
+        },
+      },
+      {
+        segment: { x1: room.x, y1: room.y, x2: room.x, y2: room.y + room.height },
+        probe: { x: room.x - wall, y: room.y, width: wall, height: room.height },
+      },
+      {
+        segment: {
+          x1: room.x + room.width,
+          y1: room.y,
+          x2: room.x + room.width,
+          y2: room.y + room.height,
+        },
+        probe: {
+          x: room.x + room.width,
+          y: room.y,
+          width: wall,
+          height: room.height,
+        },
+      },
+    ];
+
+    for (const { segment, probe } of edges) {
+      const shared = rooms.some(
+        (other) =>
+          other !== room &&
+          other.x < probe.x + probe.width - 0.001 &&
+          other.x + other.width > probe.x + 0.001 &&
+          other.y < probe.y + probe.height - 0.001 &&
+          other.y + other.height > probe.y + 0.001,
+      );
+      if (!shared) {
+        segments.push(segment);
+      }
+    }
+  }
+
+  return segments;
+}
+
+export interface WallSegment {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
+/** Draws the exterior walls; `square` caps close the corners. */
+export function PlanPerimeter({
+  rooms,
+  wall,
+  selected,
+}: {
+  rooms: Box[];
+  wall: number;
+  selected?: boolean;
+}) {
+  if (rooms.length === 0) {
+    return null;
+  }
+  return (
+    <g pointerEvents="none">
+      {exteriorWallSegments(rooms, wall).map((segment, index) => (
+        <line
+          key={index}
+          x1={segment.x1}
+          y1={segment.y1}
+          x2={segment.x2}
+          y2={segment.y2}
+          stroke={selected ? SELECTED_STROKE : WALL_COLOR}
+          strokeWidth={wall}
+          strokeLinecap="square"
+        />
+      ))}
+    </g>
+  );
+}
+
+/* ------------------------------------------------------------------------ *
+ * Floor objects.
+ *
+ * Each palette kind has its own architectural symbol rather than a plain
+ * rectangle: a stairwell with treads, an elevator with its cross, a WC with
+ * fixtures, a door with its swing. The drawing is shared by the read-only
+ * plan, the designer and the thumbnail so all three agree.
+ * ------------------------------------------------------------------------ */
+
+const OBJECT_FILL = '#EFF3F8';
+const OBJECT_WALL_RATIO = 0.07;
+
+export interface LayoutObjectArtProps {
+  box: Box;
+  kind: FloorLayoutItemKind;
+  /** Object walls are thinner than room walls; they are smaller boxes. */
+  wall?: number;
+  /** Bottom strip reserved for the caption, so the symbol sits above it. */
+  caption?: number;
+}
+
+export function objectWall(box: Box): number {
+  const unit = Math.min(box.width, box.height);
+  return Math.max(0.07, Math.min(0.2, unit * OBJECT_WALL_RATIO));
+}
+
+/** Walls around an object, with no door opening. */
+function closedWalls(box: Box, wall: number): string {
+  const inset = wall / 2;
+  const left = box.x + inset;
+  const right = box.x + box.width - inset;
+  const top = box.y + inset;
+  const bottom = box.y + box.height - inset;
+  return `M ${left} ${top} H ${right} V ${bottom} H ${left} Z`;
+}
+
+function StairArt({ box, wall }: { box: Box; wall: number }) {
+  const inner = innerBox(box, wall);
+  const horizontal = inner.width >= inner.height;
+  const span = horizontal ? inner.width : inner.height;
+  const treads = Math.max(4, Math.min(14, Math.round(span / 0.32)));
+  const strokeWidth = Math.max(0.02, wall * 0.16);
+
+  const steps = [];
+  for (let index = 1; index < treads; index += 1) {
+    const t = index / treads;
+    steps.push(
+      horizontal ? (
+        <line
+          key={index}
+          x1={inner.x + inner.width * t}
+          y1={inner.y}
+          x2={inner.x + inner.width * t}
+          y2={inner.y + inner.height}
+          stroke={LINE_COLOR}
+          strokeWidth={strokeWidth}
+        />
+      ) : (
+        <line
+          key={index}
+          x1={inner.x}
+          y1={inner.y + inner.height * t}
+          x2={inner.x + inner.width}
+          y2={inner.y + inner.height * t}
+          stroke={LINE_COLOR}
+          strokeWidth={strokeWidth}
+        />
+      ),
+    );
+  }
+
+  // Direction of travel, as the mockup draws it down the middle of the flight.
+  const midX = inner.x + inner.width / 2;
+  const midY = inner.y + inner.height / 2;
+  const head = Math.min(inner.width, inner.height) * 0.16;
+  const from = horizontal ? inner.x + inner.width * 0.14 : inner.y + inner.height * 0.14;
+  const to = horizontal ? inner.x + inner.width * 0.86 : inner.y + inner.height * 0.86;
+
+  return (
+    <>
+      {steps}
+      <line
+        x1={horizontal ? from : midX}
+        y1={horizontal ? midY : from}
+        x2={horizontal ? to : midX}
+        y2={horizontal ? midY : to}
+        stroke={LINE_COLOR}
+        strokeWidth={strokeWidth * 1.6}
+      />
+      <path
+        d={
+          horizontal
+            ? `M ${to} ${midY} l ${-head} ${-head * 0.6} v ${head * 1.2} Z`
+            : `M ${midX} ${to} l ${-head * 0.6} ${-head} h ${head * 1.2} Z`
+        }
+        fill={LINE_COLOR}
+      />
+    </>
+  );
+}
+
+function ElevatorArt({ box, wall }: { box: Box; wall: number }) {
+  const inner = innerBox(box, wall);
+  const strokeWidth = Math.max(0.02, wall * 0.16);
+  return (
+    <>
+      <line
+        x1={inner.x}
+        y1={inner.y}
+        x2={inner.x + inner.width}
+        y2={inner.y + inner.height}
+        stroke={LINE_COLOR}
+        strokeWidth={strokeWidth}
+      />
+      <line
+        x1={inner.x + inner.width}
+        y1={inner.y}
+        x2={inner.x}
+        y2={inner.y + inner.height}
+        stroke={LINE_COLOR}
+        strokeWidth={strokeWidth}
+      />
+    </>
+  );
+}
+
+function ToiletArt({ box, wall }: { box: Box; wall: number }) {
+  const inner = innerBox(box, wall);
+  const strokeWidth = Math.max(0.015, wall * 0.12);
+  const unit = Math.min(inner.width, inner.height);
+  const bowl = unit * 0.26;
+  const cx = inner.x + inner.width * 0.62;
+  const cy = inner.y + inner.height * 0.55;
+
+  return (
+    <g fill="none" stroke={LINE_COLOR} strokeWidth={strokeWidth}>
+      {/* Cistern against the wall, then the bowl in front of it. */}
+      <rect
+        x={inner.x + inner.width * 0.62 - bowl * 0.8}
+        y={inner.y + inner.height * 0.12}
+        width={bowl * 1.6}
+        height={bowl * 0.5}
+        rx={bowl * 0.1}
+      />
+      <ellipse cx={cx} cy={cy} rx={bowl * 0.78} ry={bowl} />
+      {/* Basin tucked into the other corner. */}
+      <rect
+        x={inner.x + inner.width * 0.12}
+        y={inner.y + inner.height * 0.16}
+        width={inner.width * 0.2}
+        height={inner.height * 0.18}
+        rx={unit * 0.05}
+      />
+    </g>
+  );
+}
+
+/** A doorway: the wall breaks and the leaf sweeps into the room. */
+function DoorArt({ box, wall }: { box: Box; wall: number }) {
+  const horizontal = box.width >= box.height;
+  const strokeWidth = Math.max(0.05, wall * 0.7);
+  const span = horizontal ? box.width : box.height;
+  const gap = span * 0.62;
+
+  if (horizontal) {
+    const left = box.x + (box.width - gap) / 2;
+    const right = left + gap;
+    const y = box.y + box.height / 2;
+    return (
+      <g fill="none" stroke={WALL_COLOR} strokeWidth={strokeWidth} strokeLinecap="butt">
+        <line x1={box.x} y1={y} x2={left} y2={y} />
+        <line x1={right} y1={y} x2={box.x + box.width} y2={y} />
+        <path
+          d={`M ${left} ${y} a ${gap} ${gap} 0 0 1 ${gap * 0.15} ${-gap * 0.99}`}
+          stroke={LINE_COLOR}
+          strokeWidth={strokeWidth * 0.4}
+        />
+      </g>
+    );
+  }
+
+  const top = box.y + (box.height - gap) / 2;
+  const bottom = top + gap;
+  const x = box.x + box.width / 2;
+  return (
+    <g fill="none" stroke={WALL_COLOR} strokeWidth={strokeWidth} strokeLinecap="butt">
+      <line x1={x} y1={box.y} x2={x} y2={top} />
+      <line x1={x} y1={bottom} x2={x} y2={box.y + box.height} />
+      <path
+        d={`M ${x} ${top} a ${gap} ${gap} 0 0 1 ${gap * 0.99} ${gap * 0.15}`}
+        stroke={LINE_COLOR}
+        strokeWidth={strokeWidth * 0.4}
+      />
+    </g>
+  );
+}
+
+function BalconyArt({ box, wall }: { box: Box; wall: number }) {
+  const inner = innerBox(box, wall);
+  const horizontal = inner.width >= inner.height;
+  const strokeWidth = Math.max(0.015, wall * 0.12);
+  // The railing runs along the outer edge, the side away from the building.
+  const offset = Math.max(0.1, Math.min(inner.width, inner.height) * 0.16);
+  const railY = inner.y + inner.height - offset;
+  const railX = inner.x + offset;
+  const posts = Math.max(3, Math.round((horizontal ? inner.width : inner.height) / 0.5));
+
+  return (
+    <g stroke={LINE_COLOR} strokeWidth={strokeWidth} fill="none">
+      <line
+        x1={inner.x}
+        y1={railY}
+        x2={inner.x + inner.width}
+        y2={railY}
+      />
+      <line x1={railX} y1={inner.y} x2={railX} y2={inner.y + inner.height} />
+      {Array.from({ length: posts }, (_, index) => {
+        const t = (index + 1) / (posts + 1);
+        return (
+          <line
+            key={index}
+            x1={inner.x + inner.width * t}
+            y1={railY}
+            x2={inner.x + inner.width * t}
+            y2={inner.y + inner.height}
+          />
+        );
+      })}
+    </g>
+  );
+}
+
+function TreeArt({ box }: { box: Box }) {
+  const cx = box.x + box.width / 2;
+  const cy = box.y + box.height / 2;
+  const r = Math.min(box.width, box.height) * 0.46;
+  return (
+    <g fill="#CBD5E1" stroke="#94A3B8" strokeWidth={r * 0.06}>
+      <circle cx={cx} cy={cy} r={r} />
+      <circle cx={cx - r * 0.55} cy={cy + r * 0.32} r={r * 0.55} />
+      <circle cx={cx + r * 0.5} cy={cy - r * 0.42} r={r * 0.48} />
+    </g>
+  );
+}
+
+/**
+ * The drawing of one floor object. Everything that is not a bare rectangle
+ * lives here so the designer preview and the finished plan never diverge.
+ */
+export function LayoutObjectArt({ box, kind, wall, caption = 0 }: LayoutObjectArtProps) {
+  const thickness = wall ?? objectWall(box);
+  // The caption strip belongs to the symbol's frame, not to its drawing, so
+  // the stair treads and WC fixtures stay inside the part left above it.
+  const art =
+    caption > 0 && box.height > caption
+      ? { ...box, height: box.height - caption }
+      : box;
+
+  if (kind === 7) {
+    // A note has no footprint; only its text is drawn by the caller.
+    return null;
+  }
+
+  if (kind === 11) {
+    return <TreeArt box={art} />;
+  }
+
+  if (kind === 6) {
+    return <DoorArt box={art} wall={thickness} />;
+  }
+
+  const fill = kind === 10 ? '#F4F8FB' : OBJECT_FILL;
+
+  return (
+    <g>
+      <rect
+        x={box.x}
+        y={box.y}
+        width={box.width}
+        height={box.height}
+        fill={fill}
+      />
+      <path
+        d={closedWalls(box, thickness)}
+        fill="none"
+        stroke={WALL_COLOR}
+        strokeWidth={thickness}
+        strokeLinecap="square"
+      />
+      {kind === 2 && <StairArt box={art} wall={thickness} />}
+      {kind === 3 && <ElevatorArt box={art} wall={thickness} />}
+      {kind === 5 && <ToiletArt box={art} wall={thickness} />}
+      {kind === 10 && <BalconyArt box={art} wall={thickness} />}
+    </g>
+  );
+}
+
+export interface ObjectLabelFit {
+  /** The symbol's own area, above the caption strip. */
+  art: Box;
+  /** Metres reserved at the bottom of the box for the caption. */
+  caption: number;
+  /** Baseline for the caption text. */
+  baselineY: number;
+  fontSize: number;
+  textLength?: number;
+}
+
+/**
+ * Splits an object's box into symbol and caption, following the mockup: the
+ * name sits in a strip under the symbol instead of being printed through the
+ * middle of it, where it used to cover the stair treads and the WC fixtures.
+ * Returns null when the strip would be too thin to read — a door leaf or a
+ * sliver of corridor is drawn unlabelled rather than captioned illegibly.
+ */
+export function objectLabel(box: Box, label: string): ObjectLabelFit | null {
+  const text = label.trim();
+  if (text.length === 0) {
+    return null;
+  }
+  const unit = Math.min(box.width, box.height);
+  const caption = Math.min(box.height * 0.28, Math.max(0.18, Math.min(0.5, unit * 0.24)));
+  if (caption < 0.16 || box.height < caption * 2.2 || box.width < 0.9) {
+    return null;
+  }
+  const fontSize = caption * 0.62;
+  const fit = fitLabel(text, fontSize, box.width * 0.86);
+  // Sits clear of the inner face of the bottom wall, so the caption reads on
+  // the floor rather than across the masonry band.
+  const baselineY = box.y + box.height - objectWall(box) - fontSize * 0.3;
+  return {
+    art: { ...box, height: box.height - caption },
+    caption,
+    baselineY,
+    fontSize: fit.fontSize,
+    textLength: fit.textLength,
+  };
 }
 
 /**
@@ -140,6 +611,30 @@ export function PlanRulers({
 
 export function formatTick(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+/**
+ * Fits a label inside its box. The estimate is only used to shrink the type;
+ * `textLength` is what actually guarantees the glyphs stay inside, since font
+ * metrics differ between machines and a guessed advance width would overflow
+ * on some of them.
+ */
+export function fitLabel(
+  label: string,
+  size: number,
+  maxWidth: number,
+): { fontSize: number; textLength?: number } {
+  if (label.length === 0 || maxWidth <= 0) {
+    return { fontSize: size };
+  }
+  const natural = label.length * size * 0.58;
+  if (natural <= maxWidth) {
+    return { fontSize: size };
+  }
+  const fontSize = Math.max(size * 0.4, size * (maxWidth / natural));
+  // Re-estimating at the smaller size can still be off, so the box width is
+  // imposed on the text rather than trusted to the estimate.
+  return { fontSize, textLength: maxWidth };
 }
 
 /** Keeps ruler labels readable: a tick every 1, 2, 5, 10, 20 or 50 m. */

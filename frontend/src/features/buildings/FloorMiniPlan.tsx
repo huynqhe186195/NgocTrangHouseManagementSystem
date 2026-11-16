@@ -2,7 +2,12 @@ import { useMemo } from 'react';
 import type { FloorLayoutItemDto, RoomDto } from '../../lib/api/types';
 import { floorLayoutKindMeta } from '../../lib/api/types';
 import { buildPlanGeometry } from '../../lib/floorGeometry';
-import { statusStyles } from './FloorPlan';
+import {
+  LayoutObjectArt,
+  WALL_COLOR,
+  innerBox,
+  statusStyles,
+} from './planDrawing';
 
 interface FloorMiniPlanProps {
   rooms: RoomDto[];
@@ -14,13 +19,13 @@ interface FloorMiniPlanProps {
 /**
  * The row thumbnail on the building screen. It is drawn from exactly the
  * geometry the floor plan screen uses — the same `buildPlanGeometry`, the same
- * status palette — so what the table shows is the floor's real layout and not
- * an unrelated diagram of coloured squares.
+ * status palette, the same wall ring — so what the table shows is the floor's
+ * real layout at small size, not an unrelated diagram of coloured squares.
  *
  * A floor whose rooms have no coordinates yet says so instead of drawing an
  * invented plan.
  */
-export function FloorMiniPlan({ rooms, items = [], height = 54 }: FloorMiniPlanProps) {
+export function FloorMiniPlan({ rooms, items = [], height = 62 }: FloorMiniPlanProps) {
   const plan = useMemo(() => buildPlanGeometry(rooms, items), [rooms, items]);
 
   if (rooms.length === 0) {
@@ -40,6 +45,12 @@ export function FloorMiniPlan({ rooms, items = [], height = 54 }: FloorMiniPlanP
   }
 
   const { bounds } = plan;
+  // Drawn as a share of the whole floor rather than of one room: at 60 px the
+  // true 0.27 m band would be under a pixel and the plan would read as coloured
+  // tiles again, which is exactly what this thumbnail used to look like.
+  const detail = Math.max(bounds.width, bounds.height);
+  const wall = detail * 0.012;
+  const hairline = detail * 0.003;
 
   return (
     <svg
@@ -50,43 +61,48 @@ export function FloorMiniPlan({ rooms, items = [], height = 54 }: FloorMiniPlanP
       aria-label={`Sơ đồ mặt bằng thu nhỏ: ${plan.rooms.length} phòng`}
       className="rounded border border-outline-variant bg-white"
     >
+      {/* Walls are filled rather than stroked: the floor is then painted on
+          top at the same rect, so shared partitions stay one band wide and the
+          perimeter is whatever the band could not cover. */}
+      {plan.rooms.map((room) => (
+        <rect
+          key={`wall-${room.id}`}
+          x={room.x}
+          y={room.y}
+          width={room.width}
+          height={room.height}
+          fill={WALL_COLOR}
+        />
+      ))}
+
       {plan.items.map((item) => {
         const meta = floorLayoutKindMeta[item.kind];
         return (
           <g key={item.id}>
-            <rect
-              x={item.x}
-              y={item.y}
-              width={item.width}
-              height={item.height}
-              fill={item.kind === 1 ? '#F1F5F9' : '#EEF2F7'}
-              stroke="#cbd5e1"
-              strokeWidth={Math.max(bounds.width, bounds.height) * 0.004}
+            <LayoutObjectArt
+              box={item}
+              kind={item.kind}
+              wall={Math.max(wall * 0.6, hairline)}
             />
-            {meta && (
-              <title>{item.label ?? meta.label}</title>
-            )}
+            {meta && <title>{item.label ?? meta.label}</title>}
           </g>
         );
       })}
 
       {plan.rooms.map((room) => {
         const style = statusStyles[room.status] ?? statusStyles[5]!;
-        const strokeWidth = Math.max(bounds.width, bounds.height) * 0.005;
+        const floor = innerBox(room, wall);
         return (
-          <rect
-            key={room.id}
-            x={room.x}
-            y={room.y}
-            width={room.width}
-            height={room.height}
-            rx={0.06}
-            fill={style.fill}
-            stroke={style.stroke}
-            strokeWidth={strokeWidth}
-          >
+          <g key={room.id}>
+            <rect
+              x={floor.x}
+              y={floor.y}
+              width={floor.width}
+              height={floor.height}
+              fill={style.fill}
+            />
             <title>{`${room.roomNumber} — ${style.label}`}</title>
-          </rect>
+          </g>
         );
       })}
     </svg>

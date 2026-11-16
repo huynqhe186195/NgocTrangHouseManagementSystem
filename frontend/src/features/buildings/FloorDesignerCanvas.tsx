@@ -21,15 +21,18 @@ import {
   type ResizeHandle,
 } from '../../lib/floorGeometry';
 import {
+  LayoutObjectArt,
+  LINE_COLOR,
   PlanCompass,
   PlanDimensions,
+  PlanPerimeter,
   PlanRulers,
   SELECTED_STROKE,
   WALL_COLOR,
   doorArcPath,
   doorWidth,
+  objectLabel,
   tickStep,
-  wallPath,
   wallThickness,
 } from './planDrawing';
 
@@ -91,9 +94,24 @@ const statusStroke: Record<number, string> = {
 };
 
 type DragState =
-  | { type: 'move'; target: 'room' | 'item'; id: string; origin: Box; startX: number; startY: number }
+  | {
+      type: 'move';
+      target: 'room' | 'item';
+      id: string;
+      origin: Box;
+      /** Gesture start in client pixels, and the metres-per-pixel at that moment. */
+      clientX: number;
+      clientY: number;
+      scale: number;
+    }
   | { type: 'resize'; target: 'room' | 'item'; id: string; handle: ResizeHandle; origin: Box }
-  | { type: 'pan'; startX: number; startY: number; originOffset: { x: number; y: number } }
+  | {
+      type: 'pan';
+      clientX: number;
+      clientY: number;
+      originOffset: { x: number; y: number };
+      scale: number;
+    }
   | { type: 'measure'; startX: number; startY: number; endX: number; endY: number };
 
 /** The three pointer modes the toolbar switches between. */
@@ -178,6 +196,15 @@ export function FloorDesignerCanvas({
       : box;
   }, [bounds, zoom, offset, frameSize]);
   const gridStep = useMemo(() => tickStep(bounds, zoom), [bounds.width, zoom]);
+  // One thickness for the whole floor's exterior walls, so the enclosure looks
+  // like masonry rather than a per-room outline.
+  const perimeterWall = useMemo(() => {
+    const units = rooms
+      .flatMap((room) => (room.box ? [Math.min(room.box.width, room.box.height)] : []))
+      .sort((a, b) => a - b);
+    const median = units.length > 0 ? units[Math.floor(units.length / 2)]! : 4;
+    return Math.max(0.12, Math.min(0.3, median * 0.075));
+  }, [rooms]);
 
   const toMetres = useCallback((clientX: number, clientY: number) => {
     const svg = svgRef.current;
@@ -192,6 +219,24 @@ export function FloorDesignerCanvas({
     }
     const point = new DOMPoint(clientX, clientY).matrixTransform(ctm.inverse());
     return pointToMetres(point);
+  }, []);
+
+  /**
+   * Metres per client pixel, measured once when a gesture starts.
+   *
+   * Panning must not ask the live CTM where the pointer is: moving the offset
+   * changes the viewBox, which changes the CTM, which changes the next delta —
+   * the drag feeds back into itself and the drawing shakes. Reading the scale
+   * at gesture start and multiplying raw pixel movement by it breaks the loop;
+   * the viewBox changing underneath then has no effect on the delta.
+   */
+  const scaleAtStart = useCallback((): number => {
+    const svg = svgRef.current;
+    const ctm = svg?.getScreenCTM?.();
+    if (!ctm || !Number.isFinite(ctm.a) || ctm.a === 0) {
+      return 1;
+    }
+    return 1 / Math.abs(ctm.a);
   }, []);
 
   const currentBox = useCallback(
@@ -222,8 +267,15 @@ export function FloorDesignerCanvas({
       return;
     }
     (event.target as Element).setPointerCapture?.(event.pointerId);
-    const start = toMetres(event.clientX, event.clientY);
-    setDrag({ type: 'move', target, id, origin: box, startX: start.x, startY: start.y });
+    setDrag({
+      type: 'move',
+      target,
+      id,
+      origin: box,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      scale: scaleAtStart(),
+    });
   }
 
   function startResize(
@@ -244,10 +296,12 @@ export function FloorDesignerCanvas({
     }
 
     if (drag.type === 'pan') {
-      const start = toMetres(event.clientX, event.clientY);
+      // Delta in raw client pixels, scaled by the metre-per-pixel measured at
+      // gesture start. Re-deriving it from the live CTM would make the pan
+      // chase its own viewBox change and the drawing would shake.
       setOffset({
-        x: drag.originOffset.x - (start.x - drag.startX),
-        y: drag.originOffset.y - (start.y - drag.startY),
+        x: drag.originOffset.x - (event.clientX - drag.clientX) * drag.scale,
+        y: drag.originOffset.y - (event.clientY - drag.clientY) * drag.scale,
       });
       return;
     }
@@ -263,7 +317,13 @@ export function FloorDesignerCanvas({
     const point = toMetres(event.clientX, event.clientY);
     let box: Box;
     if (drag.type === 'move') {
-      box = moveBox(drag.origin, point.x - drag.startX, point.y - drag.startY);
+      // Pan/zoom cannot change mid-drag, so a pixel delta is just as exact as
+      // two CTM lookups and does not drift when the preview re-renders.
+      box = moveBox(
+        drag.origin,
+        (event.clientX - drag.clientX) * drag.scale,
+        (event.clientY - drag.clientY) * drag.scale,
+      );
     } else {
       box = resizeBox(drag.origin, drag.handle, point);
     }
@@ -316,7 +376,13 @@ export function FloorDesignerCanvas({
       return;
     }
 
-    setDrag({ type: 'pan', startX: start.x, startY: start.y, originOffset: offset });
+    setDrag({
+      type: 'pan',
+      clientX: event.clientX,
+      clientY: event.clientY,
+      originOffset: offset,
+      scale: scaleAtStart(),
+    });
     onSelect(null);
   }
 
@@ -517,6 +583,14 @@ export function FloorDesignerCanvas({
             size={Math.max(0.9, Math.min(viewBox.width, viewBox.height) * 0.09)}
           />
 
+          <PlanPerimeter
+            rooms={rooms.flatMap((room) => {
+              const box = currentBox('room', room.id) ?? room.box;
+              return box ? [box] : [];
+            })}
+            wall={perimeterWall}
+          />
+
           {items.map((item) => {
             const active = selection?.kind === 'item' && selection.id === item.id;
             const box = currentBox('item', item.id) ?? item;
@@ -524,8 +598,7 @@ export function FloorDesignerCanvas({
               <DesignerShape
                 key={item.id}
                 box={box}
-                fill="#EEF2F7"
-                stroke="#cbd5e1"
+                kind={item.kind}
                 selected={active}
                 interactive={mode !== 'measure'}
                 label={item.label ?? floorLayoutKindMeta[item.kind]?.label ?? ''}
@@ -678,8 +751,9 @@ function MeasureLabel({
 
 function DesignerShape({
   box,
-  fill,
-  stroke,
+  kind,
+  fill = 'transparent',
+  stroke = 'transparent',
   selected,
   label,
   sublabel,
@@ -690,8 +764,10 @@ function DesignerShape({
   onResizeStart,
 }: {
   box: Box;
-  fill: string;
-  stroke: string;
+  /** Set for palette objects; rooms leave it undefined and pass `walled`. */
+  kind?: FloorLayoutItemDto['kind'];
+  fill?: string;
+  stroke?: string;
   selected: boolean;
   label: string;
   sublabel?: string;
@@ -710,6 +786,11 @@ function DesignerShape({
   const door = doorWidth(box);
   const centreX = box.x + box.width / 2;
   const centreY = box.y + box.height / 2;
+  const isNote = kind === 7;
+  // Room numbers centre in the room; a floor object captions a strip under its
+  // own symbol, the way the mockup labels the stairwell and the communal WC.
+  // A note *is* its text, so it is centred in its own box instead.
+  const caption = isNote ? null : kind === undefined ? null : objectLabel(box, label);
 
   return (
     <g transform={rotation ? `rotate(${rotation} ${centreX} ${centreY})` : undefined}>
@@ -719,9 +800,9 @@ function DesignerShape({
         width={box.width}
         height={box.height}
         rx={0.08}
-        fill={fill}
-        stroke={walled ? 'none' : selected ? SELECTED_STROKE : stroke}
-        strokeWidth={walled ? 0 : selected ? 0.1 : 0.05}
+        fill={walled || kind !== undefined ? 'transparent' : fill}
+        stroke={walled ? 'none' : kind !== undefined ? 'none' : selected ? SELECTED_STROKE : stroke}
+        strokeWidth={walled || kind !== undefined ? 0 : selected ? 0.1 : 0.05}
         style={{ cursor: interactive ? 'move' : 'default' }}
         onPointerDown={interactive ? onPointerDown : undefined}
         role={interactive ? 'button' : undefined}
@@ -729,26 +810,43 @@ function DesignerShape({
         aria-pressed={interactive ? selected : undefined}
       />
 
-      {walled && (
-        <>
-          {/* Wall ring, drawn as four edges so the bottom one can break for the door. */}
-          <path
-            d={wallPath(box, wall, door)}
-            fill="none"
-            stroke={selected ? SELECTED_STROKE : WALL_COLOR}
-            strokeWidth={wall}
-            strokeLinecap="square"
-            pointerEvents="none"
-          />
-          {/* Door leaf, the thin arc the mockup draws at each opening. */}
-          <path
-            d={doorArcPath(box, wall, door)}
-            fill="none"
-            stroke={selected ? SELECTED_STROKE : '#8a8a8a'}
-            strokeWidth={Math.max(0.02, wall * 0.28)}
-            pointerEvents="none"
-          />
-        </>
+      {kind !== undefined ? (
+        // The same symbols the finished plan draws, so what is dropped here is
+        // what the owner sees on the floor-plan screen.
+        <g pointerEvents="none">
+          <LayoutObjectArt box={box} kind={kind} caption={caption?.caption} />
+        </g>
+      ) : (
+        walled && (
+          <g pointerEvents="none">
+            {/* Walls drawn as one stroke per room edge, so neighbouring rooms
+                meeting wall-to-wall give a single wall rather than a doubled
+                band; the outer half of an exterior edge is added by
+                `PlanPerimeter`. */}
+            <rect
+              x={box.x}
+              y={box.y}
+              width={box.width}
+              height={box.height}
+              fill="none"
+              stroke={WALL_COLOR}
+              strokeWidth={wall}
+            />
+            <rect
+              x={box.x + (box.width - door) / 2}
+              y={box.y + box.height - wall}
+              width={door}
+              height={wall}
+              fill="#ffffff"
+            />
+            <path
+              d={doorArcPath(box, wall, door)}
+              fill="none"
+              stroke={LINE_COLOR}
+              strokeWidth={Math.max(0.02, wall * 0.2)}
+            />
+          </g>
+        )
       )}
 
       {/* Counter-rotated so a turned room keeps its label readable instead of
@@ -760,17 +858,20 @@ function DesignerShape({
       >
         <text
           x={centreX}
-          y={centreY + titleSize * 0.35}
+          y={caption ? caption.baselineY : centreY + titleSize * 0.35}
           textAnchor="middle"
-          fontSize={titleSize}
-          fontWeight={700}
-          fill="#0b1c30"
-          fontFamily="Plus Jakarta Sans, sans-serif"
+          fontSize={caption ? caption.fontSize : titleSize}
+          textLength={caption?.textLength}
+          lengthAdjust={caption?.textLength === undefined ? undefined : 'spacingAndGlyphs'}
+          fontWeight={caption ? 600 : 700}
+          fill={caption ? '#475569' : '#0b1c30'}
+          fontFamily={caption ? 'Inter, sans-serif' : 'Plus Jakarta Sans, sans-serif'}
           pointerEvents="none"
+          opacity={kind !== undefined && caption === null && !isNote ? 0 : 1}
         >
           {label}
         </text>
-        {sublabel && box.height > 1.6 && (
+        {sublabel && box.height > 1.6 && kind === undefined && (
           <text
             x={centreX}
             y={centreY + titleSize * 0.35 + subSize * 1.5}
@@ -794,7 +895,7 @@ function DesignerShape({
         rx={0.08}
         fill="none"
         stroke={selected ? SELECTED_STROKE : 'transparent'}
-        strokeWidth={0.05}
+        strokeWidth={isNote ? 0.03 : 0.05}
         strokeDasharray={selected ? '0.4 0.3' : undefined}
         pointerEvents="none"
       />

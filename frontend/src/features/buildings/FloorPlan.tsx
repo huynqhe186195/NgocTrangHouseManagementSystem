@@ -14,15 +14,19 @@ import {
   type PlanRoom,
 } from '../../lib/floorGeometry';
 import {
+  LayoutObjectArt,
+  LINE_COLOR,
   PlanCompass,
   PlanDimensions,
+  PlanPerimeter,
   PlanRulers,
   SELECTED_STROKE,
   WALL_COLOR,
   doorArcPath,
   doorWidth,
+  objectLabel,
+  statusStyles,
   tickStep,
-  wallPath,
   wallThickness,
 } from './planDrawing';
 
@@ -38,17 +42,7 @@ interface FloorPlanProps {
 }
 
 /** Shared with the building screen's miniature, so both read the same colours. */
-export const statusStyles: Record<number, { fill: string; stroke: string; label: string }> = {
-  1: { fill: '#E9F7E7', stroke: '#9BD69B', label: 'Trống' },
-  2: { fill: '#FDE2E1', stroke: '#F2A9A6', label: 'Đang thuê' },
-  3: { fill: '#FDF0CC', stroke: '#EBCB7A', label: 'Đã đặt' },
-  4: { fill: '#E8EEF5', stroke: '#B3C4D8', label: 'Bảo trì' },
-  5: { fill: '#F1F5F9', stroke: '#CBD5E1', label: 'Ngừng dùng' },
-};
-
-// The shared drawing module owns the palette; this re-export keeps the
-// existing import sites (the building table's miniature) working.
-export { SELECTED_STROKE } from './planDrawing';
+export { statusStyles } from './planDrawing';
 
 /**
  * Draws the floor plan from the geometry the designer saved. When no room on
@@ -88,6 +82,10 @@ export function FloorPlan({
   const unit = Math.min(bounds.width, bounds.height);
   const titleSize = Math.max(0.28, unit * 0.028);
   const metaSize = Math.max(0.22, unit * 0.021);
+  // Exterior walls run a touch heavier than the partitions, as they do on the
+  // drawing sheet; partitions are what each room strokes for itself.
+  const roomWall = wallThickness(plan.rooms[0] ?? { x: 0, y: 0, width: 4, height: 4 });
+  const perimeter = roomWall * 1.35;
   const viewBox = viewBoxRectFor(bounds, zoom);
   // The rules and the compass are drawn outside the plan's own bounds, so the
   // view widens to make room for them.
@@ -141,12 +139,12 @@ export function FloorPlan({
 
           <PlanRulers viewBox={framed} step={tickStep(bounds, zoom)} />
 
+          {/* Exterior walls first, so room fills sit on top of them and the
+              band reads as masonry running outside the rooms. */}
+          <PlanPerimeter rooms={plan.rooms} wall={perimeter} />
+
           {plan.items.map((floorItem) => (
-            <LayoutItemShape
-              key={floorItem.id}
-              item={floorItem}
-              labelSize={metaSize * 0.9}
-            />
+            <LayoutItemShape key={floorItem.id} item={floorItem} />
           ))}
 
           {plan.rooms.map((room) => (
@@ -283,7 +281,7 @@ function RoomShape({
               .join(' ')}
             fill="none"
             stroke={selected ? SELECTED_STROKE : WALL_COLOR}
-            strokeWidth={selected ? 0.1 : wall}
+            strokeWidth={selected ? wall * 1.6 : wall}
             strokeLinejoin="miter"
           />
         </>
@@ -296,19 +294,32 @@ function RoomShape({
             height={room.height}
             fill={style.fill}
           />
-          {/* Four walls broken by a door opening, then the leaf that swings from it. */}
-          <path
-            d={wallPath(room, wall, door)}
+          {/* One stroke per edge. Neighbours that meet wall-to-wall put theirs
+              on the same line, so a shared partition stays one wall thick
+              instead of doubling up. */}
+          <rect
+            x={room.x}
+            y={room.y}
+            width={room.width}
+            height={room.height}
             fill="none"
             stroke={selected ? SELECTED_STROKE : WALL_COLOR}
-            strokeWidth={wall}
-            strokeLinecap="square"
+            strokeWidth={selected ? wall * 1.15 : wall}
+          />
+          {/* The opening is cut back out of the bottom wall, then the leaf is
+              swept from its hinge. */}
+          <rect
+            x={room.x + (room.width - door) / 2}
+            y={room.y + room.height - wall}
+            width={door}
+            height={wall}
+            fill="#ffffff"
           />
           <path
             d={doorArcPath(room, wall, door)}
             fill="none"
-            stroke={selected ? SELECTED_STROKE : '#8a8a8a'}
-            strokeWidth={Math.max(0.02, wall * 0.28)}
+            stroke={selected ? SELECTED_STROKE : LINE_COLOR}
+            strokeWidth={Math.max(0.02, wall * 0.2)}
           />
         </>
       )}
@@ -342,42 +353,28 @@ function RoomShape({
   );
 }
 
-function LayoutItemShape({
-  item,
-  labelSize,
-}: {
-  item: FloorLayoutItemDto;
-  labelSize: number;
-}) {
+function LayoutItemShape({ item }: { item: FloorLayoutItemDto }) {
   const meta = floorLayoutKindMeta[item.kind];
-  const isCorridor = item.kind === 1;
-  const fill = isCorridor ? '#F1F5F9' : '#EEF2F7';
   const centreX = item.x + item.width / 2;
-  const centreY = item.y + item.height / 2;
+  const text = item.label ?? meta?.label ?? '';
+  const captioned = objectLabel(item, text);
 
   return (
-    <g>
-      <rect
-        x={item.x}
-        y={item.y}
-        width={item.width}
-        height={item.height}
-        rx={0.06}
-        fill={fill}
-        stroke="#cbd5e1"
-        strokeWidth={0.04}
-      />
-      {(item.label || meta) && (
+    <g pointerEvents="none">
+      <LayoutObjectArt box={item} kind={item.kind} caption={captioned?.caption} />
+      {captioned && (
         <text
           x={centreX}
-          y={centreY + labelSize * 0.35}
+          y={captioned.baselineY}
           textAnchor="middle"
-          fontSize={labelSize}
-          fill="#64748b"
+          fontSize={captioned.fontSize}
+          textLength={captioned.textLength}
+          lengthAdjust={captioned.textLength === undefined ? undefined : 'spacingAndGlyphs'}
+          fontWeight={600}
+          fill="#475569"
           fontFamily="Inter, sans-serif"
-          pointerEvents="none"
         >
-          {item.label ?? meta?.label ?? ''}
+          {text}
         </text>
       )}
     </g>

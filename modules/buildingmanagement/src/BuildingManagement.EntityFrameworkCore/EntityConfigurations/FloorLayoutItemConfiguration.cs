@@ -42,6 +42,15 @@ namespace BuildingManagement.EntityConfigurations
                 .HasPrecision(10, 2)
                 .IsRequired();
 
+            builder.Property(x => x.Points)
+                .HasMaxLength(4000);
+
+            builder.Property(x => x.Thickness)
+                .HasPrecision(10, 2);
+
+            builder.Property(x => x.CornerRadius)
+                .HasPrecision(10, 2);
+
             builder.HasIndex(x => x.FloorId);
 
             builder.HasOne<Floor>()

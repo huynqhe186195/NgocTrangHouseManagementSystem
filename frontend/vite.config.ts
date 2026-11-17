@@ -18,9 +18,22 @@ export default defineConfig({
       '/.well-known': { target: apiTarget, changeOrigin: true, secure: false },
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // antd is by far the largest dependency and changes on its own
+        // release cadence, so it gets its own chunk that browsers can cache
+        // across app deploys.
+        manualChunks: {
+          antd: ['antd', '@ant-design/icons'],
+        },
+      },
+    },
+  },
   test: {
     environment: 'jsdom',
     globals: true,
+    setupFiles: ['src/test-setup.ts'],
     include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
   },
 });

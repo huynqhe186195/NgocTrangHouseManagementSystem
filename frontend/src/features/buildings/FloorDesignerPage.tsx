@@ -19,18 +19,24 @@ import {
 } from '../../lib/api/buildingQueries';
 import { describeMutationError } from '../../lib/api/mutationErrors';
 import { formatVnd } from '../../lib/format';
-import { floorLayoutKindMeta, roomStatusMeta } from '../../lib/api/types';
+import { floorLayoutKindGroup, floorLayoutKindMeta, roomStatusMeta } from '../../lib/api/types';
 import type { FloorLayoutItemDto, FloorLayoutItemKind, RoomDto } from '../../lib/api/types';
 import {
   MIN_SIZE_METRES,
+  boxOfPolyline,
   boxesEqual,
   clampBoxToBounds,
   defaultRoomBox,
   formatMetres,
   hasGeometry,
+  insertPointOnPolyline,
+  movePolyline,
+  parsePoints,
+  serializePoints,
   snapToGrid,
   type Box,
   type PlanBounds,
+  type PlanPoint,
 } from '../../lib/floorGeometry';
 import {
   FloorDesignerCanvas,
@@ -60,6 +66,20 @@ const ITEM_DEFAULT_SIZE: Record<FloorLayoutItemKind, { width: number; height: nu
   9: { width: 2.4, height: 2.6 }, // Kho
   10: { width: 3.4, height: 1.5 }, // Ban công
   11: { width: 1.2, height: 1.2 }, // Cây xanh
+  12: { width: 8, height: 0.3 }, // Tường
+  // Furniture lands at the footprint it occupies on a real plan, so a bed
+  // dropped into a 3.6 m room already fits without the owner scaling it up.
+  // A bed on a real plan is 1.6 m wide by 2 m long, and the mockup draws it at
+  // that size: the long side runs against the wall, the headboard at one end.
+  13: { width: 2, height: 1.6 }, // Giường
+  14: { width: 1.6, height: 0.6 }, // Tủ quần áo
+  15: { width: 1.4, height: 0.65 }, // Bàn làm việc
+  16: { width: 0.5, height: 0.5 }, // Ghế
+  17: { width: 1.9, height: 0.85 }, // Sofa
+  18: { width: 0.9, height: 0.3 }, // Điều hoà
+  19: { width: 1.8, height: 0.6 }, // Bếp
+  20: { width: 0.7, height: 0.7 }, // Tủ lạnh
+  21: { width: 1.2, height: 0.25 }, // Tivi
 };
 const EMPTY_FLOOR_BOUNDS: PlanBounds = {
   minX: 0,
@@ -119,6 +139,10 @@ interface DraftItem {
   label: string | null;
   box: Box;
   isNew: boolean;
+  /** A wall's centreline. Null for every other kind and for box-only walls. */
+  points: PlanPoint[] | null;
+  thickness: number | null;
+  cornerRadius: number | null;
 }
 
 /** Where a room sits and how far it is turned; both are saved together. */
@@ -203,6 +227,9 @@ export function FloorDesignerPage() {
         label: item.label,
         box: itemBox(item),
         isNew: false,
+        points: parsePoints(item.points),
+        thickness: item.thickness,
+        cornerRadius: item.cornerRadius,
       })),
     [layoutItems.data],
   );
@@ -277,7 +304,13 @@ export function FloorDesignerPage() {
         return (
           !boxesEqual(draftItem.box, item.box) ||
           draftItem.kind !== item.kind ||
-          (draftItem.label ?? '') !== (item.label ?? '')
+          (draftItem.label ?? '') !== (item.label ?? '') ||
+          (draftItem.points === null) !== (item.points === null) ||
+          (draftItem.points !== null &&
+            item.points !== null &&
+            serializePoints(draftItem.points) !== serializePoints(item.points)) ||
+          draftItem.thickness !== item.thickness ||
+          draftItem.cornerRadius !== item.cornerRadius
         );
       })
       .map((item) => item.id);
@@ -394,11 +427,129 @@ export function FloorDesignerPage() {
       if (!source) {
         return current;
       }
+      // A bent wall's shape *is* its points. Dragging its box would leave the
+      // two disagreeing, so a box drag shifts the centreline instead.
+      if (source.points && source.points.length >= 2) {
+        const dx = box.x - source.box.x + (box.width - source.box.width) / 2;
+        const dy = box.y - source.box.y + (box.height - source.box.height) / 2;
+        const shifted =
+          dx === 0 && dy === 0 ? source.points : movePolyline(source.points, dx, dy);
+        return {
+          ...current,
+          items: {
+            ...current.items,
+            [itemId]: {
+              ...source,
+              points: shifted,
+              box: boxOfPolyline(shifted, source.thickness ?? Math.min(box.width, box.height)),
+              isNew: existing?.isNew ?? false,
+            },
+          },
+        };
+      }
       return {
         ...current,
         items: {
           ...current.items,
           [itemId]: { ...source, box, isNew: existing?.isNew ?? false },
+        },
+      };
+    });
+  }
+
+  /** Stores a new vertex list, keeping the wall's stored box in step with it. */
+  function setItemPoints(itemId: string, points: PlanPoint[]) {
+    commitDraft((current) => {
+      const existing = current.items[itemId];
+      const baseline = baselineItems.find((item) => item.id === itemId);
+      const source = existing ?? baseline;
+      if (!source || source.kind !== 12) {
+        return current;
+      }
+      const thickness = source.thickness;
+      return {
+        ...current,
+        items: {
+          ...current.items,
+          [itemId]: {
+            ...source,
+            points,
+            box: boxOfPolyline(points, thickness ?? Math.min(source.box.width, source.box.height)),
+            isNew: existing?.isNew ?? false,
+          },
+        },
+      };
+    });
+  }
+
+  /** Double-click on a wall: bend it at the nearest point on its run. */
+  function insertWallPoint(itemId: string, point: { x: number; y: number }) {
+    const source = itemDrafts[itemId] ?? baselineItems.find((item) => item.id === itemId);
+    if (!source || source.kind !== 12 || !source.points) {
+      return;
+    }
+    const result = insertPointOnPolyline(source.points, point);
+    if (!result) {
+      setNotice('Không chèn được điểm gãy ở đây — chỗ đó đã có một điểm khác.');
+      return;
+    }
+    setItemPoints(itemId, result.points);
+  }
+
+  function setItemWallShape(
+    itemId: string,
+    patch: { thickness?: number | null; cornerRadius?: number | null },
+  ) {
+    commitDraft((current) => {
+      const existing = current.items[itemId];
+      const baseline = baselineItems.find((item) => item.id === itemId);
+      const source = existing ?? baseline;
+      if (!source || source.kind !== 12) {
+        return current;
+      }
+      const thickness = patch.thickness !== undefined ? patch.thickness : source.thickness;
+      const next = { ...source, ...patch };
+      // Widening the band changes the box that covers it.
+      const box =
+        source.points && patch.thickness !== undefined
+          ? boxOfPolyline(source.points, thickness ?? Math.min(source.box.width, source.box.height))
+          : source.box;
+      return {
+        ...current,
+        items: {
+          ...current.items,
+          [itemId]: { ...next, box, isNew: existing?.isNew ?? false },
+        },
+      };
+    });
+  }
+
+  /** Back to a single straight band, the way a wall drawn before bends was. */
+  function straightenWall(itemId: string) {
+    commitDraft((current) => {
+      const existing = current.items[itemId];
+      const baseline = baselineItems.find((item) => item.id === itemId);
+      const source = existing ?? baseline;
+      if (!source || source.kind !== 12 || !source.points || source.points.length < 2) {
+        return current;
+      }
+      const first = source.points[0]!;
+      const last = source.points[source.points.length - 1]!;
+      const box = boxOfPolyline(
+        [first, last],
+        source.thickness ?? Math.min(source.box.width, source.box.height),
+      );
+      return {
+        ...current,
+        items: {
+          ...current.items,
+          [itemId]: {
+            ...source,
+            points: [first, last],
+            box,
+            cornerRadius: 0,
+            isNew: existing?.isNew ?? false,
+          },
         },
       };
     });
@@ -447,9 +598,31 @@ export function FloorDesignerPage() {
       bounds,
     );
     const id = `new-${crypto.randomUUID()}`;
+    // A wall comes with a straight centreline down the middle of its box, so a
+    // newly dropped wall is already bendable: one double-click adds the corner.
+    const points =
+      kind === 12
+        ? [
+            { x: box.x, y: snapToGrid(box.y + box.height / 2) },
+            { x: snapToGrid(box.x + box.width), y: snapToGrid(box.y + box.height / 2) },
+          ]
+        : null;
+    const thickness = kind === 12 ? snapToGrid(box.height) : null;
     commitDraft((current) => ({
       ...current,
-      items: { ...current.items, [id]: { id, kind, label: null, box, isNew: true } },
+      items: {
+        ...current.items,
+        [id]: {
+          id,
+          kind,
+          label: null,
+          box,
+          isNew: true,
+          points,
+          thickness,
+          cornerRadius: 0,
+        },
+      },
     }));
     setSelection({ kind: 'item', id });
   }
@@ -552,6 +725,9 @@ export function FloorDesignerPage() {
               y: item.box.y,
               width: item.box.width,
               height: item.box.height,
+              points: item.points ? serializePoints(item.points) : null,
+              thickness: item.thickness,
+              cornerRadius: item.cornerRadius,
             },
           });
           savedUpdates.push(itemId);
@@ -574,6 +750,9 @@ export function FloorDesignerPage() {
             y: item.box.y,
             width: item.box.width,
             height: item.box.height,
+            points: item.points ? serializePoints(item.points) : null,
+            thickness: item.thickness,
+            cornerRadius: item.cornerRadius,
           });
           // Dropping a created draft matters more than the others: leaving it
           // behind would draw it twice and create a duplicate on the next save.
@@ -676,9 +855,18 @@ export function FloorDesignerPage() {
         if (!found) {
           return null;
         }
-        return { id: found.id, kind: found.kind, label: found.label, ...found.box };
+        return {
+          id: found.id,
+          kind: found.kind,
+          label: found.label,
+          points: found.points,
+          thickness: found.thickness,
+          cornerRadius: found.cornerRadius,
+          ...found.box,
+        };
       })()
     : null;
+  const selectedWall = selectedItem?.kind === 12 ? selectedItem : null;
 
   return (
     <div className="mx-auto max-w-[1500px]">
@@ -800,6 +988,9 @@ export function FloorDesignerPage() {
               id: item.id,
               kind: item.kind,
               label: item.label,
+              points: item.points,
+              thickness: item.thickness,
+              cornerRadius: item.cornerRadius,
               ...item.box,
             }))}
             bounds={bounds}
@@ -809,6 +1000,8 @@ export function FloorDesignerPage() {
             onChangeItem={setItemBox}
             onDropRoom={dropRoom}
             onDropItem={dropItem}
+            onInsertWallPoint={canDesign ? insertWallPoint : undefined}
+            onChangeItemPoints={canDesign ? setItemPoints : undefined}
             onDraftChange={setDraft}
             onRotate={canDesign ? rotateSelectedRoom : undefined}
             onDeleteSelection={canDesign ? deleteSelection : undefined}
@@ -819,7 +1012,7 @@ export function FloorDesignerPage() {
               ? `${draft.label}: x ${formatMetres(draft.box.x)}, y ${formatMetres(draft.box.y)} · ${formatMetres(draft.box.width)} × ${formatMetres(draft.box.height)}`
               : measure
                 ? `Đo được ${formatMetres(measure.distance)} (Δx ${formatMetres(Math.abs(measure.dx))}, Δy ${formatMetres(Math.abs(measure.dy))}).`
-                : 'Mười một loại vật thể (hành lang, cầu thang, thang máy, nhà vệ sinh, ban công, cây xanh…) vẽ bằng ký hiệu kiến trúc riêng. Phòng và vật thể đều là hình chữ nhật; vẽ tay đa giác chưa hỗ trợ.'}
+                : 'Mười hai loại vật thể (hành lang, cầu thang, thang máy, nhà vệ sinh, ban công, cây xanh, tường…) vẽ bằng ký hiệu kiến trúc riêng. Tường là một vật thể bạn tự kéo ra, hình dạng do các điểm gãy quyết định: nhấp đúp lên tường để thêm điểm, kéo điểm tròn để bẻ góc, và chỉnh độ dày cùng bán kính bo ở bảng bên phải. Phòng vẫn là hình chữ nhật; vẽ tay đa giác chưa hỗ trợ.'}
           </p>
         </section>
 
@@ -837,6 +1030,14 @@ export function FloorDesignerPage() {
           onChangeRoomBox={(box) => selectedRoom && setRoomBox(selectedRoom.id, box)}
           onChangeItemLabel={(label) => selectedItem && setItemLabel(selectedItem.id, label)}
           onChangeItemBox={(box) => selectedItem && setItemBox(selectedItem.id, box)}
+          wall={selectedWall}
+          onChangeWallThickness={(value) =>
+            selectedItem && setItemWallShape(selectedItem.id, { thickness: value })
+          }
+          onChangeWallCornerRadius={(value) =>
+            selectedItem && setItemWallShape(selectedItem.id, { cornerRadius: value })
+          }
+          onStraightenWall={() => selectedItem && straightenWall(selectedItem.id)}
           onRotate={rotateSelectedRoom}
           onRemoveFromPlan={() => selectedRoom && setRoomBox(selectedRoom.id, null)}
           onDeleteItem={() => selectedItem && removeSelectedItem(selectedItem.id)}
@@ -895,33 +1096,52 @@ function Palette({
 
       <section className="rounded-xl border border-outline-variant bg-surface-lowest p-4">
         <h2 className="mb-2 font-display text-sm font-bold text-on-surface">Thành phần</h2>
-        <p className="mb-2 text-[11px] leading-relaxed text-on-surface-variant">
-          Kéo vào sơ đồ để thêm hành lang, cầu thang, kho, ban công, cây xanh…
+        <p className="mb-3 text-[11px] leading-relaxed text-on-surface-variant">
+          Kéo vào sơ đồ để thêm hành lang, cầu thang, kho, ban công, cây xanh, tường, và
+          đồ nội thất đặt trong phòng.
         </p>
-        <ul className="grid grid-cols-2 gap-1.5">
-          {(Object.keys(floorLayoutKindMeta) as unknown as string[]).map((key) => {
-            const kind = Number(key) as FloorLayoutItemKind;
-            const meta = floorLayoutKindMeta[kind];
-            return (
-              <li key={key}>
-                <div
-                  draggable={canDesign}
-                  onDragStart={(event) => {
-                    event.dataTransfer.setData('application/x-item-kind', String(kind));
-                    event.dataTransfer.effectAllowed = 'copy';
-                  }}
-                  className={
-                    'flex items-center gap-1.5 rounded-lg border border-outline-variant px-2 py-1.5 text-[11px] text-on-surface-variant transition ' +
-                    (canDesign ? 'cursor-grab hover:border-primary/40' : 'cursor-not-allowed opacity-60')
-                  }
-                >
-                  <span className="material-symbols-outlined text-base">{meta.icon}</span>
-                  {meta.label}
-                </div>
-              </li>
-            );
-          })}
-        </ul>
+        {(
+          [
+            { group: 'architecture', title: 'Kiến trúc' },
+            { group: 'furniture', title: 'Nội thất trong phòng' },
+          ] as const
+        ).map(({ group, title }) => {
+          const kinds = (Object.keys(floorLayoutKindMeta) as unknown as string[])
+            .map((key) => Number(key) as FloorLayoutItemKind)
+            .filter((kind) => floorLayoutKindGroup[kind] === group);
+          return (
+            <div key={group} className="mb-3 last:mb-0">
+              <h3 className="mb-1.5 text-[11px] font-semibold tracking-wide text-on-surface-variant uppercase">
+                {title}
+              </h3>
+              <ul className="grid grid-cols-2 gap-1.5">
+                {kinds.map((kind) => {
+                  const meta = floorLayoutKindMeta[kind];
+                  return (
+                    <li key={kind}>
+                      <div
+                        draggable={canDesign}
+                        onDragStart={(event) => {
+                          event.dataTransfer.setData('application/x-item-kind', String(kind));
+                          event.dataTransfer.effectAllowed = 'copy';
+                        }}
+                        className={
+                          'flex items-center gap-1.5 rounded-lg border border-outline-variant px-2 py-1.5 text-[11px] text-on-surface-variant transition ' +
+                          (canDesign
+                            ? 'cursor-grab hover:border-primary/40'
+                            : 'cursor-not-allowed opacity-60')
+                        }
+                      >
+                        <span className="material-symbols-outlined text-base">{meta.icon}</span>
+                        {meta.label}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          );
+        })}
       </section>
     </aside>
   );
@@ -934,9 +1154,13 @@ function PropertyPanel({
   roomBox,
   rotation,
   canDesign,
+  wall,
   onChangeRoomBox,
   onChangeItemLabel,
   onChangeItemBox,
+  onChangeWallThickness,
+  onChangeWallCornerRadius,
+  onStraightenWall,
   onRotate,
   onRemoveFromPlan,
   onDeleteItem,
@@ -947,9 +1171,14 @@ function PropertyPanel({
   roomBox: Box | null;
   rotation: number;
   canDesign: boolean;
+  /** Set when the selected object is a wall with a centreline. */
+  wall: DesignerItem | null;
   onChangeRoomBox: (box: Box) => void;
   onChangeItemLabel: (label: string | null) => void;
   onChangeItemBox: (box: Box) => void;
+  onChangeWallThickness: (value: number | null) => void;
+  onChangeWallCornerRadius: (value: number | null) => void;
+  onStraightenWall: () => void;
   onRotate: () => void;
   onRemoveFromPlan: () => void;
   onDeleteItem: () => void;
@@ -1079,6 +1308,16 @@ function PropertyPanel({
 
       <BoxFields box={item} disabled={!canDesign} onChange={onChangeItemBox} />
 
+      {wall && (
+        <WallControls
+          wall={wall}
+          disabled={!canDesign}
+          onChangeThickness={onChangeWallThickness}
+          onChangeCornerRadius={onChangeWallCornerRadius}
+          onStraighten={onStraightenWall}
+        />
+      )}
+
       {canDesign && (
         <button
           type="button"
@@ -1090,6 +1329,111 @@ function PropertyPanel({
         </button>
       )}
     </aside>
+  );
+}
+
+/**
+ * Wall shape controls: how thick the band is, and whether a bend is chamfered
+ * the way the mockup draws it or rounded off with an arc.
+ *
+ * The mockup's storey outline is chamfered at every corner, so the radius
+ * starts at zero and the owner raises it when a wall really is curved. The
+ * thickness matters for the same reason the mockup draws two: an exterior wall
+ * is a solid band, a partition between two rooms is a thin one.
+ */
+function WallControls({
+  wall,
+  disabled,
+  onChangeThickness,
+  onChangeCornerRadius,
+  onStraighten,
+}: {
+  wall: DesignerItem;
+  disabled: boolean;
+  onChangeThickness: (value: number | null) => void;
+  onChangeCornerRadius: (value: number | null) => void;
+  onStraighten: () => void;
+}) {
+  const vertexCount = wall.points?.length ?? 0;
+  const thickness = wall.thickness ?? Math.min(wall.width, wall.height);
+  const cornerRadius = wall.cornerRadius ?? 0;
+
+  return (
+    <div className="mt-4 flex flex-col gap-3 rounded-lg border border-outline-variant bg-surface-low p-3">
+      <div>
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="text-[11px] font-semibold tracking-[0.06em] text-on-surface-variant uppercase">
+            Hình dạng tường
+          </h3>
+          <span className="tnum text-[11px] text-on-surface-variant">{vertexCount} điểm</span>
+        </div>
+        <p className="mt-1 text-[11px] leading-relaxed text-on-surface-variant">
+          Nhấp đúp lên tường để thêm điểm gãy, rồi kéo điểm tròn cho tới khi tường khớp hình.
+        </p>
+      </div>
+
+      <Field
+        label="Độ dày (m)"
+        type="number"
+        step={0.02}
+        min={0.05}
+        max={2}
+        value={String(thickness)}
+        disabled={disabled}
+        hint="Tường bao ngoài dày hơn vách ngăn giữa hai phòng."
+        onChange={(event) => {
+          const parsed = Number(event.target.value);
+          if (!Number.isFinite(parsed)) {
+            return;
+          }
+          onChangeThickness(Math.min(2, Math.max(0.05, Number(parsed.toFixed(2)))));
+        }}
+      />
+
+      <div>
+        <label
+          htmlFor="wall-corner-radius"
+          className="mb-1.5 block text-[11px] font-semibold tracking-[0.06em] text-on-surface-variant uppercase"
+        >
+          Bo góc (m)
+        </label>
+        <div className="flex items-center gap-2">
+          <input
+            id="wall-corner-radius"
+            type="range"
+            min={0}
+            max={2}
+            step={0.05}
+            value={cornerRadius}
+            disabled={disabled}
+            aria-label="Bán kính bo góc tường"
+            onChange={(event) => onChangeCornerRadius(Number(event.target.value))}
+            className="h-1.5 flex-1 accent-[#0f766e] disabled:opacity-40"
+          />
+          <span className="tnum w-12 text-right text-xs text-on-surface">
+            {formatMetres(cornerRadius)}
+          </span>
+        </div>
+        <p className="mt-1 text-[11px] leading-relaxed text-on-surface-variant">
+          Bằng 0 thì mỗi chỗ gãy là một góc vát sắc, đúng như mockup.
+        </p>
+      </div>
+
+      <button
+        type="button"
+        onClick={onStraighten}
+        disabled={disabled || vertexCount <= 2}
+        title={
+          vertexCount <= 2
+            ? 'Tường này đã là một đường thẳng'
+            : 'Bỏ hết điểm gãy, giữ lại hai đầu'
+        }
+        className="flex h-8 items-center justify-center gap-1.5 rounded-md border border-outline-variant bg-surface-lowest text-[11px] font-semibold text-on-surface-variant transition hover:bg-surface-low disabled:opacity-40"
+      >
+        <span className="material-symbols-outlined text-base">straighten</span>
+        Về đường thẳng
+      </button>
+    </div>
   );
 }
 

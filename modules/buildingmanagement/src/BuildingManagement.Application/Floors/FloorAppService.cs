@@ -165,11 +165,14 @@ namespace BuildingManagement.Floors
                 var floor = await _floorRepository.GetAsync(id);
                 if (floor.BuildingId != buildingId)
                     throw new AbpAuthorizationException("Floor scope changed.");
-                ValidateLayoutItem(input.Kind, input.X, input.Y,
-                    input.Width, input.Height);
+                FloorLayoutItemRules.Validate(input.Kind, input.X, input.Y,
+                    input.Width, input.Height, input.Points,
+                    input.Thickness, input.CornerRadius);
                 var created = new FloorLayoutItem(GuidGenerator.Create(), id,
                     input.Kind, input.Label, input.X, input.Y,
-                    input.Width, input.Height);
+                    input.Width, input.Height,
+                    FloorLayoutItemRules.NormalizePoints(input.Points),
+                    input.Thickness, input.CornerRadius);
                 await _layoutItemRepository.InsertAsync(created, autoSave: true);
                 return ObjectMapper.Map<FloorLayoutItem, FloorLayoutItemDto>(
                     created);
@@ -193,10 +196,13 @@ namespace BuildingManagement.Floors
                 if (item is null || item.FloorId != id)
                     throw new BusinessException(
                         BuildingManagementErrorCodes.FloorLayoutItemNotFound);
-                ValidateLayoutItem(input.Kind, input.X, input.Y,
-                    input.Width, input.Height);
+                FloorLayoutItemRules.Validate(input.Kind, input.X, input.Y,
+                    input.Width, input.Height, input.Points,
+                    input.Thickness, input.CornerRadius);
                 item.Update(input.Kind, input.Label, input.X, input.Y,
-                    input.Width, input.Height);
+                    input.Width, input.Height,
+                    FloorLayoutItemRules.NormalizePoints(input.Points),
+                    input.Thickness, input.CornerRadius);
                 await _layoutItemRepository.UpdateAsync(item, autoSave: true);
                 return ObjectMapper.Map<FloorLayoutItem, FloorLayoutItemDto>(item);
             }, BuildingScopedMutationKind.Floor);
@@ -218,18 +224,6 @@ namespace BuildingManagement.Floors
                 await _layoutItemRepository.DeleteAsync(item, autoSave: true);
                 return true;
             }, BuildingScopedMutationKind.Floor);
-        }
-
-        private static void ValidateLayoutItem(
-            FloorLayoutItemKind kind,
-            decimal x, decimal y, decimal width, decimal height)
-        {
-            if (!Enum.IsDefined(kind) ||
-                width < 0 || height < 0 ||
-                width > 10000 || height > 10000 ||
-                x < -10000 || x > 10000 || y < -10000 || y > 10000)
-                throw new BusinessException(
-                    BuildingManagementErrorCodes.InvalidFloorLayoutItem);
         }
 
         private async Task<Guid> ResolveBuildingAsync(

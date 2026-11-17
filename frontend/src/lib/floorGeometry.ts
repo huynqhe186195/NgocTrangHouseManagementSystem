@@ -30,6 +30,175 @@ export interface PlanRoom extends RoomDto {
 
 export interface PlanItem extends FloorLayoutItemDto {}
 
+export interface PlanPoint {
+  x: number;
+  y: number;
+}
+
+/**
+ * Reads a stored `points` column. `minPoints` separates a wall centreline (two
+ * points is a straight run) from a room polygon (three, or it encloses no area).
+ * Anything malformed returns null so the caller falls back to the box drawing
+ * rather than painting half a shape.
+ */
+export function parsePoints(raw: string | null | undefined, minPoints = 2): PlanPoint[] | null {
+  if (!raw) {
+    return null;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed) || parsed.length < minPoints) {
+    return null;
+  }
+  const points: PlanPoint[] = [];
+  for (const candidate of parsed) {
+    if (
+      typeof candidate !== 'object' ||
+      candidate === null ||
+      typeof (candidate as { x?: unknown }).x !== 'number' ||
+      typeof (candidate as { y?: unknown }).y !== 'number' ||
+      !Number.isFinite((candidate as PlanPoint).x) ||
+      !Number.isFinite((candidate as PlanPoint).y)
+    ) {
+      return null;
+    }
+    points.push({ x: (candidate as PlanPoint).x, y: (candidate as PlanPoint).y });
+  }
+  return points;
+}
+
+export function serializePoints(points: PlanPoint[]): string {
+  return JSON.stringify(points.map((p) => ({ x: p.x, y: p.y })));
+}
+
+/** Axis-aligned extent of a polyline, so a bent wall is not clipped by its box. */
+export function polylineBounds(points: PlanPoint[]): PlanBounds | null {
+  if (points.length === 0) {
+    return null;
+  }
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const point of points) {
+    minX = Math.min(minX, point.x);
+    minY = Math.min(minY, point.y);
+    maxX = Math.max(maxX, point.x);
+    maxY = Math.max(maxY, point.y);
+  }
+  return { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY };
+}
+
+/**
+ * Distance from `p` to the segment `a→b`, plus how far along the segment the
+ * closest point sits (0 at a, 1 at b). Used to drop a new bend where the owner
+ * double-clicked rather than at the end of the wall.
+ */
+export function projectOnSegment(
+  a: PlanPoint,
+  b: PlanPoint,
+  p: PlanPoint,
+): { distance: number; t: number; point: PlanPoint } {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const lengthSquared = dx * dx + dy * dy;
+  if (lengthSquared === 0) {
+    return { distance: Math.hypot(p.x - a.x, p.y - a.y), t: 0, point: { ...a } };
+  }
+  const raw = ((p.x - a.x) * dx + (p.y - a.y) * dy) / lengthSquared;
+  const t = Math.min(1, Math.max(0, raw));
+  const point = { x: a.x + dx * t, y: a.y + dy * t };
+  return { distance: Math.hypot(p.x - point.x, p.y - point.y), t, point };
+}
+
+/**
+ * Inserts a bend into the segment nearest to `target`, snapped and clamped. The
+ * index of the new point is the segment's end index, so the caller can select
+ * and drag it straight away. Returns null when the wall is too short to hold
+ * another vertex without collapsing.
+ */
+export function insertPointOnPolyline(
+  points: PlanPoint[],
+  target: PlanPoint,
+): { points: PlanPoint[]; index: number } | null {
+  if (points.length < 2) {
+    return null;
+  }
+  let best = { index: 1, distance: Infinity, point: target };
+  for (let i = 1; i < points.length; i += 1) {
+    const a = points[i - 1];
+    const b = points[i];
+    if (!a || !b) {
+      continue;
+    }
+    const hit = projectOnSegment(a, b, target);
+    if (hit.distance < best.distance) {
+      best = { index: i, distance: hit.distance, point: hit.point };
+    }
+  }
+  const snapped = {
+    x: clampToLimits(snapToGrid(best.point.x)),
+    y: clampToLimits(snapToGrid(best.point.y)),
+  };
+  // A vertex sitting on top of its neighbour would give the wall a
+  // zero-length segment, which renders as a spike.
+  for (const existing of points) {
+    if (Math.hypot(existing.x - snapped.x, existing.y - snapped.y) < GRID_STEP_METRES) {
+      return null;
+    }
+  }
+  const next = [...points.slice(0, best.index), snapped, ...points.slice(best.index)];
+  return next.length > MAX_POLYLINE_POINTS ? null : { points: next, index: best.index };
+}
+
+export function movePolyline(points: PlanPoint[], deltaX: number, deltaY: number): PlanPoint[] {
+  return points.map((point) => ({
+    x: clampToLimits(snapToGrid(point.x + deltaX)),
+    y: clampToLimits(snapToGrid(point.y + deltaY)),
+  }));
+}
+
+export function movePolylinePoint(
+  points: PlanPoint[],
+  index: number,
+  point: PlanPoint,
+): PlanPoint[] {
+  return points.map((existing, i) =>
+    i === index
+      ? { x: clampToLimits(snapToGrid(point.x)), y: clampToLimits(snapToGrid(point.y)) }
+      : existing,
+  );
+}
+
+export function maxPolylinePointsReached(points: PlanPoint[]): boolean {
+  return points.length >= MAX_POLYLINE_POINTS;
+}
+
+/**
+ * The box a bent wall is stored with. Storage still has X/Y/Width/Height for
+ * every object, so a wall keeps a box that covers its whole run plus half the
+ * band on each side — that is what the plan's framing and the list views read.
+ */
+export function boxOfPolyline(points: PlanPoint[], thickness: number): Box {
+  const extent = polylineBounds(points);
+  if (!extent) {
+    return { x: 0, y: 0, width: MIN_SIZE_METRES, height: MIN_SIZE_METRES };
+  }
+  const pad = Math.max(0, thickness) / 2;
+  const width = Math.max(MIN_SIZE_METRES, extent.width + pad * 2);
+  const height = Math.max(MIN_SIZE_METRES, extent.height + pad * 2);
+  return {
+    x: clampToLimits(snapToGrid(extent.minX - pad)),
+    y: clampToLimits(snapToGrid(extent.minY - pad)),
+    width,
+    height,
+  };
+}
+
 export interface PlanGeometry {
   bounds: PlanBounds;
   rooms: PlanRoom[];
@@ -95,6 +264,19 @@ export function buildPlanGeometry(
     minY = Math.min(minY, box.y);
     maxX = Math.max(maxX, box.x + box.width);
     maxY = Math.max(maxY, box.y + box.height);
+  }
+
+  // A bent wall reaches past the box it was stored with, so the frame has to
+  // grow with its centreline or the bend is cut off at the edge of the canvas.
+  for (const item of usableItems) {
+    const extent = polylineBounds(parsePoints(item.points) ?? []);
+    if (!extent) {
+      continue;
+    }
+    minX = Math.min(minX, extent.minX);
+    minY = Math.min(minY, extent.minY);
+    maxX = Math.max(maxX, extent.maxX);
+    maxY = Math.max(maxY, extent.maxY);
   }
 
   minX -= PLAN_PADDING_METRES;
@@ -220,6 +402,9 @@ export interface ViewBoxRect {
 
 /** The designer snaps to 10 cm; the server stores whatever it is given. */
 export const GRID_STEP_METRES = 0.1;
+
+/** Mirrors the server's cap so the designer cannot build a wall it can't save. */
+export const MAX_POLYLINE_POINTS = 64;
 
 /** Smallest box a room or object may be shrunk to, in metres. */
 export const MIN_SIZE_METRES = 0.5;

@@ -1,12 +1,13 @@
 import { useMemo, useState } from 'react';
 import type { FloorLayoutItemDto, RoomDto } from '../../lib/api/types';
-import { floorLayoutKindMeta } from '../../lib/api/types';
+import { floorLayoutKindMeta, isFurniture } from '../../lib/api/types';
 import {
   MAX_ZOOM,
   MIN_ZOOM,
   buildPlanGeometry,
   formatZoom,
   hasGeometry,
+  parsePoints,
   unplacedRooms,
   viewBoxRectFor,
   zoomIn,
@@ -18,13 +19,13 @@ import {
   LINE_COLOR,
   PlanCompass,
   PlanDimensions,
-  PlanEnvelope,
   PlanRulers,
   SELECTED_STROKE,
   WALL_COLOR,
   doorArcPath,
   doorWidth,
   objectLabel,
+  shouldCaption,
   statusStyles,
   tickStep,
   wallThickness,
@@ -82,13 +83,9 @@ export function FloorPlan({
   const unit = Math.min(bounds.width, bounds.height);
   const titleSize = Math.max(0.28, unit * 0.028);
   const metaSize = Math.max(0.22, unit * 0.021);
-  // Exterior walls run a touch heavier than the partitions, as they do on the
-  // drawing sheet; partitions are what each room strokes for itself.
-  const roomWall = wallThickness(plan.rooms[0] ?? { x: 0, y: 0, width: 4, height: 4 });
-  // The envelope wraps the whole storey — rooms, corridor, stairwell — so it
-  // is a proper building wall and runs heavier than the partitions.
-  const perimeter = Math.max(0.2, roomWall * 1.6);
-  const footprint = [...plan.rooms, ...plan.items];
+  // Partitions are what each room strokes for itself. The storey's outer wall
+  // is a Wall object the owner places on the plan, so it is drawn with the
+  // other objects rather than generated from the room boxes.
   const viewBox = viewBoxRectFor(bounds, zoom);
   // The rules and the compass are drawn outside the plan's own bounds, so the
   // view widens to make room for them.
@@ -142,14 +139,13 @@ export function FloorPlan({
 
           <PlanRulers viewBox={framed} step={tickStep(bounds, zoom)} />
 
-          {/* The building's own wall, running around everything the floor
-              occupies, with its windows. Drawn first so room fills sit on top
-              of the inner face. */}
-          <PlanEnvelope boxes={footprint} wall={perimeter} />
-
-          {plan.items.map((floorItem) => (
-            <LayoutItemShape key={floorItem.id} item={floorItem} />
-          ))}
+          {/* Architecture sits under the rooms: a corridor or a stairwell is
+              floor, not something laid on top of a room. */}
+          {plan.items
+            .filter((floorItem) => floorItem.kind !== 12 && !isFurniture(floorItem.kind))
+            .map((floorItem) => (
+              <LayoutItemShape key={floorItem.id} item={floorItem} />
+            ))}
 
           {plan.rooms.map((room) => (
             <RoomShape
@@ -157,10 +153,29 @@ export function FloorPlan({
               room={room}
               selected={room.id === selectedId}
               onSelect={onSelect}
-              titleSize={titleSize}
-              metaSize={metaSize}
             />
           ))}
+
+          {/* Furniture paints over its room's floor — it stands inside the
+              room, so drawing it under the room would hide every piece. */}
+          {plan.items
+            .filter((floorItem) => isFurniture(floorItem.kind))
+            .map((floorItem) => (
+              <LayoutItemShape key={floorItem.id} item={floorItem} />
+            ))}
+
+          {/* The room's number and area go on last, above the furniture. */}
+          {plan.rooms.map((room) => (
+            <RoomLabel key={`label-${room.id}`} room={room} titleSize={titleSize} metaSize={metaSize} />
+          ))}
+
+          {/* Walls the owner placed paint last, so a wall laid along a room
+              edge stays visible instead of being covered by the room. */}
+          {plan.items
+            .filter((floorItem) => floorItem.kind === 12)
+            .map((floorItem) => (
+              <LayoutItemShape key={floorItem.id} item={floorItem} />
+            ))}
 
           <PlanDimensions bounds={bounds} inset={margin * 0.62} />
           <PlanCompass viewBox={framed} size={margin * 0.85} />
@@ -236,14 +251,10 @@ function RoomShape({
   room,
   selected,
   onSelect,
-  titleSize,
-  metaSize,
 }: {
   room: PlanRoom;
   selected: boolean;
   onSelect: (roomId: string) => void;
-  titleSize: number;
-  metaSize: number;
 }) {
   const style = statusStyles[room.status] ?? statusStyles[5]!;
   const rotation = room.layoutRotationDegrees ?? 0;
@@ -252,9 +263,6 @@ function RoomShape({
   const polygon = parsePolygon(room.layoutPoints);
   const wall = wallThickness(room);
   const door = doorWidth(room);
-
-  const label = room.roomNumber;
-  const sub = room.area ? `${room.area} m²` : null;
 
   return (
     <g
@@ -268,7 +276,10 @@ function RoomShape({
           onSelect(room.id);
         }
       }}
-      style={{ cursor: 'pointer' }}
+      // Chrome paints its default focus ring on an SVG <g> as a black disc
+      // centred on the box, which covered the room the owner had just clicked.
+      // The group takes no outline; the shapes inside carry the focus colour.
+      style={{ cursor: 'pointer', outline: 'none' }}
       transform={rotation ? `rotate(${rotation} ${centreX} ${centreY})` : undefined}
     >
       {polygon ? (
@@ -309,6 +320,7 @@ function RoomShape({
             fill="none"
             stroke={selected ? SELECTED_STROKE : WALL_COLOR}
             strokeWidth={selected ? wall * 1.15 : wall}
+            strokeLinejoin="round"
           />
           {/* The opening is cut back out of the bottom wall, then the leaf is
               swept from its hinge. */}
@@ -328,27 +340,65 @@ function RoomShape({
         </>
       )}
 
+      {/* The room's name is a separate pass, painted after the furniture: a bed
+          or a desk laid against the wall would otherwise cover it. */}
+    </g>
+  );
+}
+
+/** The room number and its area, drawn over the room's furniture. */
+function RoomLabel({
+  room,
+  titleSize,
+  metaSize,
+}: {
+  room: PlanRoom;
+  titleSize: number;
+  metaSize: number;
+}) {
+  const centreX = room.x + room.width / 2;
+  const centreY = room.y + room.height / 2;
+  const rotation = room.layoutRotationDegrees ?? 0;
+  const sub = room.area ? `${room.area} m²` : null;
+
+  return (
+    <g
+      pointerEvents="none"
+      transform={
+        rotation
+          ? `rotate(${rotation} ${centreX} ${centreY})`
+          : undefined
+      }
+    >
+      {/* A white halo keeps the text legible where it crosses a piece of
+          furniture, the way a drawing labels a room over the plan beneath. */}
       <text
         x={centreX}
-        y={sub ? centreY - metaSize * 0.1 : centreY + titleSize * 0.35}
+        y={sub ? centreY - metaSize * 0.15 : centreY + titleSize * 0.35}
         textAnchor="middle"
         fontSize={titleSize}
         fontWeight={700}
         fill="#0b1c30"
+        stroke="#ffffff"
+        strokeWidth={titleSize * 0.16}
+        paintOrder="stroke"
+        strokeLinejoin="round"
         fontFamily="Plus Jakarta Sans, sans-serif"
-        pointerEvents="none"
       >
-        {label}
+        {room.roomNumber}
       </text>
       {sub && (
         <text
           x={centreX}
-          y={centreY + titleSize * 0.9}
+          y={centreY + titleSize * 0.85}
           textAnchor="middle"
           fontSize={metaSize}
           fill="#475569"
+          stroke="#ffffff"
+          strokeWidth={metaSize * 0.16}
+          paintOrder="stroke"
+          strokeLinejoin="round"
           fontFamily="Inter, sans-serif"
-          pointerEvents="none"
         >
           {sub}
         </text>
@@ -361,11 +411,24 @@ function LayoutItemShape({ item }: { item: FloorLayoutItemDto }) {
   const meta = floorLayoutKindMeta[item.kind];
   const centreX = item.x + item.width / 2;
   const text = item.label ?? meta?.label ?? '';
-  const captioned = objectLabel(item, text);
+  const points = parsePoints(item.points);
+  // The mockup names the architecture — "Hành lang chung", "Cầu thang" — but
+  // leaves the furniture unlabelled: a bed drawn on a plan does not need the
+  // word "Giường" across it, and printing one covered the drawing at this size.
+  // A bent wall is unlabelled for a different reason, which shouldCaption
+  // explains.
+  const captioned = shouldCaption(points, item.kind) ? objectLabel(item, text) : null;
 
   return (
     <g pointerEvents="none">
-      <LayoutObjectArt box={item} kind={item.kind} caption={captioned?.caption} />
+      <LayoutObjectArt
+        box={item}
+        kind={item.kind}
+        caption={captioned?.caption}
+        points={points}
+        thickness={item.thickness}
+        cornerRadius={item.cornerRadius}
+      />
       {captioned && (
         <text
           x={centreX}

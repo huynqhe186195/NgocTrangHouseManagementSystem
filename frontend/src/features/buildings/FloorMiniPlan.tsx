@@ -1,10 +1,9 @@
 import { useMemo } from 'react';
 import type { FloorLayoutItemDto, RoomDto } from '../../lib/api/types';
-import { floorLayoutKindMeta } from '../../lib/api/types';
-import { buildPlanGeometry } from '../../lib/floorGeometry';
+import { floorLayoutKindMeta, isFurniture } from '../../lib/api/types';
+import { buildPlanGeometry, parsePoints } from '../../lib/floorGeometry';
 import {
   LayoutObjectArt,
-  PlanEnvelope,
   WALL_COLOR,
   innerBox,
   statusStyles,
@@ -52,7 +51,6 @@ export function FloorMiniPlan({ rooms, items = [], height = 62 }: FloorMiniPlanP
   const detail = Math.max(bounds.width, bounds.height);
   const wall = detail * 0.012;
   const hairline = detail * 0.003;
-  const envelope = detail * 0.022;
 
   return (
     <svg
@@ -63,13 +61,8 @@ export function FloorMiniPlan({ rooms, items = [], height = 62 }: FloorMiniPlanP
       aria-label={`Sơ đồ mặt bằng thu nhỏ: ${plan.rooms.length} phòng`}
       className="rounded border border-outline-variant bg-white"
     >
-      {/* The storey outline first — rooms, corridor and stairwell together —
-          so the thumbnail reads as a floor of a building, not a grid of tiles. */}
-      <PlanEnvelope boxes={[...plan.rooms, ...plan.items]} wall={envelope} />
-
-      {/* Walls are filled rather than stroked: the floor is then painted on
-          top at the same rect, so shared partitions stay one band wide and the
-          perimeter is whatever the band could not cover. */}
+      {/* Walls first, rooms painted over them: shared partitions then read as
+          one band and the storey outline is whatever wall the owner placed. */}
       {plan.rooms.map((room) => (
         <rect
           key={`wall-${room.id}`}
@@ -81,19 +74,21 @@ export function FloorMiniPlan({ rooms, items = [], height = 62 }: FloorMiniPlanP
         />
       ))}
 
-      {plan.items.map((item) => {
-        const meta = floorLayoutKindMeta[item.kind];
-        return (
-          <g key={item.id}>
-            <LayoutObjectArt
-              box={item}
-              kind={item.kind}
-              wall={Math.max(wall * 0.6, hairline)}
-            />
-            {meta && <title>{item.label ?? meta.label}</title>}
-          </g>
-        );
-      })}
+      {plan.items
+        .filter((item) => !isFurniture(item.kind) && item.kind !== 12)
+        .map((item) => {
+          const meta = floorLayoutKindMeta[item.kind];
+          return (
+            <g key={item.id}>
+              <LayoutObjectArt
+                box={item}
+                kind={item.kind}
+                wall={Math.max(wall * 0.6, hairline)}
+              />
+              {meta && <title>{item.label ?? meta.label}</title>}
+            </g>
+          );
+        })}
 
       {plan.rooms.map((room) => {
         const style = statusStyles[room.status] ?? statusStyles[5]!;
@@ -111,6 +106,26 @@ export function FloorMiniPlan({ rooms, items = [], height = 62 }: FloorMiniPlanP
           </g>
         );
       })}
+
+      {/* Furniture and walls, painted over the rooms for the same reason the
+          full plan paints them last. */}
+      {plan.items
+        .filter((item) => isFurniture(item.kind) || item.kind === 12)
+        .map((item) => (
+          <LayoutObjectArt
+            key={item.id}
+            box={item}
+            kind={item.kind}
+            wall={Math.max(wall * 0.6, hairline)}
+            points={parsePoints(item.points)}
+            thickness={
+              item.kind === 12
+                ? (item.thickness ?? Math.max(wall * 0.6, hairline))
+                : item.thickness
+            }
+            cornerRadius={item.cornerRadius}
+          />
+        ))}
     </svg>
   );
 }

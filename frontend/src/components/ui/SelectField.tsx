@@ -1,5 +1,6 @@
 import { useId } from 'react';
-import type { ReactNode, SelectHTMLAttributes } from 'react';
+import type { ChangeEvent, ReactNode } from 'react';
+import { Select } from 'antd';
 
 export interface SelectOption {
   value: string;
@@ -7,16 +8,27 @@ export interface SelectOption {
   disabled?: boolean;
 }
 
-interface SelectFieldProps extends Omit<SelectHTMLAttributes<HTMLSelectElement>, 'id'> {
+interface SelectFieldProps {
   label: string;
   required?: boolean;
   error?: string;
   hint?: ReactNode;
   options: SelectOption[];
   placeholder?: string;
+  value?: string | number;
+  onChange?: (event: ChangeEvent<HTMLSelectElement>) => void;
+  disabled?: boolean;
+  className?: string;
 }
 
-/** Select sibling of Field, sharing its label row, border and focus ring. */
+/**
+ * Draws the app's dropdown with antd's Select, which brings keyboard
+ * navigation, virtual scrolling and a searchable list.
+ *
+ * The props stay the native ones — callers still read `event.target.value` —
+ * so the change is invisible to every form that uses it. The event handed to
+ * `onChange` is only a carrier for the chosen value.
+ */
 export function SelectField({
   label,
   required = false,
@@ -25,7 +37,9 @@ export function SelectField({
   options,
   placeholder,
   className = '',
-  ...rest
+  value,
+  onChange,
+  disabled,
 }: SelectFieldProps) {
   const id = useId();
   const errorId = `${id}-error`;
@@ -39,27 +53,21 @@ export function SelectField({
         {label}
         {required && <span className="ml-1 text-error">*</span>}
       </label>
-      <select
+      <Select
         id={id}
+        className={`w-full ${className}`}
+        value={value === undefined || value === '' ? undefined : String(value)}
+        onChange={(next: string) =>
+          onChange?.({ target: { value: next } } as ChangeEvent<HTMLSelectElement>)
+        }
+        options={options}
+        placeholder={placeholder}
+        disabled={disabled}
+        status={error ? 'error' : undefined}
         aria-invalid={error ? true : undefined}
         aria-describedby={error ? errorId : undefined}
-        className={
-          'h-10 w-full rounded-[0.5rem] border bg-surface-lowest px-3 text-sm text-on-surface ' +
-          'focus:outline-none focus:ring-3 ' +
-          (error
-            ? 'border-error focus:border-error focus:ring-error/15 '
-            : 'border-outline-variant focus:border-primary focus:ring-primary/15 ') +
-          className
-        }
-        {...rest}
-      >
-        {placeholder && <option value="">{placeholder}</option>}
-        {options.map((option) => (
-          <option key={option.value} value={option.value} disabled={option.disabled}>
-            {option.label}
-          </option>
-        ))}
-      </select>
+        notFoundContent={null}
+      />
       {error ? (
         <p id={errorId} className="text-xs text-error">
           {error}

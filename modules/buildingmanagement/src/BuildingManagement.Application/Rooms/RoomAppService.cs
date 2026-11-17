@@ -110,10 +110,35 @@ namespace BuildingManagement.Rooms
                          select room;
             var rooms = await AsyncExecuter.ToListAsync(scoped);
 
-            return ObjectMapper.Map<
-                List<Room>,
-                List<RoomDto>
-            >(rooms);
+            var dtos = ObjectMapper.Map<List<Room>, List<RoomDto>>(rooms);
+
+            // A room list is what the plan and the side panel read, so the
+            // counts come back with it: two grouped queries rather than one
+            // query per room.
+            if (dtos.Count > 0)
+            {
+                var roomIds = rooms.Select(x => x.Id).ToList();
+                var equipment = await _equipmentRepository.GetQueryableAsync();
+                var photos = await _photoRepository.GetQueryableAsync();
+                var equipmentCounts = (await AsyncExecuter.ToListAsync(
+                        equipment.Where(x => roomIds.Contains(x.RoomId))
+                            .GroupBy(x => x.RoomId)
+                            .Select(g => new { RoomId = g.Key, Count = g.Count() })))
+                    .ToDictionary(x => x.RoomId, x => x.Count);
+                var photoCounts = (await AsyncExecuter.ToListAsync(
+                        photos.Where(x => roomIds.Contains(x.RoomId))
+                            .GroupBy(x => x.RoomId)
+                            .Select(g => new { RoomId = g.Key, Count = g.Count() })))
+                    .ToDictionary(x => x.RoomId, x => x.Count);
+                foreach (var dto in dtos)
+                {
+                    dto.EquipmentCount =
+                        equipmentCounts.GetValueOrDefault(dto.Id);
+                    dto.PhotoCount = photoCounts.GetValueOrDefault(dto.Id);
+                }
+            }
+
+            return dtos;
         }
 
         public async Task<RoomDto> UpdateAsync(

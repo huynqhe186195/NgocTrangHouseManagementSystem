@@ -89,8 +89,7 @@ function renderPage() {
 }
 
 /** jsdom has no DataTransfer constructor, so the drop event carries a stub. */
-function dropOnCanvas(data: Record<string, string>) {
-  const canvas = screen.getByRole('application');
+function dropOnCanvas(data: Record<string, string>) {  const canvas = screen.getByRole('application');
   fireEvent.drop(canvas, {
     dataTransfer: {
       getData: (key: string) => data[key] ?? '',
@@ -262,5 +261,105 @@ describe('FloorDesignerPage', () => {
       roomId: 'r1',
       input: { rotationDegrees: 90 },
     });
+  });
+
+  it('drops a wall with a straight centreline it can then be bent from', async () => {
+    renderPage();
+
+    dropOnCanvas({ 'application/x-item-kind': '12' });
+    fireEvent.click(screen.getByRole('button', { name: /Lưu sơ đồ/ }));
+
+    await waitFor(() => expect(createLayoutItem).toHaveBeenCalledTimes(1));
+    const input = createLayoutItem.mock.calls[0]![0] as {
+      kind: number;
+      points: string | null;
+      thickness: number | null;
+      cornerRadius: number | null;
+    };
+    expect(input.kind).toBe(12);
+    expect(input.points).not.toBeNull();
+    const points = JSON.parse(input.points as string) as { x: number; y: number }[];
+    expect(points).toHaveLength(2);
+    expect(points[0]!.y).toBe(points[1]!.y);
+    expect(input.thickness).toBeGreaterThan(0);
+    expect(input.cornerRadius).toBe(0);
+  });
+
+  it('sends every vertex of a bent wall back on save', async () => {
+    layoutItems = [
+      {
+        id: 'w1',
+        creationTime: '2026-01-01T00:00:00Z',
+        creatorId: null,
+        lastModificationTime: null,
+        lastModifierId: null,
+        floorId: 'f1',
+        kind: 12,
+        label: 'Tường ngoài',
+        x: 0,
+        y: 0,
+        width: 10,
+        height: 6,
+        points: '[{"x":0,"y":0},{"x":5,"y":0},{"x":10,"y":6}]',
+        thickness: 0.24,
+        cornerRadius: 0,
+      },
+    ];
+    renderPage();
+
+    // Selecting the wall shows its shape controls, including the vertex count.
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Tường ngoài' }));
+    expect(screen.getByText('3 điểm')).toBeTruthy();
+
+    // The corner radius slider is a real control: moving it marks the wall dirty.
+    fireEvent.change(screen.getByLabelText('Bán kính bo góc tường'), {
+      target: { value: '0.6' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Lưu sơ đồ/ }));
+
+    await waitFor(() => expect(updateLayoutItem).toHaveBeenCalledTimes(1));
+    const call = updateLayoutItem.mock.calls[0]![0] as {
+      itemId: string;
+      input: { points: string; cornerRadius: number; thickness: number };
+    };
+    expect(call.itemId).toBe('w1');
+    expect(JSON.parse(call.input.points)).toEqual([
+      { x: 0, y: 0 },
+      { x: 5, y: 0 },
+      { x: 10, y: 6 },
+    ]);
+    expect(call.input.cornerRadius).toBe(0.6);
+    expect(call.input.thickness).toBe(0.24);
+  });
+
+  it('straightens a bent wall back to its two ends and keeps it undoable', async () => {
+    layoutItems = [
+      {
+        id: 'w1',
+        creationTime: '2026-01-01T00:00:00Z',
+        creatorId: null,
+        lastModificationTime: null,
+        lastModifierId: null,
+        floorId: 'f1',
+        kind: 12,
+        label: 'Tường ngoài',
+        x: 0,
+        y: 0,
+        width: 10,
+        height: 6,
+        points: '[{"x":0,"y":0},{"x":5,"y":0},{"x":10,"y":6}]',
+        thickness: 0.24,
+        cornerRadius: 0,
+      },
+    ];
+    renderPage();
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: 'Tường ngoài' }));
+    fireEvent.click(screen.getByRole('button', { name: /Về đường thẳng/ }));
+    expect(screen.getByText('2 điểm')).toBeTruthy();
+
+    // Undo restores the bend rather than resetting the whole drawing.
+    fireEvent.click(screen.getByRole('button', { name: 'Hoàn tác bước trước' }));
+    expect(screen.getByText('3 điểm')).toBeTruthy();
   });
 });

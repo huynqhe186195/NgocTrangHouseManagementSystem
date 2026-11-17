@@ -1,5 +1,6 @@
-import { formatMetres, type Box } from '../../lib/floorGeometry';
+import { formatMetres, type Box, type PlanPoint } from '../../lib/floorGeometry';
 import type { FloorLayoutItemKind } from '../../lib/api/types';
+import { isFurniture } from '../../lib/api/types';
 
 /**
  * The architectural primitives both floor-plan screens draw with. The
@@ -9,6 +10,8 @@ import type { FloorLayoutItemKind } from '../../lib/api/types';
  */
 
 export const WALL_COLOR = '#2b2b2b';
+/** The lighter core line inside a drawn wall band. */
+const WALL_LIGHT = '#5a5a5a';
 export const SELECTED_STROKE = '#1d4ed8';
 const RULE_COLOR = '#94a3b8';
 const RULE_TEXT = '#64748b';
@@ -74,280 +77,6 @@ export function innerBox(box: Box, wall: number): Box {
   };
 }
 
-/**
- * One straight run of the building envelope, with the side the band sits on.
- * `-1` is above/left of the footprint, `1` is below/right; the band always
- * lies outside the floor, so the drawn wall never eats into a room.
- */
-export interface EnvelopeRun {
-  orientation: 'h' | 'v';
-  /** The footprint's own boundary line the band is fixed to. */
-  at: number;
-  from: number;
-  to: number;
-  side: 1 | -1;
-}
-
-const OUTLINE_EPSILON = 0.005;
-
-function uniqueEdges(values: number[]): number[] {
-  const sorted = [...values].sort((a, b) => a - b);
-  const out: number[] = [];
-  for (const value of sorted) {
-    const last = out[out.length - 1];
-    if (last === undefined || value - last > OUTLINE_EPSILON) {
-      out.push(value);
-    }
-  }
-  return out;
-}
-
-/**
- * The outline of the whole floor, not of one room.
- *
- * The mockup encloses the entire storey — rooms, corridor, stairwell — in one
- * continuous wall, the way a building is actually drawn. Stroking each room's
- * own edges cannot produce that: the corridor's ends and the gaps between
- * room blocks have no room to stroke them, so the envelope came out broken.
- *
- * The boxes are rasterised onto their own coordinate grid and every cell edge
- * that faces open space is kept, then collinear neighbours are merged back
- * into long runs. That handles the L-shapes and the notches between blocks
- * without needing a polygon clipper.
- *
- * `gap` closes slots narrower than itself before the outline is taken. Designed
- * plans leave a few tens of centimetres between blocks, which would otherwise
- * cut a sawtooth of 40 cm notches into a wall that a building simply does not
- * have; the mockup draws one clean footprint for the same reason.
- */
-export function envelopeRuns(boxes: Box[], gap = 0): EnvelopeRun[] {
-  if (boxes.length === 0) {
-    return [];
-  }
-  const grow = Math.max(0, gap) / 2;
-  const grown = boxes.map((box) => ({
-    x: box.x - grow,
-    y: box.y - grow,
-    width: box.width + grow * 2,
-    height: box.height + grow * 2,
-  }));
-
-  const xs = uniqueEdges(grown.flatMap((box) => [box.x, box.x + box.width]));
-  const ys = uniqueEdges(grown.flatMap((box) => [box.y, box.y + box.height]));
-  if (xs.length < 2 || ys.length < 2) {
-    return [];
-  }
-
-  const cols = xs.length - 1;
-  const rows = ys.length - 1;
-  const covered: boolean[] = new Array<boolean>(cols * rows).fill(false);
-
-  for (let row = 0; row < rows; row += 1) {
-    for (let col = 0; col < cols; col += 1) {
-      const cx = (xs[col]! + xs[col + 1]!) / 2;
-      const cy = (ys[row]! + ys[row + 1]!) / 2;
-      covered[row * cols + col] = grown.some(
-        (box) =>
-          cx > box.x + OUTLINE_EPSILON &&
-          cx < box.x + box.width - OUTLINE_EPSILON &&
-          cy > box.y + OUTLINE_EPSILON &&
-          cy < box.y + box.height - OUTLINE_EPSILON,
-      );
-    }
-  }
-
-  const filled = (col: number, row: number): boolean =>
-    col >= 0 && col < cols && row >= 0 && row < rows && covered[row * cols + col] === true;
-
-  const horizontal: { at: number; from: number; to: number; side: 1 | -1 }[] = [];
-  const vertical: { at: number; from: number; to: number; side: 1 | -1 }[] = [];
-
-  for (let row = 0; row < rows; row += 1) {
-    for (let col = 0; col < cols; col += 1) {
-      if (!filled(col, row)) {
-        continue;
-      }
-      if (!filled(col, row - 1)) {
-        horizontal.push({ at: ys[row]!, from: xs[col]!, to: xs[col + 1]!, side: -1 });
-      }
-      if (!filled(col, row + 1)) {
-        horizontal.push({ at: ys[row + 1]!, from: xs[col]!, to: xs[col + 1]!, side: 1 });
-      }
-      if (!filled(col - 1, row)) {
-        vertical.push({ at: xs[col]!, from: ys[row]!, to: ys[row + 1]!, side: -1 });
-      }
-      if (!filled(col + 1, row)) {
-        vertical.push({ at: xs[col + 1]!, from: ys[row]!, to: ys[row + 1]!, side: 1 });
-      }
-    }
-  }
-
-  return [
-    ...mergeRuns(horizontal, 'h'),
-    ...mergeRuns(vertical, 'v'),
-  ];
-}
-
-function mergeRuns(
-  runs: { at: number; from: number; to: number; side: 1 | -1 }[],
-  orientation: 'h' | 'v',
-): EnvelopeRun[] {
-  const groups = new Map<string, { at: number; from: number; to: number; side: 1 | -1 }[]>();
-  for (const run of runs) {
-    const key = `${run.at}|${run.side}`;
-    const bucket = groups.get(key);
-    if (bucket) {
-      bucket.push(run);
-    } else {
-      groups.set(key, [run]);
-    }
-  }
-
-  const merged: EnvelopeRun[] = [];
-  for (const bucket of groups.values()) {
-    bucket.sort((a, b) => a.from - b.from);
-    let current = { ...bucket[0]! };
-    for (let index = 1; index < bucket.length; index += 1) {
-      const next = bucket[index]!;
-      if (next.from - current.to <= OUTLINE_EPSILON) {
-        current.to = Math.max(current.to, next.to);
-      } else {
-        merged.push({ orientation, ...current });
-        current = { ...next };
-      }
-    }
-    merged.push({ orientation, ...current });
-  }
-  return merged;
-}
-
-/** The wall band a run draws, lying entirely outside the footprint. */
-export function envelopeBand(run: EnvelopeRun, wall: number): Box {
-  if (run.orientation === 'h') {
-    return {
-      x: run.from,
-      y: run.side === -1 ? run.at - wall : run.at,
-      width: run.to - run.from,
-      height: wall,
-    };
-  }
-  return {
-    x: run.side === -1 ? run.at - wall : run.at,
-    y: run.from,
-    width: wall,
-    height: run.to - run.from,
-  };
-}
-
-const WINDOW_FILL = '#dce8f5';
-const WINDOW_STROKE = '#aec3d9';
-
-/**
- * Windows punched through an exterior run, spaced the way the mockup spaces
- * them. Only runs wide enough to hold a whole window get any, so a short
- * return beside a notch is left solid rather than split into slivers.
- */
-function windowOpenings(
-  run: EnvelopeRun,
-  wall: number,
-): { box: Box; frame: Box }[] {
-  const span = run.to - run.from;
-  const width = Math.min(2.2, Math.max(1.2, span * 0.32));
-  const gap = 3.4;
-  if (span < width + 0.8) {
-    return [];
-  }
-
-  const count = Math.max(1, Math.floor((span - width) / gap) + 1);
-  const used = width * count;
-  const spare = span - used;
-  const step = spare / (count + 1);
-  const openings: { box: Box; frame: Box }[] = [];
-
-  for (let index = 0; index < count; index += 1) {
-    const start = run.from + step * (index + 1) + width * index;
-    const inset = Math.min(wall * 0.22, 0.06);
-    if (run.orientation === 'h') {
-      const y = run.side === -1 ? run.at - wall : run.at;
-      openings.push({
-        box: { x: start + inset, y: y + inset, width: width - inset * 2, height: wall - inset * 2 },
-        frame: { x: start, y, width, height: wall },
-      });
-    } else {
-      const x = run.side === -1 ? run.at - wall : run.at;
-      openings.push({
-        box: { x: x + inset, y: start + inset, width: wall - inset * 2, height: width - inset * 2 },
-        frame: { x, y: start, width: wall, height: width },
-      });
-    }
-  }
-  return openings;
-}
-
-/**
- * The building envelope: one continuous wall around everything the floor
- * actually occupies, with window openings on its exterior. This is the band
- * the mockup draws around the whole storey — it is the reason the plan reads
- * as a floor of a building rather than a scatter of separate boxes.
- */
-export function PlanEnvelope({
-  boxes,
-  wall,
-  selected,
-  gap = 0.8,
-}: {
-  boxes: Box[];
-  wall: number;
-  selected?: boolean;
-  /** Slots narrower than this are bridged, so the outline reads as one block. */
-  gap?: number;
-}) {
-  const runs = envelopeRuns(boxes, gap);
-  if (runs.length === 0) {
-    return null;
-  }
-  const color = selected ? SELECTED_STROKE : WALL_COLOR;
-
-  return (
-    <g pointerEvents="none">
-      {runs.map((run, index) => {
-        const band = envelopeBand(run, wall);
-        return (
-          <rect
-            key={`band-${index}`}
-            x={band.x}
-            y={band.y}
-            width={band.width}
-            height={band.height}
-            fill={color}
-          />
-        );
-      })}
-      {runs.flatMap((run, index) =>
-        windowOpenings(run, wall).map((opening, openingIndex) => (
-          <g key={`win-${index}-${openingIndex}`}>
-            <rect
-              x={opening.frame.x}
-              y={opening.frame.y}
-              width={opening.frame.width}
-              height={opening.frame.height}
-              fill="none"
-              stroke={selected ? SELECTED_STROKE : WINDOW_STROKE}
-              strokeWidth={Math.max(0.02, wall * 0.12)}
-            />
-            <rect
-              x={opening.box.x}
-              y={opening.box.y}
-              width={opening.box.width}
-              height={opening.box.height}
-              fill={WINDOW_FILL}
-            />
-          </g>
-        )),
-      )}
-    </g>
-  );
-}
 
 /* ------------------------------------------------------------------------ *
  * Floor objects.
@@ -368,6 +97,10 @@ export interface LayoutObjectArtProps {
   wall?: number;
   /** Bottom strip reserved for the caption, so the symbol sits above it. */
   caption?: number;
+  /** A wall's centreline. Absent means a box wall from before polylines. */
+  points?: PlanPoint[] | null;
+  thickness?: number | null;
+  cornerRadius?: number | null;
 }
 
 export function objectWall(box: Box): number {
@@ -623,11 +356,630 @@ function TreeArt({ box }: { box: Box }) {
 }
 
 /**
+ * Warm, paper-light fills and a soft outline: the mockup draws furniture as
+ * pale blocks with a thin grey edge, clearly lighter than the masonry of the
+ * walls, so a furnished room reads as a room rather than as more structure.
+ */
+const FURNITURE_FILL = '#FBF7F1';
+const FURNITURE_SHADE = '#DFD6C9';
+const FURNITURE_STROKE = '#9C9184';
+const FURNITURE_SOFT = '#FFFFFF';
+
+interface FurnitureArtProps {
+  box: Box;
+}
+
+/** A bed: pillow against the headboard, a folded blanket across the foot. */
+function BedArt({ box }: FurnitureArtProps) {
+  const short = box.height;
+  const strokeWidth = Math.max(0.012, short * 0.03);
+  const headboard = short * 0.12;
+  const pillowDepth = short * 0.26;
+  const blanketStart = box.width * 0.52;
+
+  return (
+    <g>
+      <rect
+        x={box.x}
+        y={box.y}
+        width={box.width}
+        height={box.height}
+        fill={FURNITURE_FILL}
+        stroke={FURNITURE_STROKE}
+        strokeWidth={strokeWidth}
+      />
+      {/* Headboard: a thicker band at the wall end. */}
+      <rect x={box.x} y={box.y} width={headboard} height={box.height} fill={FURNITURE_SHADE} />
+      {/* The pillow, laid against the headboard. */}
+      <rect
+        x={box.x + headboard + short * 0.05}
+        y={box.y + short * 0.12}
+        width={pillowDepth}
+        height={box.height - short * 0.24}
+        rx={short * 0.04}
+        fill={FURNITURE_SOFT}
+        stroke={FURNITURE_STROKE}
+        strokeWidth={strokeWidth * 0.7}
+      />
+      {/* The blanket, with a turned-down edge like the mockup's. */}
+      <rect
+        x={box.x + headboard + blanketStart}
+        y={box.y}
+        width={Math.max(0, box.width - headboard - blanketStart - strokeWidth)}
+        height={box.height}
+        fill={FURNITURE_SHADE}
+        fillOpacity={0.55}
+      />
+      <line
+        x1={box.x + headboard + blanketStart}
+        y1={box.y}
+        x2={box.x + headboard + blanketStart}
+        y2={box.y + box.height}
+        stroke={FURNITURE_STROKE}
+        strokeWidth={strokeWidth * 0.7}
+      />
+    </g>
+  );
+}
+
+/** A wardrobe: two doors split down the middle, with the hanging rail. */
+function WardrobeArt({ box }: FurnitureArtProps) {
+  const strokeWidth = Math.max(0.012, Math.min(box.width, box.height) * 0.032);
+
+  return (
+    <g>
+      <rect
+        x={box.x + strokeWidth}
+        y={box.y + strokeWidth}
+        width={box.width - strokeWidth * 2}
+        height={box.height - strokeWidth * 2}
+        fill={FURNITURE_FILL}
+        stroke={FURNITURE_STROKE}
+        strokeWidth={strokeWidth}
+      />
+      <line
+        x1={box.x + box.width * 0.18}
+        y1={box.y + box.height * 0.5}
+        x2={box.x + box.width * 0.82}
+        y2={box.y + box.height * 0.5}
+        stroke={FURNITURE_STROKE}
+        strokeWidth={strokeWidth * 1.2}
+      />
+      <line
+        x1={box.x + box.width * 0.5}
+        y1={box.y + strokeWidth}
+        x2={box.x + box.width * 0.5}
+        y2={box.y + box.height - strokeWidth}
+        stroke={FURNITURE_STROKE}
+        strokeWidth={strokeWidth}
+      />
+    </g>
+  );
+}
+
+/** A desk with a chair tucked under it, the way the mockup seats a room. */
+function DeskArt({ box }: FurnitureArtProps) {
+  const strokeWidth = Math.max(0.012, box.height * 0.028);
+
+  return (
+    <g>
+      <rect
+        x={box.x + strokeWidth}
+        y={box.y + strokeWidth}
+        width={box.width - strokeWidth * 2}
+        height={box.height * 0.62}
+        fill={FURNITURE_FILL}
+        stroke={FURNITURE_STROKE}
+        strokeWidth={strokeWidth}
+      />
+      {/* The chair: a back and a seat, drawn as two rounded blocks. */}
+      <rect
+        x={box.x + box.width * 0.34}
+        y={box.y + box.height * 0.62}
+        width={box.width * 0.32}
+        height={box.height * 0.16}
+        rx={strokeWidth}
+        fill={FURNITURE_SOFT}
+        stroke={FURNITURE_STROKE}
+        strokeWidth={strokeWidth}
+      />
+      <rect
+        x={box.x + box.width * 0.42}
+        y={box.y + box.height * 0.78}
+        width={box.width * 0.16}
+        height={box.height * 0.16}
+        rx={strokeWidth}
+        fill={FURNITURE_FILL}
+        stroke={FURNITURE_STROKE}
+        strokeWidth={strokeWidth}
+      />
+    </g>
+  );
+}
+
+/** A chair on its own: seat ring with a backrest. */
+function ChairArt({ box }: FurnitureArtProps) {
+  const unit = Math.min(box.width, box.height);
+  const strokeWidth = Math.max(0.012, unit * 0.05);
+  const cx = box.x + box.width / 2;
+  const cy = box.y + box.height / 2;
+
+  return (
+    <g>
+      <circle
+        cx={cx}
+        cy={cy + unit * 0.08}
+        r={unit * 0.3}
+        fill={FURNITURE_FILL}
+        stroke={FURNITURE_STROKE}
+        strokeWidth={strokeWidth}
+      />
+      <rect
+        x={cx - unit * 0.3}
+        y={cy - unit * 0.42}
+        width={unit * 0.6}
+        height={unit * 0.16}
+        rx={strokeWidth}
+        fill={FURNITURE_SHADE}
+        stroke={FURNITURE_STROKE}
+        strokeWidth={strokeWidth}
+      />
+    </g>
+  );
+}
+
+/** A sofa: a back, two arms and a pair of cushions. */
+function SofaArt({ box }: FurnitureArtProps) {
+  const short = box.height;
+  const strokeWidth = Math.max(0.012, short * 0.03);
+
+  return (
+    <g>
+      <rect
+        x={box.x + strokeWidth}
+        y={box.y + strokeWidth}
+        width={box.width - strokeWidth * 2}
+        height={box.height - strokeWidth * 2}
+        rx={short * 0.12}
+        fill={FURNITURE_FILL}
+        stroke={FURNITURE_STROKE}
+        strokeWidth={strokeWidth}
+      />
+      {/* Backrest along the wall side. */}
+      <rect
+        x={box.x + box.width * 0.06}
+        y={box.y + box.height * 0.08}
+        width={box.width * 0.88}
+        height={box.height * 0.26}
+        rx={short * 0.06}
+        fill={FURNITURE_SHADE}
+        stroke={FURNITURE_STROKE}
+        strokeWidth={strokeWidth * 0.8}
+      />
+      {/* Two seat cushions, split down the middle. */}
+      <rect
+        x={box.x + box.width * 0.08}
+        y={box.y + box.height * 0.38}
+        width={box.width * 0.4}
+        height={box.height * 0.5}
+        rx={short * 0.05}
+        fill={FURNITURE_SOFT}
+        stroke={FURNITURE_STROKE}
+        strokeWidth={strokeWidth * 0.8}
+      />
+      <rect
+        x={box.x + box.width * 0.52}
+        y={box.y + box.height * 0.38}
+        width={box.width * 0.4}
+        height={box.height * 0.5}
+        rx={short * 0.05}
+        fill={FURNITURE_SOFT}
+        stroke={FURNITURE_STROKE}
+        strokeWidth={strokeWidth * 0.8}
+      />
+    </g>
+  );
+}
+
+/** A wall-mounted air conditioner: a louvred box with the airflow arrow. */
+function AirConditionerArt({ box }: FurnitureArtProps) {
+  const short = Math.min(box.width, box.height);
+  const strokeWidth = Math.max(0.01, short * 0.06);
+  const centreX = box.x + box.width / 2;
+
+  return (
+    <g>
+      <rect
+        x={box.x + strokeWidth}
+        y={box.y + strokeWidth}
+        width={box.width - strokeWidth * 2}
+        height={box.height - strokeWidth * 2}
+        rx={short * 0.2}
+        fill={FURNITURE_SOFT}
+        stroke={FURNITURE_STROKE}
+        strokeWidth={strokeWidth}
+      />
+      {/* The louvre, a line along the unit's length. */}
+      <line
+        x1={box.x + box.width * 0.18}
+        y1={box.y + box.height * 0.62}
+        x2={box.x + box.width * 0.82}
+        y2={box.y + box.height * 0.62}
+        stroke={FURNITURE_STROKE}
+        strokeWidth={strokeWidth * 0.8}
+      />
+      {/* Two zigzags of airflow, the usual air-conditioner symbol. */}
+      <path
+        d={`M ${centreX - short * 0.3} ${box.y + box.height * 0.28} q ${short * 0.16} ${-short * 0.18} ${short * 0.32} 0 q ${short * 0.16} ${short * 0.18} ${short * 0.32} 0`}
+        fill="none"
+        stroke={FURNITURE_STROKE}
+        strokeWidth={strokeWidth * 0.7}
+        strokeLinecap="round"
+      />
+    </g>
+  );
+}
+
+/** A kitchen run: a sink and a hob on a worktop. */
+function KitchenArt({ box }: FurnitureArtProps) {
+  const strokeWidth = Math.max(0.012, box.height * 0.03);
+
+  return (
+    <g>
+      <rect
+        x={box.x + strokeWidth}
+        y={box.y + strokeWidth}
+        width={box.width - strokeWidth * 2}
+        height={box.height - strokeWidth * 2}
+        fill={FURNITURE_FILL}
+        stroke={FURNITURE_STROKE}
+        strokeWidth={strokeWidth}
+      />
+      {/* Sink basin. */}
+      <rect
+        x={box.x + box.width * 0.1}
+        y={box.y + box.height * 0.28}
+        width={box.width * 0.28}
+        height={box.height * 0.44}
+        rx={strokeWidth}
+        fill={FURNITURE_SOFT}
+        stroke={FURNITURE_STROKE}
+        strokeWidth={strokeWidth * 0.8}
+      />
+      {/* Hob: four burners. */}
+      {(
+        [
+          [0.58, 0.34],
+          [0.76, 0.34],
+          [0.58, 0.66],
+          [0.76, 0.66],
+        ] as const
+      ).map(([fx, fy]) => (
+        <circle
+          key={`${fx}-${fy}`}
+          cx={box.x + box.width * fx}
+          cy={box.y + box.height * fy}
+          r={Math.min(box.width, box.height) * 0.07}
+          fill="none"
+          stroke={FURNITURE_STROKE}
+          strokeWidth={strokeWidth * 0.7}
+        />
+      ))}
+    </g>
+  );
+}
+
+/** A refrigerator: a tall box with the door split and a handle. */
+function RefrigeratorArt({ box }: FurnitureArtProps) {
+  const strokeWidth = Math.max(0.012, box.height * 0.035);
+
+  return (
+    <g>
+      <rect
+        x={box.x + strokeWidth}
+        y={box.y + strokeWidth}
+        width={box.width - strokeWidth * 2}
+        height={box.height - strokeWidth * 2}
+        rx={strokeWidth}
+        fill={FURNITURE_SOFT}
+        stroke={FURNITURE_STROKE}
+        strokeWidth={strokeWidth}
+      />
+      <line
+        x1={box.x + box.width * 0.5}
+        y1={box.y + strokeWidth}
+        x2={box.x + box.width * 0.5}
+        y2={box.y + box.height - strokeWidth}
+        stroke={FURNITURE_STROKE}
+        strokeWidth={strokeWidth}
+      />
+      <line
+        x1={box.x + box.width * 0.42}
+        y1={box.y + box.height * 0.3}
+        x2={box.x + box.width * 0.42}
+        y2={box.y + box.height * 0.7}
+        stroke={FURNITURE_STROKE}
+        strokeWidth={strokeWidth * 1.4}
+        strokeLinecap="round"
+      />
+    </g>
+  );
+}
+
+/** A television: a screen with the stand and the wall bracket. */
+function TelevisionArt({ box }: FurnitureArtProps) {
+  const strokeWidth = Math.max(0.01, box.height * 0.04);
+
+  return (
+    <g>
+      <rect
+        x={box.x + box.width * 0.06}
+        y={box.y + box.height * 0.1}
+        width={box.width * 0.88}
+        height={box.height * 0.68}
+        rx={strokeWidth}
+        fill={FURNITURE_SOFT}
+        stroke={FURNITURE_STROKE}
+        strokeWidth={strokeWidth}
+      />
+      <rect
+        x={box.x + box.width * 0.42}
+        y={box.y + box.height * 0.78}
+        width={box.width * 0.16}
+        height={box.height * 0.08}
+        fill={FURNITURE_SHADE}
+      />
+      <line
+        x1={box.x + box.width * 0.28}
+        y1={box.y + box.height * 0.9}
+        x2={box.x + box.width * 0.72}
+        y2={box.y + box.height * 0.9}
+        stroke={FURNITURE_STROKE}
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+      />
+    </g>
+  );
+}
+
+/**
+ * Furniture is authored along the box's width — a bed's headboard at its left
+ * edge, a desk's worktop across the top. When the owner stretches the box
+ * taller than it is wide the drawing turns a quarter turn so the symbol still
+ * lies the long way round, exactly as a bed drawn on a real plan would.
+ */
+const UPRIGHT_ROTATION = new Set<FloorLayoutItemKind>([13, 14, 15, 17, 19, 20, 21]);
+
+function withUpright(
+  kind: FloorLayoutItemKind,
+  box: Box,
+  art: React.ReactNode,
+): React.ReactNode {
+  if (!UPRIGHT_ROTATION.has(kind) || box.width >= box.height) {
+    return art;
+  }
+  // Rotating about the box centre maps the authored w×h drawing onto the
+  // stretched h×w box, so the symbol fills the footprint either way.
+  return (
+    <g transform={`rotate(90 ${box.x + box.width / 2} ${box.y + box.height / 2})`}>{art}</g>
+  );
+}
+
+const FURNITURE_ART: Partial<
+  Record<FloorLayoutItemKind, (props: FurnitureArtProps) => React.ReactElement>
+> = {
+  13: BedArt,
+  14: WardrobeArt,
+  15: DeskArt,
+  16: ChairArt,
+  17: SofaArt,
+  18: AirConditionerArt,
+  19: KitchenArt,
+  20: RefrigeratorArt,
+  21: TelevisionArt,
+};
+
+/**
+ * A wall the owner places and stretches. Unlike the other palette objects it
+ * has no floor or symbol: it is solid masonry along its own length, and its
+ * thickness follows the short side of the box — so the same object can be a
+ * storey's outer wall, a corridor partition or a stub beside a doorway.
+ *
+ * The mockup's outer wall is exactly this: a band the designer drags out,
+ * which is why it can leave a gap at a stairwell or run past the last room.
+ * Deriving it from the room boxes could never do that.
+ */
+function WallArt({ box }: { box: Box }) {
+  const horizontal = box.width >= box.height;
+  const thickness = horizontal ? box.height : box.width;
+  const cap = Math.max(0.04, thickness * 0.18);
+  const strokeWidth = Math.max(0.015, thickness * 0.07);
+
+  return (
+    <g>
+      <rect x={box.x} y={box.y} width={box.width} height={box.height} fill={WALL_COLOR} />
+      {/* A lighter core line, the way a cut wall is hatched on a drawing. */}
+      {horizontal ? (
+        <>
+          <line
+            x1={box.x + cap}
+            y1={box.y + box.height / 2}
+            x2={box.x + box.width - cap}
+            y2={box.y + box.height / 2}
+            stroke={WALL_LIGHT}
+            strokeWidth={strokeWidth}
+          />
+          <line x1={box.x} y1={box.y} x2={box.x} y2={box.y + box.height} stroke={WALL_LIGHT} strokeWidth={strokeWidth} />
+          <line
+            x1={box.x + box.width}
+            y1={box.y}
+            x2={box.x + box.width}
+            y2={box.y + box.height}
+            stroke={WALL_LIGHT}
+            strokeWidth={strokeWidth}
+          />
+        </>
+      ) : (
+        <>
+          <line
+            x1={box.x + box.width / 2}
+            y1={box.y + cap}
+            x2={box.x + box.width / 2}
+            y2={box.y + box.height - cap}
+            stroke={WALL_LIGHT}
+            strokeWidth={strokeWidth}
+          />
+          <line x1={box.x} y1={box.y} x2={box.x + box.width} y2={box.y} stroke={WALL_LIGHT} strokeWidth={strokeWidth} />
+          <line
+            x1={box.x}
+            y1={box.y + box.height}
+            x2={box.x + box.width}
+            y2={box.y + box.height}
+            stroke={WALL_LIGHT}
+            strokeWidth={strokeWidth}
+          />
+        </>
+      )}
+    </g>
+  );
+}
+
+/**
+ * A storey's outer wall is not one straight band. This turns the stored
+ * centreline into an SVG path, and `radius` decides what happens at each bend:
+ * zero keeps the sharp miter the mockup draws (its corners are chamfered, not
+ * curved), anything above it swaps a corner for an arc, which is what stucco
+ * and brickwork actually do.
+ *
+ * The cut is clamped to half of each adjoining leg, so a radius larger than the
+ * wall itself shortens the fillet instead of swallowing the segment and folding
+ * the line back on itself.
+ */
+export function roundedPolyline(points: PlanPoint[], radius: number): string {
+  const first = points[0];
+  if (!first) {
+    return '';
+  }
+  const f = (value: number) => Number(value.toFixed(4));
+  let d = `M ${f(first.x)} ${f(first.y)}`;
+
+  if (points.length === 1) {
+    return d;
+  }
+
+  const r = Number.isFinite(radius) && radius > 0 ? radius : 0;
+
+  for (let i = 1; i < points.length; i += 1) {
+    const current = points[i];
+    if (!current) {
+      continue;
+    }
+    const isLast = i === points.length - 1;
+
+    if (r === 0 || isLast) {
+      d += ` L ${f(current.x)} ${f(current.y)}`;
+      continue;
+    }
+
+    const prev = points[i - 1];
+    const next = points[i + 1];
+    if (!prev || !next) {
+      d += ` L ${f(current.x)} ${f(current.y)}`;
+      continue;
+    }
+    const inLength = Math.hypot(current.x - prev.x, current.y - prev.y);
+    const outLength = Math.hypot(next.x - current.x, next.y - current.y);
+    if (inLength === 0 || outLength === 0) {
+      d += ` L ${f(current.x)} ${f(current.y)}`;
+      continue;
+    }
+
+    // The fillet has to fit inside both legs, or it would run past the next bend.
+    const cut = Math.min(r, inLength / 2, outLength / 2);
+    const entry = {
+      x: current.x + ((prev.x - current.x) / inLength) * cut,
+      y: current.y + ((prev.y - current.y) / inLength) * cut,
+    };
+    const exit = {
+      x: current.x + ((next.x - current.x) / outLength) * cut,
+      y: current.y + ((next.y - current.y) / outLength) * cut,
+    };
+
+    // A straight run has no corner to round; the arc would be drawn edge-on.
+    const cross = (current.x - prev.x) * (next.y - current.y) -
+      (current.y - prev.y) * (next.x - current.x);
+    const straight = Math.abs(cross) < 1e-9;
+
+    d += ` L ${f(entry.x)} ${f(entry.y)}`;
+    if (!straight) {
+      const sweep = cross > 0 ? 1 : 0;
+      d += ` A ${f(cut)} ${f(cut)} 0 0 ${sweep} ${f(exit.x)} ${f(exit.y)}`;
+    } else {
+      d += ` L ${f(exit.x)} ${f(exit.y)}`;
+    }
+  }
+
+  return d;
+}
+
+/**
+ * A polyline wall: the body is one thick round-capped stroke, so the band closes
+ * itself at every bend without building an offset polygon, and the light core
+ * runs down the middle the way a cut wall is hatched on a drawing.
+ */
+export function WallPolylineArt({
+  points,
+  thickness,
+  cornerRadius,
+}: {
+  points: PlanPoint[];
+  thickness: number;
+  cornerRadius: number;
+}) {
+  const d = roundedPolyline(points, cornerRadius);
+  if (!d) {
+    return null;
+  }
+  // Two points is a plain run, and an open end should read as a cut, not a
+  // rounded stub: butt caps keep the wall's ends square to its own length.
+  const strokeWidth = Math.max(0.02, thickness);
+  return (
+    <g>
+      <path
+        d={d}
+        fill="none"
+        stroke={WALL_COLOR}
+        strokeWidth={strokeWidth}
+        strokeLinejoin="miter"
+        strokeLinecap="butt"
+        strokeMiterlimit={2}
+      />
+      <path
+        d={d}
+        fill="none"
+        stroke={WALL_LIGHT}
+        strokeWidth={Math.max(0.015, strokeWidth * 0.14)}
+        strokeLinejoin="miter"
+        strokeLinecap="butt"
+      />
+    </g>
+  );
+}
+
+/**
  * The drawing of one floor object. Everything that is not a bare rectangle
  * lives here so the designer preview and the finished plan never diverge.
  */
-export function LayoutObjectArt({ box, kind, wall, caption = 0 }: LayoutObjectArtProps) {
-  const thickness = wall ?? objectWall(box);
+export function LayoutObjectArt({
+  box,
+  kind,
+  wall,
+  caption = 0,
+  points = null,
+  thickness = null,
+  cornerRadius = null,
+}: LayoutObjectArtProps) {
+  const thickness2 = wall ?? objectWall(box);
   // The caption strip belongs to the symbol's frame, not to its drawing, so
   // the stair treads and WC fixtures stay inside the part left above it.
   const art =
@@ -640,12 +992,36 @@ export function LayoutObjectArt({ box, kind, wall, caption = 0 }: LayoutObjectAr
     return null;
   }
 
+  if (kind === 12) {
+    // A wall with a centreline bends; one stored only as a box (every wall
+    // saved before polylines existed) still draws exactly as it did.
+    if (points && points.length >= 2) {
+      return (
+        <WallPolylineArt
+          points={points}
+          thickness={thickness ?? Math.min(box.width, box.height)}
+          cornerRadius={cornerRadius ?? 0}
+        />
+      );
+    }
+    return <WallArt box={box} />;
+  }
+
+  const furniture = FURNITURE_ART[kind];
+  if (furniture) {
+    // Furniture sits inside a room that is already walled, so it draws its own
+    // outline and nothing else — a second masonry ring inside a room would
+    // read as a partition wall the owner never placed.
+    const Art = furniture;
+    return <>{withUpright(kind, box, <Art box={art} />)}</>;
+  }
+
   if (kind === 11) {
     return <TreeArt box={art} />;
   }
 
   if (kind === 6) {
-    return <DoorArt box={art} wall={thickness} />;
+    return <DoorArt box={art} wall={thickness2} />;
   }
 
   const fill = kind === 10 ? '#F4F8FB' : OBJECT_FILL;
@@ -660,16 +1036,16 @@ export function LayoutObjectArt({ box, kind, wall, caption = 0 }: LayoutObjectAr
         fill={fill}
       />
       <path
-        d={closedWalls(box, thickness)}
+        d={closedWalls(box, thickness2)}
         fill="none"
         stroke={WALL_COLOR}
-        strokeWidth={thickness}
+        strokeWidth={thickness2}
         strokeLinecap="square"
       />
-      {kind === 2 && <StairArt box={art} wall={thickness} />}
-      {kind === 3 && <ElevatorArt box={art} wall={thickness} />}
-      {kind === 5 && <ToiletArt box={art} wall={thickness} />}
-      {kind === 10 && <BalconyArt box={art} wall={thickness} />}
+      {kind === 2 && <StairArt box={art} wall={thickness2} />}
+      {kind === 3 && <ElevatorArt box={art} wall={thickness2} />}
+      {kind === 5 && <ToiletArt box={art} wall={thickness2} />}
+      {kind === 10 && <BalconyArt box={art} wall={thickness2} />}
     </g>
   );
 }
@@ -683,6 +1059,22 @@ export interface ObjectLabelFit {
   baselineY: number;
   fontSize: number;
   textLength?: number;
+}
+
+/**
+ * A bent wall's box is only the extent of its centreline, so a caption placed
+ * at the box's centre would float in the middle of the floor rather than on
+ * the wall. It is the one architectural object the finished plan leaves
+ * unlabelled; a box-only wall keeps its caption.
+ */
+export function shouldCaption(
+  points: PlanPoint[] | null,
+  kind: FloorLayoutItemKind,
+): boolean {
+  if (points && points.length >= 2) {
+    return false;
+  }
+  return !isFurniture(kind);
 }
 
 /**

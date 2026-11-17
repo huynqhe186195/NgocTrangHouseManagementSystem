@@ -368,4 +368,7 @@ public static class BuildingManagementErrorCodes
 
     public const string InvalidFloorLayoutItem =
         "BuildingManagement:InvalidFloorLayoutItem";
+
+    public const string InvalidFloorLayoutItemPoints =
+        "BuildingManagement:InvalidFloorLayoutItemPoints";
 } // Consolidate all of the module's error codes in one place.

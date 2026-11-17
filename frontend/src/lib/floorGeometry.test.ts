@@ -12,9 +12,16 @@ import {
   formatMetres,
   formatZoom,
   hasGeometry,
+  insertPointOnPolyline,
   moveBox,
+  movePolyline,
+  movePolylinePoint,
+  parsePoints,
   pointToMetres,
+  polylineBounds,
+  projectOnSegment,
   resizeBox,
+  serializePoints,
   snapToGrid,
   unplacedRooms,
   viewBoxFor,
@@ -66,6 +73,9 @@ function item(overrides: Partial<FloorLayoutItemDto> = {}): FloorLayoutItemDto {
     y: 4,
     width: 12,
     height: 2,
+    points: null,
+    thickness: null,
+    cornerRadius: null,
     ...overrides,
   };
 }
@@ -336,5 +346,180 @@ describe('unplacedRooms', () => {
       room({ id: 'b' }),
     ];
     expect(unplacedRooms(rooms).map((r) => r.id)).toEqual(['b']);
+  });
+});
+
+describe('parsePoints', () => {
+  it('reads a stored centreline', () => {
+    expect(parsePoints('[{"x":0,"y":1},{"x":4,"y":1}]')).toEqual([
+      { x: 0, y: 1 },
+      { x: 4, y: 1 },
+    ]);
+  });
+
+  it('treats an absent column as no centreline', () => {
+    expect(parsePoints(null)).toBeNull();
+    expect(parsePoints('')).toBeNull();
+  });
+
+  it('rejects broken JSON and non-arrays', () => {
+    expect(parsePoints('{oops')).toBeNull();
+    expect(parsePoints('{"x":0,"y":0}')).toBeNull();
+  });
+
+  it('rejects a point missing a coordinate', () => {
+    expect(parsePoints('[{"x":0},{"x":1,"y":2}]')).toBeNull();
+    expect(parsePoints('[{"x":0,"y":"1"},{"x":1,"y":2}]')).toBeNull();
+  });
+
+  it('rejects a non-finite coordinate', () => {
+    expect(parsePoints('[{"x":null,"y":0},{"x":1,"y":2}]')).toBeNull();
+  });
+
+  it('applies the caller minimum: a polygon needs three points', () => {
+    expect(parsePoints('[{"x":0,"y":0},{"x":1,"y":0}]', 3)).toBeNull();
+    expect(
+      parsePoints('[{"x":0,"y":0},{"x":1,"y":0},{"x":1,"y":1}]', 3),
+    ).toHaveLength(3);
+  });
+});
+
+describe('serializePoints', () => {
+  it('round-trips through parsePoints', () => {
+    const points = [
+      { x: 1.2, y: 3.4 },
+      { x: 5.6, y: 3.4 },
+      { x: 5.6, y: 7.8 },
+    ];
+    expect(parsePoints(serializePoints(points))).toEqual(points);
+  });
+
+  it('drops extra properties so a stale field cannot leak into storage', () => {
+    const dirty = [{ x: 1, y: 2, selected: true } as unknown as { x: number; y: number }];
+    expect(serializePoints(dirty)).toBe('[{"x":1,"y":2}]');
+  });
+});
+
+describe('polylineBounds', () => {
+  it('covers every vertex, not just the first and last', () => {
+    const bounds = polylineBounds([
+      { x: 0, y: 0 },
+      { x: 2, y: 6 },
+      { x: 8, y: 1 },
+    ]);
+    expect(bounds).toEqual({ minX: 0, minY: 0, maxX: 8, maxY: 6, width: 8, height: 6 });
+  });
+
+  it('has no bounds for an empty line', () => {
+    expect(polylineBounds([])).toBeNull();
+  });
+});
+
+describe('projectOnSegment', () => {
+  it('finds the closest point on the interior of a segment', () => {
+    const hit = projectOnSegment({ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 4, y: 3 });
+    expect(hit.t).toBeCloseTo(0.4, 6);
+    expect(hit.point).toEqual({ x: 4, y: 0 });
+    expect(hit.distance).toBeCloseTo(3, 6);
+  });
+
+  it('clamps past the end so a click beyond the wall still lands on it', () => {
+    const hit = projectOnSegment({ x: 0, y: 0 }, { x: 10, y: 0 }, { x: 20, y: 0 });
+    expect(hit.t).toBe(1);
+    expect(hit.point).toEqual({ x: 10, y: 0 });
+  });
+
+  it('measures to the vertex when the segment has no length', () => {
+    const hit = projectOnSegment({ x: 2, y: 2 }, { x: 2, y: 2 }, { x: 5, y: 6 });
+    expect(hit.distance).toBeCloseTo(5, 6);
+  });
+});
+
+describe('insertPointOnPolyline', () => {
+  const straight = [
+    { x: 0, y: 0 },
+    { x: 10, y: 0 },
+  ];
+
+  it('splits the segment nearest the click', () => {
+    const result = insertPointOnPolyline(straight, { x: 3.04, y: 0.6 });
+    expect(result).not.toBeNull();
+    expect(result!.index).toBe(1);
+    expect(result!.points).toEqual([
+      { x: 0, y: 0 },
+      { x: 3, y: 0 },
+      { x: 10, y: 0 },
+    ]);
+  });
+
+  it('picks the nearer of two segments on a bent wall', () => {
+    const bent = [
+      { x: 0, y: 0 },
+      { x: 5, y: 0 },
+      { x: 5, y: 5 },
+    ];
+    const result = insertPointOnPolyline(bent, { x: 4.5, y: 3 });
+    expect(result!.index).toBe(2);
+    expect(result!.points).toHaveLength(4);
+  });
+
+  it('refuses a bend that would sit on top of an existing vertex', () => {
+    expect(insertPointOnPolyline(straight, { x: 0.02, y: 0 })).toBeNull();
+    expect(insertPointOnPolyline(straight, { x: 10, y: 0 })).toBeNull();
+  });
+
+  it('refuses a wall with fewer than two vertices', () => {
+    expect(insertPointOnPolyline([{ x: 1, y: 1 }], { x: 2, y: 2 })).toBeNull();
+    expect(insertPointOnPolyline([], { x: 2, y: 2 })).toBeNull();
+  });
+});
+
+describe('movePolyline / movePolylinePoint', () => {
+  const wall = [
+    { x: 0, y: 0 },
+    { x: 4, y: 0 },
+    { x: 4, y: 2 },
+  ];
+
+  it('shifts every vertex by the same snapped delta', () => {
+    expect(movePolyline(wall, 0.52, 1.03)).toEqual([
+      { x: 0.5, y: 1 },
+      { x: 4.5, y: 1 },
+      { x: 4.5, y: 3 },
+    ]);
+  });
+
+  it('moves one vertex and snaps it, leaving the rest alone', () => {
+    expect(movePolylinePoint(wall, 1, { x: 6.07, y: -0.02 })).toEqual([
+      { x: 0, y: 0 },
+      { x: 6.1, y: 0 },
+      { x: 4, y: 2 },
+    ]);
+  });
+
+  it('ignores an index that does not exist', () => {
+    expect(movePolylinePoint(wall, 9, { x: 1, y: 1 })).toEqual(wall);
+  });
+});
+
+describe('buildPlanGeometry with a bent wall', () => {
+  it('grows the frame to include a vertex outside the stored box', () => {
+    const plan = buildPlanGeometry(
+      [room({ layoutX: 0, layoutY: 0, layoutWidth: 4, layoutHeight: 3 })],
+      [
+        item({
+          kind: 12,
+          x: 0,
+          y: 0,
+          width: 1,
+          height: 1,
+          points: '[{"x":0,"y":0},{"x":20,"y":12}]',
+        }),
+      ],
+    );
+
+    expect(plan).not.toBeNull();
+    expect(plan!.bounds.maxX).toBeGreaterThan(20);
+    expect(plan!.bounds.maxY).toBeGreaterThan(12);
   });
 });

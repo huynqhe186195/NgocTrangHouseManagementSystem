@@ -19,6 +19,15 @@ namespace BuildingManagement.Floors
 
         public decimal Height { get; private set; }
 
+        // A wall is a polyline, not a box: Points holds the centreline as JSON
+        // [{x,y},…] so a wall can bend around the shape of the building. Items
+        // that carry no Points keep drawing from the box exactly as before.
+        public string? Points { get; private set; }
+
+        public decimal? Thickness { get; private set; }
+
+        public decimal? CornerRadius { get; private set; }
+
         protected FloorLayoutItem()
         {
         }
@@ -31,7 +40,10 @@ namespace BuildingManagement.Floors
             decimal x,
             decimal y,
             decimal width,
-            decimal height) : base(id)
+            decimal height,
+            string? points = null,
+            decimal? thickness = null,
+            decimal? cornerRadius = null) : base(id)
         {
             FloorId = floorId;
             Kind = kind;
@@ -40,6 +52,9 @@ namespace BuildingManagement.Floors
             Y = y;
             Width = width;
             Height = height;
+            Points = points;
+            Thickness = thickness;
+            CornerRadius = cornerRadius;
         }
 
         public void Update(
@@ -48,7 +63,10 @@ namespace BuildingManagement.Floors
             decimal x,
             decimal y,
             decimal width,
-            decimal height)
+            decimal height,
+            string? points = null,
+            decimal? thickness = null,
+            decimal? cornerRadius = null)
         {
             Kind = kind;
             Label = label;
@@ -56,6 +74,9 @@ namespace BuildingManagement.Floors
             Y = y;
             Width = width;
             Height = height;
+            Points = points;
+            Thickness = thickness;
+            CornerRadius = cornerRadius;
         }
     }
 }

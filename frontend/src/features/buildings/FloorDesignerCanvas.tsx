@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FloorLayoutItemDto } from '../../lib/api/types';
-import { floorLayoutKindMeta } from '../../lib/api/types';
+import { floorLayoutKindMeta, isFurniture } from '../../lib/api/types';
 import {
   MAX_ZOOM,
   MIN_ZOOM,
@@ -11,6 +11,8 @@ import {
   formatMetres,
   formatZoom,
   moveBox,
+  movePolyline,
+  movePolylinePoint,
   pointToMetres,
   resizeBox,
   viewBoxRectFor,
@@ -18,6 +20,7 @@ import {
   zoomOut,
   type Box,
   type PlanBounds,
+  type PlanPoint,
   type ResizeHandle,
 } from '../../lib/floorGeometry';
 import {
@@ -25,10 +28,10 @@ import {
   LINE_COLOR,
   PlanCompass,
   PlanDimensions,
-  PlanEnvelope,
   PlanRulers,
   SELECTED_STROKE,
   WALL_COLOR,
+  WallPolylineArt,
   doorArcPath,
   doorWidth,
   objectLabel,
@@ -51,6 +54,10 @@ export interface DesignerItem extends Box {
   id: string;
   kind: FloorLayoutItemDto['kind'];
   label: string | null;
+  /** A wall's centreline; null for every other kind and for box-only walls. */
+  points?: PlanPoint[] | null;
+  thickness?: number | null;
+  cornerRadius?: number | null;
 }
 
 interface FloorDesignerCanvasProps {
@@ -63,6 +70,10 @@ interface FloorDesignerCanvasProps {
   onChangeItem: (itemId: string, box: Box) => void;
   onDropRoom: (roomId: string, point: { x: number; y: number }) => void;
   onDropItem: (kind: FloorLayoutItemDto['kind'], point: { x: number; y: number }) => void;
+  /** A double-click on a wall asked for a new bend at this point. */
+  onInsertWallPoint?: (itemId: string, point: { x: number; y: number }) => void;
+  /** A wall's vertices were dragged: the page stores them and refits the box. */
+  onChangeItemPoints?: (itemId: string, points: PlanPoint[]) => void;
   /** "Room dragging still in progress" — the page shows the running numbers. */
   onDraftChange?: (draft: { label: string; box: Box } | null) => void;
   /** Turns the selected room a quarter turn and records it as a draft change. */
@@ -106,6 +117,22 @@ type DragState =
     }
   | { type: 'resize'; target: 'room' | 'item'; id: string; handle: ResizeHandle; origin: Box }
   | {
+      /** Dragging one vertex of a bent wall. */
+      type: 'wallVertex';
+      id: string;
+      index: number;
+      origin: PlanPoint[];
+    }
+  | {
+      /** Dragging the whole wall: every vertex shifts together. */
+      type: 'wallMove';
+      id: string;
+      origin: PlanPoint[];
+      clientX: number;
+      clientY: number;
+      scale: number;
+    }
+  | {
       type: 'pan';
       clientX: number;
       clientY: number;
@@ -148,6 +175,8 @@ export function FloorDesignerCanvas({
   onChangeItem,
   onDropRoom,
   onDropItem,
+  onInsertWallPoint,
+  onChangeItemPoints,
   onDraftChange,
   onRotate,
   onDeleteSelection,
@@ -163,6 +192,9 @@ export function FloorDesignerCanvas({
   const [preview, setPreview] = useState<{ kind: 'room' | 'item'; id: string; box: Box } | null>(
     null,
   );
+  // A bent wall is dragged by its vertices, so the live geometry is a point
+  // list rather than a box: the preview has to hold that too.
+  const [wallPreview, setWallPreview] = useState<{ id: string; points: PlanPoint[] } | null>(null);
   const [measure, setMeasure] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(
     null,
   );
@@ -196,22 +228,6 @@ export function FloorDesignerCanvas({
       : box;
   }, [bounds, zoom, offset, frameSize]);
   const gridStep = useMemo(() => tickStep(bounds, zoom), [bounds.width, zoom]);
-  // One thickness for the whole floor's envelope, so the storey reads as a
-  // walled building rather than a set of separately outlined boxes.
-  const perimeterWall = useMemo(() => {
-    const units = rooms
-      .flatMap((room) => (room.box ? [Math.min(room.box.width, room.box.height)] : []))
-      .sort((a, b) => a - b);
-    const median = units.length > 0 ? units[Math.floor(units.length / 2)]! : 4;
-    return Math.max(0.2, Math.min(0.34, median * 0.085));
-  }, [rooms]);
-
-  // The envelope wraps rooms *and* floor objects: the corridor and the
-  // stairwell are part of the storey, so leaving them out broke the outline.
-  const envelopeBoxes = useMemo(
-    () => [...rooms.flatMap((room) => (room.box ? [room.box] : [])), ...items],
-    [rooms, items],
-  );
 
   const toMetres = useCallback((clientX: number, clientY: number) => {
     const svg = svgRef.current;
@@ -260,6 +276,13 @@ export function FloorDesignerCanvas({
     [preview, rooms, items],
   );
 
+  /** The live vertex list for a wall: its drag preview, else what was handed in. */
+  const currentPoints = useCallback(
+    (item: DesignerItem): PlanPoint[] | null =>
+      wallPreview && wallPreview.id === item.id ? wallPreview.points : (item.points ?? null),
+    [wallPreview],
+  );
+
   function startMove(
     event: React.PointerEvent,
     target: 'room' | 'item',
@@ -297,6 +320,34 @@ export function FloorDesignerCanvas({
     setDrag({ type: 'resize', target, id, handle, origin: box });
   }
 
+  function startWallVertex(event: React.PointerEvent, id: string, index: number, points: PlanPoint[]) {
+    event.stopPropagation();
+    onSelect({ kind: 'item', id });
+    (event.target as Element).setPointerCapture?.(event.pointerId);
+    setDrag({ type: 'wallVertex', id, index, origin: points });
+  }
+
+  function startWallMove(
+    event: React.PointerEvent,
+    id: string,
+    points: PlanPoint[],
+  ) {
+    event.stopPropagation();
+    onSelect({ kind: 'item', id });
+    if (mode === 'select') {
+      return;
+    }
+    (event.target as Element).setPointerCapture?.(event.pointerId);
+    setDrag({
+      type: 'wallMove',
+      id,
+      origin: points,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      scale: scaleAtStart(),
+    });
+  }
+
   function handlePointerMove(event: React.PointerEvent) {
     if (!drag) {
       return;
@@ -318,6 +369,29 @@ export function FloorDesignerCanvas({
       const next = { x1: drag.startX, y1: drag.startY, x2: point.x, y2: point.y };
       setMeasure(next);
       onMeasure?.(measureInfo(next));
+      return;
+    }
+
+    if (drag.type === 'wallVertex') {
+      const point = toMetres(event.clientX, event.clientY);
+      setWallPreview({
+        id: drag.id,
+        points: movePolylinePoint(drag.origin, drag.index, point),
+      });
+      return;
+    }
+
+    if (drag.type === 'wallMove') {
+      // Pixel delta scaled by the gesture-start ratio, exactly like a box move:
+      // re-reading the CTM here would drift as the preview re-renders.
+      setWallPreview({
+        id: drag.id,
+        points: movePolyline(
+          drag.origin,
+          (event.clientX - drag.clientX) * drag.scale,
+          (event.clientY - drag.clientY) * drag.scale,
+        ),
+      });
       return;
     }
 
@@ -351,6 +425,15 @@ export function FloorDesignerCanvas({
     }
     if (drag.type === 'pan' || drag.type === 'measure') {
       setDrag(null);
+      return;
+    }
+    if (drag.type === 'wallVertex' || drag.type === 'wallMove') {
+      // The preview is what the owner saw under the pointer; committing the
+      // origin would snap the wall back at the moment of release.
+      const next = wallPreview?.id === drag.id ? wallPreview.points : drag.origin;
+      onChangeItemPoints?.(drag.id, next);
+      setDrag(null);
+      setWallPreview(null);
       return;
     }
     // `currentBox` reads the preview first, so the drop commits exactly what
@@ -590,24 +673,24 @@ export function FloorDesignerCanvas({
             size={Math.max(0.9, Math.min(viewBox.width, viewBox.height) * 0.09)}
           />
 
-          <PlanEnvelope boxes={envelopeBoxes} wall={perimeterWall} />
-
-          {items.map((item) => {
-            const active = selection?.kind === 'item' && selection.id === item.id;
-            const box = currentBox('item', item.id) ?? item;
-            return (
+          {items
+            .filter((item) => !isFurniture(item.kind) && item.kind !== 12)
+            .map((item) => (
               <DesignerShape
                 key={item.id}
-                box={box}
+                box={currentBox('item', item.id) ?? item}
                 kind={item.kind}
-                selected={active}
+                selected={selection?.kind === 'item' && selection.id === item.id}
                 interactive={mode !== 'measure'}
                 label={item.label ?? floorLayoutKindMeta[item.kind]?.label ?? ''}
-                onPointerDown={(event) => startMove(event, 'item', item.id, box)}
-                onResizeStart={(event, handle) => startResize(event, 'item', item.id, handle, box)}
+                onPointerDown={(event) =>
+                  startMove(event, 'item', item.id, currentBox('item', item.id) ?? item)
+                }
+                onResizeStart={(event, handle) =>
+                  startResize(event, 'item', item.id, handle, currentBox('item', item.id) ?? item)
+                }
               />
-            );
-          })}
+            ))}
 
           {rooms.map((room) => {
             const active = selection?.kind === 'room' && selection.id === room.id;
@@ -631,8 +714,94 @@ export function FloorDesignerCanvas({
                     : `${room.area} m²`
                 }
                 walled
+                showCaption={false}
                 onPointerDown={(event) => startMove(event, 'room', room.id, box)}
                 onResizeStart={(event, handle) => startResize(event, 'room', room.id, handle, box)}
+              />
+            );
+          })}
+
+          {/* Furniture belongs on a room's floor, so it paints after the rooms;
+              walls paint last so a wall along a room edge stays visible. A
+              wall with a centreline is drawn by its own component: it is a
+              polyline, not a box, so its vertices need their own hit areas. */}
+          {items
+            .filter((item) => isFurniture(item.kind))
+            .map((item) => (
+              <DesignerShape
+                key={item.id}
+                box={currentBox('item', item.id) ?? item}
+                kind={item.kind}
+                selected={selection?.kind === 'item' && selection.id === item.id}
+                interactive={mode !== 'measure'}
+                label={item.label ?? floorLayoutKindMeta[item.kind]?.label ?? ''}
+                onPointerDown={(event) =>
+                  startMove(event, 'item', item.id, currentBox('item', item.id) ?? item)
+                }
+                onResizeStart={(event, handle) =>
+                  startResize(event, 'item', item.id, handle, currentBox('item', item.id) ?? item)
+                }
+              />
+            ))}
+
+          {items
+            .filter((item) => item.kind === 12)
+            .map((item) => {
+              const points = currentPoints(item);
+              const selected = selection?.kind === 'item' && selection.id === item.id;
+              if (!points || points.length < 2) {
+                return (
+                  <DesignerShape
+                    key={item.id}
+                    box={currentBox('item', item.id) ?? item}
+                    kind={item.kind}
+                    selected={selected}
+                    interactive={mode !== 'measure'}
+                    label={item.label ?? floorLayoutKindMeta[item.kind]?.label ?? ''}
+                    onPointerDown={(event) =>
+                      startMove(event, 'item', item.id, currentBox('item', item.id) ?? item)
+                    }
+                    onResizeStart={(event, handle) =>
+                      startResize(event, 'item', item.id, handle, currentBox('item', item.id) ?? item)
+                    }
+                  />
+                );
+              }
+              return (
+                <DesignerWall
+                  key={item.id}
+                  item={item}
+                  points={points}
+                  box={currentBox('item', item.id) ?? item}
+                  selected={selected}
+                  interactive={mode !== 'measure'}
+                  canInsert={Boolean(onInsertWallPoint)}
+                  onPointerDown={(event) => startWallMove(event, item.id, points)}
+                  onVertexPointerDown={(event, index) =>
+                    startWallVertex(event, item.id, index, points)
+                  }
+                  onInsertPoint={(point) => onInsertWallPoint?.(item.id, point)}
+                />
+              );
+            })}
+
+          {/* The room number goes on above the furniture, as it does on the
+              finished plan: a bed laid against the wall would otherwise sit on
+              top of the number. */}
+          {rooms.map((room) => {
+            const box = currentBox('room', room.id) ?? room.box;
+            if (!box) {
+              return null;
+            }
+            return (
+              <DesignerRoomLabel
+                key={`label-${room.id}`}
+                box={box}
+                rotation={room.rotationDegrees ?? 0}
+                label={room.roomNumber}
+                sublabel={
+                  room.area === null ? formatMetres(box.width * box.height) : `${room.area} m²`
+                }
               />
             );
           })}
@@ -761,6 +930,7 @@ function DesignerShape({
   walled = false,
   rotation = 0,
   interactive = true,
+  showCaption = true,
   onPointerDown,
   onResizeStart,
 }: {
@@ -777,6 +947,8 @@ function DesignerShape({
   /** Degrees clockwise about the box centre, matching the stored column. */
   rotation?: number;
   interactive?: boolean;
+  /** False when the label is drawn by a later pass, above the furniture. */
+  showCaption?: boolean;
   onPointerDown: (event: React.PointerEvent) => void;
   onResizeStart: (event: React.PointerEvent, handle: ResizeHandle) => void;
 }) {
@@ -790,8 +962,15 @@ function DesignerShape({
   const isNote = kind === 7;
   // Room numbers centre in the room; a floor object captions a strip under its
   // own symbol, the way the mockup labels the stairwell and the communal WC.
-  // A note *is* its text, so it is centred in its own box instead.
-  const caption = isNote ? null : kind === undefined ? null : objectLabel(box, label);
+  // A note *is* its text, so it is centred in its own box instead. Furniture is
+  // left unlabelled, as the finished plan leaves it: the symbol already says
+  // what the piece is, and the word would sit on top of it.
+  const caption =
+    isNote || (kind !== undefined && isFurniture(kind))
+      ? null
+      : kind === undefined
+        ? null
+        : objectLabel(box, label);
 
   return (
     <g transform={rotation ? `rotate(${rotation} ${centreX} ${centreY})` : undefined}>
@@ -852,40 +1031,42 @@ function DesignerShape({
 
       {/* Counter-rotated so a turned room keeps its label readable instead of
           printing the number on its side. */}
-      <g
-        transform={
-          rotation ? `rotate(${-rotation} ${centreX} ${centreY})` : undefined
-        }
-      >
-        <text
-          x={centreX}
-          y={caption ? caption.baselineY : centreY + titleSize * 0.35}
-          textAnchor="middle"
-          fontSize={caption ? caption.fontSize : titleSize}
-          textLength={caption?.textLength}
-          lengthAdjust={caption?.textLength === undefined ? undefined : 'spacingAndGlyphs'}
-          fontWeight={caption ? 600 : 700}
-          fill={caption ? '#475569' : '#0b1c30'}
-          fontFamily={caption ? 'Inter, sans-serif' : 'Plus Jakarta Sans, sans-serif'}
-          pointerEvents="none"
-          opacity={kind !== undefined && caption === null && !isNote ? 0 : 1}
+      {showCaption && (
+        <g
+          transform={
+            rotation ? `rotate(${-rotation} ${centreX} ${centreY})` : undefined
+          }
         >
-          {label}
-        </text>
-        {sublabel && box.height > 1.6 && kind === undefined && (
           <text
             x={centreX}
-            y={centreY + titleSize * 0.35 + subSize * 1.5}
+            y={caption ? caption.baselineY : centreY + titleSize * 0.35}
             textAnchor="middle"
-            fontSize={subSize}
-            fill="#475569"
-            fontFamily="Inter, sans-serif"
+            fontSize={caption ? caption.fontSize : titleSize}
+            textLength={caption?.textLength}
+            lengthAdjust={caption?.textLength === undefined ? undefined : 'spacingAndGlyphs'}
+            fontWeight={caption ? 600 : 700}
+            fill={caption ? '#475569' : '#0b1c30'}
+            fontFamily={caption ? 'Inter, sans-serif' : 'Plus Jakarta Sans, sans-serif'}
             pointerEvents="none"
+            opacity={kind !== undefined && caption === null && !isNote ? 0 : 1}
           >
-            {sublabel}
+            {label}
           </text>
-        )}
-      </g>
+          {sublabel && box.height > 1.6 && kind === undefined && (
+            <text
+              x={centreX}
+              y={centreY + titleSize * 0.35 + subSize * 1.5}
+              textAnchor="middle"
+              fontSize={subSize}
+              fill="#475569"
+              fontFamily="Inter, sans-serif"
+              pointerEvents="none"
+            >
+              {sublabel}
+            </text>
+          )}
+        </g>
+      )}
 
       {/* The selected outline sits inside the wall so it never hides it. */}
       <rect
@@ -923,6 +1104,187 @@ function DesignerShape({
 
 /** Half a metre is the floor; the handles themselves are fixed in metres. */
 const HANDLE_SIZE = Math.min(0.32, MIN_SIZE_METRES * 0.4);
+
+/**
+ * A wall with a centreline. It is not a box: its shape is the vertex list, so
+ * it carries its own hit area (the thick stroke the plan draws, made grabbable)
+ * and one round handle per vertex. Dragging a vertex bends the wall; double-
+ * clicking anywhere along it adds a bend at that spot.
+ *
+ * The four corner handles a box has are deliberately absent — resizing the
+ * bounding rectangle of a bent wall would move geometry the owner never pointed
+ * at, and the box is only a storage detail once a centreline exists.
+ */
+function DesignerWall({
+  item,
+  points,
+  box,
+  selected,
+  interactive,
+  canInsert,
+  onPointerDown,
+  onVertexPointerDown,
+  onInsertPoint,
+}: {
+  item: DesignerItem;
+  points: PlanPoint[];
+  box: Box;
+  selected: boolean;
+  interactive: boolean;
+  canInsert: boolean;
+  onPointerDown: (event: React.PointerEvent) => void;
+  onVertexPointerDown: (event: React.PointerEvent, index: number) => void;
+  onInsertPoint: (point: { x: number; y: number }) => void;
+}) {
+  const thickness = item.thickness ?? Math.min(box.width, box.height);
+  const label = item.label ?? floorLayoutKindMeta[item.kind]?.label ?? 'Tường';
+  // A wall's box is the extent of its whole run — 26 m across on a real floor —
+  // so a handle sized as a fraction of it becomes a disc that swallows the
+  // drawing. It reuses the box handles' fixed size instead, so a vertex is the
+  // same size on every wall and every floor.
+  const handle = HANDLE_SIZE;
+
+  function handleDoubleClick(event: React.MouseEvent) {
+    if (!canInsert) {
+      return;
+    }
+    event.stopPropagation();
+    const svg = (event.currentTarget as SVGElement).ownerSVGElement;
+    const ctm = svg?.getScreenCTM?.();
+    if (!ctm) {
+      return;
+    }
+    const point = new DOMPoint(event.clientX, event.clientY).matrixTransform(ctm.inverse());
+    onInsertPoint(pointToMetres(point));
+  }
+
+  return (
+    <g>
+      <WallPolylineArt points={points} thickness={thickness} cornerRadius={item.cornerRadius ?? 0} />
+
+      {/* The grabbable band. Transparent so the wall itself stays the drawing,
+          and wider than the wall so a thin partition is still easy to hit. */}
+      <path
+        d={polylinePath(points)}
+        fill="none"
+        stroke="transparent"
+        strokeWidth={Math.max(thickness, 0.5)}
+        strokeLinejoin="miter"
+        strokeLinecap="butt"
+        style={{ cursor: interactive ? 'move' : 'default' }}
+        onPointerDown={interactive ? onPointerDown : undefined}
+        onDoubleClick={handleDoubleClick}
+        role={interactive ? 'button' : undefined}
+        aria-label={interactive ? label : undefined}
+        aria-pressed={interactive ? selected : undefined}
+      >
+        <title>{canInsert ? 'Nhấp đúp để thêm điểm gãy' : label}</title>
+      </path>
+
+      {selected && (
+        <>
+          <path
+            d={polylinePath(points)}
+            fill="none"
+            stroke={SELECTED_STROKE}
+            strokeWidth={Math.max(0.03, thickness * 0.12)}
+            strokeDasharray="0.35 0.25"
+            strokeLinejoin="miter"
+            pointerEvents="none"
+          />
+          {interactive &&
+            points.map((point, index) => (
+              <circle
+                key={`${point.x}-${point.y}-${index}`}
+                cx={point.x}
+                cy={point.y}
+                r={handle / 2}
+                fill="#ffffff"
+                stroke={SELECTED_STROKE}
+                strokeWidth={Math.max(0.02, handle * 0.12)}
+                style={{ cursor: 'crosshair' }}
+                onPointerDown={(event) => onVertexPointerDown(event, index)}
+              >
+                <title>{`Điểm gãy ${index + 1}`}</title>
+              </circle>
+            ))}
+        </>
+      )}
+    </g>
+  );
+}
+
+/** A plain polyline path, for the hit band and the selection outline. */
+function polylinePath(points: PlanPoint[]): string {
+  if (points.length === 0) {
+    return '';
+  }
+  return points
+    .map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`)
+    .join(' ');
+}
+
+/**
+ * A room's number and area, drawn on its own so it can paint above the
+ * furniture. A white halo keeps both legible where a bed or a desk runs under
+ * the text, the way the finished plan labels a room.
+ */
+function DesignerRoomLabel({
+  box,
+  rotation,
+  label,
+  sublabel,
+}: {
+  box: Box;
+  rotation: number;
+  label: string;
+  sublabel?: string;
+}) {
+  const unit = Math.min(box.width, box.height);
+  const titleSize = Math.max(0.22, Math.min(unit * 0.3, box.width * 0.16));
+  const subSize = titleSize * 0.72;
+  const centreX = box.x + box.width / 2;
+  const centreY = box.y + box.height / 2;
+
+  return (
+    <g
+      pointerEvents="none"
+      transform={rotation ? `rotate(${-rotation} ${centreX} ${centreY})` : undefined}
+    >
+      <text
+        x={centreX}
+        y={centreY + titleSize * 0.35}
+        textAnchor="middle"
+        fontSize={titleSize}
+        fontWeight={700}
+        fill="#0b1c30"
+        stroke="#ffffff"
+        strokeWidth={titleSize * 0.16}
+        paintOrder="stroke"
+        strokeLinejoin="round"
+        fontFamily="Plus Jakarta Sans, sans-serif"
+      >
+        {label}
+      </text>
+      {sublabel && box.height > 1.6 && (
+        <text
+          x={centreX}
+          y={centreY + titleSize * 0.35 + subSize * 1.5}
+          textAnchor="middle"
+          fontSize={subSize}
+          fill="#475569"
+          stroke="#ffffff"
+          strokeWidth={subSize * 0.16}
+          paintOrder="stroke"
+          strokeLinejoin="round"
+          fontFamily="Inter, sans-serif"
+        >
+          {sublabel}
+        </text>
+      )}
+    </g>
+  );
+}
 
 function measureInfo(segment: { x1: number; y1: number; x2: number; y2: number }): MeasureInfo {
   const dx = segment.x2 - segment.x1;

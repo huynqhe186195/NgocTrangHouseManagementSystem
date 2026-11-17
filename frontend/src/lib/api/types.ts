@@ -83,8 +83,13 @@ export type RoomLayoutShape = 1 | 2;
 /** Server enum: Good=1, NeedsRepair=2, Broken=3. */
 export type RoomEquipmentCondition = 1 | 2 | 3;
 
-/** Server enum: Corridor=1, Staircase=2, Elevator=3, ServiceArea=4, Restroom=5, Entrance=6, Label=7, Laundry=8, Storage=9, Balcony=10, Tree=11. */
-export type FloorLayoutItemKind = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11;
+/**
+ * Server enum: Corridor=1, Staircase=2, Elevator=3, ServiceArea=4, Restroom=5,
+ * Entrance=6, Label=7, Laundry=8, Storage=9, Balcony=10, Tree=11, Wall=12,
+ * Bed=13, Wardrobe=14, Desk=15, Chair=16, Sofa=17, AirConditioner=18,
+ * Kitchen=19, Refrigerator=20, Television=21.
+ */
+export type FloorLayoutItemKind = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21;
 
 export interface RoomDto extends AuditedEntity {
   floorId: string;
@@ -185,6 +190,10 @@ export interface FloorLayoutItemDto extends AuditedEntity {
   y: number;
   width: number;
   height: number;
+  /** JSON `[{x,y},…]` centreline; only walls carry one. */
+  points: string | null;
+  thickness: number | null;
+  cornerRadius: number | null;
 }
 
 export interface CreateFloorLayoutItemInput {
@@ -194,6 +203,9 @@ export interface CreateFloorLayoutItemInput {
   y: number;
   width: number;
   height: number;
+  points?: string | null;
+  thickness?: number | null;
+  cornerRadius?: number | null;
 }
 
 export type UpdateFloorLayoutItemInput = CreateFloorLayoutItemInput;
@@ -236,5 +248,49 @@ export const floorLayoutKindMeta: Record<FloorLayoutItemKind, { label: string; i
   9: { label: 'Kho', icon: 'inventory_2' },
   10: { label: 'Ban công', icon: 'balcony' },
   11: { label: 'Cây xanh', icon: 'park' },
+  12: { label: 'Tường', icon: 'horizontal_rule' },
+  13: { label: 'Giường', icon: 'bed' },
+  14: { label: 'Tủ quần áo', icon: 'checkroom' },
+  15: { label: 'Bàn làm việc', icon: 'desk' },
+  16: { label: 'Ghế', icon: 'chair' },
+  17: { label: 'Sofa', icon: 'weekend' },
+  18: { label: 'Điều hoà', icon: 'ac_unit' },
+  19: { label: 'Bếp', icon: 'countertops' },
+  20: { label: 'Tủ lạnh', icon: 'kitchen' },
+  21: { label: 'Tivi', icon: 'tv' },
+};
+
+/** True for the kinds that stand inside a room rather than forming the floor. */
+export function isFurniture(kind: FloorLayoutItemKind): boolean {
+  return floorLayoutKindGroup[kind] === 'furniture';
+}
+
+/**
+ * The palette groups kinds so the designer lists architecture and furniture
+ * separately: a wall is not furniture, and mixing them made the sixteen-item
+ * list hard to scan.
+ */
+export const floorLayoutKindGroup: Record<FloorLayoutItemKind, 'architecture' | 'furniture'> = {
+  1: 'architecture',
+  2: 'architecture',
+  3: 'architecture',
+  4: 'architecture',
+  5: 'architecture',
+  6: 'architecture',
+  7: 'architecture',
+  8: 'architecture',
+  9: 'architecture',
+  10: 'architecture',
+  11: 'architecture',
+  12: 'architecture',
+  13: 'furniture',
+  14: 'furniture',
+  15: 'furniture',
+  16: 'furniture',
+  17: 'furniture',
+  18: 'furniture',
+  19: 'furniture',
+  20: 'furniture',
+  21: 'furniture',
 };
 

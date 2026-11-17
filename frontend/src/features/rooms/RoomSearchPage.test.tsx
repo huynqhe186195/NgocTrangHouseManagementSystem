@@ -128,7 +128,7 @@ describe('RoomSearchPage', () => {
     expect(book.title).toBe('Chức năng đặt phòng chưa được mở trên máy chủ.');
   });
 
-  it('recomputes the estimate when the lease length changes', () => {
+  it('recomputes the estimate when the lease length changes', async () => {
     floorsData.current = [floor];
     roomsData.current = [room()];
 
@@ -137,7 +137,9 @@ describe('RoomSearchPage', () => {
     // 6 months is the default: 3.500.000 x 6 + 3.500.000 deposit.
     expect(screen.getAllByText(/24\.500\.000/).length).toBeGreaterThan(0);
 
-    fireEvent.change(screen.getByLabelText(/Thời hạn thuê/), { target: { value: '12' } });
+    // The lease length is an antd Select: open it, then pick the option.
+    fireEvent.mouseDown(screen.getByLabelText(/Thời hạn thuê/));
+    fireEvent.click(await screen.findByTitle('12 tháng'));
     expect(screen.getAllByText(/45\.500\.000/).length).toBeGreaterThan(0);
   });
 

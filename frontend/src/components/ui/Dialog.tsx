@@ -1,6 +1,5 @@
-import { useEffect, useId, useRef } from 'react';
 import type { ReactNode } from 'react';
-import { createPortal } from 'react-dom';
+import { Modal } from 'antd';
 
 interface DialogProps {
   open: boolean;
@@ -14,18 +13,20 @@ interface DialogProps {
   busy?: boolean;
 }
 
-const WIDTHS: Record<NonNullable<DialogProps['size']>, string> = {
-  sm: '28rem',
-  md: '32rem',
-  lg: '40rem',
+const WIDTHS: Record<NonNullable<DialogProps['size']>, number> = {
+  sm: 448,
+  md: 512,
+  lg: 640,
 };
 
-const FOCUSABLE =
-  'button:not([disabled]),[href],input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
-
 /**
- * Portal-based modal. Rendering into document.body keeps it outside any
- * transformed ancestor, and the hand-rolled trap is small enough to audit.
+ * The app's modal, drawn by antd's Modal. Its focus trap, scroll lock and
+ * Escape handling are already tested upstream, and a hand-rolled copy of them
+ * drifted from the rest of the app whenever a field was added.
+ *
+ * The API stays the app's own: callers pass `children` and a `footer` of
+ * buttons rather than antd's `okButtonProps`/`onOk`, so every dialog in the app
+ * keeps its existing call site and its own wording.
  */
 export function Dialog({
   open,
@@ -37,120 +38,34 @@ export function Dialog({
   size = 'md',
   busy = false,
 }: DialogProps) {
-  const panelRef = useRef<HTMLDivElement>(null);
-  const titleId = useId();
-  const descriptionId = useId();
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-    const previousOverflow = document.body.style.overflow;
-    const restoreFocusTo = document.activeElement as HTMLElement | null;
-    document.body.style.overflow = 'hidden';
-
-    // Land on the first field so keyboard users can type immediately.
-    const firstField = panelRef.current?.querySelector<HTMLElement>(FOCUSABLE);
-    firstField?.focus();
-
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      restoreFocusTo?.focus?.();
-    };
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape' && !busy) {
-        event.preventDefault();
-        onClose();
-        return;
-      }
-      if (event.key !== 'Tab') {
-        return;
-      }
-      const panel = panelRef.current;
-      if (!panel) {
-        return;
-      }
-      // Re-query every time: the error Alert and the loading spinner change
-      // the DOM while the dialog is open.
-      const focusable = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE));
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (!first || !last) {
-        return;
-      }
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    }
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [open, busy, onClose]);
-
-  if (!open) {
-    return null;
-  }
-
-  return createPortal(
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 p-4 backdrop-blur-sm"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget && !busy) {
+  return (
+    <Modal
+      open={open}
+      onCancel={() => {
+        if (!busy) {
           onClose();
         }
       }}
+      title={
+        <div className="min-w-0">
+          <h2 className="font-display text-lg font-bold text-on-surface">{title}</h2>
+          {description && (
+            <p className="mt-1 text-xs leading-relaxed font-normal text-on-surface-variant">
+              {description}
+            </p>
+          )}
+        </div>
+      }
+      footer={footer ?? null}
+      width={WIDTHS[size]}
+      closable={!busy}
+      mask={{ closable: !busy }}
+      keyboard={!busy}
+      destroyOnHidden
+      centered
+      styles={{ body: { paddingTop: 12 } }}
     >
-      <div
-        ref={panelRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        aria-describedby={description ? descriptionId : undefined}
-        style={{ maxWidth: WIDTHS[size] }}
-        className="flex max-h-[90vh] w-full flex-col overflow-hidden rounded-xl border border-outline-variant bg-surface-lowest text-on-surface shadow-[0_20px_25px_-5px_rgb(0_0_0/0.25)]"
-      >
-        <header className="flex items-start justify-between gap-3 border-b border-outline-variant px-5 py-4">
-          <div className="min-w-0">
-            <h2 id={titleId} className="font-display text-lg font-bold text-on-surface">
-              {title}
-            </h2>
-            {description && (
-              <p
-                id={descriptionId}
-                className="mt-1 text-xs leading-relaxed text-on-surface-variant"
-              >
-                {description}
-              </p>
-            )}
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Đóng"
-            className="rounded-lg p-1 text-outline transition hover:bg-surface-low hover:text-on-surface"
-          >
-            <span className="material-symbols-outlined text-lg">close</span>
-          </button>
-        </header>
-
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">{children}</div>
-
-        {footer && (
-          <footer className="flex items-center justify-end gap-2 border-t border-outline-variant px-5 py-3.5">
-            {footer}
-          </footer>
-        )}
-      </div>
-    </div>,
-    document.body,
+      {children}
+    </Modal>
   );
 }

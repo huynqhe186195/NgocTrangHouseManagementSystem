@@ -11,8 +11,9 @@ import {
   useBuildingSnapshot,
   useBuildings,
   useFloorLayoutItems,
+  useRoomEquipment,
 } from '../../lib/api/buildingQueries';
-import { roomStatusMeta } from '../../lib/api/types';
+import { equipmentConditionMeta, roomStatusMeta } from '../../lib/api/types';
 import type { RoomDto } from '../../lib/api/types';
 import { formatMillions, formatNumber } from '../../lib/format';
 import { RoomFormDialog } from '../rooms/RoomFormDialog';
@@ -301,6 +302,8 @@ function RoomPanel({
   onClose: () => void;
 }) {
   const meta = roomStatusMeta[room.status];
+  const equipment = useRoomEquipment(room.id);
+  const equipmentRows = equipment.data ?? [];
 
   return (
     <div>
@@ -363,6 +366,52 @@ function RoomPanel({
         </p>
       )}
 
+      {/* The equipment the room actually holds, as the server records it. The
+          mockup lists these beside the plan; a bed drawn on the floor is the
+          furniture the owner placed, which is a different thing from what the
+          room is equipped with. */}
+      <div className="mt-4 border-t border-outline-variant pt-3">
+        <h4 className="mb-2 text-xs font-semibold tracking-wide text-[#1d4ed8] uppercase">
+          Thiết bị trong phòng
+        </h4>
+        {equipment.isPending && (
+          <p className="py-2 text-xs text-on-surface-variant">Đang tải thiết bị…</p>
+        )}
+        {!equipment.isPending && equipmentRows.length === 0 && (
+          <p className="py-2 text-xs text-on-surface-variant">
+            Phòng này chưa được ghi nhận thiết bị nào.
+          </p>
+        )}
+        {equipmentRows.length > 0 && (
+          <ul className="flex flex-col divide-y divide-outline-variant rounded-lg border border-outline-variant">
+            {equipmentRows.map((item) => {
+              const condition = equipmentConditionMeta[item.condition];
+              return (
+                <li
+                  key={item.id}
+                  className="flex items-center justify-between gap-2 px-2.5 py-2 text-xs"
+                >
+                  <span className="flex min-w-0 items-center gap-1.5 text-on-surface">
+                    <span className="material-symbols-outlined text-base text-on-surface-variant">
+                      {equipmentIcon(item.name)}
+                    </span>
+                    <span className="truncate">{item.name}</span>
+                  </span>
+                  <span className="flex shrink-0 items-center gap-2">
+                    {condition && condition.tone !== 'success' && (
+                      <span className="text-[10px] font-semibold text-[#b45309]">
+                        {condition.label}
+                      </span>
+                    )}
+                    <span className="font-semibold text-on-surface tnum">×{item.quantity}</span>
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+
       <Link
         to={`/rooms/${room.id}`}
         className="mt-4 flex h-9 items-center justify-center gap-1.5 rounded-lg bg-[#1d4ed8] text-xs font-semibold text-white transition hover:bg-[#1e40af]"
@@ -379,6 +428,24 @@ function RoomPanel({
       )}
     </div>
   );
+}
+
+/**
+ * Equipment is free text on the server, so the icon is matched on the name the
+ * owner typed. Anything unrecognised gets a neutral wrench rather than an
+ * empty box.
+ */
+function equipmentIcon(name: string): string {
+  const text = name.toLowerCase();
+  if (/máy lạnh|điều hoà|điều hòa/.test(text)) return 'ac_unit';
+  if (/giường/.test(text)) return 'bed';
+  if (/tủ quần áo|tủ áo/.test(text)) return 'checkroom';
+  if (/bàn/.test(text)) return 'desk';
+  if (/bình nóng lạnh|nóng lạnh/.test(text)) return 'water_heater';
+  if (/vệ sinh|toilet|wc/.test(text)) return 'wc';
+  if (/tivi|tv/.test(text)) return 'tv';
+  if (/tủ lạnh/.test(text)) return 'kitchen';
+  return 'handyman';
 }
 
 function Row({ icon, label, value }: { icon: string; label: string; value: string }) {

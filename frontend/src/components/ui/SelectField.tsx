@@ -19,6 +19,8 @@ interface SelectFieldProps {
   onChange?: (event: ChangeEvent<HTMLSelectElement>) => void;
   disabled?: boolean;
   className?: string;
+  /** Keeps the label for screen readers but hides it, for inline toolbars. */
+  hideLabel?: boolean;
 }
 
 /**
@@ -40,6 +42,7 @@ export function SelectField({
   value,
   onChange,
   disabled,
+  hideLabel = false,
 }: SelectFieldProps) {
   const id = useId();
   const errorId = `${id}-error`;
@@ -48,7 +51,11 @@ export function SelectField({
     <div className="flex flex-col gap-2">
       <label
         htmlFor={id}
-        className="text-[11px] font-semibold tracking-[0.06em] text-on-surface-variant uppercase"
+        className={
+          hideLabel
+            ? 'sr-only'
+            : 'text-[11px] font-semibold tracking-[0.06em] text-on-surface-variant uppercase'
+        }
       >
         {label}
         {required && <span className="ml-1 text-error">*</span>}

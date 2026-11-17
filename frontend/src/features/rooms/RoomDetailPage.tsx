@@ -35,6 +35,7 @@ import type { RoomEquipmentDto, RoomPhotoDto } from '../../lib/api/types';
 import { formatVnd } from '../../lib/format';
 import { FloorPlan } from '../buildings/FloorPlan';
 import { EquipmentFormDialog } from './EquipmentFormDialog';
+import { equipmentIcon } from './equipmentIcon';
 import { RoomFormDialog } from './RoomFormDialog';
 
 const TABS: TabItem[] = [
@@ -672,29 +673,6 @@ function PhotoSection({
  * only stores a free-text name and category, so the icon is inferred from the
  * words the owner typed — an unmatched name falls back to a generic tool.
  */
-function equipmentIcon(item: RoomEquipmentDto): string {
-  const haystack = `${item.name} ${item.category ?? ''}`.toLowerCase();
-  // Most specific first: "tủ lạnh" and "bình nóng lạnh" both contain "lạnh",
-  // so they must be tested before the air-conditioner rule.
-  const rules: [RegExp, string][] = [
-    [/tủ lạnh|tu lanh|fridge/, 'kitchen'],
-    [/nóng lạnh|nong lanh|bình nước|binh nuoc|water_heater/, 'water_heater'],
-    [/máy giặt|may giat|wash/, 'local_laundry_service'],
-    [/lạnh|lanh|điều hoà|dieu hoa|air/, 'ac_unit'],
-    [/giường|giuong|bed|nệm|nem/, 'bed'],
-    [/tủ|tu |wardrobe|kệ|ke /, 'shelves'],
-    [/bàn|ban |desk|ghế|ghe/, 'table_restaurant'],
-    [/tivi|tv|truyền hình/, 'tv'],
-    [/quạt|quat|fan/, 'mode_fan'],
-    [/bếp|bep|kitchen/, 'countertops'],
-  ];
-  for (const [pattern, icon] of rules) {
-    if (pattern.test(haystack)) {
-      return icon;
-    }
-  }
-  return 'handyman';
-}
 
 function EquipmentTab({
   items,

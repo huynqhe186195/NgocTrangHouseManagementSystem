@@ -8,7 +8,16 @@ import { SAVED_ROOMS_EVENT, savedRoomStore } from '../../lib/savedRooms';
  * label says so. Share opens the platform sheet when the browser has one and
  * otherwise copies the room's own link, reporting which one happened.
  */
-export function RoomSaveShare({ roomId, roomNumber }: { roomId: string; roomNumber: string }) {
+export function RoomSaveShare({
+  roomId,
+  roomNumber,
+  href,
+}: {
+  roomId: string;
+  roomNumber: string;
+  /** The screen the visitor is on; defaults to the admin room page. */
+  href?: string;
+}) {
   const [saved, setSaved] = useState(() => savedRoomStore.has(roomId));
   const [message, setMessage] = useState<string | null>(null);
 
@@ -49,7 +58,7 @@ export function RoomSaveShare({ roomId, roomNumber }: { roomId: string; roomNumb
   }
 
   async function share() {
-    const url = new URL(`/rooms/${roomId}`, window.location.origin).toString();
+    const url = new URL(href ?? `/rooms/${roomId}`, window.location.origin).toString();
     const title = `Phòng ${roomNumber}`;
 
     const nav = navigator as Navigator & {

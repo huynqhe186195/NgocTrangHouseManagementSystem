@@ -822,7 +822,7 @@
 
 ---
 
-### P4.9 ✅ Room Detail Screen Rebuilt Against Mockup 1 — CODE DONE, AWAITING COMMIT
+### P4.9 ✅ Room Detail Screen Rebuilt Against Mockup 1 — COMMITTED `544e7be`
 **Status:** DONE in the working tree (not yet committed). Compared against `Anh_1_nguyen_goc.png`, the screen was the largest remaining gap: two columns with three stacked cards and the equipment table on its own row, while the mockup sets **photos | facts | locator side by side** over a full-width tab strip with the note panel beside the equipment table.
 **What changed (3 modified + 1 new file):**
 - `RoomDetailPage.tsx` — `lg:grid-cols-2 xl:grid-cols-[1.05fr_0.95fr_1fr]`; the locator card spans both columns between 1024 and 1280 (`lg:col-span-2 xl:col-span-1`) rather than leaving a third of the screen empty. The status badge sits beside the title. The locator gets a building-wide floor picker. The chip count on the equipment tab is the real row count. "Chỉnh sửa" opens the same `RoomFormDialog` the room list uses.
@@ -840,6 +840,32 @@
 - ✅ The capture script reads the admin password from `LANE_ADMIN_PASSWORD` and never writes it down
 **Blocker:** None — awaiting the Owner's word to commit.
 **Dependency:** P4.8 ✅ (wall thickness and the polyline wall the locator draws), P4.5 ✅ (the room page this rebuilds)
+
+---
+
+### P4.10 ✅ Tenant Room Screen Rebuilt Against Mockup 2 — CODE DONE, AWAITING COMMIT
+**Status:** DONE in the working tree (not yet committed). Compared against `Anh_2_nguyen_goc.png`, `/search` was still a search list with a detail card bolted on — a filter band across the top, three stacked cards in the main column and an "available rooms" list in the rail — while the mockup is a room page: breadcrumb, title with the building/floor/room-code line under it and Lưu / Chia sẻ beside it, then **photos | facts | booking** in one row, then **floor locator | amenity chips**, then **house rules | other prices**.
+**What changed (3 modified + 1 new file):**
+- `RoomSearchPage.tsx` — the mockup's grid; the building/query filters moved into a bottom "Phòng đang trống khác" strip so the page opens on the room, not on a filter form; the locator gets the mockup's floor dropdown and follows the room's own floor by default; amenities are the mockup's icon chips; the info card follows the mockup's field order with Giá thuê in the primary colour and Tình trạng as a chip.
+- `RoomSaveShare.tsx` — takes `href`, so a shared link points at `/search?room=<id>` and not at the admin room page.
+- `SelectField.tsx` — `hideLabel`, for the inline floor dropdown that the mockup draws without a visible caption (the label stays for screen readers).
+- `equipmentIcon.ts` (new) — the per-item glyph rule moved out of `RoomDetailPage.tsx` so the admin table and the tenant chips cannot drift apart; it also learned wifi, balcony and bathroom.
+- `RoomSearchPage.test.tsx` — 5 → 6 tests: the subtitle line, the two blank fields, every section heading, the "not published" wording, and the deep link opening the room named in the URL.
+**A silent Tailwind v4 trap:** `min-[1400px]:grid-cols-[...]` **sorts before** `md:grid-cols-2` in the generated sheet, so the three-column template never applied at 1448 px and the page rendered as two 577 px columns. Only the rendered PNG showed it; the fix is to make the ranges disjoint (`sm:max-[1399px]:grid-cols-2` + `min-[1400px]:grid-cols-[...]`).
+**Honest gaps (BLOCKED, not faked):**
+- **Hướng (direction) and Loại phòng (room type)** — `RoomDto` has no such column. The rows render "Chưa cập nhật" with a note under the card; adding them is a schema change and §9 forbids that without approval.
+- **Quy định nhà trọ and Thông tin khác (electricity / water / service prices)** — `BuildingManagementSettings` defines no setting names, so both cards render an explicit "chưa được công bố trên máy chủ" instead of invented rules or prices.
+- **Đặt phòng ngay** — the booking app service is not exposed (403); the button stays disabled with that reason, as §8 requires.
+- **Room code prefix** — the server accepts digits only, so the mockup's "A203" can only come from the room's `name`; the title now uses the name and the subtitle keeps "Mã phòng: 203".
+- **Photos** — the repository holds no room photography; the captures use six generated gradient PNGs uploaded through the real endpoint, so the gallery layout is real but the pictures are placeholders.
+- **Bottom strip** — "Phòng đang trống khác" is not in the mockup; it is kept because without it a tenant cannot move between rooms on this screen.
+**Evidence:**
+- ✅ `tsc --noEmit` exit 0; `npx vitest run` **178/178 in 16 files**
+- ✅ Four rendered captures at 1448×1086 / 1280×800 / 1024×768 / 390×844 in `etc/captures/p50/`, produced by `etc/scripts/capture-p50-tenant-room.mjs` (seeds a building with three floors, eight placed rooms on floor 2, an outer wall polyline, corridor, stair, lift, eight amenities and six photos) and re-shot by `recapture-p50-tenant-room.mjs` after each fix
+- ✅ Each capture opened and compared against `Anh_2_nguyen_goc.png`; the 1280 squeeze, the 1024 photo height and the truncated chip label were found that way and re-captured after fixing
+- ✅ Both scripts read the admin password from `LANE_ADMIN_PASSWORD` and never write it down
+**Blocker:** None for the layout; the five BLOCKED items above need either an Owner decision or a backend change.
+**Dependency:** P4.9 ✅ (the shared equipment-icon and room-detail conventions), P4.5 ✅ (the tenant screen this rebuilds)
 
 ---
 
@@ -871,7 +897,7 @@
 - P2: 6/6 **MERGED INTO `main`** (PR #11 merge commit `72a0721`, 2026-11-13, no squash — P2.1 `d36edb5` / P2.2 `b18644b` / P2.3 `aa3b9bb` / P2.4 `950610a` / P2.5 `2d01952` / P2.6 `6c9852f`; local 5-group harness ALL PASSED at `72a0721`; post-merge CI stale-assertion fix `d364ee1` with CI run 43423912631 green 5/5)
 - P3: 4/4 done + **MERGED to main** (P3.1 merge `01cba31`; P3.2 DONE `1ddf2e6`; P3.3 matrix; **P3.4 CLOSED 2026-11-12: PR #10 → main merge commit `c499d89`, Owner §6 signed + §3.2 P2 deferral accepted; post-merge local regression + CI green 5/5 at the merge commit**)
 
-**Current Focus:** **P4.9 ROOM DETAIL REBUILD DONE IN THE TREE (2026-11-17), awaiting the word to commit** — against Anh_1_nguyen_goc.png the admin room screen was the largest remaining gap: two columns with three stacked cards, while the mockup sets photos | facts | locator side by side over a full-width tab strip with the note panel beside the equipment table. It now does. The status badge sits beside the title through a new PageHeader.titleAddon slot, the locator carries a building-wide floor picker, the equipment tab chip is the real row count, Chinh sua opens the same dialog the room list uses, and each equipment row carries the mockup per-item icon (inferred from the item name, because the server stores only free text). Partitions were re-measured off the mockup pixels — its plan is roughly 26 px per metre and a partition is a 5 px band, about 0.22-0.28 m, one brick wythe with plaster on both faces — replacing a 0.1-0.2 m ramp that made a 2 m bathroom draw a pencil line; corridor, stair, lift, WC, laundry and storage now wall at partition weight too. Three defects only the rendered PNGs could show were found and fixed: at 1024x768 the page collapsed into one 2655 px column (the grid had only an xl: breakpoint); at 390x844 the equipment table action column was clipped and the note panel ran past the right edge (default min-width auto on the grid children); and the table min-w was unconditional so a phone still scrolled sideways — it now hides STT and drops the button captions to icons below sm, aria-label intact. tsc --noEmit clean, Vitest 176/176, four captures at 1448x1086 / 1280x800 / 1024x768 / 390x844 in etc/captures/p49/.
+**Current Focus:** **P4.10 TENANT ROOM SCREEN DONE IN THE TREE (2026-11-17), awaiting the word to commit** — against Anh_2_nguyen_goc.png the tenant room page was still a search list: a filter band across the top, three stacked cards and an "available rooms" list in the rail. It is now the mockup's page: breadcrumb, title with "Tòa nhà · Tầng · Mã phòng" under it and Lưu / Chia sẻ beside it, photos | facts | booking in one row, floor locator | amenity chips, house rules | other prices, and the room switcher moved into a bottom strip with the building and text filters. The room id lives in ?room= now, so Chia sẻ copies a link that actually opens the same room. Direction and room type have no server column and the house rules / electricity prices no source, so those read "Chưa cập nhật" and "chưa được công bố" rather than invented values — that is the honest PARTIAL, not a missing screen. One silent defect only the rendered PNG could show: Tailwind v4 sorts min-[1400px]: before md:, so the three-column template never applied at 1448 px and the page fell back to two 577 px columns; the ranges are disjoint now. tsc --noEmit clean, Vitest 178/178, four captures at 1448x1086 / 1280x800 / 1024x768 / 390x844 in etc/captures/p50/.
 
 **Earlier (2026-11-15 to 2026-11-17):** P4.8 84520bb made a wall a centreline that bends and curves with its own thickness and corner radius; P4.7 9715605 + cda83a7 drew one storey-wide wall instead of per-room strokes and fixed the pan feedback loop; P4.6 3553f0e + 0960b71 rebuilt the building screen against the mockup with every toolbar control wired. Still open: the tenant screen house-rules and electricity/water/service prices are BLOCKED — BuildingManagementSettings defines no setting names; real payOS money flow, TLS public callback, production vault/roles/secrets and production deploy stay HOLD.
 

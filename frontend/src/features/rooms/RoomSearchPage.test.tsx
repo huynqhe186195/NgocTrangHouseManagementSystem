@@ -83,13 +83,13 @@ const floor: FloorDto = {
   status: 1,
 };
 
-function renderPage() {
+function renderPage(entry = '/search') {
   // The photo gallery fetches thumbnail bytes through `useQueries`, so a
   // provider is needed even though every data hook here is mocked.
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={['/search']}>
+      <MemoryRouter initialEntries={[entry]}>
         <RoomSearchPage />
       </MemoryRouter>
     </QueryClientProvider>,
@@ -117,7 +117,7 @@ describe('RoomSearchPage', () => {
 
     renderPage();
 
-    expect(screen.getByText('Phòng đang trống (1)')).toBeTruthy();
+    expect(screen.getByText('Phòng đang trống khác (0)')).toBeTruthy();
     // The room also titles the page now, so it appears more than once.
     expect(screen.getAllByText('Phòng A203').length).toBeGreaterThan(0);
     expect(screen.queryByText('Phòng A204')).toBeNull();
@@ -150,5 +150,42 @@ describe('RoomSearchPage', () => {
     renderPage();
 
     expect(screen.getByText('Chưa có phòng trống phù hợp')).toBeTruthy();
+  });
+
+  it('fills the mockup structure and blanks the fields the server does not have', () => {
+    floorsData.current = [floor];
+    roomsData.current = [room()];
+
+    renderPage();
+
+    expect(
+      screen.getByText('Tòa nhà Ngọc Trang Building · Tầng 2 · Mã phòng: A203'),
+    ).toBeTruthy();
+
+    // Direction and room type have no column on the server, so they stay blank
+    // instead of being invented.
+    expect(screen.getAllByText('Chưa cập nhật')).toHaveLength(2);
+
+    for (const heading of [
+      'Thông tin phòng',
+      'Vị trí phòng trên mặt bằng',
+      'Tiện ích phòng',
+      'Quy định nhà trọ',
+      'Thông tin khác',
+    ]) {
+      expect(screen.getByText(heading)).toBeTruthy();
+    }
+
+    expect(screen.getByText(/Đơn giá điện, nước và phí dịch vụ chưa được công bố/)).toBeTruthy();
+  });
+
+  it('opens the room named in the URL so a shared link lands on it', () => {
+    floorsData.current = [floor];
+    roomsData.current = [room(), room({ id: 'r2', roomNumber: 'A205', name: 'Phòng A205' })];
+
+    renderPage('/search?room=r2');
+
+    expect(screen.getAllByText('Phòng A205').length).toBeGreaterThan(0);
+    expect(screen.getByText('Phòng đang trống khác (1)')).toBeTruthy();
   });
 });

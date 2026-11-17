@@ -2,6 +2,8 @@ import type { ReactNode } from 'react';
 
 interface PageHeaderProps {
   title: string;
+  /** Sits immediately right of the title, e.g. the room's status badge. */
+  titleAddon?: ReactNode;
   description?: string;
   breadcrumb?: string[];
   actions?: ReactNode;
@@ -32,6 +34,7 @@ function Breadcrumb({ crumbs, className = '' }: { crumbs: string[]; className?: 
 
 export function PageHeader({
   title,
+  titleAddon,
   description,
   breadcrumb,
   actions,
@@ -44,7 +47,12 @@ export function PageHeader({
     <div className="mb-5 flex flex-col justify-between gap-4 md:flex-row md:items-start">
       <div className="min-w-0">
         {!alignRight && crumbs.length > 0 && <Breadcrumb crumbs={crumbs} className="mb-2" />}
-        <h1 className="font-display text-2xl font-bold tracking-tight text-on-surface">{title}</h1>
+        <div className="flex flex-wrap items-center gap-3">
+          <h1 className="font-display text-2xl font-bold tracking-tight text-on-surface">
+            {title}
+          </h1>
+          {titleAddon}
+        </div>
         {description && <p className="mt-1 text-sm text-on-surface-variant">{description}</p>}
       </div>
 

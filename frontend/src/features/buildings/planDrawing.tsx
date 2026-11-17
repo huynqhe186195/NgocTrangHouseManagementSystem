@@ -28,14 +28,18 @@ export const statusStyles: Record<number, { fill: string; stroke: string; label:
 };
 
 /**
- * Wall thickness in metres for a partition between two rooms. The mockup sets
- * partitions noticeably lighter than the building envelope, so this stays at
- * roughly half the envelope's weight — otherwise the plan reads as a grid of
- * equally heavy boxes instead of a walled floor.
+ * Wall thickness in metres for a partition between two rooms.
+ *
+ * Read off the mockup: its plan is drawn at roughly 26 px per metre, and a
+ * partition there is a 5 px band — about 0.2 m, which is one brick wythe with
+ * plaster on both faces. The previous 0.1-0.2 m ramp shrank the wall on small
+ * rooms, so a 2 m bathroom drew a pencil line next to a 5 m bedroom's band and
+ * the floor stopped reading as masonry. The band is now near-uniform, the way
+ * a real plan is: partitions do not change thickness with the room they bound.
  */
 export function wallThickness(box: Box): number {
   const unit = Math.min(box.width, box.height);
-  return Math.max(0.1, Math.min(0.2, unit * 0.055));
+  return Math.max(0.22, Math.min(0.28, unit * 0.07));
 }
 
 /** Door opening on the bottom wall, wide enough to read but never the whole side. */
@@ -90,6 +94,14 @@ export function innerBox(box: Box, wall: number): Box {
 const OBJECT_FILL = '#EFF3F8';
 const OBJECT_WALL_RATIO = 0.07;
 
+/**
+ * The solid kinds — corridor, stairwell, elevator, WC, service area, laundry,
+ * storage — are rooms in their own right on the mockup's plan, walled at the
+ * same weight as the rooms around them. Only the light kinds (a door leaf, a
+ * balcony railing, a plant) stay thin.
+ */
+const WALLED_KINDS = new Set<number>([1, 2, 3, 4, 5, 8, 9]);
+
 export interface LayoutObjectArtProps {
   box: Box;
   kind: FloorLayoutItemKind;
@@ -106,6 +118,16 @@ export interface LayoutObjectArtProps {
 export function objectWall(box: Box): number {
   const unit = Math.min(box.width, box.height);
   return Math.max(0.07, Math.min(0.2, unit * OBJECT_WALL_RATIO));
+}
+
+/**
+ * A corridor or a stairwell is drawn at partition weight, not at the thin
+ * object weight: the mockup walls them exactly like the rooms they serve, so a
+ * corridor between two rooms reads as one continuous masonry band rather than
+ * as an unwalled grey strip.
+ */
+export function solidObjectWall(box: Box): number {
+  return wallThickness(box);
 }
 
 /** Walls around an object, with no door opening. */
@@ -979,7 +1001,8 @@ export function LayoutObjectArt({
   thickness = null,
   cornerRadius = null,
 }: LayoutObjectArtProps) {
-  const thickness2 = wall ?? objectWall(box);
+  const thickness2 =
+    wall ?? (WALLED_KINDS.has(kind) ? solidObjectWall(box) : objectWall(box));
   // The caption strip belongs to the symbol's frame, not to its drawing, so
   // the stair treads and WC fixtures stay inside the part left above it.
   const art =

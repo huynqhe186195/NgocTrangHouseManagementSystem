@@ -33,9 +33,12 @@ public sealed class BuildingManagementAuthenticatedControllerConvention
     // application services, including Slice C utilities and finance.
     // Login alone must never disclose meter usage, rates, payment records,
     // account details, tenant PII or allow inter-building mutations.
-    // Only the 15 already-enforced Building/Floor/Room endpoints keep their
-    // service-level per-building authorization. Explicit isolated staging
-    // adapters live in the host assembly and are NOT unlocked by this.
+    // The allowlisted services below keep their service-level per-building
+    // authorization (IBuildingCrudAccessPolicy + the write boundary).
+    // BuildingPublicInfo is on the list because it enforces the same pair on
+    // both of its actions: read needs ReadBuilding, publish needs ManageBuilding.
+    // Explicit isolated staging adapters live in the host assembly and are NOT
+    // unlocked by this.
     private static readonly AuthorizeFilter UnscopedApplicationDenied = new(
         new AuthorizationPolicyBuilder()
             .RequireAuthenticatedUser()
@@ -46,7 +49,8 @@ public sealed class BuildingManagementAuthenticatedControllerConvention
         => type.Assembly == typeof(BuildingManagementApplicationModule).Assembly &&
            type != typeof(BuildingAppService) &&
            type != typeof(FloorAppService) &&
-           type != typeof(RoomAppService);
+           type != typeof(RoomAppService) &&
+           type != typeof(BuildingPublicInfoAppService);
 
     public void Apply(ApplicationModel application)
     {

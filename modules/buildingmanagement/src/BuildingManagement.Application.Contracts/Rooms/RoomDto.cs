@@ -21,6 +21,10 @@ namespace BuildingManagement.Rooms
 
         public string? Description { get; set; }
 
+        public string? RoomType { get; set; }
+
+        public RoomDirection? Direction { get; set; }
+
         public decimal? MonthlyRent { get; set; }
 
         public decimal? LayoutX { get; set; }

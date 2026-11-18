@@ -735,6 +735,22 @@ function BuildingCover({
           <span className="text-[11px]">
             {photo.isLoading ? 'Đang tải ảnh…' : 'Chưa có ảnh tòa nhà'}
           </span>
+          {/* Without a photograph the only way in was the pill in the corner,
+              which reads as "replace" and is easy to miss on an empty frame.
+              The frame itself offers the upload when there is nothing to
+              replace, and says so rather than the screen appearing unfinished. */}
+          {!photo.isLoading && (
+            <button
+              type="button"
+              disabled={!canManage || upload.isPending}
+              title={canManage ? undefined : 'Tài khoản này chưa được cấp quyền quản lý tòa nhà.'}
+              onClick={() => fileInput.current?.click()}
+              className="mt-1 inline-flex items-center gap-1.5 rounded-lg border border-[#b6c6da] bg-white/70 px-2.5 py-1.5 text-[11px] font-semibold text-[#334155] transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <span className="material-symbols-outlined text-sm">upload</span>
+              {upload.isPending ? 'Đang tải lên…' : 'Tải ảnh lên'}
+            </button>
+          )}
         </div>
       )}
 
@@ -775,18 +791,22 @@ function BuildingCover({
         }}
       />
 
-      <div className="absolute bottom-3 left-3">
-        <button
-          type="button"
-          disabled={!canManage || upload.isPending}
-          title={canManage ? undefined : 'Tài khoản này chưa được cấp quyền quản lý tòa nhà.'}
-          onClick={() => fileInput.current?.click()}
-          className="inline-flex items-center gap-2 rounded-lg bg-[#1F2937]/85 px-3 py-2 text-xs font-semibold text-white transition hover:bg-[#1F2937] disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          <span className="material-symbols-outlined text-base">photo_camera</span>
-          {upload.isPending ? 'Đang tải lên…' : 'Thay đổi ảnh'}
-        </button>
-      </div>
+      {/* Only with a photograph: on an empty frame the upload lives inside the
+          frame itself, and two controls for one action is noise. */}
+      {src && (
+        <div className="absolute bottom-3 left-3">
+          <button
+            type="button"
+            disabled={!canManage || upload.isPending}
+            title={canManage ? undefined : 'Tài khoản này chưa được cấp quyền quản lý tòa nhà.'}
+            onClick={() => fileInput.current?.click()}
+            className="inline-flex items-center gap-2 rounded-lg bg-[#1F2937]/85 px-3 py-2 text-xs font-semibold text-white transition hover:bg-[#1F2937] disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <span className="material-symbols-outlined text-base">photo_camera</span>
+            {upload.isPending ? 'Đang tải lên…' : 'Thay đổi ảnh'}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

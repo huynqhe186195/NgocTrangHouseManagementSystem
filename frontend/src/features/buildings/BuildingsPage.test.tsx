@@ -64,7 +64,12 @@ function floor(overrides: Partial<FloorDto> = {}): FloorDto {
   };
 }
 
-function room(id: string, floorId: string, status: 1 | 2 | 3 | 4 | 5): RoomDto {
+function room(
+  id: string,
+  floorId: string,
+  status: 1 | 2 | 3 | 4 | 5,
+  box?: { x: number; y: number; width: number; height: number },
+): RoomDto {
   return {
     id,
     creationTime: '2026-01-01T00:00:00Z',
@@ -81,12 +86,12 @@ function room(id: string, floorId: string, status: 1 | 2 | 3 | 4 | 5): RoomDto {
     roomType: null,
     direction: null,
     monthlyRent: null,
-    layoutX: null,
-    layoutY: null,
-    layoutWidth: null,
-    layoutHeight: null,
-    layoutShape: null,
-    layoutRotationDegrees: null,
+    layoutX: box?.x ?? null,
+    layoutY: box?.y ?? null,
+    layoutWidth: box?.width ?? null,
+    layoutHeight: box?.height ?? null,
+    layoutShape: box ? 1 : null,
+    layoutRotationDegrees: box ? 0 : null,
     layoutPoints: null,
     equipmentCount: 0,
     photoCount: 0,
@@ -215,6 +220,35 @@ describe('BuildingDetailPage', () => {
     // below it — so the message appears once per storey in each view.
     const table = screen.getByRole('table');
     expect(within(table).getAllByText('Chưa có sơ đồ')).toHaveLength(3);
+  });
+
+  it('reports how many rooms of a half-designed storey the thumbnail draws', () => {
+    const floors = [floor({ id: 'fl1', floorNumber: 1, status: 1 })];
+    snapshot = makeSnapshot(floors, [
+      room('101', 'fl1', 1, { x: 1, y: 1, width: 5, height: 4 }),
+      room('102', 'fl1', 2, { x: 6, y: 1, width: 5, height: 4 }),
+      room('103', 'fl1', 1),
+    ]);
+
+    renderPage();
+
+    // Only two of the three rooms have coordinates. Drawing the placed two and
+    // saying nothing would understate the storey by a third.
+    const table = screen.getByRole('table');
+    expect(within(table).getByText('2/3 phòng có toạ độ')).toBeTruthy();
+    expect(
+      within(table).getByRole('img', { name: 'Sơ đồ mặt bằng thu nhỏ: 2 trên 3 phòng có toạ độ' }),
+    ).toBeTruthy();
+  });
+
+  it('offers an upload on an empty cover instead of only the replace pill', () => {
+    renderPage();
+
+    // The frame has no photograph and the pill underneath says "Thay đổi ảnh",
+    // which reads as replace. An owner with no photo needs to be told where to
+    // start, so the empty frame carries its own upload action.
+    const button = screen.getByRole('button', { name: /Tải ảnh lên/ });
+    expect(button).toBeTruthy();
   });
 
   it('paginates five rows at a time and reports the visible range', () => {

@@ -123,12 +123,14 @@ public sealed class BuildingManagementAuthenticatedControllerConvention_Tests
                         .AssertionRequirement));
         }
 
-        // Only the reviewed 15 Slice A CRUD actions may rely on their
-        // own enforced permission + building-scoped service boundary.
+        // Only the reviewed Slice A CRUD actions, plus the building settings
+        // read/publish pair, may rely on their own enforced permission and
+        // building-scoped service boundary.
         foreach (var service in new[] {
             typeof(BuildingAppService),
             typeof(BuildingManagement.Floors.FloorAppService),
-            typeof(BuildingManagement.Rooms.RoomAppService) })
+            typeof(BuildingManagement.Rooms.RoomAppService),
+            typeof(BuildingManagement.Buildings.BuildingPublicInfoAppService) })
         {
             var reviewed = ModelFor(service);
             new BuildingManagementAuthenticatedControllerConvention()

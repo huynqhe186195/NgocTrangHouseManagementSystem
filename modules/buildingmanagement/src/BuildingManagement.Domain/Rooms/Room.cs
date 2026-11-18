@@ -21,6 +21,14 @@ namespace BuildingManagement.Rooms
 
         public string? Description { get; private set; }
 
+        /// <summary>
+        /// Free text on purpose: the letting vocabulary ("Phòng tiêu chuẩn",
+        /// "Phòng gia đình", …) is the owner's, not a fixed catalogue.
+        /// </summary>
+        public string? RoomType { get; private set; }
+
+        public RoomDirection? Direction { get; private set; }
+
         public decimal? MonthlyRent { get; private set; }
 
         public decimal? LayoutX { get; private set; }
@@ -49,7 +57,9 @@ namespace BuildingManagement.Rooms
             decimal? area,
             int capacity,
             RoomStatus status,
-            string? description = null
+            string? description = null,
+            string? roomType = null,
+            RoomDirection? direction = null
         ) : base(id)
         {
             FloorId = floorId;
@@ -59,6 +69,8 @@ namespace BuildingManagement.Rooms
             Capacity = capacity;
             Status = status;
             Description = description;
+            RoomType = roomType;
+            Direction = direction;
         }
 
         public void Update(
@@ -67,7 +79,9 @@ namespace BuildingManagement.Rooms
             decimal? area,
             int capacity,
             RoomStatus status,
-            string? description)
+            string? description,
+            string? roomType = null,
+            RoomDirection? direction = null)
         {
             RoomNumber = roomNumber;
             Name = name;
@@ -75,6 +89,8 @@ namespace BuildingManagement.Rooms
             Capacity = capacity;
             Status = status;
             Description = description;
+            RoomType = roomType;
+            Direction = direction;
         }
 
         public void ChangeStatus(RoomStatus status)

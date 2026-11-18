@@ -280,8 +280,7 @@ public sealed class BuildingManagementAutoApiAuthorization_Tests
     }
 
     [Fact]
-    public async Task APIAUTO09_Authenticated_Unassigned_User_Cannot_List_Any_Building_Floor_Room()
-    {
+    public async Task APIAUTO09_Authenticated_Unassigned_User_Cannot_List_Any_Building_Floor_Room()    {
         await using var app = await StartIsolatedAbpHostAsync();
         using var client = AuthenticatedClient(app);
 
@@ -342,8 +341,40 @@ public sealed class BuildingManagementAutoApiAuthorization_Tests
     }
 
     [Fact]
-    public async Task APIAUTO12_Authenticated_User_Cannot_Create_Orphan_Building()
+    public async Task APIAUTO15_Building_Public_Info_Read_And_Publish_Fail_Closed_Without_A_Grant()
     {
+        await using var app = await StartIsolatedAbpHostAsync();
+        using var client = AuthenticatedClient(app);
+        var actions = GetGeneratedActions(app);
+        var guessed = Guid.NewGuid().ToString("D");
+
+        // The endpoint left the default-deny list because it enforces its own
+        // per-building policy. That only holds if it really refuses an
+        // authenticated user who has no grant — the exact case login alone
+        // must never unlock.
+        var get = Assert.Single(actions, x =>
+            x.ControllerTypeInfo.AsType() ==
+                typeof(BuildingManagement.Buildings.BuildingPublicInfoAppService) &&
+            x.MethodInfo.Name == "GetAsync");
+        var getRoute = Assert.IsType<string>(get.AttributeRouteInfo?.Template);
+        using var getResponse = await client.GetAsync(
+            "/" + Regex.Replace(getRoute, @"\{[^}]+\}", guessed).TrimStart('/'));
+        Assert.Equal(HttpStatusCode.Forbidden, getResponse.StatusCode);
+
+        var update = Assert.Single(actions, x =>
+            x.ControllerTypeInfo.AsType() ==
+                typeof(BuildingManagement.Buildings.BuildingPublicInfoAppService) &&
+            x.MethodInfo.Name == "UpdateAsync");
+        var updateRoute = Assert.IsType<string>(update.AttributeRouteInfo?.Template);
+        using var body = new StringContent(
+            "{\"electricityUnitPrice\":3500}", Encoding.UTF8, "application/json");
+        using var updateResponse = await client.PutAsync(
+            "/" + Regex.Replace(updateRoute, @"\{[^}]+\}", guessed).TrimStart('/'), body);
+        Assert.Equal(HttpStatusCode.Forbidden, updateResponse.StatusCode);
+    }
+
+    [Fact]
+    public async Task APIAUTO12_Authenticated_User_Cannot_Create_Orphan_Building()    {
         await using var app = await StartIsolatedAbpHostAsync();
         using var client = AuthenticatedClient(app);
         var action = Assert.Single(GetGeneratedActions(app), x =>

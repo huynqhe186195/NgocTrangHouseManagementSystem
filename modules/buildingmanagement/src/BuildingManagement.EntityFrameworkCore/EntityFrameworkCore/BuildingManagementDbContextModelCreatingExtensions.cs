@@ -14,6 +14,8 @@ public static class BuildingManagementDbContextModelCreatingExtensions
 
         //This code use register configuration entity framework core for entity Building into Dbcontext
         builder.ApplyConfiguration(new BuildingConfiguration());
+        // Prices and house rules the owner publishes on the room screen
+        builder.ApplyConfiguration(new BuildingPublicInfoConfiguration());
         //This code use register configuration entity framework core for entity Floor into Dbcontext
         builder.ApplyConfiguration(new FloorConfiguration());
         //This code use register configuration entity framework core for entity Room into Dbcontext

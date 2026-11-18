@@ -24,6 +24,8 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
      */
     // The register entity Building into database
     public DbSet<Building> Buildings { get; set; } = default!;
+    // Published prices and house rules shown to prospective tenants.
+    public DbSet<BuildingPublicInfo> BuildingPublicInfos { get; set; } = default!;
     // Schema-only rollout; runtime grant/account/writer DI remains DenyAll.
     public DbSet<BuildingOperatorAccessGrant> OperatorBuildingGrants { get; set; } = default!;
     public DbSet<BuildingPhoto> BuildingPhotos { get; set; } = default!;

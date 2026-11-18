@@ -360,6 +360,12 @@ public static class BuildingManagementErrorCodes
     public const string InvalidRoomLayout =
         "BuildingManagement:InvalidRoomLayout";
 
+    public const string InvalidRoomDirection =
+        "BuildingManagement:InvalidRoomDirection";
+
+    public const string InvalidHouseRule =
+        "BuildingManagement:InvalidHouseRule";
+
     public const string InvalidMonthlyRentAmount =
         "BuildingManagement:InvalidMonthlyRentAmount";
 

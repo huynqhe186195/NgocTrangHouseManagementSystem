@@ -26,6 +26,8 @@ const CODE_TO_FIELD: Record<string, string> = {
   'BuildingManagement:InvalidRoomEquipmentQuantity': 'quantity',
   'BuildingManagement:InvalidMonthlyRentAmount': 'monthlyRent',
   'BuildingManagement:InvalidRoomLayout': 'layout',
+  'BuildingManagement:InvalidRoomDirection': 'direction',
+  'BuildingManagement:InvalidHouseRule': 'houseRules',
   'BuildingManagement:InvalidFloorLayoutItem': 'layout',
   'BuildingManagement:InvalidRoomPhotoContent': 'photo',
   'BuildingManagement:InvalidBuildingPhotoContent': 'buildingPhoto',
@@ -56,6 +58,9 @@ const CODE_MESSAGES: Record<string, string> = {
     'Toạ độ sơ đồ không hợp lệ: cần đủ X/Y/rộng/cao trong khoảng cho phép.',
   'BuildingManagement:InvalidMonthlyRentAmount': 'Giá thuê không hợp lệ.',
   'BuildingManagement:InvalidFloorLayoutItem': 'Vật thể sơ đồ không hợp lệ.',
+  'BuildingManagement:InvalidRoomDirection': 'Hướng phòng không hợp lệ.',
+  'BuildingManagement:InvalidHouseRule':
+    'Quy định nhà trọ không hợp lệ: mỗi dòng cần nội dung và biểu tượng đã biết.',
   'BuildingManagement:RoomPhotoNotFound': 'Không tìm thấy ảnh này.',
   'BuildingManagement:RoomEquipmentNotFound': 'Không tìm thấy thiết bị này.',
   'BuildingManagement:FloorLayoutItemNotFound': 'Không tìm thấy vật thể sơ đồ này.',

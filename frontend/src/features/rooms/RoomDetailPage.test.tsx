@@ -51,6 +51,7 @@ vi.mock('../../lib/api/buildingQueries', () => ({
   useUpdateRoomRent: () => ({ mutate: vi.fn(), isPending: false, error: null, reset: vi.fn() }),
   useCreateRoom: () => ({ mutate: vi.fn(), isPending: false, error: null, reset: vi.fn() }),
   useUpdateRoom: () => ({ mutate: vi.fn(), isPending: false, error: null, reset: vi.fn() }),
+  useBuildingPublicInfo: () => ({ data: null, isLoading: false, error: null }),
 }));
 
 vi.mock('../../lib/api/buildingApi', () => ({
@@ -77,6 +78,8 @@ const room: RoomDto = {
   capacity: 2,
   status: 1,
   description: null,
+  roomType: 'Phòng tiêu chuẩn',
+  direction: 4,
   monthlyRent: 3500000,
   layoutX: 4,
   layoutY: 5,

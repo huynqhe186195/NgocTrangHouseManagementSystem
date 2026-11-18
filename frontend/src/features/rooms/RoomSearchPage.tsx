@@ -12,6 +12,7 @@ import { StatusBadge } from '../../components/ui/StatusBadge';
 import { ApiError } from '../../lib/http';
 import { roomsApi } from '../../lib/api/buildingApi';
 import {
+  useBuildingPublicInfo,
   useBuildings,
   useFloorLayoutItems,
   useFloors,
@@ -19,7 +20,7 @@ import {
   useRoomPhotos,
   useRooms,
 } from '../../lib/api/buildingQueries';
-import { equipmentConditionMeta, roomStatusMeta } from '../../lib/api/types';
+import { roomDirectionLabels, equipmentConditionMeta, roomStatusMeta } from '../../lib/api/types';
 import type { RoomPhotoDto } from '../../lib/api/types';
 import { formatVnd } from '../../lib/format';
 import { FloorPlan } from '../buildings/FloorPlan';
@@ -32,6 +33,14 @@ const DEPOSIT_MONTHS = 1;
 const GALLERY_PHOTOS = 6;
 
 const BOOKING_BLOCKED_HINT = 'Chức năng đặt phòng chưa được mở trên máy chủ.';
+
+/** Matches the server's HouseRuleIcon enum; only these symbols exist. */
+const HOUSE_RULE_ICONS: Record<number, string> = {
+  1: 'block',
+  2: 'schedule',
+  3: 'cleaning_services',
+  4: 'info',
+};
 
 export interface FirstPaymentEstimate {
   rent: number;
@@ -132,6 +141,7 @@ export function RoomSearchPage() {
 
   const photos = useRoomPhotos(room?.id);
   const equipment = useRoomEquipment(room?.id);
+  const publicInfo = useBuildingPublicInfo(building?.id);
 
   const planFloorCandidates = useMemo(
     () =>
@@ -166,6 +176,38 @@ export function RoomSearchPage() {
 
   const estimate =
     room?.monthlyRent != null ? estimateFirstPayment(room.monthlyRent, leaseMonths) : null;
+
+  // Only published prices become rows; a null would read as "free" rather
+  // than "not announced", which is the one thing a tenant must not misread.
+  const publishedPriceRows = useMemo(() => {
+    const info = publicInfo.data;
+    if (!info) {
+      return [];
+    }
+    const rows: { icon: string; label: string; value: string }[] = [];
+    if (info.electricityUnitPrice !== null) {
+      rows.push({
+        icon: 'bolt',
+        label: 'Điện',
+        value: `${formatVnd(info.electricityUnitPrice)}/kWh`,
+      });
+    }
+    if (info.waterUnitPrice !== null) {
+      rows.push({
+        icon: 'water_drop',
+        label: 'Nước',
+        value: `${formatVnd(info.waterUnitPrice)}/người/tháng`,
+      });
+    }
+    if (info.serviceFee !== null) {
+      rows.push({
+        icon: 'receipt_long',
+        label: 'Phí dịch vụ',
+        value: `${formatVnd(info.serviceFee)}/phòng/tháng`,
+      });
+    }
+    return rows;
+  }, [publicInfo.data]);
 
   const breadcrumb = building
     ? [
@@ -275,13 +317,21 @@ export function RoomSearchPage() {
                   label="Tầng"
                   value={floor ? `Tầng ${floor.floorNumber}` : 'Chưa cập nhật'}
                 />
-                <InfoRow icon="explore" label="Hướng" value="Chưa cập nhật" />
+                <InfoRow
+                  icon="explore"
+                  label="Hướng"
+                  value={room.direction === null ? 'Chưa cập nhật' : roomDirectionLabels[room.direction]}
+                />
                 <InfoRow icon="check_circle" label="Tình trạng">
                   <StatusBadge tone="success" withDot>
                     {roomStatusMeta[room.status].label}
                   </StatusBadge>
                 </InfoRow>
-                <InfoRow icon="meeting_room" label="Loại phòng" value="Chưa cập nhật" />
+                <InfoRow
+                  icon="meeting_room"
+                  label="Loại phòng"
+                  value={room.roomType ?? 'Chưa cập nhật'}
+                />
                 <InfoRow icon="group" label="Sức chứa" value={`Tối đa ${room.capacity} người`} />
               </div>
 
@@ -290,11 +340,6 @@ export function RoomSearchPage() {
                   {room.description}
                 </p>
               )}
-
-              <p className="mt-3 border-t border-outline-variant pt-3 text-[11px] leading-relaxed text-on-surface-variant">
-                Hướng và loại phòng chưa có trong dữ liệu phòng trên máy chủ, nên để trống thay vì
-                tự điền.
-              </p>
             </section>
 
             <section className="min-w-0 rounded-xl border border-outline-variant bg-surface-lowest p-5">
@@ -459,20 +504,70 @@ export function RoomSearchPage() {
               <h2 className="mb-3 font-display text-base font-bold text-on-surface">
                 Quy định nhà trọ
               </h2>
-              <p className="rounded-lg border border-dashed border-outline-variant bg-surface-low px-3 py-4 text-sm leading-relaxed text-on-surface-variant">
-                Chủ nhà chưa công bố quy định nhà trọ trên máy chủ, nên màn hình không hiển thị quy
-                định nào.
-              </p>
+              {publicInfo.isLoading ? (
+                <p className="text-sm text-on-surface-variant">Đang tải quy định…</p>
+              ) : publicInfo.error ? (
+                <p className="rounded-lg border border-dashed border-outline-variant bg-surface-low px-3 py-4 text-sm leading-relaxed text-on-surface-variant">
+                  Không tải được quy định nhà trọ từ máy chủ.
+                </p>
+              ) : (publicInfo.data?.houseRules ?? []).length === 0 ? (
+                <p className="rounded-lg border border-dashed border-outline-variant bg-surface-low px-3 py-4 text-sm leading-relaxed text-on-surface-variant">
+                  Chủ nhà chưa công bố quy định nhà trọ trên máy chủ, nên màn hình không hiển thị quy
+                  định nào.
+                </p>
+              ) : (
+                <ul className="flex flex-col gap-2.5">
+                  {(publicInfo.data?.houseRules ?? []).map((rule) => (
+                    <li
+                      key={`${rule.icon}-${rule.text}`}
+                      className="flex items-start gap-2.5 text-sm text-on-surface"
+                    >
+                      <span
+                        className="material-symbols-outlined shrink-0 text-lg text-error"
+                        aria-hidden
+                      >
+                        {HOUSE_RULE_ICONS[rule.icon]}
+                      </span>
+                      <span className="min-w-0 leading-relaxed">{rule.text}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </section>
 
             <section className="min-w-0 rounded-xl border border-outline-variant bg-surface-lowest p-4">
               <h2 className="mb-3 font-display text-base font-bold text-on-surface">
                 Thông tin khác
               </h2>
-              <p className="rounded-lg border border-dashed border-outline-variant bg-surface-low px-3 py-4 text-sm leading-relaxed text-on-surface-variant">
-                Đơn giá điện, nước và phí dịch vụ chưa được công bố trên máy chủ, nên màn hình không
-                hiển thị con số nào.
-              </p>
+              {publishedPriceRows.length === 0 ? (
+                <p className="rounded-lg border border-dashed border-outline-variant bg-surface-low px-3 py-4 text-sm leading-relaxed text-on-surface-variant">
+                  {publicInfo.isLoading
+                    ? 'Đang tải thông tin điện, nước và phí dịch vụ…'
+                    : 'Chủ nhà chưa công bố giá điện, nước và phí dịch vụ trên máy chủ.'}
+                </p>
+              ) : (
+                <ul className="flex flex-col gap-2.5">
+                  {publishedPriceRows.map((row) => (
+                    <li key={row.label} className="flex items-start gap-2.5 text-sm">
+                      <span
+                        className="material-symbols-outlined shrink-0 text-lg text-on-surface-variant"
+                        aria-hidden
+                      >
+                        {row.icon}
+                      </span>
+                      <span className="min-w-0 flex-1 text-on-surface-variant">{row.label}</span>
+                      <span className="shrink-0 text-right font-medium text-on-surface tnum">
+                        {row.value}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {publicInfo.data?.otherInfo && (
+                <p className="mt-3 border-t border-outline-variant pt-3 text-[11px] leading-relaxed text-on-surface-variant">
+                  {publicInfo.data.otherInfo}
+                </p>
+              )}
             </section>
           </div>
 

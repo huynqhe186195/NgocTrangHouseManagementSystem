@@ -80,6 +80,23 @@ export type FloorStatus = 1 | 2 | 3;
 /** Server enum: Rectangle=1, Polygon=2. */
 export type RoomLayoutShape = 1 | 2;
 
+/**
+ * Server enum, stored as its integer: North=1, NorthEast=2, East=3,
+ * SouthEast=4, South=5, SouthWest=6, West=7, NorthWest=8.
+ */
+export type RoomDirection = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+
+export const roomDirectionLabels: Record<RoomDirection, string> = {
+  1: 'Bắc',
+  2: 'Đông Bắc',
+  3: 'Đông',
+  4: 'Đông Nam',
+  5: 'Nam',
+  6: 'Tây Nam',
+  7: 'Tây',
+  8: 'Tây Bắc',
+};
+
 /** Server enum: Good=1, NeedsRepair=2, Broken=3. */
 export type RoomEquipmentCondition = 1 | 2 | 3;
 
@@ -99,6 +116,9 @@ export interface RoomDto extends AuditedEntity {
   capacity: number;
   status: RoomStatus;
   description: string | null;
+  /** Free text, e.g. "Phòng tiêu chuẩn". Null when the owner has not set it. */
+  roomType: string | null;
+  direction: RoomDirection | null;
   monthlyRent: number | null;
   layoutX: number | null;
   layoutY: number | null;
@@ -119,6 +139,8 @@ export interface CreateRoomInput {
   capacity: number;
   status: RoomStatus;
   description: string | null;
+  roomType: string | null;
+  direction: RoomDirection | null;
 }
 
 export interface UpdateRoomInput {
@@ -128,6 +150,37 @@ export interface UpdateRoomInput {
   capacity: number;
   status: RoomStatus;
   description: string | null;
+  roomType: string | null;
+  direction: RoomDirection | null;
+}
+
+/** Server enum: Prohibition=1, QuietHours=2, Hygiene=3, General=4. */
+export type HouseRuleIcon = 1 | 2 | 3 | 4;
+
+export interface HouseRuleItem {
+  icon: HouseRuleIcon;
+  text: string;
+}
+
+/**
+ * Prices and rules the owner publishes on the room screen. Distinct from the
+ * billing tariff: editing this never changes what a tenant is charged.
+ */
+export interface BuildingPublicInfoDto {
+  buildingId: string;
+  electricityUnitPrice: number | null;
+  waterUnitPrice: number | null;
+  serviceFee: number | null;
+  otherInfo: string | null;
+  houseRules: HouseRuleItem[];
+}
+
+export interface UpdateBuildingPublicInfoInput {
+  electricityUnitPrice: number | null;
+  waterUnitPrice: number | null;
+  serviceFee: number | null;
+  otherInfo: string | null;
+  houseRules: HouseRuleItem[];
 }
 
 export interface RoomEquipmentDto extends AuditedEntity {

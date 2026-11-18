@@ -29,6 +29,13 @@ vi.mock('../../lib/api/buildingQueries', () => ({
   // No floor has saved coordinates in these fixtures, so every row must fall
   // through to the "Chưa có sơ đồ" state.
   useFloorLayoutItemsFor: () => new Map(),
+  useBuildingPublicInfo: () => ({ data: null, isLoading: false, error: null }),
+  useUpdateBuildingPublicInfo: () => ({
+    mutate: vi.fn(),
+    isPending: false,
+    error: null,
+    reset: vi.fn(),
+  }),
 }));
 
 // The dialogs are separate screens with their own wiring; keeping them out of
@@ -71,6 +78,8 @@ function room(id: string, floorId: string, status: 1 | 2 | 3 | 4 | 5): RoomDto {
     capacity: 2,
     status,
     description: null,
+    roomType: null,
+    direction: null,
     monthlyRent: null,
     layoutX: null,
     layoutY: null,

@@ -26,6 +26,7 @@ import { describeMutationError } from '../../lib/api/mutationErrors';
 import { floorStatusMeta } from '../../lib/api/types';
 import type { FloorDto, FloorStatus } from '../../lib/api/types';
 import { BuildingFormDialog } from './BuildingFormDialog';
+import { BuildingPublicInfoDialog } from './BuildingPublicInfoDialog';
 import { FloorFormDialog } from './FloorFormDialog';
 import { FloorMiniPlan } from './FloorMiniPlan';
 
@@ -126,6 +127,7 @@ export function BuildingDetailPage() {
   const canManageFloors = hasPermission(BuildingPolicies.floorsManage);
 
   const [buildingDialogOpen, setBuildingDialogOpen] = useState(false);
+  const [publicInfoOpen, setPublicInfoOpen] = useState(false);
   const [floorDialog, setFloorDialog] = useState<
     { mode: 'create' } | { mode: 'edit'; floor: FloorDto } | null
   >(null);
@@ -239,6 +241,14 @@ export function BuildingDetailPage() {
                     <RowMenu
                       label="Thao tác khác của tòa nhà"
                       items={[
+                        {
+                          label: 'Giá và nội quy công bố',
+                          icon: 'sell',
+                          disabled: !canManageBuilding,
+                          disabledHint:
+                            'Tài khoản này chưa được cấp quyền quản lý tòa nhà trên máy chủ.',
+                          onSelect: () => setPublicInfoOpen(true),
+                        },
                         {
                           label: 'Xoá ảnh tòa nhà',
                           icon: 'hide_image',
@@ -534,6 +544,14 @@ export function BuildingDetailPage() {
           mode="edit"
           initial={snapshot.building}
           onClose={() => setBuildingDialogOpen(false)}
+        />
+      )}
+
+      {snapshot && (
+        <BuildingPublicInfoDialog
+          open={publicInfoOpen}
+          buildingId={snapshot.building.id}
+          onClose={() => setPublicInfoOpen(false)}
         />
       )}
 

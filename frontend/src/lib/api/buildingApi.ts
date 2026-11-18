@@ -3,6 +3,7 @@ import type {
   BuildingDto,
   BuildingPhotoDto,
   BuildingPhotoFileDto,
+  BuildingPublicInfoDto,
   CreateBuildingInput,
   CreateFloorInput,
   CreateFloorLayoutItemInput,
@@ -15,6 +16,7 @@ import type {
   RoomPhotoDto,
   RoomPhotoFileDto,
   UpdateBuildingInput,
+  UpdateBuildingPublicInfoInput,
   UpdateFloorInput,
   UpdateFloorLayoutItemInput,
   UpdateRoomEquipmentInput,
@@ -72,6 +74,20 @@ export const buildingsApi = {
     request<BuildingPhotoFileDto>(`${base}/building/${id}/photo-content`),
   removePhoto: (id: string) =>
     request<void>(`${base}/building/${id}/photo`, { method: 'DELETE' }),
+
+  /**
+   * Conventional-controller segments: GetAsync -> /building-public-info/{id},
+   * UpdateAsync -> PUT /building-public-info/{id}. Returns null until the
+   * owner publishes anything, so the caller can say "chưa công bố" instead of
+   * showing zero.
+   */
+  getPublicInfo: (buildingId: string) =>
+    request<BuildingPublicInfoDto | null>(`${base}/building-public-info/${buildingId}`),
+  updatePublicInfo: (buildingId: string, input: UpdateBuildingPublicInfoInput) =>
+    request<BuildingPublicInfoDto>(`${base}/building-public-info/${buildingId}`, {
+      method: 'PUT',
+      body: input,
+    }),
 };
 
 export const floorsApi = {

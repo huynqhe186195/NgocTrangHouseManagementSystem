@@ -12,8 +12,8 @@ import {
   useFloors,
   useUpdateRoom,
 } from '../../lib/api/buildingQueries';
-import { roomStatusMeta } from '../../lib/api/types';
-import type { RoomDto, RoomStatus } from '../../lib/api/types';
+import { roomDirectionLabels, roomStatusMeta } from '../../lib/api/types';
+import type { RoomDirection, RoomDto, RoomStatus } from '../../lib/api/types';
 import { suggestRoomNumber, validateRoomNumber } from '../../lib/api/roomNumberRules';
 
 interface RoomFormDialogProps {
@@ -29,6 +29,15 @@ const STATUS_OPTIONS = (Object.keys(roomStatusMeta) as unknown as string[]).map(
   value,
   label: roomStatusMeta[Number(value) as RoomStatus].label,
 }));
+
+/** Empty value = not published, which the server stores as null. */
+const DIRECTION_OPTIONS = [
+  { value: '', label: 'Chưa xác định' },
+  ...(Object.keys(roomDirectionLabels) as unknown as string[]).map((value) => ({
+    value,
+    label: roomDirectionLabels[Number(value) as RoomDirection],
+  })),
+];
 
 export function RoomFormDialog({ open, mode, floorId, initial, onClose }: RoomFormDialogProps) {
   const create = useCreateRoom();
@@ -46,6 +55,8 @@ export function RoomFormDialog({ open, mode, floorId, initial, onClose }: RoomFo
   const [capacity, setCapacity] = useState('1');
   const [status, setStatus] = useState('1');
   const [description, setDescription] = useState('');
+  const [roomType, setRoomType] = useState('');
+  const [direction, setDirection] = useState('');
   const [touched, setTouched] = useState(false);
 
   const allFloors = useMemo(() => floors.data ?? [], [floors.data]);
@@ -60,6 +71,10 @@ export function RoomFormDialog({ open, mode, floorId, initial, onClose }: RoomFo
     setCapacity(String(initial?.capacity ?? 1));
     setStatus(String(initial?.status ?? 1));
     setDescription(initial?.description ?? '');
+    setRoomType(initial?.roomType ?? '');
+    setDirection(initial?.direction === null || initial?.direction === undefined
+      ? ''
+      : String(initial.direction));
     setTouched(false);
     create.reset();
     update.reset();
@@ -161,6 +176,8 @@ export function RoomFormDialog({ open, mode, floorId, initial, onClose }: RoomFo
       capacity: Number(capacity),
       status: statusValue as RoomStatus,
       description: description.trim().length === 0 ? null : description.trim(),
+      roomType: roomType.trim().length === 0 ? null : roomType.trim(),
+      direction: direction === '' ? null : (Number(direction) as RoomDirection),
     };
 
     if (mode === 'create') {
@@ -292,6 +309,25 @@ export function RoomFormDialog({ open, mode, floorId, initial, onClose }: RoomFo
             value={status}
             onChange={(event) => setStatus(event.target.value)}
             error={view?.fieldErrors.status ?? statusError}
+          />
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field
+            label="Loại phòng"
+            maxLength={64}
+            value={roomType}
+            onChange={(event) => setRoomType(event.target.value)}
+            error={view?.fieldErrors.roomType}
+            placeholder="Ví dụ: Phòng tiêu chuẩn"
+            hint="Không bắt buộc, tối đa 64 ký tự."
+          />
+          <SelectField
+            label="Hướng"
+            options={DIRECTION_OPTIONS}
+            value={direction}
+            onChange={(event) => setDirection(event.target.value)}
+            error={view?.fieldErrors.direction}
           />
         </div>
 

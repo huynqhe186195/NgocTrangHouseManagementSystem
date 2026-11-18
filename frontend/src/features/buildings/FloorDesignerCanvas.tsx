@@ -1037,21 +1037,44 @@ function DesignerShape({
             rotation ? `rotate(${-rotation} ${centreX} ${centreY})` : undefined
           }
         >
-          <text
-            x={centreX}
-            y={caption ? caption.baselineY : centreY + titleSize * 0.35}
-            textAnchor="middle"
-            fontSize={caption ? caption.fontSize : titleSize}
-            textLength={caption?.textLength}
-            lengthAdjust={caption?.textLength === undefined ? undefined : 'spacingAndGlyphs'}
-            fontWeight={caption ? 600 : 700}
-            fill={caption ? '#475569' : '#0b1c30'}
-            fontFamily={caption ? 'Inter, sans-serif' : 'Plus Jakarta Sans, sans-serif'}
-            pointerEvents="none"
-            opacity={kind !== undefined && caption === null && !isNote ? 0 : 1}
-          >
-            {label}
-          </text>
+          {caption ? (
+            <g
+              textAnchor="middle"
+              fontSize={caption.fontSize}
+              fontWeight={600}
+              fill="#475569"
+              fontFamily="Inter, sans-serif"
+              pointerEvents="none"
+            >
+              {caption.lines.map((line) => (
+                <text
+                  key={line.text}
+                  x={centreX}
+                  y={line.baselineY}
+                  textLength={line.textLength}
+                  lengthAdjust={
+                    line.textLength === undefined ? undefined : 'spacingAndGlyphs'
+                  }
+                >
+                  {line.text}
+                </text>
+              ))}
+            </g>
+          ) : (
+            <text
+              x={centreX}
+              y={centreY + titleSize * 0.35}
+              textAnchor="middle"
+              fontSize={titleSize}
+              fontWeight={700}
+              fill="#0b1c30"
+              fontFamily="Plus Jakarta Sans, sans-serif"
+              pointerEvents="none"
+              opacity={kind !== undefined && !isNote ? 0 : 1}
+            >
+              {label}
+            </text>
+          )}
           {sublabel && box.height > 1.6 && kind === undefined && (
             <text
               x={centreX}

@@ -13,6 +13,8 @@ export const WALL_COLOR = '#2b2b2b';
 /** The lighter core line inside a drawn wall band. */
 const WALL_LIGHT = '#5a5a5a';
 export const SELECTED_STROKE = '#1d4ed8';
+/** The room the inspector is showing tints blue, the way the mockup marks it. */
+export const SELECTED_FILL = '#DBEAFE';
 const RULE_COLOR = '#94a3b8';
 const RULE_TEXT = '#64748b';
 /** Hairlines inside a plan: stair treads, door leaves, railings. */
@@ -1078,10 +1080,9 @@ export interface ObjectLabelFit {
   art: Box;
   /** Metres reserved at the bottom of the box for the caption. */
   caption: number;
-  /** Baseline for the caption text. */
-  baselineY: number;
+  /** The caption, one entry per line, top to bottom. */
+  lines: { text: string; baselineY: number; textLength?: number }[];
   fontSize: number;
-  textLength?: number;
 }
 
 /**
@@ -1104,6 +1105,9 @@ export function shouldCaption(
  * Splits an object's box into symbol and caption, following the mockup: the
  * name sits in a strip under the symbol instead of being printed through the
  * middle of it, where it used to cover the stair treads and the WC fixtures.
+ * A long name wraps onto a second line — the mockup writes "Khu vệ sinh" and
+ * "chung" on two lines — rather than being squeezed until it runs into the
+ * neighbouring wall.
  * Returns null when the strip would be too thin to read — a door leaf or a
  * sliver of corridor is drawn unlabelled rather than captioned illegibly.
  */
@@ -1118,16 +1122,50 @@ export function objectLabel(box: Box, label: string): ObjectLabelFit | null {
     return null;
   }
   const fontSize = caption * 0.62;
-  const fit = fitLabel(text, fontSize, box.width * 0.86);
+  const maxWidth = box.width * 0.86;
+  // Same 0.58 advance fitLabel assumes, so a line is never wider than the
+  // width the two agree on.
+  const estimate = (candidate: string) => candidate.length * fontSize * 0.58;
+
+  // One line when it fits; otherwise fill it greedily, which is what the
+  // mockup's "Khu vệ" / "sinh chung" does — a balanced split would break after
+  // "Khu vệ" and leave the longer half on the second line.
+  let lines: string[] = [text];
+  if (estimate(text) > maxWidth) {
+    lines = [];
+    for (const word of text.split(/\s+/)) {
+      const current = lines[lines.length - 1];
+      if (current !== undefined && estimate(`${current} ${word}`) <= maxWidth) {
+        lines[lines.length - 1] = `${current} ${word}`;
+      } else {
+        lines.push(word);
+      }
+    }
+    // The mockup gives a caption two lines; anything longer folds its tail
+    // into the second line and lets fitLabel compress it.
+    if (lines.length > 2) {
+      lines.splice(1, lines.length - 1, lines.slice(1).join(' '));
+    }
+  }
+
+  const lineHeight = fontSize * 1.22;
+  const reserve = Math.max(caption, lineHeight * lines.length + fontSize * 0.3);
   // Sits clear of the inner face of the bottom wall, so the caption reads on
   // the floor rather than across the masonry band.
-  const baselineY = box.y + box.height - objectWall(box) - fontSize * 0.3;
+  const bottom = box.y + box.height - objectWall(box) - fontSize * 0.3;
+  const laid = lines.map((line, index) => {
+    const fit = fitLabel(line, fontSize, maxWidth);
+    return {
+      text: line,
+      baselineY: bottom - (lines.length - 1 - index) * lineHeight,
+      textLength: fit.textLength,
+    };
+  });
   return {
-    art: { ...box, height: box.height - caption },
-    caption,
-    baselineY,
-    fontSize: fit.fontSize,
-    textLength: fit.textLength,
+    art: { ...box, height: box.height - reserve },
+    caption: reserve,
+    lines: laid,
+    fontSize,
   };
 }
 
@@ -1373,6 +1411,177 @@ export function PlanDimensions({
   );
 }
 
+export interface DimensionBay {
+  start: number;
+  end: number;
+}
+
+/**
+ * The bay widths a drawing chains along a wall: successive distinct edges, with
+ * slivers dropped so a 5 cm offset does not print as a meaningless number beside
+ * a 4 m room. Values are rounded to the centimetre the plan is stored at.
+ */
+export function dimensionBays(edges: number[], minimum = 0.4): DimensionBay[] {
+  const sorted = [
+    ...new Set(edges.filter((edge) => Number.isFinite(edge)).map((edge) => Number(edge.toFixed(2)))),
+  ].sort((a, b) => a - b);
+  const bays: DimensionBay[] = [];
+  for (let index = 1; index < sorted.length; index += 1) {
+    const start = sorted[index - 1];
+    const end = sorted[index];
+    if (start === undefined || end === undefined) {
+      continue;
+    }
+    if (end - start >= minimum) {
+      bays.push({ start, end });
+    }
+  }
+  return bays;
+}
+
+/**
+ * Dimension chains, drawn the way the mockup annotates a measured plan: a rule
+ * above and below the floor with one number per bay, and a rotated rule down the
+ * left. The numbers are the saved geometry in millimetres, not decoration.
+ */
+export function PlanDimensionChains({
+  bounds,
+  topBays,
+  bottomBays,
+  leftBays,
+  inset,
+  fontSize,
+}: {
+  bounds: { minX: number; minY: number; maxX: number; maxY: number };
+  topBays: DimensionBay[];
+  bottomBays: DimensionBay[];
+  leftBays: DimensionBay[];
+  inset: number;
+  fontSize: number;
+}) {
+  const stroke = Math.max(0.012, fontSize * 0.06);
+  const tick = fontSize * 0.55;
+  const millimetres = (bay: DimensionBay) => String(Math.round((bay.end - bay.start) * 1000));
+  const breaks = (bays: DimensionBay[]) => [
+    ...new Set(bays.flatMap((bay) => [bay.start, bay.end])),
+  ];
+
+  const topY = bounds.minY - inset;
+  const bottomY = bounds.maxY + inset;
+  const leftX = bounds.minX - inset;
+
+  return (
+    <g pointerEvents="none" fontFamily="Inter, sans-serif" stroke={RULE_COLOR} fill={RULE_TEXT}>
+      {topBays.length > 0 && (
+        <g>
+          <line
+            x1={topBays[0]?.start}
+            y1={topY}
+            x2={topBays[topBays.length - 1]?.end}
+            y2={topY}
+            strokeWidth={stroke}
+          />
+          {breaks(topBays).map((value) => (
+            <line
+              key={`top-tick-${value}`}
+              x1={value}
+              y1={topY - tick / 2}
+              x2={value}
+              y2={topY + tick / 2}
+              strokeWidth={stroke}
+            />
+          ))}
+          {topBays.map((bay) => (
+            <text
+              key={`top-label-${bay.start}`}
+              x={(bay.start + bay.end) / 2}
+              y={topY - fontSize * 0.4}
+              textAnchor="middle"
+              fontSize={fontSize}
+              stroke="none"
+            >
+              {millimetres(bay)}
+            </text>
+          ))}
+        </g>
+      )}
+
+      {bottomBays.length > 0 && (
+        <g>
+          <line
+            x1={bottomBays[0]?.start}
+            y1={bottomY}
+            x2={bottomBays[bottomBays.length - 1]?.end}
+            y2={bottomY}
+            strokeWidth={stroke}
+          />
+          {breaks(bottomBays).map((value) => (
+            <line
+              key={`bottom-tick-${value}`}
+              x1={value}
+              y1={bottomY - tick / 2}
+              x2={value}
+              y2={bottomY + tick / 2}
+              strokeWidth={stroke}
+            />
+          ))}
+          {bottomBays.map((bay) => (
+            <text
+              key={`bottom-label-${bay.start}`}
+              x={(bay.start + bay.end) / 2}
+              y={bottomY + fontSize * 1.05}
+              textAnchor="middle"
+              fontSize={fontSize}
+              stroke="none"
+            >
+              {millimetres(bay)}
+            </text>
+          ))}
+        </g>
+      )}
+
+      {leftBays.length > 0 && (
+        <g>
+          <line
+            x1={leftX}
+            y1={leftBays[0]?.start}
+            x2={leftX}
+            y2={leftBays[leftBays.length - 1]?.end}
+            strokeWidth={stroke}
+          />
+          {breaks(leftBays).map((value) => (
+            <line
+              key={`left-tick-${value}`}
+              x1={leftX - tick / 2}
+              y1={value}
+              x2={leftX + tick / 2}
+              y2={value}
+              strokeWidth={stroke}
+            />
+          ))}
+          {leftBays.map((bay) => {
+            const centreY = (bay.start + bay.end) / 2;
+            const labelX = leftX - fontSize * 0.45;
+            return (
+              <text
+                key={`left-label-${bay.start}`}
+                x={labelX}
+                y={centreY}
+                textAnchor="middle"
+                fontSize={fontSize}
+                stroke="none"
+                transform={`rotate(-90 ${labelX} ${centreY})`}
+              >
+                {millimetres(bay)}
+              </text>
+            );
+          })}
+        </g>
+      )}
+    </g>
+  );
+}
+
 /** North arrow, sitting in the corner of the viewable area like the mockup. */
 export function PlanCompass({
   viewBox,
@@ -1381,9 +1590,10 @@ export function PlanCompass({
   viewBox: { x: number; y: number; width: number; height: number };
   size: number;
 }) {
-  // Kept clear of the top ruler, which draws its labels just inside the frame.
-  const cx = viewBox.x + viewBox.width - size * 1.4;
-  const cy = viewBox.y + size * 1.75;
+  // The mockup puts the north point in the bottom-left corner, clear of the
+  // rulers that run along the top and the left.
+  const cx = viewBox.x + size * 0.95;
+  const cy = viewBox.y + viewBox.height - size * 0.95;
   const r = size * 0.36;
 
   return (

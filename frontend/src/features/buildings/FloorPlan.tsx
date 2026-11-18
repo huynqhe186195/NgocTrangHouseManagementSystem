@@ -18,16 +18,16 @@ import {
   LayoutObjectArt,
   LINE_COLOR,
   PlanCompass,
-  PlanDimensions,
-  PlanRulers,
+  PlanDimensionChains,
+  SELECTED_FILL,
   SELECTED_STROKE,
   WALL_COLOR,
+  dimensionBays,
   doorArcPath,
   doorWidth,
   objectLabel,
   shouldCaption,
   statusStyles,
-  tickStep,
   wallThickness,
 } from './planDrawing';
 
@@ -40,6 +40,13 @@ interface FloorPlanProps {
   compact?: boolean;
   /** Stretches the drawing over the whole screen while in fullscreen. */
   fill?: boolean;
+  /** Controlled zoom, for when the screen keeps the controls in its own header. */
+  zoom?: number;
+  onZoomChange?: (zoom: number) => void;
+  /** The header's grid button turns the metre grid off. */
+  showGrid?: boolean;
+  /** The colour key under the drawing; the mockup's plan card has none. */
+  showLegend?: boolean;
 }
 
 /** Shared with the building screen's miniature, so both read the same colours. */
@@ -57,8 +64,14 @@ export function FloorPlan({
   onSelect,
   compact = false,
   fill = false,
+  zoom: controlledZoom,
+  onZoomChange,
+  showGrid = true,
+  showLegend = true,
 }: FloorPlanProps) {
-  const [zoom, setZoom] = useState(1);
+  const [innerZoom, setInnerZoom] = useState(1);
+  const zoom = controlledZoom ?? innerZoom;
+  const setZoom = onZoomChange ?? setInnerZoom;
 
   function resetZoom() {
     setZoom(1);
@@ -87,9 +100,9 @@ export function FloorPlan({
   // is a Wall object the owner places on the plan, so it is drawn with the
   // other objects rather than generated from the room boxes.
   const viewBox = viewBoxRectFor(bounds, zoom);
-  // The rules and the compass are drawn outside the plan's own bounds, so the
+  // The chains and the compass are drawn outside the plan's own bounds, so the
   // view widens to make room for them.
-  const margin = Math.max(1.1, unit * 0.09);
+  const margin = Math.max(1.1, unit * 0.095);
   const framed = {
     x: viewBox.x - margin,
     y: viewBox.y - margin,
@@ -97,9 +110,34 @@ export function FloorPlan({
     height: viewBox.height + margin * 2,
   };
 
+  // Each facade is chained against the rooms that actually sit on it, so the
+  // top rule measures the top row's bays and the bottom rule the bottom row's,
+  // the way the mockup annotates a measured plan. A stairwell or shared WC is
+  // an object rather than a room, but it breaks the facade into bays too, so
+  // its edges join the chain — otherwise a stair and a WC read as one long
+  // unmeasured gap.
+  const midY = (bounds.minY + bounds.maxY) / 2;
+  const topRow = plan.rooms.filter((room) => room.y < midY);
+  const bottomRow = plan.rooms.filter((room) => room.y >= midY);
+  const measuredKinds = new Set([1, 2, 3, 4, 5, 8, 9, 10]);
+  const measured = plan.items.filter((item) => measuredKinds.has(item.kind));
+  const span = (box: { x: number; width: number }) => [box.x, box.x + box.width];
+  const topBays = dimensionBays([
+    ...(topRow.length > 0 ? topRow : plan.rooms).flatMap(span),
+    ...measured.filter((item) => item.y < midY).flatMap(span),
+  ]);
+  const bottomBays = dimensionBays([
+    ...(bottomRow.length > 0 ? bottomRow : plan.rooms).flatMap(span),
+    ...measured.filter((item) => item.y >= midY).flatMap(span),
+  ]);
+  const leftBays = dimensionBays([
+    ...plan.rooms.flatMap((room) => [room.y, room.y + room.height]),
+    ...measured.flatMap((item) => [item.y, item.y + item.height]),
+  ]);
+
   return (
     <div className={fill ? 'flex min-h-0 flex-1 flex-col' : undefined}>
-      {!compact && (
+      {!compact && !onZoomChange && (
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <p className="text-xs text-on-surface-variant">
             Sơ đồ vẽ theo toạ độ thật (mét) · {plan.rooms.length} phòng đã đặt vị trí
@@ -129,15 +167,15 @@ export function FloorPlan({
             </pattern>
           </defs>
 
-          <rect
-            x={framed.x}
-            y={framed.y}
-            width={framed.width}
-            height={framed.height}
-            fill="url(#plan-grid)"
-          />
-
-          <PlanRulers viewBox={framed} step={tickStep(bounds, zoom)} />
+          {showGrid && (
+            <rect
+              x={framed.x}
+              y={framed.y}
+              width={framed.width}
+              height={framed.height}
+              fill="url(#plan-grid)"
+            />
+          )}
 
           {/* Architecture sits under the rooms: a corridor or a stairwell is
               floor, not something laid on top of a room. */}
@@ -177,12 +215,23 @@ export function FloorPlan({
               <LayoutItemShape key={floorItem.id} item={floorItem} />
             ))}
 
-          <PlanDimensions bounds={bounds} inset={margin * 0.62} />
-          <PlanCompass viewBox={framed} size={margin * 0.85} />
+          {/* Below a phone's width the chain labels collapse into unreadable
+              specks, so the drawing drops them rather than printing noise. */}
+          <g className="hidden min-[520px]:inline">
+            <PlanDimensionChains
+              bounds={bounds}
+              topBays={topBays}
+              bottomBays={bottomBays}
+              leftBays={leftBays}
+              inset={margin * 0.42}
+              fontSize={Math.max(0.28, unit * 0.024)}
+            />
+          </g>
+          <PlanCompass viewBox={framed} size={margin * 0.62} />
         </svg>
       </div>
 
-      {!compact && (
+      {!compact && showLegend && (
         <div className="mt-3 flex flex-wrap gap-3 border-t border-outline-variant pt-3 text-[11px] text-on-surface-variant">
           {[1, 2, 3, 4, 5].map((status) => (
             <span key={status} className="flex items-center gap-1.5">
@@ -288,7 +337,7 @@ function RoomShape({
             points={polygon
               .map((point) => `${room.x + point.x},${room.y + point.y}`)
               .join(' ')}
-            fill={style.fill}
+            fill={selected ? SELECTED_FILL : style.fill}
           />
           <polygon
             points={polygon
@@ -307,7 +356,7 @@ function RoomShape({
             y={room.y}
             width={room.width}
             height={room.height}
-            fill={style.fill}
+            fill={selected ? SELECTED_FILL : style.fill}
           />
           {/* One stroke per edge. Neighbours that meet wall-to-wall put theirs
               on the same line, so a shared partition stays one wall thick
@@ -360,6 +409,9 @@ function RoomLabel({
   const centreY = room.y + room.height / 2;
   const rotation = room.layoutRotationDegrees ?? 0;
   const sub = room.area ? `${room.area} m²` : null;
+  // The mockup labels rooms by the name the owner gave them (A201); the server
+  // stores the number alone, so the name wins when it exists.
+  const label = (room.name ?? '').replace(/^\s*phòng\s+/i, '').trim() || room.roomNumber;
 
   return (
     <g
@@ -385,7 +437,7 @@ function RoomLabel({
         strokeLinejoin="round"
         fontFamily="Plus Jakarta Sans, sans-serif"
       >
-        {room.roomNumber}
+        {label}
       </text>
       {sub && (
         <text
@@ -417,6 +469,7 @@ function LayoutItemShape({ item }: { item: FloorLayoutItemDto }) {
   // word "Giường" across it, and printing one covered the drawing at this size.
   // A bent wall is unlabelled for a different reason, which shouldCaption
   // explains.
+  // A caption is two lines at most; the text lives in `captioned.lines`.
   const captioned = shouldCaption(points, item.kind) ? objectLabel(item, text) : null;
 
   return (
@@ -430,19 +483,20 @@ function LayoutItemShape({ item }: { item: FloorLayoutItemDto }) {
         cornerRadius={item.cornerRadius}
       />
       {captioned && (
-        <text
-          x={centreX}
-          y={captioned.baselineY}
+        <g
           textAnchor="middle"
           fontSize={captioned.fontSize}
-          textLength={captioned.textLength}
-          lengthAdjust={captioned.textLength === undefined ? undefined : 'spacingAndGlyphs'}
+          lengthAdjust={captioned.lines.some((line) => line.textLength !== undefined) ? 'spacingAndGlyphs' : undefined}
           fontWeight={600}
           fill="#475569"
           fontFamily="Inter, sans-serif"
         >
-          {text}
-        </text>
+          {captioned.lines.map((line) => (
+            <text key={line.text} x={centreX} y={line.baselineY} textLength={line.textLength}>
+              {line.text}
+            </text>
+          ))}
+        </g>
       )}
     </g>
   );

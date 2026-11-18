@@ -1,5 +1,61 @@
 import { describe, expect, it } from 'vitest';
-import { roundedPolyline, shouldCaption } from './planDrawing';
+import { dimensionBays, objectLabel, roundedPolyline, shouldCaption } from './planDrawing';
+
+describe('objectLabel', () => {
+  it('keeps a short name on one line', () => {
+    const fit = objectLabel({ x: 0, y: 0, width: 3, height: 4 }, 'Cầu thang');
+    expect(fit?.lines.map((line) => line.text)).toEqual(['Cầu thang']);
+  });
+
+  it('wraps a long name onto two lines instead of overrunning the wall', () => {
+    // 2.2 m is the mockup's shared WC. Printed on one line the name was wider
+    // than the room and ran into the neighbouring wall.
+    const box = { x: 9.6, y: 7.8, width: 2.2, height: 4.8 };
+    const fit = objectLabel(box, 'Khu vệ sinh chung');
+    expect(fit?.lines).toHaveLength(2);
+    for (const line of fit!.lines) {
+      const width = line.textLength ?? line.text.length * fit!.fontSize * 0.58;
+      expect(width).toBeLessThanOrEqual(box.width * 0.86 + 1e-9);
+    }
+  });
+
+  it('gives the second line its own baseline, under the first', () => {
+    const fit = objectLabel({ x: 0, y: 0, width: 2.2, height: 4.8 }, 'Khu vệ sinh chung');
+    const [first, second] = fit?.lines ?? [];
+    expect(first?.baselineY).toBeLessThan(second?.baselineY ?? 0);
+  });
+
+  it('reserves the whole caption strip, so the symbol never sits under the text', () => {
+    const box = { x: 0, y: 0, width: 2.2, height: 4.8 };
+    const fit = objectLabel(box, 'Khu vệ sinh chung');
+    expect(fit!.art.height).toBeLessThan(box.height);
+    expect(fit!.caption).toBeGreaterThan(0);
+  });
+});
+
+describe('dimensionBays', () => {
+  it('measures each gap between successive edges', () => {
+    expect(dimensionBays([0, 4.2, 8, 12.2, 15.8])).toEqual([
+      { start: 0, end: 4.2 },
+      { start: 4.2, end: 8 },
+      { start: 8, end: 12.2 },
+      { start: 12.2, end: 15.8 },
+    ]);
+  });
+
+  it('collapses duplicate edges and drops slivers below the minimum', () => {
+    // Two neighbouring rooms share the 4.2 edge; a 10 cm offset is noise.
+    expect(dimensionBays([0, 4.2, 4.2, 4.3, 8], 0.4)).toEqual([
+      { start: 0, end: 4.2 },
+      { start: 4.3, end: 8 },
+    ]);
+  });
+
+  it('returns nothing when there are fewer than two edges', () => {
+    expect(dimensionBays([])).toEqual([]);
+    expect(dimensionBays([3])).toEqual([]);
+  });
+});
 
 describe('shouldCaption', () => {
   it('leaves a bent wall unlabelled', () => {

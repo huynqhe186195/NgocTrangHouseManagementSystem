@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Alert } from '../../components/ui/Alert';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { PageHeader } from '../../components/ui/PageHeader';
+import { SelectField } from '../../components/ui/SelectField';
 import { StatusBadge } from '../../components/ui/StatusBadge';
 import { useAuth } from '../../lib/auth/AuthProvider';
 import { BuildingPolicies } from '../../lib/auth/policies';
@@ -12,12 +14,24 @@ import {
   useBuildings,
   useFloorLayoutItems,
   useRoomEquipment,
+  useRoomPhotoContent,
+  useRoomPhotos,
 } from '../../lib/api/buildingQueries';
 import { equipmentConditionMeta, roomStatusMeta } from '../../lib/api/types';
 import type { RoomDto } from '../../lib/api/types';
-import { formatMillions, formatNumber } from '../../lib/format';
+import { formatVnd } from '../../lib/format';
+import {
+  MAX_ZOOM,
+  MIN_ZOOM,
+  formatZoom,
+  zoomIn,
+  zoomOut,
+} from '../../lib/floorGeometry';
+import { equipmentIcon } from '../rooms/equipmentIcon';
 import { RoomFormDialog } from '../rooms/RoomFormDialog';
 import { FloorPlan } from './FloorPlan';
+
+const BOOKING_BLOCKED_HINT = 'Chức năng đặt phòng chưa được mở trên máy chủ.';
 
 export function FloorPlanPage() {
   const { buildingId, floorId } = useParams<{ buildingId: string; floorId: string }>();
@@ -27,8 +41,9 @@ export function FloorPlanPage() {
   const layoutItems = useFloorLayoutItems(floorId);
   const { hasPermission } = useAuth();
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
-  const [addRoomOpen, setAddRoomOpen] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
+  const [zoom, setZoom] = useState(1);
+  const [showGrid, setShowGrid] = useState(true);
   const planFrameRef = useRef<HTMLDivElement>(null);
 
   // Escape and the browser's own "leave fullscreen" both fire this, so the
@@ -87,63 +102,58 @@ export function FloorPlanPage() {
           'Xem sơ đồ tầng',
         ]}
         actions={
-          <Link
-            to={buildingId ? `/buildings/${buildingId}` : '/buildings'}
-            className="flex h-10 items-center gap-2 rounded-lg border border-outline-variant px-4 text-sm font-semibold text-on-surface-variant transition hover:bg-surface-low"
-          >
-            <span className="material-symbols-outlined text-lg">arrow_back</span>
-            Quay lại tòa nhà
-          </Link>
+          // The mockup pairs the two pickers on the title row, so a visit to
+          // another storey is one click from the top of the screen.
+          <div className="flex flex-wrap items-start gap-3">
+            <div className="w-[240px]">
+              <SelectField
+                label="Tòa nhà"
+                value={buildingId ?? ''}
+                onChange={(event) => {
+                  setSelectedRoomId(null);
+                  navigate(`/buildings/${event.target.value}`);
+                }}
+                options={[
+                  ...(buildings.data ?? []).map((building) => ({
+                    value: building.id,
+                    label: building.name,
+                  })),
+                  ...(buildingId &&
+                  !(buildings.data ?? []).some((b) => b.id === buildingId)
+                    ? [
+                        {
+                          value: buildingId,
+                          label: snapshot?.building.name ?? 'Tòa nhà hiện tại',
+                        },
+                      ]
+                    : []),
+                ]}
+              />
+            </div>
+            <div className="w-[190px]">
+              <SelectField
+                label="Tầng"
+                value={floorId ?? ''}
+                disabled={!snapshot || snapshot.floors.length === 0}
+                onChange={(event) => {
+                  setSelectedRoomId(null);
+                  navigate(`/buildings/${buildingId}/floors/${event.target.value}`);
+                }}
+                options={[
+                  ...(floor ? [] : [{ value: '', label: 'Chọn tầng' }]),
+                  ...(snapshot?.floors ?? []).map((item) => ({
+                    value: item.id,
+                    label:
+                      item.name !== `Tầng ${item.floorNumber}`
+                        ? `Tầng ${item.floorNumber} — ${item.name}`
+                        : `Tầng ${item.floorNumber}`,
+                  })),
+                ]}
+              />
+            </div>
+          </div>
         }
       />
-
-      <div className="mb-4 grid gap-3 rounded-xl border border-outline-variant bg-surface-lowest p-3 sm:grid-cols-2 lg:max-w-xl">
-        <label className="flex flex-col gap-1.5">
-          <span className="text-[11px] font-semibold tracking-[0.06em] text-on-surface-variant uppercase">
-            Tòa nhà
-          </span>
-          <select
-            value={buildingId ?? ''}
-            onChange={(event) => {
-              setSelectedRoomId(null);
-              navigate(`/buildings/${event.target.value}`);
-            }}
-            className="h-9 w-full rounded-lg border border-outline-variant bg-surface-lowest px-2.5 text-sm text-on-surface focus:border-primary focus:outline-none"
-          >
-            {(buildings.data ?? []).map((building) => (
-              <option key={building.id} value={building.id}>
-                {building.name}
-              </option>
-            ))}
-            {buildingId && !(buildings.data ?? []).some((b) => b.id === buildingId) && (
-              <option value={buildingId}>{snapshot?.building.name ?? 'Tòa nhà hiện tại'}</option>
-            )}
-          </select>
-        </label>
-
-        <label className="flex flex-col gap-1.5">
-          <span className="text-[11px] font-semibold tracking-[0.06em] text-on-surface-variant uppercase">
-            Tầng
-          </span>
-          <select
-            value={floorId ?? ''}
-            onChange={(event) => {
-              setSelectedRoomId(null);
-              navigate(`/buildings/${buildingId}/floors/${event.target.value}`);
-            }}
-            disabled={!snapshot || snapshot.floors.length === 0}
-            className="h-9 w-full rounded-lg border border-outline-variant bg-surface-lowest px-2.5 text-sm text-on-surface focus:border-primary focus:outline-none disabled:opacity-60"
-          >
-            {!floor && <option value="">Chọn tầng</option>}
-            {(snapshot?.floors ?? []).map((item) => (
-              <option key={item.id} value={item.id}>
-                Tầng {item.floorNumber}
-                {item.name !== `Tầng ${item.floorNumber}` ? ` — ${item.name}` : ''}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
 
       {error && (
         <div className="mb-4">
@@ -181,7 +191,7 @@ export function FloorPlanPage() {
       )}
 
       {!loading && floor && (
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
           <section className="rounded-xl border border-outline-variant bg-surface-lowest p-5">
             <header className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2.5">
@@ -197,13 +207,44 @@ export function FloorPlanPage() {
                   </p>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
+              {/* The mockup draws the zoom as one pill and the two view
+                  buttons as separate squares beside it. Every button does
+                  something — the percentage is the reset, so no dead icon. */}
+              <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-0.5 rounded-full border border-outline-variant bg-surface-lowest py-0.5 pr-0.5 pl-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setZoom(zoomOut(zoom))}
+                    aria-label="Thu nhỏ sơ đồ"
+                    className="flex h-7 w-7 items-center justify-center rounded-full text-on-surface-variant transition hover:bg-surface-low disabled:opacity-40"
+                    disabled={zoom <= MIN_ZOOM}
+                  >
+                    <span className="material-symbols-outlined text-base">remove</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setZoom(1)}
+                    title="Đặt lại tỷ lệ"
+                    className="tnum min-w-[52px] rounded-full text-center text-xs font-semibold text-on-surface transition hover:bg-surface-low"
+                  >
+                    {formatZoom(zoom)}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setZoom(zoomIn(zoom))}
+                    aria-label="Phóng to sơ đồ"
+                    className="flex h-7 w-7 items-center justify-center rounded-full text-on-surface-variant transition hover:bg-surface-low disabled:opacity-40"
+                    disabled={zoom >= MAX_ZOOM}
+                  >
+                    <span className="material-symbols-outlined text-base">add</span>
+                  </button>
+                </div>
                 <button
                   type="button"
                   onClick={() => void toggleFullscreen()}
                   aria-label={fullscreen ? 'Thoát toàn màn hình' : 'Xem sơ đồ toàn màn hình'}
                   title={fullscreen ? 'Thoát toàn màn hình' : 'Xem sơ đồ toàn màn hình'}
-                  className="flex h-9 w-9 items-center justify-center rounded-lg border border-outline-variant text-on-surface-variant transition hover:bg-surface-low"
+                  className="flex h-9 w-10 items-center justify-center rounded-lg border border-outline-variant text-on-surface-variant transition hover:bg-surface-low"
                 >
                   <span className="material-symbols-outlined text-base">
                     {fullscreen ? 'fullscreen_exit' : 'fullscreen'}
@@ -211,25 +252,14 @@ export function FloorPlanPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setAddRoomOpen(true)}
-                  disabled={!canManageRooms}
-                  title={
-                    canManageRooms
-                      ? undefined
-                      : 'Tài khoản này chưa được cấp quyền quản lý phòng trên máy chủ.'
-                  }
-                  className="flex h-9 items-center gap-1.5 rounded-lg bg-[#1d4ed8] px-3 text-xs font-semibold text-white transition hover:bg-[#1e40af] disabled:cursor-not-allowed disabled:opacity-50"
+                  onClick={() => setShowGrid((current) => !current)}
+                  aria-pressed={showGrid}
+                  aria-label={showGrid ? 'Ẩn lưới mét' : 'Hiện lưới mét'}
+                  title={showGrid ? 'Ẩn lưới mét' : 'Hiện lưới mét'}
+                  className="flex h-9 w-10 items-center justify-center rounded-lg border border-outline-variant text-on-surface-variant transition hover:bg-surface-low"
                 >
-                  <span className="material-symbols-outlined text-base">add</span>
-                  Thêm phòng
+                  <span className="material-symbols-outlined text-base">grid_on</span>
                 </button>
-                <Link
-                  to={`/buildings/${buildingId}/floors/${floorId}/design`}
-                  className="flex h-9 items-center gap-1.5 rounded-lg border border-outline-variant px-3 text-xs font-semibold text-on-surface-variant transition hover:bg-surface-low"
-                >
-                  <span className="material-symbols-outlined text-base">edit</span>
-                  Sửa sơ đồ
-                </Link>
               </div>
             </header>
 
@@ -247,6 +277,10 @@ export function FloorPlanPage() {
                 selectedId={selectedRoomId}
                 onSelect={setSelectedRoomId}
                 fill={fullscreen}
+                zoom={zoom}
+                onZoomChange={setZoom}
+                showGrid={showGrid}
+                showLegend={false}
               />
 
               {unplacedCount > 0 && unplacedCount < rooms.length && (
@@ -260,9 +294,10 @@ export function FloorPlanPage() {
           <aside className="rounded-xl border border-outline-variant bg-surface-lowest p-5">
             {selectedRoom ? (
               <RoomPanel
+                key={selectedRoom.id}
                 room={selectedRoom}
                 floorNumber={floor.floorNumber}
-                buildingId={buildingId ?? ''}
+                canManage={canManageRooms}
                 onClose={() => setSelectedRoomId(null)}
               />
             ) : (
@@ -277,15 +312,6 @@ export function FloorPlanPage() {
           </aside>
         </div>
       )}
-
-      {floorId && (
-        <RoomFormDialog
-          open={addRoomOpen}
-          mode="create"
-          floorId={floorId}
-          onClose={() => setAddRoomOpen(false)}
-        />
-      )}
     </div>
   );
 }
@@ -293,29 +319,32 @@ export function FloorPlanPage() {
 function RoomPanel({
   room,
   floorNumber,
-  buildingId,
+  canManage,
   onClose,
 }: {
   room: RoomDto;
   floorNumber: number;
-  buildingId: string;
+  canManage: boolean;
   onClose: () => void;
 }) {
   const meta = roomStatusMeta[room.status];
   const equipment = useRoomEquipment(room.id);
   const equipmentRows = equipment.data ?? [];
+  const photos = useRoomPhotos(room.id);
+  const firstPhoto = useMemo(
+    () => [...(photos.data ?? [])].sort((a, b) => a.displayOrder - b.displayOrder)[0],
+    [photos.data],
+  );
+  const photo = useRoomPhotoContent(room.id, firstPhoto?.id ?? '', Boolean(firstPhoto));
+  const photoSrc = photo.data
+    ? `data:${photo.data.contentType};base64,${photo.data.content}`
+    : null;
+  const [editOpen, setEditOpen] = useState(false);
 
   return (
     <div>
       <div className="mb-3 flex items-start justify-between gap-2">
-        <div>
-          <p className="text-xs font-semibold tracking-wide text-on-surface-variant uppercase">
-            Thông tin phòng
-          </p>
-          <h3 className="mt-1 font-display text-xl font-bold text-on-surface">
-            Phòng {room.roomNumber}
-          </h3>
-        </div>
+        <h3 className="font-display text-lg font-bold text-on-surface">Thông tin phòng</h3>
         <button
           type="button"
           onClick={onClose}
@@ -326,45 +355,69 @@ function RoomPanel({
         </button>
       </div>
 
-      <div className="mb-4">
+      {/* The mockup opens the rail with the room's own photograph. A room
+          nobody has photographed keeps a plain frame that says so, rather than
+          borrowing a stock image. */}
+      <div className="mb-3 aspect-[16/9] overflow-hidden rounded-lg border border-outline-variant bg-surface-low">
+        {photoSrc ? (
+          <img
+            src={photoSrc}
+            alt={room.name || `Phòng ${room.roomNumber}`}
+            className="h-full w-full object-cover"
+          />
+        ) : (
+          <div className="flex h-full flex-col items-center justify-center gap-1.5 text-center">
+            <span className="material-symbols-outlined text-2xl text-outline">image</span>
+            <p className="text-xs text-on-surface-variant">
+              {photos.isPending ? 'Đang tải ảnh…' : 'Phòng chưa có ảnh.'}
+            </p>
+          </div>
+        )}
+      </div>
+
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <p className="font-display text-xl font-bold text-on-surface">
+          {room.name || `Phòng ${room.roomNumber}`}
+        </p>
         <StatusBadge tone={meta?.tone ?? 'neutral'} withDot>
           {meta?.label ?? 'Không xác định'}
         </StatusBadge>
       </div>
 
-      <dl className="flex flex-col gap-2.5 text-sm">
+      <dl className="flex flex-col gap-1.5 text-sm">
         <Row icon="layers" label="Tầng" value={`Tầng ${floorNumber}`} />
         <Row
           icon="square_foot"
           label="Diện tích"
-          value={room.area ? `${room.area} m²` : 'Chưa khai báo'}
+          value={room.area ? `${room.area} m²` : 'Chưa cập nhật'}
         />
-        <Row icon="category" label="Tên phòng" value={room.name} />
+        <Row icon="category" label="Hình dạng" value={shapeLabel(room)} />
         <Row
           icon="payments"
           label="Giá thuê"
           value={
             room.monthlyRent === null
-              ? 'Chưa khai báo'
-              : `${formatNumber(room.monthlyRent)} đ/tháng`
+              ? 'Chưa cập nhật'
+              : `${formatVnd(room.monthlyRent)}/tháng`
           }
         />
-        <Row icon="group" label="Sức chứa" value={`${room.capacity} người`} />
-        <Row icon="handyman" label="Thiết bị" value={`${room.equipmentCount} món`} />
-        <Row icon="photo_camera" label="Ảnh" value={`${room.photoCount} ảnh`} />
+        <Row
+          icon="check_circle"
+          label="Trạng thái"
+          value={
+            <span className="inline-flex items-center gap-1.5 font-medium text-[#047857]">
+              <span aria-hidden className="h-2 w-2 rounded-full bg-[#10b981]" />
+              {meta?.label ?? 'Không xác định'}
+            </span>
+          }
+        />
+        <Row icon="location_on" label="Vị trí" value="Chưa cập nhật" />
+        <Row icon="explore" label="Hướng" value="Chưa cập nhật" />
       </dl>
 
-      {room.monthlyRent !== null && (
-        <p className="mt-3 rounded-lg bg-[#ECFDF5] px-3 py-2 text-xs font-semibold text-[#047857] tnum">
-          Khoảng {formatMillions(room.monthlyRent)} / tháng
-        </p>
-      )}
-
-      {room.description && (
-        <p className="mt-3 rounded-lg bg-surface-low px-3 py-2.5 text-xs leading-relaxed text-on-surface-variant">
-          {room.description}
-        </p>
-      )}
+      <p className="mt-2 text-[11px] leading-snug text-on-surface-variant">
+        Vị trí và hướng chưa có trong dữ liệu phòng trên máy chủ nên để trống thay vì tự điền.
+      </p>
 
       {/* The equipment the room actually holds, as the server records it. The
           mockup lists these beside the plan; a bed drawn on the floor is the
@@ -389,11 +442,11 @@ function RoomPanel({
               return (
                 <li
                   key={item.id}
-                  className="flex items-center justify-between gap-2 px-2.5 py-2 text-xs"
+                  className="flex items-center justify-between gap-2 px-2.5 py-1.5 text-xs"
                 >
                   <span className="flex min-w-0 items-center gap-1.5 text-on-surface">
                     <span className="material-symbols-outlined text-base text-on-surface-variant">
-                      {equipmentIcon(item.name)}
+                      {equipmentIcon(item)}
                     </span>
                     <span className="truncate">{item.name}</span>
                   </span>
@@ -412,43 +465,60 @@ function RoomPanel({
         )}
       </div>
 
-      <Link
-        to={`/rooms/${room.id}`}
-        className="mt-4 flex h-9 items-center justify-center gap-1.5 rounded-lg bg-[#1d4ed8] text-xs font-semibold text-white transition hover:bg-[#1e40af]"
-      >
-        <span className="material-symbols-outlined text-base">open_in_new</span>
-        Xem chi tiết phòng
-      </Link>
+      <div className="mt-3 flex gap-2">
+        <button
+          type="button"
+          onClick={() => setEditOpen(true)}
+          disabled={!canManage}
+          title={
+            canManage ? undefined : 'Tài khoản này chưa được cấp quyền quản lý phòng trên máy chủ.'
+          }
+          className="flex h-9 flex-1 items-center justify-center gap-1.5 rounded-lg border border-outline-variant text-sm font-semibold text-on-surface-variant transition hover:bg-surface-low disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <span className="material-symbols-outlined text-base">edit</span>
+          Chỉnh sửa
+        </button>
+        <button
+          type="button"
+          disabled
+          title={BOOKING_BLOCKED_HINT}
+          className="flex h-9 flex-1 items-center justify-center gap-1.5 rounded-lg bg-[#1d4ed8] text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          <span className="material-symbols-outlined text-base">event_available</span>
+          Đặt phòng
+        </button>
+      </div>
 
-      {buildingId && (
-        <p className="mt-3 border-t border-outline-variant pt-3 text-[11px] leading-relaxed text-on-surface-variant">
-          Hợp đồng, hoá đơn và bảo trì chưa có API công khai trên máy chủ nên chưa hiển thị ở
-          đây.
-        </p>
-      )}
+      <RoomFormDialog
+        open={editOpen}
+        mode="edit"
+        initial={room}
+        onClose={() => setEditOpen(false)}
+      />
     </div>
   );
 }
 
-/**
- * Equipment is free text on the server, so the icon is matched on the name the
- * owner typed. Anything unrecognised gets a neutral wrench rather than an
- * empty box.
- */
-function equipmentIcon(name: string): string {
-  const text = name.toLowerCase();
-  if (/máy lạnh|điều hoà|điều hòa/.test(text)) return 'ac_unit';
-  if (/giường/.test(text)) return 'bed';
-  if (/tủ quần áo|tủ áo/.test(text)) return 'checkroom';
-  if (/bàn/.test(text)) return 'desk';
-  if (/bình nóng lạnh|nóng lạnh/.test(text)) return 'water_heater';
-  if (/vệ sinh|toilet|wc/.test(text)) return 'wc';
-  if (/tivi|tv/.test(text)) return 'tv';
-  if (/tủ lạnh/.test(text)) return 'kitchen';
-  return 'handyman';
+/** `layoutShape` is the only shape fact the server keeps about a room. */
+function shapeLabel(room: RoomDto): string {
+  if (room.layoutShape === 2) {
+    return 'Đa giác';
+  }
+  if (room.layoutShape === 1) {
+    return 'Hình chữ nhật';
+  }
+  return 'Chưa cập nhật';
 }
 
-function Row({ icon, label, value }: { icon: string; label: string; value: string }) {
+function Row({
+  icon,
+  label,
+  value,
+}: {
+  icon: string;
+  label: string;
+  value: ReactNode;
+}) {
   return (
     <div className="flex items-center justify-between gap-3">
       <span className="flex items-center gap-1.5 text-on-surface-variant">

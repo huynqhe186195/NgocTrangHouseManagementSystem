@@ -966,6 +966,27 @@
 
 ---
 
+### P4.15 ✅ "Loại phòng" in the Designer's Profile Panel — MERGED `70c7b33`
+**Status:** DONE, merged into `main` at `70c7b33`. The Owner asked what the "Loại phòng" row meant, then said "Thêm đi". §7 asks the designer's right-hand panel for the room's type; the panel showed the name, area, rent, capacity and shape but not the type, even though `RoomDto.RoomType` had been there since P4.13.
+**What changed (2 files + harness):**
+- `FloorDesignerPage.tsx` — one row: `<SummaryRow label="Loại phòng" value={room.roomType ?? '—'} />`, between "Tên phòng" and "Diện tích". The `—` fallback matches the rent row directly below it, so a room with no type reads as unknown rather than blank. Nothing else in the panel or the toolbar was touched; a "Hướng" row was drafted alongside it and reverted, because §7 does not ask the designer for it and the room form already owns that field.
+- `FloorDesignerPage.test.tsx` — 1 new case (11 total): two rooms, one typed and one not; the row must show the stored string for the first and `—` for the second. Written scoped with `within()` around the row's own `div` so it cannot be satisfied by the room number or the page title.
+- `etc/scripts/capture-p53-designer-panel.mjs` (untracked) — seeds a building, a storey, room 101 with `roomType` "Phòng tiêu chuẩn" and room 102 with `null`, places both with a corridor, then selects each room on the canvas and shoots both states at the four widths.
+**A test that would not have caught the bug, caught:** the first version of the case asserted only that "Phòng tiêu chuẩn" was on screen after a drop — true for a hardcoded constant too. It was rewritten to scope to the "Loại phòng" row and assert both the typed and the empty state, then mutation-checked: replacing the row with `value="Phòng tiêu chuẩn"` turns it red (`1 failed | 10 passed`), restoring the real code turns it green.
+**A capture bug the first render exposed:** the harness clicked `svg rect` first, which landed on grid background rather than the room, so the very first screenshot showed the empty panel — "Chọn một phòng hoặc vật thể" — and would have been reported as if it proved the row. The room's hit area carries `role="button"` with the room number as its accessible name, so the selector now targets `[aria-label="Khu vực thiết kế sơ đồ tầng"] [role="button"][aria-label="101"]`; scoping to the canvas keeps it off the identically-numbered row in the left-hand room list.
+**Honest gaps (PARTIAL, not faked):**
+- **Room type is still free text.** The field is a nullable 64-char string (P4.13), not a picker, so two rooms can be typed "Phòng tiêu chuẩn" and "phòng tiêu chuẩn". §9 forbids inventing a price/status taxonomy, and the Owner has not asked for a fixed list, so the panel prints what the server holds.
+- **Real photographs** — unchanged from P4.14; owner-supplied assets, not code.
+**Evidence:**
+- ✅ `tsc --noEmit` exit 0; `npx vitest run` **188/188 in 16 files**; `npm run build` succeeds
+- ✅ Eight rendered captures in `etc/captures/p53/` — `designer-room-type-{1448x1086,1280x800,1024x768,390x844}.png` and the matching `designer-room-type-empty-*` — produced by `etc/scripts/capture-p53-designer-panel.mjs`
+- ✅ Every capture opened: at 1448 room 101 reads "Loại phòng — Phòng tiêu chuẩn" with "Giá thuê — 3.500.000 đ/tháng", room 102 reads "Loại phòng — —"; at 390 the panel stacks below the canvas and the row still reads "Loại phòng — Phòng tiêu chuẩn" with no horizontal overflow
+- ✅ The script reads the admin password from `LANE_ADMIN_PASSWORD` and never writes it down
+**Blocker:** None.
+**Dependency:** P4.13 ✅ (the schema and the field this row reads), P4.11 ✅ (the designer screen the row lives on)
+
+---
+
 ## NOT IN BACKLOG (Already Fixed — Do Not Repeat)
 
 - ❌ CS0117 Convert.TryFromHexString → Fixed at `0702e0db`

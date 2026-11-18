@@ -920,6 +920,30 @@
 
 ---
 
+### P4.13 ✅ Room Type, Direction and the Published Prices — COMMITTED `58d6515` (not pushed)
+**Status:** DONE in the working tree (committed, not pushed). The previous four screen rebuilds each carried the same honest PARTIAL: `RoomDto` had no room-type or direction column, and there was nowhere to store house rules or published electricity / water / service-fee prices, so the screens printed "Chưa cập nhật" and "chưa được công bố". The Owner named those gaps and authorised the schema change ("thêm trường Loại phòng và Hướng vào RoomDto; thêm bảng cài đặt giá điện/nước/dịch vụ và nội quy nhà trọ … Làm luôn đi"), so this slice closes all three.
+**What changed (three commits, 38 files):**
+- `8104efa` / `9768d13` — backend. `Room` gains `RoomType` (free text, nullable, 64 chars) and `Direction` (nullable enum 1..8 clockwise from North). Both nullable on purpose: existing rows hold no such information and not every room in the mockups is oriented, so "chưa xác định" has to be a real state rather than a default that would invent data. New `BuildingPublicInfo` aggregate per building: three nullable `decimal(18,0)` prices, a 1000-char note, and up to twenty house rules stored as JSON, each carrying one of four icons. Reads go through `BuildingBusinessCapability.ReadBuilding` and writes through `ManageBuilding` via the existing building-access service, so a grant on one building cannot touch another. `BuildingPublicInfoAppService` joins the conventional-controller allowlist and is pinned by AUTHMODEL07; new APIAUTO15 proves GET and PUT both answer 403 to an authenticated caller holding no grant.
+- `58d6515` — frontend. The tenant search reads "Hướng" and "Loại phòng" from the room and the "Quy định nhà trọ" / "Thông tin khác" blocks from the published row, keeping the dashed notices only for when the data genuinely is absent. Prices render only when non-null — a null printed as "0 đ" would read as free rather than not announced. The room form and room detail gained both fields. A new `BuildingPublicInfoDialog` edits the prices, the note and an add/remove rule list, reached from the building row menu behind the same `canManageBuilding` check the server enforces; it states plainly that these figures are published information and do not change invoicing.
+**Why `BuildingPublicInfo` is not an extension of `UtilityRate`:** `UtilityRate` prices metered consumption for invoicing. These are published list prices read by tenants who have no billing access, they are edited as one block by the same person, and grouping them means one authorisation check covers the whole published block instead of two that could drift apart.
+**A defect only the rendered capture showed:** the price rows first read "3.500 đ đ/kWh", because `formatVnd` already appends " đ" and the unit string appended it again. The unit test asserted the same wrong string, so vitest was green; the rendered PNG was not. The fixture now asserts `3.500 đ/kWh` with one " đ".
+**Honest gaps (PARTIAL, not faked):**
+- **Real photographs** — cover and room photography still do not exist in the repository; the captures upload generated PNGs through the real endpoints. Unchanged by this slice.
+- **Placed room coordinates** — the thumbnail still draws ten of each storey's fifteen-plus rooms; the rest exist and are counted but have no coordinates. Belongs to the designer screen.
+- **Plan tinting** — the mockup tints rooms by room type and the plan tints by status. Now that `RoomType` exists this could follow the mockup, but tinting by type would lose the status signal the building and plan screens rely on, so it stays a documented difference pending an Owner decision.
+- **Rule ordering** — rules keep their posted order; there is no reorder control, only add and remove.
+**Evidence:**
+- ✅ `dotnet build` 0 errors; Domain **774/774**, Application **247/247**, EF Core **447/447**, HttpApi.Host **76/76**
+- ✅ `tsc --noEmit` exit 0; `npx vitest run` **185/185 in 16 files**; `npm run build` succeeds
+- ✅ Four rendered captures of `/search?room=<id>` at 1448×1086 / 1280×800 / 1024×768 / 390×844 in `etc/captures/p53/`, produced by `etc/scripts/capture-p53-tenant-room.mjs` (seeds two storeys, room 203 with `roomType` "Phòng tiêu chuẩn" and direction 4 = Đông Nam, seven neighbours, the floor outline plus corridor and stair, eight amenities, six photos, and the published prices with six rules)
+- ✅ §10 state evidence in the same directory: empty (a building with zero rooms, plus a storey list with nothing in it) at 1448 and 390, and loading / error / denied at 1448 forced against the real endpoint in three separate browser contexts
+- ✅ Every capture opened and compared against `Anh_2_nguyen_goc.png`; the doubled " đ", the placeholder notices that should now be real values, and the states bleeding into each other were all found that way and re-shot after fixing
+- ✅ Every script reads the admin password from `LANE_ADMIN_PASSWORD` and never writes it down
+**Blocker:** None for this slice. Real photography and placed-room coordinates remain the two PARTIALs.
+**Dependency:** P4.10 ✅ (the tenant room screen this fills in), P4.12 ✅ (the building screen whose row menu gained the dialog), P4.5 ✅ (the schema this extends)
+
+---
+
 ## NOT IN BACKLOG (Already Fixed — Do Not Repeat)
 
 - ❌ CS0117 Convert.TryFromHexString → Fixed at `0702e0db`

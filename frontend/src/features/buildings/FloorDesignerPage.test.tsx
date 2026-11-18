@@ -48,6 +48,8 @@ function room(overrides: Partial<RoomDto> = {}): RoomDto {
     capacity: 2,
     status: 1,
     description: null,
+    roomType: null,
+    direction: null,
     monthlyRent: null,
     layoutX: null,
     layoutY: null,

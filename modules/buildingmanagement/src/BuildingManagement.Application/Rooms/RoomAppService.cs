@@ -76,7 +76,9 @@ namespace BuildingManagement.Rooms
                 await EnsureRoomNumberUniqueAsync(input.FloorId, input.RoomNumber);
                 var room = new Room(GuidGenerator.Create(), input.FloorId,
                     input.RoomNumber, input.Name, input.Area, input.Capacity,
-                    input.Status, input.Description);
+                    input.Status, input.Description,
+                    NormalizeRoomType(input.RoomType),
+                    ValidateDirection(input.Direction));
                 await _roomRepository.InsertAsync(room, autoSave: true);
                 return ObjectMapper.Map<Room, RoomDto>(room);
             }, BuildingScopedMutationKind.Room);
@@ -160,7 +162,9 @@ namespace BuildingManagement.Rooms
                 await EnsureRoomNumberUniqueAsync(room.FloorId,
                     input.RoomNumber, room.Id);
                 room.Update(input.RoomNumber, input.Name, input.Area,
-                    input.Capacity, input.Status, input.Description);
+                    input.Capacity, input.Status, input.Description,
+                    NormalizeRoomType(input.RoomType),
+                    ValidateDirection(input.Direction));
                 await _roomRepository.UpdateAsync(room, autoSave: true);
                 return ObjectMapper.Map<Room, RoomDto>(room);
             }, BuildingScopedMutationKind.Room);
@@ -447,6 +451,18 @@ namespace BuildingManagement.Rooms
                 throw new BusinessException(
                     BuildingManagementErrorCodes.InvalidRoomEquipmentQuantity)
                     .WithData("Quantity", quantity);
+        }
+
+        private static string? NormalizeRoomType(string? roomType)
+            => string.IsNullOrWhiteSpace(roomType) ? null : roomType.Trim();
+
+        private static RoomDirection? ValidateDirection(RoomDirection? direction)
+        {
+            if (direction.HasValue && !Enum.IsDefined(direction.Value))
+                throw new BusinessException(
+                    BuildingManagementErrorCodes.InvalidRoomDirection)
+                    .WithData("Direction", (int)direction.Value);
+            return direction;
         }
 
         private async Task<Guid> ResolveBuildingAsync(

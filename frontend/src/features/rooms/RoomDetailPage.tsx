@@ -30,7 +30,7 @@ import {
 } from '../../lib/api/buildingQueries';
 import { describeMutationError } from '../../lib/api/mutationErrors';
 import { fileToBase64, roomsApi } from '../../lib/api/buildingApi';
-import { equipmentConditionMeta, roomStatusMeta } from '../../lib/api/types';
+import { equipmentConditionMeta, roomDirectionLabels, roomStatusMeta } from '../../lib/api/types';
 import type { RoomEquipmentDto, RoomPhotoDto } from '../../lib/api/types';
 import { formatVnd } from '../../lib/format';
 import { FloorPlan } from '../buildings/FloorPlan';
@@ -310,6 +310,12 @@ export function RoomDetailPage() {
               }
             />
             <Row icon="group" label="Sức chứa" value={`${room.capacity} người`} />
+            <Row
+              icon="explore"
+              label="Hướng"
+              value={room.direction === null ? '—' : roomDirectionLabels[room.direction]}
+            />
+            <Row icon="meeting_room" label="Loại phòng" value={room.roomType ?? '—'} />
             <Row icon="photo_camera" label="Ảnh" value={`${room.photoCount} ảnh`} />
             <Row icon="handyman" label="Thiết bị" value={`${room.equipmentCount} món`} />
           </dl>

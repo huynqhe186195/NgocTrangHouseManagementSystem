@@ -51,6 +51,8 @@ function room(id: string, floorId: string, roomNumber: string, status: 1 | 2 | 3
     capacity: 2,
     status,
     description: null,
+    roomType: null,
+    direction: null,
     monthlyRent: null,
     layoutX: null,
     layoutY: null,

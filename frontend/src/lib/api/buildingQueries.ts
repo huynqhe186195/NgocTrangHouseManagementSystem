@@ -4,6 +4,7 @@ import type {
   BuildingDto,
   BuildingPhotoDto,
   BuildingPhotoFileDto,
+  BuildingPublicInfoDto,
   CreateBuildingInput,
   CreateFloorInput,
   CreateFloorLayoutItemInput,
@@ -16,6 +17,7 @@ import type {
   RoomPhotoDto,
   RoomPhotoFileDto,
   UpdateBuildingInput,
+  UpdateBuildingPublicInfoInput,
   UpdateFloorInput,
   UpdateFloorLayoutItemInput,
   UpdateRoomEquipmentInput,
@@ -36,6 +38,7 @@ const keys = {
   floorLayout: (floorId: string) => ['floor-layout', floorId] as const,
   buildingPhotoContent: (buildingId: string) =>
     ['building-photo-content', buildingId] as const,
+  buildingPublicInfo: (buildingId: string) => ['building-public-info', buildingId] as const,
 };
 
 /**
@@ -208,6 +211,24 @@ export function useDeleteRoom() {
   return useMutation<void, unknown, string>({
     mutationFn: (id) => roomsApi.remove(id),
     onSuccess: invalidate,
+  });
+}
+
+export function useBuildingPublicInfo(buildingId: string | undefined) {
+  return useQuery<BuildingPublicInfoDto | null>({
+    queryKey: keys.buildingPublicInfo(buildingId ?? ''),
+    queryFn: () => buildingsApi.getPublicInfo(buildingId!),
+    enabled: Boolean(buildingId),
+  });
+}
+
+export function useUpdateBuildingPublicInfo(buildingId: string) {
+  const queryClient = useQueryClient();
+  return useMutation<BuildingPublicInfoDto, unknown, UpdateBuildingPublicInfoInput>({
+    mutationFn: (input) => buildingsApi.updatePublicInfo(buildingId, input),
+    onSuccess: (data) => {
+      queryClient.setQueryData(keys.buildingPublicInfo(buildingId), data);
+    },
   });
 }
 

@@ -36,6 +36,21 @@ vi.mock('../../lib/api/buildingQueries', () => ({
   useRoomPhotos: () => ({ data: [], isLoading: false }),
   useRoomEquipment: () => ({ data: [], isLoading: false }),
   useFloorLayoutItems: () => ({ data: [], isLoading: false }),
+  useBuildingPublicInfo: () => ({
+    data: {
+      buildingId: 'b1',
+      electricityUnitPrice: 3500,
+      waterUnitPrice: 100000,
+      serviceFee: 150000,
+      otherInfo: null,
+      houseRules: [
+        { icon: 1, text: 'Không nuôi thú cưng' },
+        { icon: 2, text: 'Giờ yên tĩnh 22:00-06:00' },
+      ],
+    },
+    isLoading: false,
+    error: null,
+  }),
 }));
 
 vi.mock('../../lib/api/buildingApi', () => ({
@@ -56,6 +71,8 @@ function room(overrides: Partial<RoomDto> = {}): RoomDto {
     capacity: 2,
     status: 1,
     description: null,
+    roomType: 'Phòng tiêu chuẩn',
+    direction: 4,
     monthlyRent: 3500000,
     layoutX: null,
     layoutY: null,
@@ -152,7 +169,7 @@ describe('RoomSearchPage', () => {
     expect(screen.getByText('Chưa có phòng trống phù hợp')).toBeTruthy();
   });
 
-  it('fills the mockup structure and blanks the fields the server does not have', () => {
+  it('fills the mockup structure from the server payload', () => {
     floorsData.current = [floor];
     roomsData.current = [room()];
 
@@ -162,9 +179,11 @@ describe('RoomSearchPage', () => {
       screen.getByText('Tòa nhà Ngọc Trang Building · Tầng 2 · Mã phòng: A203'),
     ).toBeTruthy();
 
-    // Direction and room type have no column on the server, so they stay blank
-    // instead of being invented.
-    expect(screen.getAllByText('Chưa cập nhật')).toHaveLength(2);
+    // Direction and room type now have real columns, so the pane reads them
+    // instead of falling back to a blank.
+    expect(screen.getAllByText('Đông Nam').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Phòng tiêu chuẩn').length).toBeGreaterThan(0);
+    expect(screen.queryByText('Chưa cập nhật')).toBeNull();
 
     for (const heading of [
       'Thông tin phòng',
@@ -176,7 +195,12 @@ describe('RoomSearchPage', () => {
       expect(screen.getByText(heading)).toBeTruthy();
     }
 
-    expect(screen.getByText(/Đơn giá điện, nước và phí dịch vụ chưa được công bố/)).toBeTruthy();
+    // The published prices and rules come from the settings table.
+    expect(screen.getByText('3.500 đ/kWh')).toBeTruthy();
+    expect(screen.getByText('100.000 đ/người/tháng')).toBeTruthy();
+    expect(screen.getByText('150.000 đ/phòng/tháng')).toBeTruthy();
+    expect(screen.getByText('Không nuôi thú cưng')).toBeTruthy();
+    expect(screen.getByText('Giờ yên tĩnh 22:00-06:00')).toBeTruthy();
   });
 
   it('opens the room named in the URL so a shared link lands on it', () => {

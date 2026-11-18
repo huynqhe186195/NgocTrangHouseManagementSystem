@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import type { FloorLayoutItemDto, FloorDto, RoomDto } from '../../lib/api/types';
 import type { BuildingSnapshot } from '../../lib/api/buildingQueries';
@@ -263,6 +263,29 @@ describe('FloorDesignerPage', () => {
       roomId: 'r1',
       input: { rotationDegrees: 90 },
     });
+  });
+
+  it('shows the room type the server holds, and a dash when it holds none', () => {
+    const typed = room({ roomType: 'Phòng tiêu chuẩn' });
+    const untyped = room({ id: 'r2', roomNumber: 'A102' });
+    snapshot = {
+      ...snapshot,
+      rooms: [typed, untyped],
+      roomsByFloor: new Map([['f1', [typed, untyped]]]),
+    };
+
+    renderPage();
+
+    // Selecting a room opens its profile panel. The row has to read the stored
+    // value rather than a constant — and a room with no type must say so, the
+    // way the empty rent row above it does.
+    dropOnCanvas({ 'application/x-room-id': 'r1' });
+    const withType = screen.getByText('Loại phòng').closest('div') as HTMLElement;
+    expect(within(withType).getByText('Phòng tiêu chuẩn')).toBeTruthy();
+
+    dropOnCanvas({ 'application/x-room-id': 'r2' });
+    const withoutType = screen.getByText('Loại phòng').closest('div') as HTMLElement;
+    expect(within(withoutType).getByText('—')).toBeTruthy();
   });
 
   it('drops a wall with a straight centreline it can then be bent from', async () => {

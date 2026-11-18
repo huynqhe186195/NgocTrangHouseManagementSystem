@@ -1218,6 +1218,7 @@ function PropertyPanel({
         {/* Read-only profile, the same rows mockup 3 shows above the geometry. */}
         <dl className="mb-4 flex flex-col gap-1.5 border-b border-outline-variant pb-3 text-xs">
           <SummaryRow label="Tên phòng" value={room.name} />
+          <SummaryRow label="Loại phòng" value={room.roomType ?? '—'} />
           <SummaryRow label="Diện tích" value={room.area ? `${room.area} m²` : '—'} />
           <SummaryRow
             label="Giá thuê"

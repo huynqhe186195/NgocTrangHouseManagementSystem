@@ -202,7 +202,10 @@ describe('BuildingDetailPage', () => {
   it('says a floor has no plan instead of inventing one', () => {
     renderPage();
 
-    expect(screen.getAllByText('Chưa có sơ đồ')).toHaveLength(3);
+    // The storey list renders twice — as the `xl` table and as the card list
+    // below it — so the message appears once per storey in each view.
+    const table = screen.getByRole('table');
+    expect(within(table).getAllByText('Chưa có sơ đồ')).toHaveLength(3);
   });
 
   it('paginates five rows at a time and reports the visible range', () => {

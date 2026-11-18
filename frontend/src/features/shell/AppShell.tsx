@@ -4,6 +4,29 @@ import { useAuth } from '../../lib/auth/AuthProvider';
 import { navigationFor, resolveShellRole, type NavItem } from './navigation';
 
 /**
+ * The mockup's brand mark is a green hexagonal badge with a house struck out
+ * of it, drawn at 37x42. The logo file is a 1376x768 lockup, so squeezing it
+ * into a 36 px square left it unrecognisable; this redraws the badge at the
+ * mockup's own proportions and colour (#13BE7B).
+ */
+function BrandMark({ className = '' }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 37 42" aria-hidden className={`shrink-0 ${className}`}>
+      <path d="M18.5 0 L36.5 10.7 V31.3 L18.5 42 L0.5 31.3 V10.7 Z" fill="#13BE7B" />
+      <path
+        d="M11.5 27.5 V18 L18.5 10.5 L25.5 18 V27.5"
+        fill="none"
+        stroke="#0F1D33"
+        strokeWidth="5"
+        strokeLinejoin="miter"
+        strokeLinecap="butt"
+      />
+      <rect x="18" y="23.5" width="3" height="4.8" fill="#0F1D33" />
+    </svg>
+  );
+}
+
+/**
  * Two shells, not one: the mockup draws a different sidebar for the
  * administration and the tenant. Which one is shown comes from the claims the
  * server issued; the backend remains the final authority on every call.
@@ -59,16 +82,19 @@ export function AppShell() {
           (navOpen ? 'lg:w-[238px]' : 'lg:w-[76px]')
         }
       >
-        <div className={'flex items-center gap-3 py-5 ' + (navOpen ? 'px-5' : 'lg:justify-center lg:px-2')}>
-          <img
-            src="/ngoc-trang-logo.png"
-            alt=""
-            className="h-9 w-9 shrink-0 rounded-lg bg-white object-contain p-0.5"
-          />
+        <div
+          className={
+            'flex items-center gap-[19px] py-[17px] ' +
+            (navOpen ? 'pl-[26px]' : 'lg:justify-center lg:px-2')
+          }
+        >
+          <BrandMark className="h-[42px] w-[37px]" />
           {navOpen && (
             <div className="leading-tight">
-              <p className="font-display text-sm font-bold">Ngọc Trang</p>
-              <p className="text-[10px] text-white/60">Hệ thống quản lý nhà trọ</p>
+              <p className="font-display text-xl font-bold">Ngọc Trang</p>
+              <p className="mt-1.5 whitespace-nowrap text-xs text-white/60">
+                Hệ thống quản lý nhà trọ
+              </p>
             </div>
           )}
         </div>

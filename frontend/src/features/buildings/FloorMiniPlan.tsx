@@ -14,8 +14,9 @@ interface FloorMiniPlanProps {
   items?: FloorLayoutItemDto[];
   /** Height in CSS pixels; the width follows the plan's own aspect ratio. */
   height?: number;
+  /** Longest side in CSS pixels, so a deep plan cannot tower over its row. */
+  maxWidth?: number;
 }
-
 /**
  * The row thumbnail on the building screen. It is drawn from exactly the
  * geometry the floor plan screen uses — the same `buildPlanGeometry`, the same
@@ -25,7 +26,7 @@ interface FloorMiniPlanProps {
  * A floor whose rooms have no coordinates yet says so instead of drawing an
  * invented plan.
  */
-export function FloorMiniPlan({ rooms, items = [], height = 62 }: FloorMiniPlanProps) {
+export function FloorMiniPlan({ rooms, items = [], height = 55, maxWidth = 168 }: FloorMiniPlanProps) {
   const plan = useMemo(() => buildPlanGeometry(rooms, items), [rooms, items]);
 
   if (rooms.length === 0) {
@@ -56,11 +57,22 @@ export function FloorMiniPlan({ rooms, items = [], height = 62 }: FloorMiniPlanP
     <svg
       viewBox={`${bounds.minX} ${bounds.minY} ${bounds.width} ${bounds.height}`}
       height={height}
+      style={{ maxWidth }}
       preserveAspectRatio="xMidYMid meet"
       role="img"
       aria-label={`Sơ đồ mặt bằng thu nhỏ: ${plan.rooms.length} phòng`}
       className="rounded border border-outline-variant bg-white"
     >
+      {/* Floor slab behind everything, so the corridor reads as a light surface
+          rather than as white space between two rows of rooms. */}
+      <rect
+        x={bounds.minX}
+        y={bounds.minY}
+        width={bounds.width}
+        height={bounds.height}
+        fill="#FBFDFF"
+      />
+
       {/* Walls first, rooms painted over them: shared partitions then read as
           one band and the storey outline is whatever wall the owner placed. */}
       {plan.rooms.map((room) => (

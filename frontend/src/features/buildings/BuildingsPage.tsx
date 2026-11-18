@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Alert } from '../../components/ui/Alert';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
+import { Dialog } from '../../components/ui/Dialog';
 import { EmptyState } from '../../components/ui/EmptyState';
 import { PageHeader } from '../../components/ui/PageHeader';
 import { StatTile } from '../../components/ui/StatTile';
@@ -136,6 +137,7 @@ export function BuildingDetailPage() {
 
   const deleteFloor = useDeleteFloor();
   const deleteBuilding = useDeleteBuilding();
+  const removePhoto = useDeleteBuildingPhoto(buildingId ?? '');
 
   const floorDeleteError = describeMutationError(deleteFloor.error, 'floor', 'delete');
   const buildingDeleteError = describeMutationError(deleteBuilding.error, 'building', 'delete');
@@ -216,7 +218,7 @@ export function BuildingDetailPage() {
                     </p>
                   </div>
 
-                  <div className="flex shrink-0 items-center gap-2">
+                  <div className="flex shrink-0 flex-wrap items-center gap-2">
                     <ActionButton
                       onClick={() => setBuildingDialogOpen(true)}
                       allowed={canManageBuilding}
@@ -237,6 +239,25 @@ export function BuildingDetailPage() {
                     <RowMenu
                       label="Thao tác khác của tòa nhà"
                       items={[
+                        {
+                          label: 'Xoá ảnh tòa nhà',
+                          icon: 'hide_image',
+                          disabled: !canManageBuilding || !snapshot.building.hasPhoto,
+                          disabledHint: !canManageBuilding
+                            ? 'Tài khoản này chưa được cấp quyền quản lý tòa nhà trên máy chủ.'
+                            : 'Tòa nhà chưa có ảnh để xoá.',
+                          onSelect: () =>
+                            removePhoto.mutate(undefined, {
+                              onError: (error) => {
+                                const view = describeMutationError(
+                                  error,
+                                  'buildingPhoto',
+                                  'delete',
+                                );
+                                setPhotoError(view?.formError ?? 'Không xoá được ảnh tòa nhà.');
+                              },
+                            }),
+                        },
                         {
                           label: 'Xoá tòa nhà',
                           icon: 'delete',
@@ -259,7 +280,7 @@ export function BuildingDetailPage() {
 
                 <div className="mt-4 grid grid-cols-2 gap-3 xl:grid-cols-4">
                   <StatTile
-                    icon="layers"
+                    icon="domain"
                     value={String(snapshot.floors.length)}
                     label="Tổng số tầng"
                     tone="primary"
@@ -281,6 +302,7 @@ export function BuildingDetailPage() {
                     value={`${snapshot.occupancyRate}%`}
                     label="Tỷ lệ lấp đầy"
                     tone="orange"
+                    chip={false}
                   />
                 </div>
               </div>
@@ -314,12 +336,74 @@ export function BuildingDetailPage() {
               </div>
             ) : (
               <>
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[980px] border-collapse text-sm">
+                {/* Below `xl` the six-column table cannot hold the plan drawing
+                    and the three row actions at once — at 1024 the action cell
+                    was being clipped by the card edge. These cards carry the
+                    same fields and drive the same handlers, so no function is
+                    lost; from `md` they sit two across, which keeps the storey
+                    list short at tablet width. */}
+                <ul className="grid grid-cols-1 divide-y divide-outline-variant md:grid-cols-2 md:divide-y-0 md:[&>li:nth-child(2n)]:border-l md:[&>li]:border-t xl:hidden">
+                  {visibleFloors.map((floor) => {
+                    const floorRooms = snapshot.roomsByFloor.get(floor.id) ?? [];
+                    return (
+                      <li key={floor.id} className="flex flex-col gap-3 border-outline-variant p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="font-semibold text-on-surface">
+                              Tầng {floor.floorNumber}
+                            </p>
+                            {floor.name !== `Tầng ${floor.floorNumber}` && (
+                              <p className="text-xs text-on-surface-variant">{floor.name}</p>
+                            )}
+                            <p className="mt-1 text-xs text-on-surface-variant">
+                              {floorRooms.length} phòng
+                            </p>
+                          </div>
+                          <FloorStatusBadge status={floor.status} />
+                        </div>
+
+                        <FloorMiniPlan
+                          rooms={floorRooms}
+                          items={layoutByFloor.get(floor.id) ?? []}
+                          height={72}
+                        />
+
+                        {floor.description && (
+                          <p className="text-xs leading-relaxed text-on-surface-variant">
+                            {floor.description}
+                          </p>
+                        )}
+
+                        <div className="flex flex-wrap items-center gap-2">
+                          <FloorActions
+                            buildingId={snapshot.building.id}
+                            floor={floor}
+                            canManageFloors={canManageFloors}
+                            onEdit={() => setFloorDialog({ mode: 'edit', floor })}
+                            onDesign={() =>
+                              navigate(
+                                `/buildings/${snapshot.building.id}/floors/${floor.id}/design`,
+                              )
+                            }
+                            onDelete={() => {
+                              deleteFloor.reset();
+                              setFloorDeleteTarget(floor);
+                            }}
+                          />
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+
+                <div className="hidden overflow-x-auto xl:block">
+                  <table className="w-full border-collapse text-sm">
                     <thead>
                       <tr className="bg-[#EFF4FF] text-left text-xs font-semibold text-on-surface-variant">
                         <th className="whitespace-nowrap px-4 py-3">Tầng</th>
-                        <th className="whitespace-nowrap px-4 py-3">Sơ đồ mặt bằng</th>
+                        {/* 194 px of column minus the 2 x 16 px cell padding
+                            leaves the mockup's 162 px-wide plan drawing. */}
+                        <th className="w-[194px] whitespace-nowrap px-4 py-3">Sơ đồ mặt bằng</th>
                         <th className="whitespace-nowrap px-4 py-3">Số phòng</th>
                         <th className="whitespace-nowrap px-4 py-3">Trạng thái</th>
                         <th className="whitespace-nowrap px-4 py-3">Ghi chú</th>
@@ -332,11 +416,13 @@ export function BuildingDetailPage() {
                         return (
                           <tr key={floor.id} className="border-t border-outline-variant">
                             <td className="px-4 py-3.5">
-                              <p className="font-semibold text-on-surface">
+                              <p className="whitespace-nowrap font-semibold text-on-surface">
                                 Tầng {floor.floorNumber}
                               </p>
                               {floor.name !== `Tầng ${floor.floorNumber}` && (
-                                <p className="text-xs text-on-surface-variant">{floor.name}</p>
+                                <p className="whitespace-nowrap text-xs text-on-surface-variant">
+                                  {floor.name}
+                                </p>
                               )}
                             </td>
                             <td className="px-4 py-3.5">
@@ -349,52 +435,28 @@ export function BuildingDetailPage() {
                             <td className="px-4 py-3.5">
                               <FloorStatusBadge status={floor.status} />
                             </td>
-                            <td className="max-w-[240px] px-4 py-3.5 text-xs leading-relaxed text-on-surface-variant">
+                            <td
+                              className="max-w-[240px] px-4 py-3.5 text-xs leading-relaxed text-on-surface-variant"
+                              title={floor.description ?? undefined}
+                            >
                               {floor.description ?? '—'}
                             </td>
                             <td className="px-4 py-3.5">
                               <div className="flex items-center gap-2 whitespace-nowrap">
-                                <Link
-                                  to={`/buildings/${snapshot.building.id}/floors/${floor.id}`}
-                                  className="inline-flex h-9 items-center gap-1.5 whitespace-nowrap rounded-lg border border-outline-variant px-3 text-xs font-semibold text-[#1d4ed8] transition hover:bg-surface-low"
-                                >
-                                  <span className="material-symbols-outlined text-base">
-                                    visibility
-                                  </span>
-                                  Xem sơ đồ
-                                </Link>
-                                <SmallButton
-                                  onClick={() => setFloorDialog({ mode: 'edit', floor })}
-                                  allowed={canManageFloors}
-                                  deniedHint="Tài khoản này chưa được cấp quyền quản lý tầng trên máy chủ."
-                                  icon="edit"
-                                >
-                                  Chỉnh sửa
-                                </SmallButton>
-                                <RowMenu
-                                  label={`Thao tác khác của tầng ${floor.floorNumber}`}
-                                  items={[
-                                    {
-                                      label: 'Thiết kế sơ đồ',
-                                      icon: 'design_services',
-                                      onSelect: () =>
-                                        navigate(
-                                          `/buildings/${snapshot.building.id}/floors/${floor.id}/design`,
-                                        ),
-                                    },
-                                    {
-                                      label: 'Xoá tầng',
-                                      icon: 'delete',
-                                      danger: true,
-                                      disabled: !canManageFloors,
-                                      disabledHint:
-                                        'Tài khoản này chưa được cấp quyền quản lý tầng trên máy chủ.',
-                                      onSelect: () => {
-                                        deleteFloor.reset();
-                                        setFloorDeleteTarget(floor);
-                                      },
-                                    },
-                                  ]}
+                                <FloorActions
+                                  buildingId={snapshot.building.id}
+                                  floor={floor}
+                                  canManageFloors={canManageFloors}
+                                  onEdit={() => setFloorDialog({ mode: 'edit', floor })}
+                                  onDesign={() =>
+                                    navigate(
+                                      `/buildings/${snapshot.building.id}/floors/${floor.id}/design`,
+                                    )
+                                  }
+                                  onDelete={() => {
+                                    deleteFloor.reset();
+                                    setFloorDeleteTarget(floor);
+                                  }}
                                 />
                               </div>
                             </td>
@@ -530,6 +592,57 @@ export function BuildingDetailPage() {
   );
 }
 
+/** The three per-row controls, shared by the table and the phone card list. */
+function FloorActions({
+  buildingId,
+  floor,
+  canManageFloors,
+  onEdit,
+  onDesign,
+  onDelete,
+}: {
+  buildingId: string;
+  floor: FloorDto;
+  canManageFloors: boolean;
+  onEdit: () => void;
+  onDesign: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <>
+      <Link
+        to={`/buildings/${buildingId}/floors/${floor.id}`}
+        className="inline-flex h-9 items-center gap-1.5 whitespace-nowrap rounded-lg border border-outline-variant px-3 text-xs font-semibold text-[#1d4ed8] transition hover:bg-surface-low"
+      >
+        <span className="material-symbols-outlined text-base">visibility</span>
+        Xem sơ đồ
+      </Link>
+      <SmallButton
+        onClick={onEdit}
+        allowed={canManageFloors}
+        deniedHint="Tài khoản này chưa được cấp quyền quản lý tầng trên máy chủ."
+        icon="edit"
+      >
+        Chỉnh sửa
+      </SmallButton>
+      <RowMenu
+        label={`Thao tác khác của tầng ${floor.floorNumber}`}
+        items={[
+          { label: 'Thiết kế sơ đồ', icon: 'design_services', onSelect: onDesign },
+          {
+            label: 'Xoá tầng',
+            icon: 'delete',
+            danger: true,
+            disabled: !canManageFloors,
+            disabledHint: 'Tài khoản này chưa được cấp quyền quản lý tầng trên máy chủ.',
+            onSelect: onDelete,
+          },
+        ]}
+      />
+    </>
+  );
+}
+
 function FloorStatusBadge({ status }: { status: FloorStatus }) {
   const meta = floorStatusMeta[status] ?? floorStatusMeta[1];
   return (
@@ -543,6 +656,10 @@ function FloorStatusBadge({ status }: { status: FloorStatus }) {
  * The cover image. Uploads go through the same base64 JSON envelope the room
  * photos use, and the server sniffs the payload — a renamed text file is
  * rejected there, not here.
+ *
+ * The mockup draws one control on the photograph ("Thay đổi ảnh") and nothing
+ * else, so removal lives in the building's "..." menu instead of as a second
+ * button over the picture.
  */
 function BuildingCover({
   buildingId,
@@ -558,7 +675,7 @@ function BuildingCover({
   const fileInput = useRef<HTMLInputElement>(null);
   const photo = useBuildingPhotoContent(buildingId, hasPhoto);
   const upload = useUploadBuildingPhoto(buildingId);
-  const remove = useDeleteBuildingPhoto(buildingId);
+  const [zoomed, setZoomed] = useState(false);
 
   const src = photo.data
     ? `data:${photo.data.contentType};base64,${photo.data.content}`
@@ -591,7 +708,7 @@ function BuildingCover({
   }
 
   return (
-    <div className="relative h-56 w-full shrink-0 overflow-hidden rounded-lg bg-surface-low lg:h-[225px] lg:w-[255px]">
+    <div className="relative h-56 w-full shrink-0 overflow-hidden rounded-lg bg-surface-low lg:h-[259px] lg:w-[254px]">
       {src ? (
         <img src={src} alt={`Ảnh tòa nhà`} className="h-full w-full object-cover" />
       ) : (
@@ -602,6 +719,32 @@ function BuildingCover({
           </span>
         </div>
       )}
+
+      {/* The whole photograph opens full size: the mockup shows no chrome on
+          the cover, so the zoom affordance has to be the image itself. */}
+      {src && (
+        <button
+          type="button"
+          aria-label="Xem ảnh tòa nhà cỡ lớn"
+          onClick={() => setZoomed(true)}
+          className="absolute inset-0 cursor-zoom-in"
+        />
+      )}
+
+      <Dialog
+        open={zoomed && src !== null}
+        onClose={() => setZoomed(false)}
+        title="Ảnh tòa nhà"
+        size="lg"
+      >
+        {src && (
+          <img
+            src={src}
+            alt="Ảnh tòa nhà cỡ lớn"
+            className="max-h-[70vh] w-full rounded-lg object-contain"
+          />
+        )}
+      </Dialog>
 
       <input
         ref={fileInput}
@@ -614,35 +757,17 @@ function BuildingCover({
         }}
       />
 
-      <div className="absolute inset-x-2 bottom-2 flex gap-2">
+      <div className="absolute bottom-3 left-3">
         <button
           type="button"
           disabled={!canManage || upload.isPending}
           title={canManage ? undefined : 'Tài khoản này chưa được cấp quyền quản lý tòa nhà.'}
           onClick={() => fileInput.current?.click()}
-          className="inline-flex items-center gap-1.5 rounded-md bg-black/55 px-2.5 py-1.5 text-[11px] font-semibold text-white backdrop-blur-sm transition hover:bg-black/70 disabled:cursor-not-allowed disabled:opacity-60"
+          className="inline-flex items-center gap-2 rounded-lg bg-[#1F2937]/85 px-3 py-2 text-xs font-semibold text-white transition hover:bg-[#1F2937] disabled:cursor-not-allowed disabled:opacity-60"
         >
-          <span className="material-symbols-outlined text-sm">photo_camera</span>
+          <span className="material-symbols-outlined text-base">photo_camera</span>
           {upload.isPending ? 'Đang tải lên…' : 'Thay đổi ảnh'}
         </button>
-        {hasPhoto && (
-          <button
-            type="button"
-            disabled={!canManage || remove.isPending}
-            title={canManage ? undefined : 'Tài khoản này chưa được cấp quyền quản lý tòa nhà.'}
-            onClick={() =>
-              remove.mutate(undefined, {
-                onError: (error) => {
-                  const view = describeMutationError(error, 'buildingPhoto', 'delete');
-                  onError(view?.formError ?? 'Không xoá được ảnh tòa nhà.');
-                },
-              })
-            }
-            className="rounded-md bg-black/55 px-2.5 py-1.5 text-[11px] font-semibold text-white backdrop-blur-sm transition hover:bg-black/70 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            Xoá ảnh
-          </button>
-        )}
       </div>
     </div>
   );
@@ -725,7 +850,7 @@ function RowMenu({ label, items }: { label: string; items: MenuItem[] }) {
 }
 
 const BUTTON_BASE =
-  'inline-flex h-10 items-center gap-2 rounded-lg px-4 text-sm font-semibold transition ' +
+  'inline-flex h-10 items-center gap-2 whitespace-nowrap rounded-lg px-4 text-sm font-semibold transition ' +
   'disabled:cursor-not-allowed disabled:opacity-50';
 
 const BUTTON_LOOKS = {

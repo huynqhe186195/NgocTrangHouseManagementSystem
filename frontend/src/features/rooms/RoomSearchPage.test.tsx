@@ -72,6 +72,7 @@ function room(overrides: Partial<RoomDto> = {}): RoomDto {
     status: 1,
     description: null,
     roomType: 'Phòng tiêu chuẩn',
+    locationNote: null,
     direction: 4,
     monthlyRent: 3500000,
     layoutX: null,
@@ -171,7 +172,7 @@ describe('RoomSearchPage', () => {
 
   it('fills the mockup structure from the server payload', () => {
     floorsData.current = [floor];
-    roomsData.current = [room()];
+    roomsData.current = [room({ locationNote: 'Gần cầu thang, view nội khu' })];
 
     renderPage();
 
@@ -183,6 +184,7 @@ describe('RoomSearchPage', () => {
     // instead of falling back to a blank.
     expect(screen.getAllByText('Đông Nam').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Phòng tiêu chuẩn').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Gần cầu thang, view nội khu').length).toBeGreaterThan(0);
     expect(screen.queryByText('Chưa cập nhật')).toBeNull();
 
     for (const heading of [

@@ -27,6 +27,13 @@ namespace BuildingManagement.Rooms
         /// </summary>
         public string? RoomType { get; private set; }
 
+        /// <summary>
+        /// Where the room sits in the building, in the owner's own words
+        /// ("Gần cầu thang", "View nội khu"). Free text like RoomType: it is a
+        /// description for the tenant, not a coordinate the system computes.
+        /// </summary>
+        public string? LocationNote { get; private set; }
+
         public RoomDirection? Direction { get; private set; }
 
         public decimal? MonthlyRent { get; private set; }
@@ -59,7 +66,8 @@ namespace BuildingManagement.Rooms
             RoomStatus status,
             string? description = null,
             string? roomType = null,
-            RoomDirection? direction = null
+            RoomDirection? direction = null,
+            string? locationNote = null
         ) : base(id)
         {
             FloorId = floorId;
@@ -71,6 +79,7 @@ namespace BuildingManagement.Rooms
             Description = description;
             RoomType = roomType;
             Direction = direction;
+            LocationNote = locationNote;
         }
 
         public void Update(
@@ -81,7 +90,8 @@ namespace BuildingManagement.Rooms
             RoomStatus status,
             string? description,
             string? roomType = null,
-            RoomDirection? direction = null)
+            RoomDirection? direction = null,
+            string? locationNote = null)
         {
             RoomNumber = roomNumber;
             Name = name;
@@ -91,6 +101,7 @@ namespace BuildingManagement.Rooms
             Description = description;
             RoomType = roomType;
             Direction = direction;
+            LocationNote = locationNote;
         }
 
         public void ChangeStatus(RoomStatus status)

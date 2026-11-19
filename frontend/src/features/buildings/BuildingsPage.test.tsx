@@ -84,6 +84,7 @@ function room(
     status,
     description: null,
     roomType: null,
+    locationNote: null,
     direction: null,
     monthlyRent: null,
     layoutX: box?.x ?? null,

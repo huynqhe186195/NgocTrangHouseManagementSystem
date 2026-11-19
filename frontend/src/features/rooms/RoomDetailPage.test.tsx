@@ -79,6 +79,7 @@ const room: RoomDto = {
   status: 1,
   description: null,
   roomType: 'Phòng tiêu chuẩn',
+  locationNote: null,
   direction: 4,
   monthlyRent: 3500000,
   layoutX: 4,
@@ -183,6 +184,30 @@ describe('RoomDetailPage', () => {
     const notes = screen.getByRole('heading', { name: 'Thông tin khác' });
     // The mockup puts them in the same tab panel, side by side.
     expect(table.closest('[role="tabpanel"]')).toBe(notes.closest('[role="tabpanel"]'));
+  });
+
+  it('shows the Vị trí note the owner saved, beside Loại phòng', () => {
+    roomsData.current = [{ ...room, locationNote: 'Gần cầu thang, view nội khu' }];
+    floorsData.current = floors;
+    equipmentData.current = [];
+
+    renderPage();
+
+    const label = screen.getByText('Vị trí', { selector: 'span' });
+    const row = label.parentElement?.parentElement as HTMLElement;
+    expect(within(row).getByText('Gần cầu thang, view nội khu')).toBeTruthy();
+  });
+
+  it('leaves Vị trí blank rather than inventing one', () => {
+    roomsData.current = [room];
+    floorsData.current = floors;
+    equipmentData.current = [];
+
+    renderPage();
+
+    const label = screen.getByText('Vị trí', { selector: 'span' });
+    const row = label.parentElement?.parentElement as HTMLElement;
+    expect(within(row).getByText('—')).toBeTruthy();
   });
 
   it('edits the room through the same dialog the room list uses', () => {

@@ -46,6 +46,9 @@ namespace BuildingManagement.EntityConfigurations
             builder.Property(x => x.RoomType)
                 .HasMaxLength(64);
 
+            builder.Property(x => x.LocationNote)
+                .HasMaxLength(128);
+
             builder.Property(x => x.Direction);
 
             builder.Property(x => x.MonthlyRent)

@@ -332,6 +332,11 @@ export function RoomSearchPage() {
                   label="Loại phòng"
                   value={room.roomType ?? 'Chưa cập nhật'}
                 />
+                <InfoRow
+                  icon="location_on"
+                  label="Vị trí"
+                  value={room.locationNote ?? 'Chưa cập nhật'}
+                />
                 <InfoRow icon="group" label="Sức chứa" value={`Tối đa ${room.capacity} người`} />
               </div>
 
@@ -729,7 +734,7 @@ function InfoRow({
 }) {
   return (
     <div className="flex items-center justify-between gap-3">
-      <span className="flex items-center gap-2 text-sm text-on-surface-variant">
+      <span className="flex shrink-0 items-center gap-2 text-sm text-on-surface-variant">
         <span className="material-symbols-outlined text-base" aria-hidden>
           {icon}
         </span>

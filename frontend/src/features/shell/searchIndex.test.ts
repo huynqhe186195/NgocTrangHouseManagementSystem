@@ -54,6 +54,7 @@ function room(overrides: Partial<RoomDto> = {}): RoomDto {
     status: 1,
     description: null,
     roomType: 'Phòng tiêu chuẩn',
+    locationNote: null,
     direction: null,
     monthlyRent: null,
     layoutX: null,
@@ -115,6 +116,13 @@ describe('searchIndex', () => {
 
   it('matches a room type, which is how the owner thinks of a room', () => {
     const results = searchIndex('tieu chuan', [building()], [floor()], [room()]);
+
+    expect(results.map((result) => result.to)).toEqual(['/rooms/r1']);
+  });
+
+  it('matches the location note, so "cau thang" finds the room by the stairs', () => {
+    const byStairs = room({ locationNote: 'Gần cầu thang' });
+    const results = searchIndex('cau thang', [building()], [floor()], [byStairs]);
 
     expect(results.map((result) => result.to)).toEqual(['/rooms/r1']);
   });

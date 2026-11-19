@@ -97,7 +97,7 @@ function buildIndex(
         to: `/rooms/${room.id}`,
       },
       haystack: foldForSearch(
-        [room.roomNumber, room.name, room.roomType ?? '', floor?.name ?? '', building?.name ?? '']
+        [room.roomNumber, room.name, room.roomType ?? '', room.locationNote ?? '', floor?.name ?? '', building?.name ?? '']
           .join(' '),
       ),
     });

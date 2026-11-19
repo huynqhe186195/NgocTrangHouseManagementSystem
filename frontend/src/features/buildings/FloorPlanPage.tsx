@@ -411,7 +411,11 @@ function RoomPanel({
             </span>
           }
         />
-        <Row icon="location_on" label="Vị trí" value="Chưa cập nhật" />
+        <Row
+          icon="location_on"
+          label="Vị trí"
+          value={room.locationNote ?? 'Chưa cập nhật'}
+        />
         <Row
           icon="explore"
           label="Hướng"
@@ -422,10 +426,6 @@ function RoomPanel({
           }
         />
       </dl>
-
-      <p className="mt-2 text-[11px] leading-snug text-on-surface-variant">
-        Vị trí chưa có trong dữ liệu phòng trên máy chủ nên để trống thay vì tự điền.
-      </p>
 
       {/* The equipment the room actually holds, as the server records it. The
           mockup lists these beside the plan; a bed drawn on the floor is the

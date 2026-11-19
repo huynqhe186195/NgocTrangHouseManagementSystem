@@ -76,7 +76,12 @@ const floor: FloorDto = {
   status: 1,
 };
 
-function makeRoom(id: string, number: string, direction: RoomDto['direction']): RoomDto {
+function makeRoom(
+  id: string,
+  number: string,
+  direction: RoomDto['direction'],
+  locationNote: string | null = null,
+): RoomDto {
   return {
     id,
     creationTime: '2026-01-01T00:00:00Z',
@@ -91,6 +96,7 @@ function makeRoom(id: string, number: string, direction: RoomDto['direction']): 
     status: 1,
     description: null,
     roomType: null,
+    locationNote,
     direction,
     monthlyRent: 3500000,
     layoutX: 0.2,
@@ -121,14 +127,18 @@ function renderPage(roomNumber: string) {
 }
 
 function directionRow(): HTMLElement {
+  return factRow('Hướng');
+}
+
+function factRow(label: string): HTMLElement {
   const facts = document.querySelector('dl');
   if (!facts) throw new Error('the facts list did not render');
   const row = Array.from(facts.querySelectorAll('div')).find(
-    (candidate) => candidate.children.length === 2 && /Hướng$/.test(
+    (candidate) => candidate.children.length === 2 && new RegExp(`${label}$`).test(
       candidate.children[0]?.textContent?.trim() ?? '',
     ),
   );
-  if (!row) throw new Error('the Hướng row did not render');
+  if (!row) throw new Error(`the ${label} row did not render`);
   return row as HTMLElement;
 }
 
@@ -150,14 +160,30 @@ describe('FloorPlanPage — the Hướng row', () => {
     expect(within(directionRow()).getByText('Chưa cập nhật')).toBeTruthy();
   });
 
-  it('no longer claims the server holds no direction at all', () => {
+  it('no longer explains away the Vị trí row it now fills from the server', () => {
     rooms.current = [makeRoom('r1', '101', 3)];
 
-    renderPage("101");
+    renderPage('101');
 
     expect(screen.queryByText(/Vị trí và hướng chưa có trong dữ liệu/i)).toBeNull();
-    expect(
-      screen.getByText('Vị trí chưa có trong dữ liệu phòng trên máy chủ nên để trống thay vì tự điền.'),
-    ).toBeTruthy();
+    expect(screen.queryByText(/Vị trí chưa có trong dữ liệu phòng/i)).toBeNull();
+  });
+});
+
+describe('FloorPlanPage — the Vị trí row', () => {
+  it('prints the note the owner saved', () => {
+    rooms.current = [makeRoom('r1', '101', 3, 'Gần cầu thang, view nội khu')];
+
+    renderPage('101');
+
+    expect(within(factRow('Vị trí')).getByText('Gần cầu thang, view nội khu')).toBeTruthy();
+  });
+
+  it('falls back to the dash when the owner has not written one', () => {
+    rooms.current = [makeRoom('r2', '102', 3)];
+
+    renderPage('102');
+
+    expect(within(factRow('Vị trí')).getByText('Chưa cập nhật')).toBeTruthy();
   });
 });

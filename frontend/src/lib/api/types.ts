@@ -118,6 +118,8 @@ export interface RoomDto extends AuditedEntity {
   description: string | null;
   /** Free text, e.g. "Phòng tiêu chuẩn". Null when the owner has not set it. */
   roomType: string | null;
+  /** Free text, e.g. "Gần cầu thang". Null when the owner has not set it. */
+  locationNote: string | null;
   direction: RoomDirection | null;
   monthlyRent: number | null;
   layoutX: number | null;
@@ -140,6 +142,7 @@ export interface CreateRoomInput {
   status: RoomStatus;
   description: string | null;
   roomType: string | null;
+  locationNote: string | null;
   direction: RoomDirection | null;
 }
 
@@ -151,6 +154,7 @@ export interface UpdateRoomInput {
   status: RoomStatus;
   description: string | null;
   roomType: string | null;
+  locationNote: string | null;
   direction: RoomDirection | null;
 }
 

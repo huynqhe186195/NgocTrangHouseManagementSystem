@@ -23,6 +23,9 @@ namespace BuildingManagement.Rooms
 
         public string? RoomType { get; set; }
 
+        /// <summary>Free text, e.g. "Gần cầu thang". Null when unset.</summary>
+        public string? LocationNote { get; set; }
+
         public RoomDirection? Direction { get; set; }
 
         public decimal? MonthlyRent { get; set; }

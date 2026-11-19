@@ -78,7 +78,8 @@ namespace BuildingManagement.Rooms
                     input.RoomNumber, input.Name, input.Area, input.Capacity,
                     input.Status, input.Description,
                     NormalizeRoomType(input.RoomType),
-                    ValidateDirection(input.Direction));
+                    ValidateDirection(input.Direction),
+                    NormalizeLocationNote(input.LocationNote));
                 await _roomRepository.InsertAsync(room, autoSave: true);
                 return ObjectMapper.Map<Room, RoomDto>(room);
             }, BuildingScopedMutationKind.Room);
@@ -164,7 +165,8 @@ namespace BuildingManagement.Rooms
                 room.Update(input.RoomNumber, input.Name, input.Area,
                     input.Capacity, input.Status, input.Description,
                     NormalizeRoomType(input.RoomType),
-                    ValidateDirection(input.Direction));
+                    ValidateDirection(input.Direction),
+                    NormalizeLocationNote(input.LocationNote));
                 await _roomRepository.UpdateAsync(room, autoSave: true);
                 return ObjectMapper.Map<Room, RoomDto>(room);
             }, BuildingScopedMutationKind.Room);
@@ -454,7 +456,10 @@ namespace BuildingManagement.Rooms
         }
 
         private static string? NormalizeRoomType(string? roomType)
-            => string.IsNullOrWhiteSpace(roomType) ? null : roomType.Trim();
+            => RoomFreeText.Normalize(roomType);
+
+        private static string? NormalizeLocationNote(string? locationNote)
+            => RoomFreeText.Normalize(locationNote);
 
         private static RoomDirection? ValidateDirection(RoomDirection? direction)
         {

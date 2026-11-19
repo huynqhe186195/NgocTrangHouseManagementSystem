@@ -56,6 +56,7 @@ export function RoomFormDialog({ open, mode, floorId, initial, onClose }: RoomFo
   const [status, setStatus] = useState('1');
   const [description, setDescription] = useState('');
   const [roomType, setRoomType] = useState('');
+  const [locationNote, setLocationNote] = useState('');
   const [direction, setDirection] = useState('');
   const [touched, setTouched] = useState(false);
 
@@ -72,6 +73,7 @@ export function RoomFormDialog({ open, mode, floorId, initial, onClose }: RoomFo
     setStatus(String(initial?.status ?? 1));
     setDescription(initial?.description ?? '');
     setRoomType(initial?.roomType ?? '');
+    setLocationNote(initial?.locationNote ?? '');
     setDirection(initial?.direction === null || initial?.direction === undefined
       ? ''
       : String(initial.direction));
@@ -177,6 +179,7 @@ export function RoomFormDialog({ open, mode, floorId, initial, onClose }: RoomFo
       status: statusValue as RoomStatus,
       description: description.trim().length === 0 ? null : description.trim(),
       roomType: roomType.trim().length === 0 ? null : roomType.trim(),
+      locationNote: locationNote.trim().length === 0 ? null : locationNote.trim(),
       direction: direction === '' ? null : (Number(direction) as RoomDirection),
     };
 
@@ -330,6 +333,16 @@ export function RoomFormDialog({ open, mode, floorId, initial, onClose }: RoomFo
             error={view?.fieldErrors.direction}
           />
         </div>
+
+        <Field
+          label="Vị trí"
+          maxLength={128}
+          value={locationNote}
+          onChange={(event) => setLocationNote(event.target.value)}
+          error={view?.fieldErrors.locationNote}
+          placeholder="Ví dụ: Gần cầu thang, view nội khu"
+          hint="Chữ tự do, mô tả vị trí phòng cho người thuê. Không bắt buộc, tối đa 128 ký tự."
+        />
 
         <TextareaField
           label="Mô tả"

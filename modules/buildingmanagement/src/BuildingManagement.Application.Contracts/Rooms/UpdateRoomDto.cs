@@ -29,6 +29,9 @@ namespace BuildingManagement.Rooms
         [MaxLength(64)]
         public string? RoomType { get; set; }
 
+        [MaxLength(128)]
+        public string? LocationNote { get; set; }
+
         public RoomDirection? Direction { get; set; }
     }
 }

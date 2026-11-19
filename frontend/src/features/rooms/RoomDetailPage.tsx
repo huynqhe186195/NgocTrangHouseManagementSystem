@@ -316,6 +316,7 @@ export function RoomDetailPage() {
               value={room.direction === null ? '—' : roomDirectionLabels[room.direction]}
             />
             <Row icon="meeting_room" label="Loại phòng" value={room.roomType ?? '—'} />
+            <Row icon="location_on" label="Vị trí" value={room.locationNote ?? '—'} />
             <Row icon="photo_camera" label="Ảnh" value={`${room.photoCount} ảnh`} />
             <Row icon="handyman" label="Thiết bị" value={`${room.equipmentCount} món`} />
           </dl>

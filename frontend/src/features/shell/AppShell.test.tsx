@@ -106,6 +106,7 @@ function room(overrides: Partial<RoomDto> = {}): RoomDto {
     status: 1,
     description: null,
     roomType: 'Phòng tiêu chuẩn',
+    locationNote: null,
     direction: null,
     monthlyRent: null,
     layoutX: null,

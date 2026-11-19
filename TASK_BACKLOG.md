@@ -987,6 +987,34 @@
 
 ---
 
+### P4.16 ✅ The Header Search Works and the Bell Has a Real Source
+**Status:** DONE in the working tree (not yet committed). Two header controls had been left inert for the right reason — master prompt §3.3 forbids a search that only pretends to search and a hardcoded notification count — but leaving them inert forever was not the plan's endpoint either. The Owner said "làm cả 2 luôn đi".
+**The constraint that shaped both:** there is no search endpoint and no notification table on the server, and adding either would mean a migration plus a new authorized app service — the kind of slice P4.13 was, not a header fix. Both controls were therefore built on data the server *already returns* to this account: the three scoped lists `/building`, `/floor` and `/room` that every screen reads through `buildingQueries`. Every row either control shows is a real building, floor or room the signed-in account is authorized to see, so neither can disclose anything the sidebar would not.
+**What changed (3 new source files, 3 new test files, `AppShell.tsx`):**
+- `searchIndex.ts` — joins the three lists into result rows (building → name/address, floor → name with its building, room → name with "building · floor · number"). `foldForSearch` strips Vietnamese diacritics and folds `đ`, so an unaccented "toa nha" finds "Tòa nhà" — the common case on a desktop keyboard. Every term must match, so a second word narrows; results cap at 8 and order buildings → floors → rooms, the order the sidebar walks.
+- `HeaderSearch.tsx` — replaces the disabled input with a real `combobox`: type to filter, ArrowUp/ArrowDown to move, Enter to open, Escape and outside-click to close. It states loading, "nothing matched", and — importantly — a *refused list* ("Cần quyền đọc tòa nhà") rather than showing an empty result set, because a 403 and an empty estate look identical otherwise.
+- `notifications.ts` — derives rows from real state: rooms held for maintenance (status 4), rooms already reserved (status 3), and floors under maintenance (status 2). Ordering puts `error` before `warning` before `neutral`.
+- `NotificationBell.tsx` — a popover listing those rows with links, and a badge **only when rows exist**. The panel header states what the number is: "Số mục cần chú ý, không phải số thông báo chưa đọc." That distinction is not pedantry — the server records no read state, so an unread counter would be a lie the UI told on its own.
+- `AppShell.test.tsx` — 12 cases (was 5). The old case asserting `search.disabled === true` and "no notification badge" described the inert state; it is replaced by cases that drive the real controls: search finds a room and opens it, arrow keys move the active row, Enter opens it, "nothing matched" is stated, a refused list is explained, the bell shows no badge with nothing to report, counts exactly the rows that exist, opens the row it names, and states an empty panel rather than a blank one.
+- `searchIndex.test.ts` (9 cases), `notifications.test.ts` (5 cases).
+**Two defects only the rendered capture showed:**
+- At 390 px the bell's panel was anchored to a bell that sits near the left edge once the avatar block collapses, so the panel overhung the viewport on the left and its title wrapped. The panel is now `fixed inset-x-4` below `md` and only becomes a right-anchored popover at `md` and up; the header block is a column so the note sits under the title. The 1448 shot before that fix also showed the note squeezed onto one clipped line beside "Cần chú ý".
+- The 390 capture cannot show the search box at all — it is hidden below `md`, as the mockup draws it — so that width documents the header and the bell only.
+**Honest gaps (PARTIAL, not faked):**
+- **Search is client-side.** It filters what the current screen session has loaded; it does not page the server. With the building list scoped and small this is accurate, and it can never offer a row the account may not read — but it is not a server search, and renaming it one would be wrong.
+- **The bell has no read/unread state, no history and no delivery.** It is a live view of current conditions, not a message inbox; the panel says so. Genuine notifications would need a table, an app service and an allowlist entry — deliberately not attempted here.
+- **Real photographs** — unchanged from P4.14.
+**Evidence:**
+- ✅ `tsc --noEmit` exit 0; `npx vitest run` **209/209 in 18 files** (was 188/188 in 16); `npm run build` succeeds
+- ✅ Mutation-checked both derivations: disabling the maintenance branch in `notifications.ts` and the term filter in `searchIndex.ts` turns **11 of 26** shell tests red; restoring them turns them green
+- ✅ Rendered captures in `etc/captures/p54/` from `etc/scripts/capture-p54-shell-header.mjs` — `shell-header-*`, `shell-search-*` and `shell-bell-*` at 1448×1086 / 1280×800 / 1024×768 / 390×844, seeded with one building holding a maintenance room, a reserved room and an available room
+- ✅ Every capture opened: at 1448 the search offers exactly the three rooms with "Ngọc Trang Building · Tầng 1 · 101" as context; the bell badge reads 2 and the panel lists "Phòng 101 đang bảo trì" and "Phòng 102 đã được đặt" — the available room 103 appears in neither; at 1024 the same; at 390 the bell panel sits inside the viewport and the title no longer wraps
+- ✅ `RoomAppService.GetListAsync`, `BuildingAppService.GetListAsync` and `FloorAppService.GetListAsync` all filter by `GetAuthorizedBuildingIdsAsync`, so the client-side join cannot surface another owner's estate
+**Blocker:** None.
+**Dependency:** P4.5 ✅ (the scoped list endpoints both controls read), P4.12 ✅ (the shell whose header these live in)
+
+---
+
 ## NOT IN BACKLOG (Already Fixed — Do Not Repeat)
 
 - ❌ CS0117 Convert.TryFromHexString → Fixed at `0702e0db`

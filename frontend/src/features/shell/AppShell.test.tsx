@@ -1,17 +1,24 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, within, fireEvent } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { render, screen, within, fireEvent, waitFor } from '@testing-library/react';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { AppShell } from './AppShell';
 import type { CurrentUser } from '../../lib/auth/AuthProvider';
+import type { BuildingDto, FloorDto, RoomDto } from '../../lib/api/types';
 /**
  * The mockup draws a different sidebar per role, a hamburger that really
- * collapses the rail, and no notification badge (there is no notification
- * source on the server). Those are the claims under test here — the data
- * screens themselves are covered by their own files.
+ * collapses the rail, a search box that has to answer, and a bell that may
+ * only show a count when the data really holds something to count. Those are
+ * the claims under test here — the data screens themselves are covered by
+ * their own files.
  */
 
 let user: CurrentUser | null;
 let permissions: string[];
+let buildings: { current: BuildingDto[] };
+let floors: { current: FloorDto[] };
+let rooms: { current: RoomDto[] };
+let listFails: { current: boolean };
+let listLoading: { current: boolean };
 
 vi.mock('../../lib/auth/AuthProvider', () => ({
   useAuth: () => ({
@@ -21,10 +28,33 @@ vi.mock('../../lib/auth/AuthProvider', () => ({
   }),
 }));
 
+vi.mock('../../lib/api/buildingQueries', () => ({
+  useBuildings: () => ({
+    data: listFails.current ? undefined : buildings.current,
+    isLoading: listLoading.current,
+    error: listFails.current ? new Error('denied') : null,
+  }),
+  useFloors: () => ({
+    data: listFails.current ? undefined : floors.current,
+    isLoading: listLoading.current,
+    error: null,
+  }),
+  useRooms: () => ({
+    data: listFails.current ? undefined : rooms.current,
+    isLoading: listLoading.current,
+    error: null,
+  }),
+}));
+
 function renderShell() {
   return render(
     <MemoryRouter initialEntries={['/buildings']}>
-      <AppShell />
+      <Routes>
+        <Route element={<AppShell />}>
+          <Route path="/buildings" element={<p>danh sách tòa nhà</p>} />
+          <Route path="/rooms/:roomId" element={<p>chi tiết phòng</p>} />
+        </Route>
+      </Routes>
     </MemoryRouter>,
   );
 }
@@ -34,6 +64,61 @@ function navLabels(): string[] {
   return within(nav)
     .getAllByRole('listitem')
     .map((node) => node.textContent ?? '');
+}
+
+const building: BuildingDto = {
+  id: 'b1',
+  creationTime: '2026-01-01T00:00:00Z',
+  creatorId: null,
+  lastModificationTime: null,
+  lastModifierId: null,
+  name: 'Ngọc Trang Building',
+  address: '123 Đường ABC',
+  description: null,
+  hasPhoto: false,
+};
+
+const floor: FloorDto = {
+  id: 'f1',
+  creationTime: '2026-01-01T00:00:00Z',
+  creatorId: null,
+  lastModificationTime: null,
+  lastModifierId: null,
+  buildingId: 'b1',
+  floorNumber: 1,
+  name: 'Tầng 1',
+  description: null,
+  status: 1,
+};
+
+function room(overrides: Partial<RoomDto> = {}): RoomDto {
+  return {
+    id: 'r1',
+    creationTime: '2026-01-01T00:00:00Z',
+    creatorId: null,
+    lastModificationTime: null,
+    lastModifierId: null,
+    floorId: 'f1',
+    roomNumber: '101',
+    name: 'Phòng 101',
+    area: 24,
+    capacity: 2,
+    status: 1,
+    description: null,
+    roomType: 'Phòng tiêu chuẩn',
+    direction: null,
+    monthlyRent: null,
+    layoutX: null,
+    layoutY: null,
+    layoutWidth: null,
+    layoutHeight: null,
+    layoutShape: null,
+    layoutRotationDegrees: null,
+    layoutPoints: null,
+    equipmentCount: 0,
+    photoCount: 0,
+    ...overrides,
+  };
 }
 
 beforeEach(() => {
@@ -54,6 +139,11 @@ beforeEach(() => {
     roles: ['Owner'],
   } as CurrentUser;
   permissions = [];
+  buildings = { current: [building] };
+  floors = { current: [floor] };
+  rooms = { current: [room()] };
+  listFails = { current: false };
+  listLoading = { current: false };
 });
 
 describe('AppShell', () => {
@@ -112,13 +202,104 @@ describe('AppShell', () => {
     expect(document.querySelector('aside')?.className).toContain('lg:w-[238px]');
   });
 
-  it('shows no notification badge and does not fake a search', () => {
+  it('searches the loaded lists and opens the room it offers', async () => {
+    renderShell();
+
+    const search = screen.getByRole('combobox', { name: 'Tìm kiếm tòa nhà, tầng, phòng' });
+    expect((search as HTMLInputElement).disabled).toBe(false);
+
+    fireEvent.change(search, { target: { value: '101' } });
+
+    const options = await screen.findAllByRole('option');
+    expect(options).toHaveLength(1);
+    expect(options[0]!.textContent).toContain('Phòng 101');
+    expect(options[0]!.textContent).toContain('Tầng 1');
+
+    fireEvent.click(options[0]!);
+
+    await waitFor(() => expect(screen.getByText('chi tiết phòng')).toBeTruthy());
+  });
+
+  it('says nothing matched rather than showing an empty box', () => {
+    renderShell();
+
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'khong co gi' } });
+
+    expect(screen.getByText(/Không có tòa nhà, tầng hay phòng nào khớp/)).toBeTruthy();
+    expect(screen.queryAllByRole('option')).toHaveLength(0);
+  });
+
+  it('explains a refused list instead of pretending the search found nothing', () => {
+    listFails.current = true;
+    renderShell();
+
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: '101' } });
+
+    expect(screen.getByText(/Cần quyền đọc tòa nhà/)).toBeTruthy();
+  });
+
+  it('moves through the results with the arrow keys and opens on Enter', async () => {
+    rooms.current = [room(), room({ id: 'r2', roomNumber: '102', name: 'Phòng 102' })];
+    renderShell();
+
+    const search = screen.getByRole('combobox');
+    fireEvent.change(search, { target: { value: 'phong' } });
+
+    const options = await screen.findAllByRole('option');
+    expect(options).toHaveLength(2);
+    expect(options[0]!.getAttribute('aria-selected')).toBe('true');
+
+    fireEvent.keyDown(search, { key: 'ArrowDown' });
+    expect(screen.getAllByRole('option')[1]!.getAttribute('aria-selected')).toBe('true');
+
+    fireEvent.keyDown(search, { key: 'Enter' });
+    await waitFor(() => expect(screen.getByText('chi tiết phòng')).toBeTruthy());
+  });
+
+  it('shows no notification badge when nothing needs attention, and no invented count', () => {
     renderShell();
 
     const bell = screen.getByRole('button', { name: 'Thông báo' });
     expect(bell.textContent?.trim()).toBe('notifications');
+  });
 
-    const search = screen.getByRole('searchbox');
-    expect((search as HTMLInputElement).disabled).toBe(true);
+  it('counts what actually needs attention and lists those rows', () => {
+    rooms.current = [room({ status: 4 }), room({ id: 'r2', roomNumber: '102', status: 3 })];
+    renderShell();
+
+    const bell = screen.getByRole('button', { name: 'Thông báo (2)' });
+    expect(bell.textContent).toContain('2');
+
+    fireEvent.click(bell);
+
+    const dialog = screen.getByRole('dialog', { name: 'Thông báo' });
+    expect(within(dialog).getByText('Phòng 101 đang bảo trì')).toBeTruthy();
+    expect(within(dialog).getByText('Phòng 102 đã được đặt')).toBeTruthy();
+    // The count is a count of open items, and the panel says so.
+    expect(dialog.textContent).toContain('không phải số thông báo chưa đọc');
+  });
+
+  it('opens the row the bell names', async () => {
+    rooms.current = [room({ status: 4 })];
+    renderShell();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Thông báo (1)' }));
+    fireEvent.click(
+      within(screen.getByRole('dialog', { name: 'Thông báo' })).getByText(
+        'Phòng 101 đang bảo trì',
+      ),
+    );
+
+    await waitFor(() => expect(screen.getByText('chi tiết phòng')).toBeTruthy());
+  });
+
+  it('says the list is empty rather than showing a blank panel', () => {
+    renderShell();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Thông báo' }));
+
+    expect(
+      screen.getByText('Không có phòng bảo trì, phòng đã đặt hay tầng bảo trì nào.'),
+    ).toBeTruthy();
   });
 });

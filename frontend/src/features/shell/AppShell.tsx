@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../lib/auth/AuthProvider';
+import { HeaderSearch } from './HeaderSearch';
 import { navigationFor, resolveShellRole, type NavItem } from './navigation';
+import { NotificationBell } from './NotificationBell';
 
 /**
  * The mockup's brand mark is a green hexagonal badge with a house struck out
@@ -143,34 +145,10 @@ export function AppShell() {
             <span className="material-symbols-outlined text-xl">menu</span>
           </button>
 
-          <div className="relative hidden max-w-xl flex-1 md:block">
-            <span className="material-symbols-outlined pointer-events-none absolute top-1/2 left-3.5 -translate-y-1/2 text-xl text-outline">
-              search
-            </span>
-            {/*
-              The mockup shows a search box, but no search endpoint exists yet.
-              Leaving it enabled would make typing look meaningful when nothing
-              is queried, so it is disabled and says why.
-            */}
-            <input
-              type="search"
-              disabled
-              title="Tìm kiếm chưa được nối với máy chủ."
-              placeholder="Tìm kiếm tòa nhà, tầng, phòng… (chưa khả dụng)"
-              aria-label="Tìm kiếm tòa nhà, tầng, phòng (chưa khả dụng)"
-              className="h-10 w-full cursor-not-allowed rounded-lg border border-outline-variant bg-surface-low pr-4 pl-11 text-sm text-on-surface placeholder:text-outline"
-            />
-          </div>
+          <HeaderSearch />
 
           <div className="ml-auto flex items-center gap-3">
-            <button
-              type="button"
-              aria-label="Thông báo"
-              title="Máy chủ chưa có nguồn thông báo."
-              className="relative rounded-lg p-2 text-on-surface-variant transition hover:bg-surface-low"
-            >
-              <span className="material-symbols-outlined text-xl">notifications</span>
-            </button>
+            <NotificationBell />
 
             <div className="hidden items-center gap-2.5 border-l border-outline-variant pl-3 sm:flex">
               <span className="flex h-9 w-9 items-center justify-center rounded-full bg-surface-container text-xs font-bold text-on-surface-variant">

@@ -17,7 +17,7 @@ import {
   useRoomPhotoContent,
   useRoomPhotos,
 } from '../../lib/api/buildingQueries';
-import { equipmentConditionMeta, roomStatusMeta } from '../../lib/api/types';
+import { equipmentConditionMeta, roomDirectionLabels, roomStatusMeta } from '../../lib/api/types';
 import type { RoomDto } from '../../lib/api/types';
 import { formatVnd } from '../../lib/format';
 import {
@@ -412,11 +412,19 @@ function RoomPanel({
           }
         />
         <Row icon="location_on" label="Vị trí" value="Chưa cập nhật" />
-        <Row icon="explore" label="Hướng" value="Chưa cập nhật" />
+        <Row
+          icon="explore"
+          label="Hướng"
+          value={
+            room.direction === null
+              ? 'Chưa cập nhật'
+              : roomDirectionLabels[room.direction]
+          }
+        />
       </dl>
 
       <p className="mt-2 text-[11px] leading-snug text-on-surface-variant">
-        Vị trí và hướng chưa có trong dữ liệu phòng trên máy chủ nên để trống thay vì tự điền.
+        Vị trí chưa có trong dữ liệu phòng trên máy chủ nên để trống thay vì tự điền.
       </p>
 
       {/* The equipment the room actually holds, as the server records it. The

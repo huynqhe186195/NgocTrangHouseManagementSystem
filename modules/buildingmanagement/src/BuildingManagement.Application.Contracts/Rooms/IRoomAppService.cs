@@ -23,6 +23,8 @@ namespace BuildingManagement.Rooms
 
         Task<List<RoomEquipmentDto>> GetEquipmentAsync(Guid id);
 
+        Task<List<Contracts.ContractDto>> GetContractsAsync(Guid id);
+
         Task<RoomEquipmentDto> CreateEquipmentAsync(
             Guid id, CreateRoomEquipmentDto input);
 

@@ -90,6 +90,11 @@ public sealed class BuildingCrudAccessPolicy_Tests
     [InlineData(BuildingBusinessResourceKind.Floor, BuildingBusinessCapability.ManageFloor)]
     [InlineData(BuildingBusinessResourceKind.Room, BuildingBusinessCapability.ReadRoom)]
     [InlineData(BuildingBusinessResourceKind.Room, BuildingBusinessCapability.ManageRoom)]
+    // The room screen reads its contracts through the room itself, so both
+    // contract capabilities must reach a Room resource. Without these two rows
+    // the matrix silently denied the only contract read the UI performs.
+    [InlineData(BuildingBusinessResourceKind.Room, BuildingBusinessCapability.ReadContract)]
+    [InlineData(BuildingBusinessResourceKind.Room, BuildingBusinessCapability.ManageContract)]
     [InlineData(BuildingBusinessResourceKind.Contract, BuildingBusinessCapability.ReadContract)]
     [InlineData(BuildingBusinessResourceKind.Contract, BuildingBusinessCapability.ManageContract)]
     public async Task CRUDSEC06_Valid_Scoped_Actor_Can_Pass_Resource_Check(

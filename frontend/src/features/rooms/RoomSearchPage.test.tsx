@@ -143,7 +143,7 @@ describe('RoomSearchPage', () => {
 
     const book = screen.getByRole('button', { name: /Đặt phòng ngay/ }) as HTMLButtonElement;
     expect(book.disabled).toBe(true);
-    expect(book.title).toBe('Chức năng đặt phòng chưa được mở trên máy chủ.');
+    expect(book.title).toContain('chưa liên kết tài khoản đăng nhập với hồ sơ người thuê');
   });
 
   it('recomputes the estimate when the lease length changes', async () => {

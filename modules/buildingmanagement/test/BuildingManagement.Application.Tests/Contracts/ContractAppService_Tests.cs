@@ -1679,6 +1679,23 @@ public abstract class ContractAppService_Tests<TStartupModule>
     }
 
     //=======================DR========================
+    // GET /room/{id}/contracts is the one contract read the room screen uses.
+    // It must ask for ReadContract, not ReadRoom: knowing a room exists is a
+    // different fact from knowing who rents it and for how much.
+    [Fact]
+    public async Task Should_Deny_Room_Contracts_When_Contract_Read_Is_Not_Granted()
+    {
+        using var roomFixtureAccess =
+            BuildingManagement.Tests.Security.LegacyRoomBusinessFixturePolicy
+                .AllowRoomBusinessAssertions();
+        var roomId = await CreateRoomAsync();
+
+        // The fixture policy grants Room Read/Manage only. Contract capabilities
+        // stay denied, so the room-scoped read must fail closed.
+        await Should.ThrowAsync<Volo.Abp.Authorization.AbpAuthorizationException>(
+            () => _roomAppService.GetContractsAsync(roomId));
+    }
+
     // DR1: Room có Active Contract không được xóa
     [Fact]
     public async Task Should_Not_Delete_Room_With_Active_Contract()

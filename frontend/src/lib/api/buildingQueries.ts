@@ -5,6 +5,7 @@ import type {
   BuildingPhotoDto,
   BuildingPhotoFileDto,
   BuildingPublicInfoDto,
+  ContractDto,
   CreateBuildingInput,
   CreateFloorInput,
   CreateFloorLayoutItemInput,
@@ -32,6 +33,7 @@ const keys = {
   floors: ['floors'] as const,
   rooms: ['rooms'] as const,
   roomEquipment: (roomId: string) => ['room-equipment', roomId] as const,
+  roomContracts: (roomId: string) => ['room-contracts', roomId] as const,
   roomPhotos: (roomId: string) => ['room-photos', roomId] as const,
   roomPhotoContent: (roomId: string, photoId: string) =>
     ['room-photo-content', roomId, photoId] as const,
@@ -265,6 +267,14 @@ export function useRoomEquipment(roomId: string | undefined) {
   return useQuery<RoomEquipmentDto[]>({
     queryKey: keys.roomEquipment(roomId ?? ''),
     queryFn: () => roomsApi.listEquipment(roomId as string),
+    enabled: Boolean(roomId),
+  });
+}
+
+export function useRoomContracts(roomId: string | undefined) {
+  return useQuery<ContractDto[]>({
+    queryKey: keys.roomContracts(roomId ?? ''),
+    queryFn: () => roomsApi.listContracts(roomId as string),
     enabled: Boolean(roomId),
   });
 }

@@ -4,6 +4,7 @@ import type {
   BuildingPhotoDto,
   BuildingPhotoFileDto,
   BuildingPublicInfoDto,
+  ContractDto,
   CreateBuildingInput,
   CreateFloorInput,
   CreateFloorLayoutItemInput,
@@ -134,6 +135,8 @@ export const roomsApi = {
 
   listEquipment: (roomId: string) =>
     request<RoomEquipmentDto[]>(`${base}/room/${roomId}/equipment`),
+  listContracts: (roomId: string) =>
+    request<ContractDto[]>(`${base}/room/${roomId}/contracts`),
   createEquipment: (roomId: string, input: CreateRoomEquipmentInput) =>
     request<RoomEquipmentDto>(`${base}/room/${roomId}/equipment`, {
       method: 'POST',

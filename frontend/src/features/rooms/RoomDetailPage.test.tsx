@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import type { FloorDto, RoomDto } from '../../lib/api/types';
+import type { ContractDto, FloorDto, RoomDto } from '../../lib/api/types';
+import { ApiError } from '../../lib/http';
 import { RoomDetailPage } from './RoomDetailPage';
 
 /**
@@ -17,6 +18,8 @@ const floorsData: { current: FloorDto[] } = { current: [] };
 const equipmentData: { current: { id: string; name: string; quantity: number }[] } = {
   current: [],
 };
+const contractsData: { current: ContractDto[] } = { current: [] };
+const contractsError: { current: unknown } = { current: null };
 const permission: { canManage: boolean } = { canManage: true };
 
 vi.mock('../../lib/api/buildingQueries', () => ({
@@ -45,6 +48,11 @@ vi.mock('../../lib/api/buildingQueries', () => ({
     error: null,
   }),
   useFloorLayoutItems: () => ({ data: [], isLoading: false }),
+  useRoomContracts: () => ({
+    data: contractsData.current,
+    isLoading: false,
+    error: contractsError.current,
+  }),
   useUploadRoomPhoto: () => ({ mutate: vi.fn(), isPending: false }),
   useDeleteRoomPhoto: () => ({ mutate: vi.fn(), isPending: false }),
   useDeleteRoomEquipment: () => ({ mutate: vi.fn(), isPending: false }),
@@ -219,6 +227,140 @@ describe('RoomDetailPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /Chỉnh sửa/ }));
     expect(screen.getByDisplayValue('A203')).toBeTruthy();
+  });
+
+  it('lists the room’s real contracts instead of a gate notice', () => {
+    roomsData.current = [room];
+    floorsData.current = floors;
+    equipmentData.current = [];
+    contractsData.current = [
+      {
+        id: 'c1',
+        creationTime: '2026-01-01T00:00:00Z',
+        creatorId: null,
+        lastModificationTime: null,
+        lastModifierId: null,
+        contractNumber: 'HD-2026-001',
+        roomId: 'r1',
+        renewedFromContractId: null,
+        startDate: '2026-01-01T00:00:00',
+        endDate: '2026-12-31T00:00:00',
+        actualEndedAt: null,
+        endReason: null,
+        monthlyRent: 3500000,
+        depositAmount: 7000000,
+        status: 2,
+        notes: null,
+      },
+    ];
+
+    try {
+      renderPage();
+
+      fireEvent.click(screen.getByRole('tab', { name: /Hợp đồng/ }));
+
+      // Both the wide table and the phone card are in the DOM; CSS picks one.
+      expect(screen.getAllByText('HD-2026-001').length).toBeGreaterThan(0);
+      expect(screen.getAllByText('01/01/2026 – 31/12/2026').length).toBeGreaterThan(0);
+      expect(screen.getAllByText('Đang hiệu lực').length).toBeGreaterThan(0);
+      // The 403 gate that used to stand here must be gone, not merely hidden.
+      expect(screen.queryByText(/chưa có API công khai/)).toBeNull();
+    } finally {
+      contractsData.current = [];
+    }
+  });
+
+  it('keeps every contract fact readable on a phone, not behind a sideways scroll', () => {
+    roomsData.current = [room];
+    floorsData.current = floors;
+    equipmentData.current = [];
+    contractsData.current = [
+      {
+        id: 'c1',
+        creationTime: '2026-01-01T00:00:00Z',
+        creatorId: null,
+        lastModificationTime: null,
+        lastModifierId: null,
+        contractNumber: 'HD-2026-001',
+        roomId: 'r1',
+        renewedFromContractId: null,
+        startDate: '2026-01-01T00:00:00',
+        endDate: '2026-12-31T00:00:00',
+        actualEndedAt: null,
+        endReason: null,
+        monthlyRent: 3500000,
+        depositAmount: 7000000,
+        status: 2,
+        notes: null,
+      },
+    ];
+
+    try {
+      renderPage();
+      fireEvent.click(screen.getByRole('tab', { name: /Hợp đồng/ }));
+
+      // The stacked card carries the same four facts as the wide table, so a
+      // phone never has to scroll a table sideways to read the rent.
+      const card = screen
+        .getAllByText('HD-2026-001')
+        .map((node) => node.closest('li'))
+        .find((node): node is HTMLLIElement => node !== null) as HTMLLIElement;
+      expect(within(card).getByText('3.500.000 đ')).toBeTruthy();
+      expect(within(card).getByText('7.000.000 đ')).toBeTruthy();
+      expect(within(card).getByText('Đang hiệu lực')).toBeTruthy();
+      expect(within(card).getByText('01/01/2026 – 31/12/2026')).toBeTruthy();
+    } finally {
+      contractsData.current = [];
+    }
+  });
+
+  it('says the room has no contract yet rather than showing an empty table', () => {
+    roomsData.current = [room];
+    floorsData.current = floors;
+    equipmentData.current = [];
+    contractsData.current = [];
+
+    renderPage();
+
+    fireEvent.click(screen.getByRole('tab', { name: /Hợp đồng/ }));
+
+    expect(screen.getByText('Phòng chưa có hợp đồng nào')).toBeTruthy();
+  });
+
+  it('explains a 403 on contracts as a permission gap, not a missing feature', () => {
+    roomsData.current = [room];
+    floorsData.current = floors;
+    equipmentData.current = [];
+    contractsError.current = new ApiError('Forbidden', 'Forbidden', 403);
+
+    try {
+      renderPage();
+
+      fireEvent.click(screen.getByRole('tab', { name: /Hợp đồng/ }));
+
+      expect(screen.getByText(/chưa được cấp quyền xem hợp đồng/)).toBeTruthy();
+    } finally {
+      contractsError.current = null;
+    }
+  });
+
+  it('states the real reason on the invoice and maintenance tabs, not a guess', () => {
+    roomsData.current = [room];
+    floorsData.current = floors;
+    equipmentData.current = [];
+
+    renderPage();
+
+    fireEvent.click(screen.getByRole('tab', { name: /Hoá đơn/ }));
+    // Every invoice app service is closed to remote access and the official
+    // posting routes live only on the disposable staging controller. Saying
+    // "the ledger is only a draft" would understate that, so it must not be
+    // the sentence the owner reads.
+    expect(screen.getByText(/đóng truy cập từ xa/)).toBeTruthy();
+    expect(screen.queryByText(/chưa phát hành hoá đơn chính thức/)).toBeNull();
+
+    fireEvent.click(screen.getByRole('tab', { name: /Bảo trì/ }));
+    expect(screen.getByText(/chưa có bảng dữ liệu và chưa có endpoint/)).toBeTruthy();
   });
 
   it('disables the edit button and the new-contract button without permission', () => {

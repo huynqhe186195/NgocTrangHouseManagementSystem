@@ -221,6 +221,19 @@ namespace BuildingManagement.Rooms
                 items.OrderBy(x => x.Name).ToList());
         }
 
+        public async Task<List<ContractDto>> GetContractsAsync(Guid id)
+        {
+            // ContractRead, not RoomRead: seeing that a room exists is a
+            // different fact from knowing who rents it and for how much.
+            await _access.EnsureResourceAsync(
+                BuildingBusinessResourceKind.Room, id,
+                BuildingBusinessCapability.ReadContract);
+            var contracts = await _contractRepository.GetListAsync(
+                x => x.RoomId == id);
+            return ObjectMapper.Map<List<Contract>, List<ContractDto>>(
+                contracts.OrderByDescending(x => x.StartDate).ToList());
+        }
+
         public async Task<RoomEquipmentDto> CreateEquipmentAsync(
             Guid id, CreateRoomEquipmentDto input)
         {

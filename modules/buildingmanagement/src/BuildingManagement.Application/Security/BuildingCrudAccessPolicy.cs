@@ -133,6 +133,7 @@ public sealed class BuildingCrudAccessPolicy
         (BuildingBusinessResourceKind.Room,
             BuildingBusinessCapability.ReadRoom or
             BuildingBusinessCapability.ManageRoom or
+            BuildingBusinessCapability.ReadContract or
             BuildingBusinessCapability.ManageContract) => true,
         (BuildingBusinessResourceKind.Contract,
             BuildingBusinessCapability.ReadContract or

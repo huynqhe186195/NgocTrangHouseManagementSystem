@@ -23,6 +23,7 @@ import {
   useFloorLayoutItems,
   useFloors,
   useRoomEquipment,
+  useRoomContracts,
   useRoomPhotos,
   useRooms,
   useUpdateRoomRent,
@@ -30,9 +31,9 @@ import {
 } from '../../lib/api/buildingQueries';
 import { describeMutationError } from '../../lib/api/mutationErrors';
 import { fileToBase64, roomsApi } from '../../lib/api/buildingApi';
-import { equipmentConditionMeta, roomDirectionLabels, roomStatusMeta } from '../../lib/api/types';
-import type { RoomEquipmentDto, RoomPhotoDto } from '../../lib/api/types';
-import { formatVnd } from '../../lib/format';
+import { contractStatusMeta, equipmentConditionMeta, roomDirectionLabels, roomStatusMeta } from '../../lib/api/types';
+import type { ContractDto, RoomEquipmentDto, RoomPhotoDto } from '../../lib/api/types';
+import { formatDate, formatVnd } from '../../lib/format';
 import { FloorPlan } from '../buildings/FloorPlan';
 import { EquipmentFormDialog } from './EquipmentFormDialog';
 import { equipmentIcon } from './equipmentIcon';
@@ -72,6 +73,7 @@ export function RoomDetailPage() {
   const [planFloorId, setPlanFloorId] = useState<string | null>(null);
 
   const equipment = useRoomEquipment(roomId);
+  const contracts = useRoomContracts(roomId);
   const photos = useRoomPhotos(roomId);
   const uploadPhoto = useUploadRoomPhoto(roomId ?? '');
   const deletePhoto = useDeleteRoomPhoto(roomId ?? '');
@@ -243,7 +245,7 @@ export function RoomDetailPage() {
             <Button
               disabled
               icon={<span className="material-symbols-outlined text-base">add</span>}
-              title="Hợp đồng thuộc app service hợp đồng, hiện bị cổng phân quyền chặn 403 trên máy chủ."
+              title="Tạo hợp đồng thuộc phân hệ hợp đồng, hiện chưa mở trên máy chủ (403). Danh sách hợp đồng vẫn đọc được ở tab bên dưới."
             >
               Hợp đồng mới
             </Button>
@@ -515,26 +517,26 @@ export function RoomDetailPage() {
         </TabPanel>
 
         <TabPanel id="contracts" activeId={activeTab}>
-          <GateNotice
-            icon="description"
-            title="Hợp đồng chưa có API công khai"
-            body="Danh sách hợp đồng thuộc app service hợp đồng, hiện bị cổng phân quyền chặn 403 trên máy chủ. Màn này sẽ hiển thị khi API đó được mở."
+          <ContractsTab
+            contracts={contracts.data ?? []}
+            loading={contracts.isLoading}
+            error={contracts.error}
           />
         </TabPanel>
 
         <TabPanel id="invoices" activeId={activeTab}>
           <GateNotice
             icon="receipt_long"
-            title="Hoá đơn chưa có API công khai"
-            body="Hoá đơn thuộc app service tài chính, hiện bị chặn 403. Không có dữ liệu giả được hiển thị thay thế."
+            title="Hoá đơn chưa có đường đọc cho giao diện"
+            body="Toàn bộ dịch vụ hoá đơn trên máy chủ đều đang đóng truy cập từ xa, và các route phát hành / ghi công nợ chính thức chỉ chạy trên làn staging dùng một lần. Vì vậy giao diện chưa có số liệu hoá đơn nào để hiển thị, và không có số liệu giả được đặt vào đây."
           />
         </TabPanel>
 
         <TabPanel id="maintenance" activeId={activeTab}>
           <GateNotice
             icon="build"
-            title="Bảo trì chưa có API công khai"
-            body="Yêu cầu bảo trì chưa có endpoint đọc trên máy chủ. Dùng tab Thiết bị để ghi nhận tình trạng từng món."
+            title="Bảo trì chưa được xây dựng"
+            body="Hệ thống chưa có phiếu yêu cầu bảo trì: chưa có bảng dữ liệu và chưa có endpoint. Dùng tab Thiết bị để ghi nhận tình trạng từng món cho tới khi phân hệ này được làm."
           />
         </TabPanel>
       </section>
@@ -812,6 +814,126 @@ function EquipmentTab({
         </tbody>
       </table>
     </div>
+  );
+}
+
+function ContractsTab({
+  contracts,
+  loading,
+  error,
+}: {
+  contracts: ContractDto[];
+  loading: boolean;
+  error: unknown;
+}) {
+  if (loading) {
+    return (
+      <div className="flex items-center gap-2 py-6 text-sm text-on-surface-variant">
+        <span className="material-symbols-outlined animate-spin text-lg">sync</span>
+        Đang tải hợp đồng…
+      </div>
+    );
+  }
+
+  if (error) {
+    // The server answers 403 when the account holds ReadRoom but not
+    // ReadContract: knowing a room exists is a different fact from knowing
+    // who rents it.
+    return (
+      <Alert tone={error instanceof ApiError && error.status === 403 ? 'warning' : 'error'}>
+        {error instanceof ApiError && error.status === 403
+          ? 'Tài khoản này được xem phòng nhưng chưa được cấp quyền xem hợp đồng trên máy chủ.'
+          : error instanceof ApiError
+            ? error.message
+            : 'Không tải được danh sách hợp đồng.'}
+      </Alert>
+    );
+  }
+
+  if (contracts.length === 0) {
+    return (
+      <EmptyState
+        icon="description"
+        title="Phòng chưa có hợp đồng nào"
+        description="Hợp đồng được tạo ở phân hệ hợp đồng; danh sách này chỉ đọc những hợp đồng máy chủ đã ghi cho phòng này."
+      />
+    );
+  }
+
+  return (
+    <>
+      {/* A phone would have to scroll a five-column table sideways to reach the
+          rent and the status, which are the two facts the owner opens this tab
+          for. Below `md` each contract becomes a stacked card instead. */}
+      <ul className="space-y-3 md:hidden">
+        {contracts.map((contract) => {
+          const meta = contractStatusMeta[contract.status];
+          return (
+            <li
+              key={contract.id}
+              className="rounded-lg border border-outline-variant bg-surface-lowest p-3"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <span className="font-medium text-on-surface">{contract.contractNumber}</span>
+                <StatusBadge tone={meta.tone}>{meta.label}</StatusBadge>
+              </div>
+              <dl className="mt-2 space-y-1 text-sm">
+                <div className="flex justify-between gap-3">
+                  <dt className="text-on-surface-variant">Thời hạn</dt>
+                  <dd className="text-right text-on-surface">
+                    {formatDate(contract.startDate)} –{' '}
+                    {contract.endDate ? formatDate(contract.endDate) : 'chưa định'}
+                  </dd>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <dt className="text-on-surface-variant">Giá thuê</dt>
+                  <dd className="text-right font-medium text-on-surface">
+                    {formatVnd(contract.monthlyRent)}
+                  </dd>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <dt className="text-on-surface-variant">Tiền cọc</dt>
+                  <dd className="text-right text-on-surface">{formatVnd(contract.depositAmount)}</dd>
+                </div>
+              </dl>
+            </li>
+          );
+        })}
+      </ul>
+
+      <div className="hidden overflow-x-auto md:block">
+        <table className="w-full border-collapse text-sm">
+          <thead>
+            <tr className="bg-surface-low text-left text-xs font-semibold text-on-surface-variant">
+              <th className="px-3 py-2.5">Số hợp đồng</th>
+              <th className="px-3 py-2.5">Thời hạn</th>
+              <th className="px-3 py-2.5">Giá thuê</th>
+              <th className="px-3 py-2.5">Tiền cọc</th>
+              <th className="px-3 py-2.5">Trạng thái</th>
+            </tr>
+          </thead>
+          <tbody>
+            {contracts.map((contract) => {
+              const meta = contractStatusMeta[contract.status];
+              return (
+                <tr key={contract.id} className="border-t border-outline-variant">
+                  <td className="px-3 py-3 font-medium text-on-surface">{contract.contractNumber}</td>
+                  <td className="px-3 py-3 whitespace-nowrap text-on-surface-variant">
+                    {formatDate(contract.startDate)} –{' '}
+                    {contract.endDate ? formatDate(contract.endDate) : 'chưa định'}
+                  </td>
+                  <td className="px-3 py-3 whitespace-nowrap text-on-surface">{formatVnd(contract.monthlyRent)}</td>
+                  <td className="px-3 py-3 whitespace-nowrap text-on-surface">{formatVnd(contract.depositAmount)}</td>
+                  <td className="px-3 py-3">
+                    <StatusBadge tone={meta.tone}>{meta.label}</StatusBadge>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </>
   );
 }
 

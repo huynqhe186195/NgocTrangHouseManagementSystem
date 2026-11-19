@@ -27,6 +27,22 @@ export function formatVnd(value: number | null | undefined): string {
 }
 
 /**
+ * Server dates arrive as ISO strings. A contract's start and end are
+ * calendar dates the owner agreed to, so they are printed as dd/mm/yyyy and
+ * never shifted by the browser's timezone.
+ */
+export function formatDate(value: string | null | undefined): string {
+  if (!value) {
+    return '—';
+  }
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  if (!match) {
+    return '—';
+  }
+  return `${match[3]}/${match[2]}/${match[1]}`;
+}
+
+/**
  * Parse what the owner typed into a money field. Accepts the dots and spaces
  * the formatter itself produces, plus a trailing currency word, so a value
  * can be pasted back into an input without being rejected.

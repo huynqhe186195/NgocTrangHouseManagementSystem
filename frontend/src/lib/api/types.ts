@@ -187,6 +187,31 @@ export interface UpdateBuildingPublicInfoInput {
   houseRules: HouseRuleItem[];
 }
 
+/** Server enum: Draft=1, Active=2, Ended=3, Cancelled=4, Signed=5. */
+export type ContractStatus = 1 | 2 | 3 | 4 | 5;
+
+export const contractStatusMeta: Record<ContractStatus, { label: string; tone: 'neutral' | 'success' | 'warning' | 'error' }> = {
+  1: { label: 'Nháp', tone: 'neutral' },
+  2: { label: 'Đang hiệu lực', tone: 'success' },
+  3: { label: 'Đã kết thúc', tone: 'neutral' },
+  4: { label: 'Đã huỷ', tone: 'error' },
+  5: { label: 'Đã ký', tone: 'warning' },
+};
+
+export interface ContractDto extends AuditedEntity {
+  contractNumber: string;
+  roomId: string;
+  renewedFromContractId: string | null;
+  startDate: string;
+  endDate: string | null;
+  actualEndedAt: string | null;
+  endReason: number | null;
+  monthlyRent: number;
+  depositAmount: number;
+  status: ContractStatus;
+  notes: string | null;
+}
+
 export interface RoomEquipmentDto extends AuditedEntity {
   roomId: string;
   name: string;

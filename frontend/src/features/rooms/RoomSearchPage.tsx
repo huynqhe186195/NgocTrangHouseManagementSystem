@@ -32,7 +32,15 @@ const DEFAULT_LEASE_MONTHS = 6;
 const DEPOSIT_MONTHS = 1;
 const GALLERY_PHOTOS = 6;
 
-const BOOKING_BLOCKED_HINT = 'Chức năng đặt phòng chưa được mở trên máy chủ.';
+/**
+ * Booking is a real server-side flow (create reservation, take the deposit),
+ * and it needs to know which tenant account is booking. The server has no
+ * link between a sign-in account and a Tenant record, so the button cannot
+ * name the booker. Saying "not open yet" would understate that: the module
+ * exists, the missing piece is the account link.
+ */
+const BOOKING_BLOCKED_HINT =
+  'Chưa đặt phòng được: máy chủ chưa liên kết tài khoản đăng nhập với hồ sơ người thuê, nên chưa biết ai là người đặt.';
 
 /** Matches the server's HouseRuleIcon enum; only these symbols exist. */
 const HOUSE_RULE_ICONS: Record<number, string> = {

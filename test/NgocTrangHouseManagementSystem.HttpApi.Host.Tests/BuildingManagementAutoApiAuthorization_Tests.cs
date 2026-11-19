@@ -695,6 +695,18 @@ public sealed class BuildingManagementAutoApiAuthorization_Tests
                 DispatchProxy.Create<
                     IRepository<BuildingManagement.Buildings.Building, Guid>,
                     NoDatabaseRepositoryProxy>());
+            context.Services.AddSingleton<IRepository<BuildingManagement.Buildings.BuildingPhoto, Guid>>(
+                DispatchProxy.Create<
+                    IRepository<BuildingManagement.Buildings.BuildingPhoto, Guid>,
+                    NoDatabaseRepositoryProxy>());
+            context.Services.AddSingleton<IRepository<BuildingManagement.Buildings.BuildingPhotoContent, Guid>>(
+                DispatchProxy.Create<
+                    IRepository<BuildingManagement.Buildings.BuildingPhotoContent, Guid>,
+                    NoDatabaseRepositoryProxy>());
+            context.Services.AddSingleton<IRepository<BuildingManagement.Buildings.BuildingPublicInfo, Guid>>(
+                DispatchProxy.Create<
+                    IRepository<BuildingManagement.Buildings.BuildingPublicInfo, Guid>,
+                    NoDatabaseRepositoryProxy>());
             context.Services.AddSingleton<IRepository<BuildingManagement.Floors.Floor, Guid>>(
                 DispatchProxy.Create<
                     IRepository<BuildingManagement.Floors.Floor, Guid>,

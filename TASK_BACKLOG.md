@@ -1223,10 +1223,47 @@ The first fix deferred "Khách thuê" to `xl` — and the re-shoot's own asserti
 
 **Honest gaps:**
 - The earlier `SliceARosterStagingPostgreSqlHttp_Tests` proof uses a synthetic TestServer actor header and is not native bearer-token evidence. The P60 lane is the native OpenIddict bearer-token proof; neither is production authorization approval.
-- There is no production migration or production role activation in this slice. The result is only: **roster đọc-only và building scope composition hoạt động đúng trong isolated staging với authenticated A/B actors**.
+- There is no production migration or production role activation in this slice. The result is only: **roster đọc-only và building scope composition hoạt động đúng trong isolated staging với authenticated A/B actors**. Commit `48841b3` đã được push lên `origin/main`; đây không phải production authorization approval.
 
 **Blocker:** None for the isolated staging roster. Production activation remains a separate Owner-approved release gate.
 **Dependency:** P4.21 ✅ (read-only gate, server-composed building scope and responsive roster precedent)
+
+---
+
+### P4.23 ✅ Admin "Hóa đơn" — Design-only preview; production read-only vẫn NO-GO
+**Status:** DONE ở phạm vi thiết kế UI cô lập. Backend/production vẫn NO-GO; không mở route `/invoices`, permission, migration, invoice mutation, thanh toán, payOS hoặc bank action.
+
+**Mục tiêu khảo sát:** xác định liệu có thể xây một read model hóa đơn scope theo tòa nhà mà không làm lộ dữ liệu tài chính hoặc vô tình mở workflow phát hành/thu tiền.
+
+**Các boundary bắt buộc trước khi triển khai:**
+- Truy nguyên scope server-side `Invoice → Contract → Room → Floor → Building`; không tin `buildingId`, tenant ID, invoice ID hoặc header do client gửi làm bằng chứng quyền.
+- Không đưa `InvoiceDraftCandidateAppService`, `InvoiceDraftStorageAppService`, final-invoice preflight/release/evidence hoặc payment allocation review trực tiếp vào allowlist nếu chưa có read contract riêng và scope proof.
+- Tách capability đọc khỏi phát hành, sửa, thanh toán, phân bổ, hoàn tiền và settlement; production tiếp tục `DenyAll` cho các path chưa có evidence.
+- Nếu không có persisted invoice read model an toàn hoặc không chứng minh được scope trước count/page/materialization, giữ sidebar ở gate 403 và ghi rõ blocker thay vì tạo UI giả.
+
+**Kết quả inventory (2026-11-21): NO-GO cho HTTP/UI ở thời điểm hiện tại.**
+
+- ✅ **Entity/DTO/service:** `Invoice` hiện là draft-only với `ContractId`, `RoomId`, kỳ billing, utility snapshot và provisional total; không phải official/payable invoice. `InvoiceDraftCandidateAppService`, `InvoiceDraftStorageAppService`, `MonthlyInvoiceBasePreviewAppService`, final-invoice/evidence/readiness và payment-allocation review đều là internal/remote-disabled. Tham chiếu: `modules/buildingmanagement/src/BuildingManagement.Domain/Invoices/Invoice.cs`, `.../Application/Invoices/InvoiceDraftCandidateAppService.cs`, `.../InvoiceDraftStorageAppService.cs`, `.../MonthlyInvoiceBasePreviewAppService.cs`.
+- ✅ **Route exposure:** host convention default-deny service không nằm allowlist; invoice services không nằm allowlist và các `RemoteService(IsEnabled = false)` không sinh public route. `BuildingManagementAutoApiAuthorization_Tests` và `InvoiceRemoteAccessGate_Tests` đang ghim boundary này.
+- ✅ **Scope graph:** quan hệ bắt buộc là `Invoice → Contract → Room → Floor → Building`, với cả `Invoice.RoomId` và `Contract.RoomId` phải khớp. `InvoiceDraftRevisionServerAccessGate`/`InvoiceDraftRevisionAccessPolicy` đã chứng minh graph check server-side ở design-only; đây chưa phải production runtime grant.
+- ✅ **Authorization gap:** chưa có capability/permission `Invoices.Read`; các permission hiện có (`Invoices.RebuildDraft`, `Invoices.ReadRevisionHistory`) không được dùng làm quyền đọc màn hình. Production invoice grant provider vẫn `DenyAll`; `EligibleForDesignOnly` không phải authorization token.
+- ✅ **Dữ liệu không được đưa ra UI hiện tại:** meter/source IDs và readings, tariff internals, raw bank/payment evidence, evidence hash, provisional amount dưới nhãn “phải trả”, payment allocation, debt/settlement facts và PII không cần thiết. Các giá trị `CanIssue`, `CanPostReceivable`, `IsOfficialReceivable`, `HasRecognizedDebt` không được suy diễn thành quyền hoặc trạng thái payable.
+- ✅ **Persistence evidence:** schema/integration tests chứng minh draft persistence, unique contract-period/room-period, FK restrict và RepeatableRead consistency; chúng không chứng minh HTTP authorization hay production role.
+
+**Kết luận:** P4.23 đã **DONE ở phạm vi design-only**. Preview UI cô lập đã được triển khai để Owner đánh giá visual, nhưng không phải production invoice module và không thay đổi kết luận backend **NO-GO**. Giữ `Hóa đơn` production ở trạng thái không có route/403 fail-closed. Nếu Owner muốn mở phase production sau, cần một plan riêng với read model mới (list/detail GET-only), permission `Invoices.Read`, active-account + membership integration, scope trước count/page/materialization, IDOR/graph-mismatch tests và native bearer-token A/B proof. Không reuse trực tiếp các draft/evidence service hiện tại.
+
+**Definition of Done cho phase P4.23 design-only:**
+- [x] Inventory entity/DTO/app service và route đang denied/exposed.
+- [x] Chứng minh quan hệ scope và các soft-delete/link conditions bằng code/test.
+- [x] Xác định PII/financial fields tối thiểu được phép hiển thị.
+- [x] Kết luận backend GO/NO-GO độc lập với việc triển khai UI.
+- [x] Tạo preview dev-only `/__design/invoices`, không thêm production `/invoices`.
+- [x] Có listing/detail local state, filter/search, responsive table/cards và loading/empty/403/error riêng.
+- [x] Có rendered evidence P61 ở bốn viewport, detail và bốn non-data states.
+- [x] Frontend Vitest `274/274`, TypeScript build và Vite build PASS.
+
+**Dependency:** P4.22 ✅
+**Blocker cho production invoice:** chưa có `Invoices.Read`, production invoice account/grant integration vẫn `DenyAll`, persisted data hiện chỉ là draft/provisional, và chưa có read-model scope proof. Đây là blocker của phase production tiếp theo, không phải blocker của preview design-only.
 
 ---
 
@@ -1258,7 +1295,9 @@ The first fix deferred "Khách thuê" to `xl` — and the re-shoot's own asserti
 - P2: 6/6 **MERGED INTO `main`** (PR #11 merge commit `72a0721`, 2026-11-13, no squash — P2.1 `d36edb5` / P2.2 `b18644b` / P2.3 `aa3b9bb` / P2.4 `950610a` / P2.5 `2d01952` / P2.6 `6c9852f`; local 5-group harness ALL PASSED at `72a0721`; post-merge CI stale-assertion fix `d364ee1` with CI run 43423912631 green 5/5)
 - P3: 4/4 done + **MERGED to main** (P3.1 merge `01cba31`; P3.2 DONE `1ddf2e6`; P3.3 matrix; **P3.4 CLOSED 2026-11-12: PR #10 → main merge commit `c499d89`, Owner §6 signed + §3.2 P2 deferral accepted; post-merge local regression + CI green 5/5 at the merge commit**)
 
-**Current Focus:** **P4.21 THE ADMIN "Khách thuê" SCREEN (2026-11-20)** — the sidebar's last data-backed grey row now opens a real read-only screen. A tenant has no building, so scope could not reuse a policy branch: a first design adding `ResourceKind.Tenant` was reverted as wrong (first-contract building would deny a caller granted the second), and scope lives in the new `TenantsAppService` via the link→contract→room→floor→building join. Exactly two read methods, no write path; allowlist 5 → 6 with `TenantAppService` still denied; `APIAUTO18` pins the surface at two methods. The read DTO deliberately withholds citizen id and emergency contact. 8 captures in `etc/captures/p59/`. Backend **257 / 774 / 463 / 78**, Vitest **257/257 in 23 files**.
+**Current Focus:** **P4.23 DESIGN-ONLY PREVIEW COMPLETE (2026-11-21, local `36bd748`)** — preview dev-only `/__design/invoices` đã có evidence P61 ở bốn viewport, detail và loading/empty/403/error; Vitest `274/274`, TypeScript và Vite build PASS. Production `/invoices` vẫn không có route, sidebar vẫn disabled, backend invoice vẫn NO-GO vì draft/provisional, thiếu `Invoices.Read`, grant provider `DenyAll` và chưa có read-model scope proof. Không push commit `36bd748` nếu Owner chưa yêu cầu. Phase production tương lai chỉ mở sau plan GET-only riêng với graph scope, IDOR/soft-delete/paging tests và native bearer-token A/B evidence.
+
+**Previous focus:** **P4.22 THE ADMIN "Người dùng" ROSTER (2026-11-21)** — read-only isolated staging, native bearer-token P60 evidence, production vẫn `DenyAll`.
 
 **Previous focus:** **P4.20 THE ADMIN "Hợp đồng" SCREEN (2026-11-20)** — the sidebar's last data-backed grey row now opens a real read-only screen. `ContractAppService.GetListAsync()` returns every contract in the database with no predicate, so it stayed denied and the read went into a **new** `ContractsAppService` carrying exactly two read methods and no write path; the allowlist grew 4 → 5 and `APIAUTO17` pins the new service's HTTP surface at two methods by name, so a future write turns a test red rather than silently widening the exposure. Reviewing the diff found the departed-tenant defect — moving a tenant out soft-deletes the **link**, not the tenant — pinned by `CTLIST07`. A defect only the PNG caught: at 1024 the seven-column table clipped its Trạng thái column inside its own `overflow-x-auto`, invisible to the page-level overflow check; the first repair traded one hidden column for another, the correct one is P4.19's precedent (cards to `xl`, table above it), and the harness now measures the last column against **its own panel**. 12 captures in `etc/captures/p58/`. Backend **257 / 774 / 455 / 78**, Vitest **240/240 in 21 files**.
 

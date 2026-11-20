@@ -183,6 +183,26 @@ describe('AppShell', () => {
     expect(invoices.textContent).toContain('Hóa đơn');
   });
 
+  it('opens the contract list from the admin sidebar', () => {
+    permissions = ['BuildingManagement.Buildings.Manage'];
+    renderShell();
+
+    const nav = screen.getByRole('navigation');
+    const item = within(nav).getByText('Hợp đồng').closest('li') as HTMLElement;
+    const link = within(item).getByRole('link');
+
+    expect(link.textContent).toContain('Hợp đồng');
+    expect(link.getAttribute('href')).toBe('/contracts');
+  });
+
+  it('puts an account that may only read contracts in the admin shell', () => {
+    permissions = ['BuildingManagement.Contracts.Read'];
+    renderShell();
+
+    expect(screen.getByText('Quản trị viên')).toBeTruthy();
+    expect(navLabels().some((label) => label.includes('Hợp đồng'))).toBe(true);
+  });
+
   it('collapses and expands the sidebar with the hamburger', () => {
     permissions = ['BuildingManagement.Buildings.Manage'];
     renderShell();

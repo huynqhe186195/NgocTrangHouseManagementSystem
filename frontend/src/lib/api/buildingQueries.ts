@@ -1,11 +1,12 @@
 import { useMutation, useQuery, useQueries, useQueryClient } from '@tanstack/react-query';
-import { buildingsApi, floorsApi, roomsApi } from '../api/buildingApi';
+import { buildingsApi, contractsApi, floorsApi, roomsApi } from '../api/buildingApi';
 import type {
   BuildingDto,
   BuildingPhotoDto,
   BuildingPhotoFileDto,
   BuildingPublicInfoDto,
   ContractDto,
+  ContractSummaryDto,
   CreateBuildingInput,
   CreateFloorInput,
   CreateFloorLayoutItemInput,
@@ -32,6 +33,8 @@ const keys = {
   buildings: ['buildings'] as const,
   floors: ['floors'] as const,
   rooms: ['rooms'] as const,
+  contracts: ['contracts'] as const,
+  contract: (contractId: string) => ['contract', contractId] as const,
   roomEquipment: (roomId: string) => ['room-equipment', roomId] as const,
   roomContracts: (roomId: string) => ['room-contracts', roomId] as const,
   roomPhotos: (roomId: string) => ['room-photos', roomId] as const,
@@ -276,6 +279,21 @@ export function useRoomContracts(roomId: string | undefined) {
     queryKey: keys.roomContracts(roomId ?? ''),
     queryFn: () => roomsApi.listContracts(roomId as string),
     enabled: Boolean(roomId),
+  });
+}
+
+export function useContracts() {
+  return useQuery<ContractSummaryDto[]>({
+    queryKey: keys.contracts,
+    queryFn: () => contractsApi.list(),
+  });
+}
+
+export function useContract(contractId: string | undefined) {
+  return useQuery<ContractSummaryDto>({
+    queryKey: keys.contract(contractId ?? ''),
+    queryFn: () => contractsApi.get(contractId as string),
+    enabled: Boolean(contractId),
   });
 }
 

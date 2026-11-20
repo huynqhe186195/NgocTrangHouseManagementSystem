@@ -212,6 +212,54 @@ export interface ContractDto extends AuditedEntity {
   notes: string | null;
 }
 
+/** Server enum: PrimaryTenant=1, Member=2. */
+export type ContractTenantRole = 1 | 2;
+
+export const contractTenantRoleLabels: Record<ContractTenantRole, string> = {
+  1: 'Khách thuê chính',
+  2: 'Thành viên',
+};
+
+/** Server enum: Normal=1, EarlyTermination=2, Transferred=3, RoomChanged=4. */
+export type ContractEndReason = 1 | 2 | 3 | 4;
+
+export const contractEndReasonLabels: Record<ContractEndReason, string> = {
+  1: 'Hết hạn hợp đồng',
+  2: 'Chấm dứt trước hạn',
+  3: 'Chuyển nhượng',
+  4: 'Chuyển phòng',
+};
+
+export interface ContractTenantSummary {
+  tenantId: string;
+  fullName: string;
+  role: ContractTenantRole;
+}
+
+/**
+ * Mirrors ContractSummaryDto. The contract entity has no building of its own:
+ * building is reached through room -> floor, so the server resolves those
+ * names and sends them along rather than making the screen guess.
+ */
+export interface ContractSummaryDto extends AuditedEntity {
+  contractNumber: string;
+  status: ContractStatus;
+  startDate: string;
+  endDate: string | null;
+  actualEndedAt: string | null;
+  endReason: ContractEndReason | null;
+  monthlyRent: number;
+  depositAmount: number;
+  notes: string | null;
+  roomId: string;
+  roomNumber: string;
+  floorId: string;
+  floorName: string;
+  buildingId: string;
+  buildingName: string;
+  tenants: ContractTenantSummary[];
+}
+
 export interface RoomEquipmentDto extends AuditedEntity {
   roomId: string;
   name: string;

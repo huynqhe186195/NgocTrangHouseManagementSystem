@@ -638,6 +638,78 @@ public sealed class BuildingManagementAutoApiAuthorization_Tests
             () => gate.EnsureDirectTerminationAllowedAsync());
     }
 
+    /// <summary>
+    /// The read-only contract list left the default-deny list because both of
+    /// its methods enforce the per-building policy themselves. That only holds
+    /// if an authenticated caller WITHOUT a grant is refused: production's
+    /// operator readers deny everyone today, so a 403 here is the shipped
+    /// behaviour, not a regression.
+    /// </summary>
+    [Fact]
+    public async Task APIAUTO17_Contract_List_Stays_Closed_Without_A_Building_Grant()
+    {
+        await using var app = await StartIsolatedAbpHostAsync();
+        using var client = AuthenticatedClient(app);
+        // Spoofed entitlement headers must not substitute for a real grant.
+        client.DefaultRequestHeaders.Add("X-Is-Admin", "true");
+        client.DefaultRequestHeaders.Add("X-Building-Id",
+            Guid.NewGuid().ToString("D"));
+        client.DefaultRequestHeaders.Add("X-Permission",
+            "BuildingManagement.Contracts.Read");
+
+        var actions = GetGeneratedActions(app);
+        var guessed = Guid.NewGuid().ToString("D");
+
+        // The allowlist entry is safe only while this service carries nothing
+        // but reads. Adding a write here would expose it over HTTP with every
+        // other test still green, so the surface itself is pinned.
+        var contractSurface = actions
+            .Where(action => action.ControllerTypeInfo.AsType() ==
+                typeof(BuildingManagement.Contracts.ContractsAppService))
+            .ToArray();
+        Assert.Equal(2, contractSurface.Length);
+        Assert.Equal(
+            new[] { "GetAsync", "GetListAsync" },
+            contractSurface.Select(action => action.MethodInfo.Name).OrderBy(x => x));
+
+        var list = Assert.Single(actions, action =>
+            action.ControllerTypeInfo.AsType() ==
+                typeof(BuildingManagement.Contracts.ContractsAppService) &&
+            action.MethodInfo.Name == "GetListAsync");
+        var listRoute = Assert.IsType<string>(list.AttributeRouteInfo?.Template);
+        Assert.Equal("api/building-management/contracts", listRoute);
+        using (var response = await client.GetAsync(
+            "/" + listRoute.TrimStart('/')))
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+
+        // A known-shaped id must not distinguish itself either: the policy runs
+        // before any contract is loaded.
+        var get = Assert.Single(actions, action =>
+            action.ControllerTypeInfo.AsType() ==
+                typeof(BuildingManagement.Contracts.ContractsAppService) &&
+            action.MethodInfo.Name == "GetAsync");
+        var getRoute = Assert.IsType<string>(get.AttributeRouteInfo?.Template);
+        Assert.Equal("api/building-management/contracts/{id}", getRoute);
+        using (var response = await client.GetAsync(
+            "/" + Regex.Replace(getRoute, @"\{[^}]+\}", guessed)
+                .TrimStart('/')))
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+
+        // The "contracts" segment comes from the class name ContractsAppService
+        // (ABP only kebab-cases the type name; it never singularises), so it sits
+        // beside RoomAppService's room/{id}/contracts rather than shadowing it.
+        var roomContracts = Assert.Single(actions, action =>
+            action.ControllerTypeInfo.AsType() ==
+                typeof(BuildingManagement.Rooms.RoomAppService) &&
+            action.MethodInfo.Name == "GetContractsAsync");
+        var roomRoute = Assert.IsType<string>(
+            roomContracts.AttributeRouteInfo?.Template);
+        Assert.Equal("api/building-management/room/{id}/contracts", roomRoute);
+        Assert.NotEqual(
+            listRoute.TrimStart('/').ToLowerInvariant(),
+            roomRoute.TrimStart('/').ToLowerInvariant());
+    }
+
     private static ControllerActionDescriptor[] GetGeneratedActions(WebApplication app)
         => app.Services
             .GetRequiredService<IActionDescriptorCollectionProvider>()
@@ -734,6 +806,14 @@ public sealed class BuildingManagementAutoApiAuthorization_Tests
             context.Services.AddSingleton<IRepository<BuildingManagement.Contracts.Contract, Guid>>(
                 DispatchProxy.Create<
                     IRepository<BuildingManagement.Contracts.Contract, Guid>,
+                    NoDatabaseRepositoryProxy>());
+            context.Services.AddSingleton<IRepository<BuildingManagement.Contracts.ContractTenant, Guid>>(
+                DispatchProxy.Create<
+                    IRepository<BuildingManagement.Contracts.ContractTenant, Guid>,
+                    NoDatabaseRepositoryProxy>());
+            context.Services.AddSingleton<IRepository<BuildingManagement.Tenants.Tenant, Guid>>(
+                DispatchProxy.Create<
+                    IRepository<BuildingManagement.Tenants.Tenant, Guid>,
                     NoDatabaseRepositoryProxy>());
             context.Services.AddSingleton<IRepository<BuildingManagement.Utilities.UtilityMeter, Guid>>(
                 DispatchProxy.Create<

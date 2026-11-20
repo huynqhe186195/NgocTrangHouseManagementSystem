@@ -5,6 +5,7 @@ import type {
   BuildingPhotoFileDto,
   BuildingPublicInfoDto,
   ContractDto,
+  ContractSummaryDto,
   CreateBuildingInput,
   CreateFloorInput,
   CreateFloorLayoutItemInput,
@@ -165,6 +166,16 @@ export const roomsApi = {
     request<RoomPhotoFileDto>(`${base}/room/${roomId}/photo-content/${photoId}`),
   removePhoto: (roomId: string, photoId: string) =>
     request<void>(`${base}/room/${roomId}/photo/${photoId}`, { method: 'DELETE' }),
+};
+
+/**
+ * Read-only contract list. Separate from the room's `/room/{id}/contracts`
+ * sub-resource: that one is scoped by room, this one by the buildings the
+ * caller holds a grant on. Both routes are asserted by APIAUTO17.
+ */
+export const contractsApi = {
+  list: () => request<ContractSummaryDto[]>(`${base}/contracts`),
+  get: (id: string) => request<ContractSummaryDto>(`${base}/contracts/${id}`),
 };
 
 /**

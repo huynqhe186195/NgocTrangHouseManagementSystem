@@ -10,6 +10,8 @@ import { FloorPlanPage } from './features/buildings/FloorPlanPage';
 import { RoomDetailPage } from './features/rooms/RoomDetailPage';
 import { RoomSearchPage } from './features/rooms/RoomSearchPage';
 import { RoomsPage } from './features/rooms/RoomsPage';
+import { ContractDetailPage } from './features/contracts/ContractDetailPage';
+import { ContractsPage } from './features/contracts/ContractsPage';
 import { AppShell } from './features/shell/AppShell';
 import { ForbiddenPage } from './features/shell/ForbiddenPage';
 import { OverviewPage } from './features/shell/OverviewPage';
@@ -34,6 +36,8 @@ export default function App() {
           />
           <Route path="/rooms" element={<RoomsPage />} />
           <Route path="/rooms/:roomId" element={<RoomDetailPage />} />
+          <Route path="/contracts" element={<ContractsPage />} />
+          <Route path="/contracts/:contractId" element={<ContractDetailPage />} />
           <Route path="/search" element={<RoomSearchPage />} />
           <Route path="/forbidden" element={<ForbiddenPage />} />
         </Route>

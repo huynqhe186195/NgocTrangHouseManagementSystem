@@ -50,7 +50,10 @@ public sealed class BuildingManagementAuthenticatedControllerConvention
            type != typeof(BuildingAppService) &&
            type != typeof(FloorAppService) &&
            type != typeof(RoomAppService) &&
-           type != typeof(BuildingPublicInfoAppService);
+           type != typeof(BuildingPublicInfoAppService) &&
+           // Read-only by construction: two Get methods, no writes. If a write
+           // is ever added to this service it must leave this list first.
+           type != typeof(ContractsAppService);
 
     public void Apply(ApplicationModel application)
     {

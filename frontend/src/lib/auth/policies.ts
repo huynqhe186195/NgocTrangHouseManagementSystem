@@ -11,4 +11,5 @@ export const BuildingPolicies = {
   buildingsBootstrapOwner: 'BuildingManagement.Buildings.BootstrapOwner',
   floorsManage: 'BuildingManagement.Floors.Manage',
   roomsManage: 'BuildingManagement.Rooms.Manage',
+  contractsRead: 'BuildingManagement.Contracts.Read',
 } as const;

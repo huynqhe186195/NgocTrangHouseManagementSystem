@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { RequireAuth } from './lib/auth/requireAuth';
 import { ForgotPasswordPage } from './features/auth/ForgotPasswordPage';
@@ -18,6 +19,10 @@ import { UsersPage } from './features/users/UsersPage';
 import { AppShell } from './features/shell/AppShell';
 import { ForbiddenPage } from './features/shell/ForbiddenPage';
 import { OverviewPage } from './features/shell/OverviewPage';
+
+const InvoiceDesignPreviewPage = import.meta.env.DEV
+  ? lazy(() => import('./features/invoices/InvoiceDesignPreviewPage').then((module) => ({ default: module.InvoiceDesignPreviewPage })))
+  : null;
 
 export default function App() {
   return (
@@ -44,6 +49,16 @@ export default function App() {
           <Route path="/tenants" element={<TenantsPage />} />
           <Route path="/tenants/:tenantId" element={<TenantDetailPage />} />
           <Route path="/users" element={<UsersPage />} />
+          {InvoiceDesignPreviewPage && (
+            <Route
+              path="/__design/invoices"
+              element={
+                <Suspense fallback={<p className="text-sm text-on-surface-variant">Đang tải bản thiết kế…</p>}>
+                  <InvoiceDesignPreviewPage />
+                </Suspense>
+              }
+            />
+          )}
           <Route path="/search" element={<RoomSearchPage />} />
           <Route path="/forbidden" element={<ForbiddenPage />} />
         </Route>

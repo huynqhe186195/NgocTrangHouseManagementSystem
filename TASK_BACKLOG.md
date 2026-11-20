@@ -1151,6 +1151,57 @@ The first fix deferred "Khách thuê" to `xl` — and the re-shoot's own asserti
 
 ---
 
+### P4.21 ✅ The Admin "Khách thuê" Module — Roster And Detail, Read-Only
+**Status:** DONE. Built to the Owner-approved plan (read-only, roster + detail page). The admin sidebar's last data-backed grey row now opens a real read-only screen. A tenant has no building — one person can rent in several — so unlike contracts there was no existing policy branch to reuse: the scope had to be designed, and the first design was wrong (see the reverted `ResourceKind.Tenant` below). The read went into a **new** `TenantsAppService` carrying exactly two read methods and no write path; the allowlist grew 5 → 6, `TenantAppService` (singular, write + unfiltered list) is deliberately **still** denied, and `APIAUTO18` pins the new service's HTTP surface at exactly two methods.
+
+**What changed — backend (8 files):**
+- `TenantSummaryDto` / `TenantContractSummaryDto` — a hand-built read model. `TenantDto` carries citizen id and emergency contact; those two PII fields are **excluded** from the read DTO (phone, email, gender, address and notes stay, per the reviewed staging read model). The contract entries carry `EndDate` so the roster can answer "ai sắp hết hạn" without a second call.
+- `ITenantsAppService` / `TenantsAppService` — exactly two methods, `GetListAsync()` and `GetAsync(Guid)`. The list joins link → contract → room → floor → building and filters on `GetAuthorizedBuildingIdsAsync(ReadTenant)`; `GetAsync` computes the authorized set **before** the lookup and returns `EntityNotFoundException` (404, not 403) for an outside-grant or unknown id, so a GUID cannot be used to confirm whether a person exists. Tenants arrive in **one** grouped query; moving out soft-deletes the **link**, so a departed person drops off the roster while still existing.
+- `BuildingBusinessCapability.ReadTenant = 9` + `AbpBuildingBusinessPrincipalReader` maps it to the new permission, fail-closed for unknown values. `BuildingCrudAccessPolicy.IsSupported` accepts `ReadTenant`; `Matches()` is unchanged.
+- `BuildingManagementPermissions.Tenants.Read` + provider entry + `en.json` "View tenants" / `vi.json` "Xem khách thuê". A separate grant on purpose: tenant PII must never be implied by `Contracts.Read`.
+- `BuildingManagementAuthenticatedControllerConvention` — one entry added, with a comment saying `TenantAppService` stays denied.
+- `TenantsAppService_Scope_Tests` (new, 8 cases TNLIST01–08) run against real SQLite with a test-only policy granting one building.
+- `APIAUTO18` + the AUTHMODEL reviewed list (5 → 6).
+
+**A design reverted during review (do not reintroduce):** the first cut added `BuildingBusinessResourceKind.Tenant = 5` with `ResolveTenantBuildingAsync` returning the tenant's *first* contract's building. That is wrong: a person renting in buildings A and B is visible to a caller granted only B, and the first-contract rule would deny them. Reverted — the enum keeps 4 values and tenant scope lives entirely in `TenantsAppService` via the join.
+
+**What changed — frontend (9 files):**
+- `types.ts` — `TenantSummaryDto`, `TenantContractSummary`, `Gender` (1/2/3) and `genderLabels` (Nam/Nữ/Khác). Deliberately narrower than `TenantDto` (no citizen id, no emergency contact).
+- `policies.ts`, `buildingApi.ts`, `buildingQueries.ts` — `tenantsRead`, `tenantsApi.list/get`, `useTenants` / `useTenant`.
+- `TenantsPage.tsx` — four KPI tiles computed from the loaded rows (total / renting / expiring within 30 days / multi-room), status pills, a client-side search over name, phone, email, room and building, a six-column table from `xl` up and a stacked card list below it (P4.20's precedent — no column ever hidden), two distinct empty states, and a 403 alert that names the missing grant.
+- `TenantDetailPage.tsx` — contact panel (phone/email/gender/address), rented-places panel with a link per contract into `/contracts/:id` plus the scope note ("chỉ những hợp đồng thuộc tòa nhà tài khoản này được xem mới xuất hiện ở đây"), and a notes panel. 404 explains the person may rent only outside the caller's buildings; it never confirms existence.
+- `navigation.ts` / `App.tsx` — `/tenants` and `/tenants/:tenantId`, plus an AppShell case proving a `Tenants.Read`-only account lands in the admin shell.
+
+**Defects found before shooting (all fixed):**
+- CS0117: `AuditedEntityDto<Guid>` carries no `CreatorId`/`LastModifierId` — two initializers removed, build green.
+- The detail test asserted `an@example.com` once, but the description line repeated it — a duplicate-text failure, fixed by rewording the description, which is also the clearer sentence.
+- `tsc` TS6133: an unused `today` parameter on `highlightContract` — removed at all three call sites.
+- The seed gave Bình a live contract, so "Đã ký" never appeared as a highlight; the live link was reassigned to Khôi so every status shows. The detail-location assertion expected two rooms for a tenant whose two contracts share one room — corrected to the true room.
+
+**Tests:**
+- EF `TenantsAppService_Scope_Tests` — 8 cases: default-deny; only the granted building's tenants listed (Alpha + Shared, never Beta); a two-building tenant shows only the granted building's contract; rows carry room/floor/building/roomId; `GetAsync` returns the granted tenant; outside-grant and unknown GUID both fail closed with `EntityNotFoundException`; a soft-deleted link drops the person from the roster while the tenant row still exists; a tenant with no contract never lists.
+- HttpApi.Host `APIAUTO18` — authenticated with spoofed headers and **no** grant: list (`api/building-management/tenants`) and detail (`.../tenants/{id}`) both answer **403**; routes pinned verbatim; the surface is exactly `GetAsync` + `GetListAsync`; the route is proven distinct from the legacy `tenant` service.
+- Vitest `TenantsPage.test.tsx` (11: 7 page + 4 helpers) + `TenantDetailPage.test.tsx` (4) + AppShell (2 more).
+- **Mutation-checked:** replacing the building filter with a tautology turns TNLIST02/03/06 red; forcing a wrong highlight/status or breaking the filter turns the frontend cases red.
+
+**Honest gaps:**
+- **There is no Figma mockup for this screen**, so "khớp Figma" does not apply. The standard is consistency with the contracts screen: same page width, same header, same `StatusBadge`, same table-from-`xl`-cards-below split.
+- **Production authorization is closed to everyone.** `IBuildingOperatorGrantReader` and `IBuildingOperatorActiveAccountReader` are still `DenyAll` outside the staging lane, so this screen returns 403 for every account in production. Seeing real data requires the separate "who may see which building" work item (the sidebar's "Người dùng" row).
+- The roster sends phone, email, address and notes for every visible tenant. Citizen id and emergency contact are deliberately withheld; if the Owner wants less on the list, phone/email can be kept on the detail only.
+
+**Evidence:**
+- ✅ `dotnet build -c Release` 0 errors; the 36 warnings are pre-existing staging-controller CS8602/CS0162 warnings, none in the new or edited files
+- ✅ Domain **774/774**, Application **257/257**, BuildingManagement EF **463/463** (P4.20 left it at 455; the new scope tests add 8), HttpApi.Host **78/78**
+- ✅ `tsc --noEmit` clean; `npx vitest run` **257/257 in 23 files** (was 240); `npm run build` exit 0
+- ✅ Rendered captures in `etc/captures/p59/` at 1448×1086 / 1280×800 / 1024×768 / 390×844 for the roster and the detail
+- ✅ The capture creates the building with `POST /building` (first-owner bootstrap issues a real per-building grant), seeds five contracts and six tenants covering live/signed/ended/no-contract directly into the throwaway database, then **asserts `GET /tenants` returns exactly the five contracted people with the right rooms and statuses and that `GET /tenants/{id}` carries both of An's contracts before any pixel is trusted**
+- ✅ The lane dropped every `bm_slicea_staging_*` database; ports 5273/44321 free; 5432/15433 untouched; the admin password existed only as a process-scoped variable
+
+**Blocker:** None for reading tenants.
+**Dependency:** P4.20 ✅ (the read-only gate pattern and the table-or-cards precedent it established)
+
+---
+
 ## NOT IN BACKLOG (Already Fixed — Do Not Repeat)
 
 - ❌ CS0117 Convert.TryFromHexString → Fixed at `0702e0db`
@@ -1179,7 +1230,9 @@ The first fix deferred "Khách thuê" to `xl` — and the re-shoot's own asserti
 - P2: 6/6 **MERGED INTO `main`** (PR #11 merge commit `72a0721`, 2026-11-13, no squash — P2.1 `d36edb5` / P2.2 `b18644b` / P2.3 `aa3b9bb` / P2.4 `950610a` / P2.5 `2d01952` / P2.6 `6c9852f`; local 5-group harness ALL PASSED at `72a0721`; post-merge CI stale-assertion fix `d364ee1` with CI run 43423912631 green 5/5)
 - P3: 4/4 done + **MERGED to main** (P3.1 merge `01cba31`; P3.2 DONE `1ddf2e6`; P3.3 matrix; **P3.4 CLOSED 2026-11-12: PR #10 → main merge commit `c499d89`, Owner §6 signed + §3.2 P2 deferral accepted; post-merge local regression + CI green 5/5 at the merge commit**)
 
-**Current Focus:** **P4.20 THE ADMIN "Hợp đồng" SCREEN (2026-11-20)** — the sidebar's last data-backed grey row now opens a real read-only screen. `ContractAppService.GetListAsync()` returns every contract in the database with no predicate, so it stayed denied and the read went into a **new** `ContractsAppService` carrying exactly two read methods and no write path; the allowlist grew 4 → 5 and `APIAUTO17` pins the new service's HTTP surface at two methods by name, so a future write turns a test red rather than silently widening the exposure. Reviewing the diff found the departed-tenant defect — moving a tenant out soft-deletes the **link**, not the tenant — pinned by `CTLIST07`. A defect only the PNG caught: at 1024 the seven-column table clipped its Trạng thái column inside its own `overflow-x-auto`, invisible to the page-level overflow check; the first repair traded one hidden column for another, the correct one is P4.19's precedent (cards to `xl`, table above it), and the harness now measures the last column against **its own panel**. 12 captures in `etc/captures/p58/`. Backend **257 / 774 / 455 / 78**, Vitest **240/240 in 21 files**.
+**Current Focus:** **P4.21 THE ADMIN "Khách thuê" SCREEN (2026-11-20)** — the sidebar's last data-backed grey row now opens a real read-only screen. A tenant has no building, so scope could not reuse a policy branch: a first design adding `ResourceKind.Tenant` was reverted as wrong (first-contract building would deny a caller granted the second), and scope lives in the new `TenantsAppService` via the link→contract→room→floor→building join. Exactly two read methods, no write path; allowlist 5 → 6 with `TenantAppService` still denied; `APIAUTO18` pins the surface at two methods. The read DTO deliberately withholds citizen id and emergency contact. 8 captures in `etc/captures/p59/`. Backend **257 / 774 / 463 / 78**, Vitest **257/257 in 23 files**.
+
+**Previous focus:** **P4.20 THE ADMIN "Hợp đồng" SCREEN (2026-11-20)** — the sidebar's last data-backed grey row now opens a real read-only screen. `ContractAppService.GetListAsync()` returns every contract in the database with no predicate, so it stayed denied and the read went into a **new** `ContractsAppService` carrying exactly two read methods and no write path; the allowlist grew 4 → 5 and `APIAUTO17` pins the new service's HTTP surface at two methods by name, so a future write turns a test red rather than silently widening the exposure. Reviewing the diff found the departed-tenant defect — moving a tenant out soft-deletes the **link**, not the tenant — pinned by `CTLIST07`. A defect only the PNG caught: at 1024 the seven-column table clipped its Trạng thái column inside its own `overflow-x-auto`, invisible to the page-level overflow check; the first repair traded one hidden column for another, the correct one is P4.19's precedent (cards to `xl`, table above it), and the harness now measures the last column against **its own panel**. 12 captures in `etc/captures/p58/`. Backend **257 / 774 / 455 / 78**, Vitest **240/240 in 21 files**.
 
 **Previous focus:** **P4.19 THE ROOM DETAIL "Hợp đồng" TAB READS REAL CONTRACTS (2026-11-19)** — the tab was a gate notice; it now lists the server's rows through a new `GetContractsAsync` on the already-allowlisted `RoomAppService`, asking for `ReadContract` rather than `ReadRoom`. Wiring it exposed a real hole: `BuildingCrudAccessPolicy.Matches` permitted `(Room, ManageContract)` but not `(Room, ReadContract)`, so the read would have failed closed for an account that holds `Contracts.Read`; fixed and pinned by test. A phone gets a stacked card because the five-column table needed 583 px inside a 324 px panel at 390 px, hiding the rent and status behind a sideways scroll. The booking, invoice and maintenance gates now state their real blockers instead of a missing route. 8 captures in `etc/captures/p57/`. Backend **257 / 774 / 448 / 77**, Vitest **222/222 in 19 files**.
 

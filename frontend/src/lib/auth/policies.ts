@@ -12,4 +12,9 @@ export const BuildingPolicies = {
   floorsManage: 'BuildingManagement.Floors.Manage',
   roomsManage: 'BuildingManagement.Rooms.Manage',
   contractsRead: 'BuildingManagement.Contracts.Read',
+  /**
+   * Separate from contractsRead: a tenant record carries citizen id, address
+   * and emergency contact, so the server grants the roster read on its own.
+   */
+  tenantsRead: 'BuildingManagement.Tenants.Read',
 } as const;

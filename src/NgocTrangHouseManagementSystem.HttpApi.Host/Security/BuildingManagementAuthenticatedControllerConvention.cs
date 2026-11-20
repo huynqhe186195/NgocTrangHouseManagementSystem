@@ -53,7 +53,10 @@ public sealed class BuildingManagementAuthenticatedControllerConvention
            type != typeof(BuildingPublicInfoAppService) &&
            // Read-only by construction: two Get methods, no writes. If a write
            // is ever added to this service it must leave this list first.
-           type != typeof(ContractsAppService);
+           type != typeof(ContractsAppService) &&
+           // Same rule: the roster read only. TenantAppService, which writes
+           // and returns every tenant unscoped, stays denied.
+           type != typeof(TenantsAppService);
 
     public void Apply(ApplicationModel application)
     {

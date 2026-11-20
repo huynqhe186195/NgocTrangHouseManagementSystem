@@ -35,7 +35,7 @@ export const NAV_ADMIN: NavSection[] = [
       { label: 'Tổng quan', icon: 'home', to: '/' },
       { label: 'Tòa nhà', icon: 'apartment', to: '/buildings' },
       { label: 'Phòng', icon: 'meeting_room', to: '/rooms' },
-      { label: 'Khách thuê', icon: 'group', to: undefined, unavailableHint: NOT_BUILT },
+      { label: 'Khách thuê', icon: 'group', to: '/tenants' },
       { label: 'Hợp đồng', icon: 'description', to: '/contracts' },
       { label: 'Hóa đơn', icon: 'receipt_long', to: undefined, unavailableHint: NOT_BUILT },
       { label: 'Thu chi', icon: 'account_balance_wallet', to: undefined, unavailableHint: NOT_BUILT },
@@ -82,6 +82,7 @@ export function resolveShellRole(
     hasPermission(BuildingPolicies.floorsManage) ||
     hasPermission(BuildingPolicies.roomsManage) ||
     hasPermission(BuildingPolicies.contractsRead) ||
+    hasPermission(BuildingPolicies.tenantsRead) ||
     hasPermission(BuildingPolicies.buildingsBootstrapOwner);
   return managesSomething ? 'admin' : 'tenant';
 }

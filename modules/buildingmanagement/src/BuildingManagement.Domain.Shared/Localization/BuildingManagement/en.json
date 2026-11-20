@@ -14,6 +14,7 @@
     "Permission:Rooms.Manage": "Manage rooms",
     "Permission:Contracts.Read": "View contracts",
     "Permission:Contracts.Manage": "Manage contracts",
+    "Permission:Tenants.Read": "View tenants",
     "Permission:Invoices.RebuildDraft": "Rebuild draft invoices (requires authorized building access)",
     "Permission:Invoices.ReadRevisionHistory": "Read invoice revision history (requires authorized building access)",
     "MyAccount": "My account",

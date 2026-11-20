@@ -41,6 +41,13 @@ public class BuildingManagementPermissions
         public const string Manage = GroupName + ".Contracts.Manage";
     }
 
+    // Tenants carry PII (citizen id, address, emergency contact), so reading
+    // them is its own grant rather than an implication of Contracts.Read.
+    public static class Tenants
+    {
+        public const string Read = GroupName + ".Tenants.Read";
+    }
+
     // D04 money-movement permissions are intentionally NOT part of
     // Contracts.Manage, Buildings.Manage or general operator CRUD grants.
     // Defining them creates no role assignment.

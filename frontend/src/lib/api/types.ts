@@ -260,6 +260,48 @@ export interface ContractSummaryDto extends AuditedEntity {
   tenants: ContractTenantSummary[];
 }
 
+/** Server enum: Male=1, Female=2, Other=3. */
+export type Gender = 1 | 2 | 3;
+
+export const genderLabels: Record<Gender, string> = {
+  1: 'Nam',
+  2: 'Nữ',
+  3: 'Khác',
+};
+
+/**
+ * Where a tenant rents, as the roster shows it. Restricted server-side to the
+ * buildings the caller holds a grant on, so a person who rents in two
+ * buildings shows only the one being viewed.
+ */
+export interface TenantContractSummary {
+  contractId: string;
+  contractNumber: string;
+  status: ContractStatus;
+  endDate: string | null;
+  roomNumber: string;
+  floorName: string;
+  buildingName: string;
+  roomId: string;
+  buildingId: string;
+}
+
+/**
+ * Mirrors TenantSummaryDto. Deliberately narrower than TenantDto: the write
+ * model carries citizen id and emergency contact, which this read does not
+ * send. A tenant with no live contract in an authorized building is absent
+ * from the roster entirely.
+ */
+export interface TenantSummaryDto extends AuditedEntity {
+  fullName: string;
+  phoneNumber: string;
+  email: string | null;
+  gender: Gender | null;
+  permanentAddress: string | null;
+  notes: string | null;
+  contracts: TenantContractSummary[];
+}
+
 export interface RoomEquipmentDto extends AuditedEntity {
   roomId: string;
   name: string;

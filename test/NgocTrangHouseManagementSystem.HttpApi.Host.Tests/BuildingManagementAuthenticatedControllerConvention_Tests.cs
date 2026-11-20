@@ -124,14 +124,16 @@ public sealed class BuildingManagementAuthenticatedControllerConvention_Tests
         }
 
         // Only the reviewed Slice A CRUD actions, the building settings
-        // read/publish pair, and the read-only contract list may rely on their
-        // own enforced permission and building-scoped service boundary.
+        // read/publish pair, the read-only contract list and the read-only
+        // tenant roster may rely on their own enforced permission and
+        // building-scoped service boundary.
         foreach (var service in new[] {
             typeof(BuildingAppService),
             typeof(BuildingManagement.Floors.FloorAppService),
             typeof(BuildingManagement.Rooms.RoomAppService),
             typeof(BuildingManagement.Buildings.BuildingPublicInfoAppService),
-            typeof(BuildingManagement.Contracts.ContractsAppService) })
+            typeof(BuildingManagement.Contracts.ContractsAppService),
+            typeof(BuildingManagement.Tenants.TenantsAppService) })
         {
             var reviewed = ModelFor(service);
             new BuildingManagementAuthenticatedControllerConvention()

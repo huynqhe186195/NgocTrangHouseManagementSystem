@@ -710,6 +710,67 @@ public sealed class BuildingManagementAutoApiAuthorization_Tests
             roomRoute.TrimStart('/').ToLowerInvariant());
     }
 
+    /// <summary>
+    /// Same argument as APIAUTO17, for the roster. A tenant carries citizen id,
+    /// address and emergency contact, so the read is its own grant rather than
+    /// an implication of Contracts.Read. TenantAppService — which returns every
+    /// tenant unscoped and also writes — must stay closed.
+    /// </summary>
+    [Fact]
+    public async Task APIAUTO18_Tenant_Roster_Stays_Closed_Without_A_Building_Grant()
+    {
+        await using var app = await StartIsolatedAbpHostAsync();
+        using var client = AuthenticatedClient(app);
+        client.DefaultRequestHeaders.Add("X-Is-Admin", "true");
+        client.DefaultRequestHeaders.Add("X-Building-Id",
+            Guid.NewGuid().ToString("D"));
+        client.DefaultRequestHeaders.Add("X-Permission",
+            "BuildingManagement.Tenants.Read");
+
+        var actions = GetGeneratedActions(app);
+
+        // Read-only by construction. A write added here would go out over HTTP
+        // with every other test still green, so the surface itself is pinned.
+        var rosterSurface = actions
+            .Where(action => action.ControllerTypeInfo.AsType() ==
+                typeof(BuildingManagement.Tenants.TenantsAppService))
+            .ToArray();
+        Assert.Equal(2, rosterSurface.Length);
+        Assert.Equal(
+            new[] { "GetAsync", "GetListAsync" },
+            rosterSurface.Select(action => action.MethodInfo.Name).OrderBy(x => x));
+
+        var list = Assert.Single(rosterSurface, action =>
+            action.MethodInfo.Name == "GetListAsync");
+        var listRoute = Assert.IsType<string>(list.AttributeRouteInfo?.Template);
+        // ABP kebab-cases the type name and does not singularise, so this sits
+        // beside TenantAppService's "tenant" route rather than shadowing it.
+        Assert.Equal("api/building-management/tenants", listRoute);
+        using (var response = await client.GetAsync("/" + listRoute.TrimStart('/')))
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+
+        var get = Assert.Single(rosterSurface, action =>
+            action.MethodInfo.Name == "GetAsync");
+        var getRoute = Assert.IsType<string>(get.AttributeRouteInfo?.Template);
+        Assert.Equal("api/building-management/tenants/{id}", getRoute);
+        using (var response = await client.GetAsync(
+            "/" + Regex.Replace(getRoute, @"\{[^}]+\}",
+                Guid.NewGuid().ToString("D")).TrimStart('/')))
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+
+        // The unscoped write service must not share the roster's route.
+        var legacyTenant = actions
+            .Where(action => action.ControllerTypeInfo.AsType() ==
+                typeof(BuildingManagement.Tenants.TenantAppService))
+            .Select(action => Assert.IsType<string>(
+                action.AttributeRouteInfo?.Template))
+            .ToArray();
+        Assert.NotEmpty(legacyTenant);
+        Assert.All(legacyTenant, route =>
+            Assert.False(route.TrimStart('/').Equals(
+                listRoute.TrimStart('/'), StringComparison.OrdinalIgnoreCase)));
+    }
+
     private static ControllerActionDescriptor[] GetGeneratedActions(WebApplication app)
         => app.Services
             .GetRequiredService<IActionDescriptorCollectionProvider>()

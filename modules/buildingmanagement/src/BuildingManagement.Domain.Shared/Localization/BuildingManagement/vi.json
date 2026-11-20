@@ -14,6 +14,7 @@
     "Permission:Rooms.Manage": "Quản lý phòng",
     "Permission:Contracts.Read": "Xem hợp đồng",
     "Permission:Contracts.Manage": "Quản lý hợp đồng",
+    "Permission:Tenants.Read": "Xem khách thuê",
     "Permission:Invoices.RebuildDraft": "Sửa hóa đơn nháp (cần quyền trên tòa nhà)",
     "Permission:Invoices.ReadRevisionHistory": "Xem lịch sử sửa hóa đơn (cần quyền trên tòa nhà)",
     "MyAccount": "Tài khoản của tôi",

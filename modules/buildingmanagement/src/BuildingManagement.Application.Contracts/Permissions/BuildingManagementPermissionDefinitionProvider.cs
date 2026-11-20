@@ -28,6 +28,10 @@ public class BuildingManagementPermissionDefinitionProvider : PermissionDefiniti
         myGroup.AddPermission(BuildingManagementPermissions.Rooms.Manage, L("Permission:Rooms.Manage"));
         myGroup.AddPermission(BuildingManagementPermissions.Contracts.Read, L("Permission:Contracts.Read"));
         myGroup.AddPermission(BuildingManagementPermissions.Contracts.Manage, L("Permission:Contracts.Manage"));
+        // Tenant records hold citizen id, address and emergency contacts. The
+        // read is a separate grant: a contracts reader is not automatically a
+        // tenant-PII reader.
+        myGroup.AddPermission(BuildingManagementPermissions.Tenants.Read, L("Permission:Tenants.Read"));
         // Independently persisted utility permissions, not implied by
         // Contracts.Manage, Rooms.Manage or root membership alone.
         myGroup.AddPermission(BuildingManagementPermissions.Utilities.Read, L("Permission:Utilities.Read"));

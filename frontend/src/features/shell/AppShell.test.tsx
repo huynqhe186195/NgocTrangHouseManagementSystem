@@ -203,6 +203,26 @@ describe('AppShell', () => {
     expect(navLabels().some((label) => label.includes('Hợp đồng'))).toBe(true);
   });
 
+  it('opens the tenant roster from the admin sidebar', () => {
+    permissions = ['BuildingManagement.Buildings.Manage'];
+    renderShell();
+
+    const nav = screen.getByRole('navigation');
+    const item = within(nav).getByText('Khách thuê').closest('li') as HTMLElement;
+    const link = within(item).getByRole('link');
+
+    expect(link.textContent).toContain('Khách thuê');
+    expect(link.getAttribute('href')).toBe('/tenants');
+  });
+
+  it('puts an account that may only read tenants in the admin shell', () => {
+    permissions = ['BuildingManagement.Tenants.Read'];
+    renderShell();
+
+    expect(screen.getByText('Quản trị viên')).toBeTruthy();
+    expect(navLabels().some((label) => label.includes('Khách thuê'))).toBe(true);
+  });
+
   it('collapses and expands the sidebar with the hamburger', () => {
     permissions = ['BuildingManagement.Buildings.Manage'];
     renderShell();

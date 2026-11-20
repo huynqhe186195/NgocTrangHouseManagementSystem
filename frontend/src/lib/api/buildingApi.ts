@@ -17,6 +17,7 @@ import type {
   RoomEquipmentDto,
   RoomPhotoDto,
   RoomPhotoFileDto,
+  TenantSummaryDto,
   UpdateBuildingInput,
   UpdateBuildingPublicInfoInput,
   UpdateFloorInput,
@@ -176,6 +177,16 @@ export const roomsApi = {
 export const contractsApi = {
   list: () => request<ContractSummaryDto[]>(`${base}/contracts`),
   get: (id: string) => request<ContractSummaryDto>(`${base}/contracts/${id}`),
+};
+
+/**
+ * Read-only tenant roster. Separate from the legacy `/tenant` service, which
+ * returns every tenant unscoped and also writes; both paths are asserted by
+ * APIAUTO18.
+ */
+export const tenantsApi = {
+  list: () => request<TenantSummaryDto[]>(`${base}/tenants`),
+  get: (id: string) => request<TenantSummaryDto>(`${base}/tenants/${id}`),
 };
 
 /**

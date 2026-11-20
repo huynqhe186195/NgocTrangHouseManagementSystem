@@ -28,7 +28,8 @@ public enum BuildingBusinessCapability
     ManageRoom = 6,
     ReadContract = 7,
     ManageContract = 8,
-    ReadTenant = 9
+    ReadTenant = 9,
+    ReadOperators = 10
 }
 
 public enum BuildingBusinessResourceKind
@@ -94,6 +95,8 @@ public sealed class AbpBuildingBusinessPrincipalReader :
                 BuildingManagementPermissions.Contracts.Manage,
             BuildingBusinessCapability.ReadTenant =>
                 BuildingManagementPermissions.Tenants.Read,
+            BuildingBusinessCapability.ReadOperators =>
+                BuildingManagementPermissions.Buildings.ReadOperators,
             _ => null
         };
 

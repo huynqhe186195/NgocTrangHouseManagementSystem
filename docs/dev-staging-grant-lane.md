@@ -20,7 +20,22 @@ deny-all:
   tạo Building **và** issue grant đầu tiên cho root trong cùng transaction
 - `SliceAStagingWriteBoundary` mở write CRUD cho Floor/Room
 
-## Điều kiện activation (phải đủ TẤT CẢ)
+## Profile roster đọc-only
+
+Màn `Người dùng` không dùng cờ legacy ở trên. Profile roster tách biệt và mặc định tắt:
+
+```text
+BuildingManagement:SliceARosterStaging:Enabled=true
+BuildingManagement:SliceARosterStaging:Activation=I_ACCEPT_ISOLATED_SLICE_A_ROSTER_READS
+```
+
+Profile này chỉ thay thế active-account reader, grant reader và roster read store. Nó không đăng ký bootstrap, Assign/Revoke, write boundary, recovery, Slice B/C hoặc finance adapter. `SliceAStagingOperatorGrantsController` cũng không được discover nên các route grant mutation/history trả `404`.
+
+Roster profile yêu cầu `Staging`, hai connection string PostgreSQL khác nhau tại loopback port `15432` với database prefix `bm_slicea_staging_`, và không được bật đồng thời với `BuildingManagement:SliceAStaging:Enabled`. Profile roster không yêu cầu `Bootstrap:RootUserIds`; không dùng owner bootstrap để seed fixture.
+
+Không đặt giá trị `true` vào appsettings dùng chung. Chỉ dùng database disposable do lane tạo; không chạm Identity firstboot `15433` hoặc PostgreSQL persistent `5432`.
+
+## Điều kiện activation legacy Slice A (phải đủ TẤT CẢ)
 
 1. Environment = **Staging** (env `ASPNETCORE_ENVIRONMENT=Staging`)
 2. `BuildingManagement:SliceAStaging:Enabled` = `true`

@@ -206,7 +206,8 @@ public sealed class BuildingBusinessScopeDesignGate_Tests
             BuildingManagementPermissions.Rooms.Read,
             BuildingManagementPermissions.Rooms.Manage,
             BuildingManagementPermissions.Contracts.Read,
-            BuildingManagementPermissions.Contracts.Manage
+            BuildingManagementPermissions.Contracts.Manage,
+            BuildingManagementPermissions.Buildings.ReadOperators
         };
         foreach (var permission in expected)
             Assert.Contains(permission, declared);

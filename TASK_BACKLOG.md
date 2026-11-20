@@ -1202,6 +1202,34 @@ The first fix deferred "Khách thuê" to `xl` — and the re-shoot's own asserti
 
 ---
 
+### P4.22 ✅ The Admin "Người dùng" Module — Operator Membership Roster, Read-Only
+**Status:** DONE in isolated staging only. Production remains fail-closed (`DenyAll`). The roster is not ABP Identity CRUD and exposes no assign, revoke, bootstrap, recovery or transfer operation. It reads the server-composed operator → building membership history through a separate `Buildings.ReadOperators` capability and keeps permission, active account and current building membership as independent authorization conditions.
+
+**What changed — backend and profile boundary:**
+- `OperatorMembershipsAppService.GetListAsync(Guid? buildingId, int skipCount, int maxResultCount)` is the only exposed roster method. The request actor comes from the server principal; `buildingId` is only a secondary filter inside the already-authorized building set. Anonymous, inactive/locked, missing-permission and out-of-scope requests fail closed.
+- The read store joins grant history to live buildings, excludes soft-deleted buildings, re-checks the current issuer membership in SQL, and applies `Count`, `Skip` and `Take` after scope composition. Expired, revoked and scheduled rows are history metadata and never become runtime authorization.
+- `SliceARosterStaging` is a sibling profile, default-off and opt-in only in `Staging`, with exact activation `I_ACCEPT_ISOLATED_SLICE_A_ROSTER_READS` and two distinct loopback disposable databases. It replaces only the active-account reader, grant reader and roster read store. Mutation writer, bootstrap writer, scoped write boundary, recovery, commit lease, Slice B/C and finance adapters remain unregistered or `DenyAll`.
+- `SliceAStagingOperatorGrantsController` is removed from MVC discovery outside the legacy full-write lane; its grant routes therefore return `404`. The legacy `SliceAStaging` profile remains independent and its existing controller/adapter inventory was regression-tested.
+
+**What changed — frontend:**
+- `/users` is a read-only table from `xl` and a full-fact card list below `xl`. It shows operator/building IDs, active/expired/revoked/scheduled status, grant/expiry/revocation timestamps, issuer and revision. There are no mutation controls.
+- Loading, empty and `403` are distinct states. The building filter is populated only from server-returned roster rows, and the query key carries filter, offset and page size so pages do not cache across scope.
+
+**Evidence:**
+- ✅ Roster-only PostgreSQL lane on disposable `127.0.0.1:15432`: persisted Identity user and permission seed, persisted Building/grant history, native OpenIddict password-grant bearer token, API preflight **7 rows / 2 buildings / all four statuses**, building filter **4 rows**, and authenticated rendered capture completed.
+- ✅ P60 PNGs read individually: `etc/captures/p60/roster-1448x1086.png`, `roster-1280x800.png`, `roster-1024x768.png`, `roster-390x844.png`, plus loading, empty and forbidden states. The 1448/1280 images show the complete table; 1024/390 show the complete card layout. No page overflow; exactly one layout is visible at each breakpoint; mutation controls are absent.
+- ✅ Profile/authorization regression **38/38**; frontend Vitest **266/266 in 24 files**; source scope gates PASS; runtime disposable-role audit PASS with SELECT allowed and INSERT/UPDATE/DELETE/CREATE/elevated attributes denied.
+- ✅ Every P60 run dropped only its exact `bm_slicea_staging_identity_<runId>` and `bm_slicea_staging_building_<runId>` databases. Ports 44321/5273 are free; 15433 and 5432 were not touched; the lane password was process-scoped only.
+
+**Honest gaps:**
+- The earlier `SliceARosterStagingPostgreSqlHttp_Tests` proof uses a synthetic TestServer actor header and is not native bearer-token evidence. The P60 lane is the native OpenIddict bearer-token proof; neither is production authorization approval.
+- There is no production migration or production role activation in this slice. The result is only: **roster đọc-only và building scope composition hoạt động đúng trong isolated staging với authenticated A/B actors**.
+
+**Blocker:** None for the isolated staging roster. Production activation remains a separate Owner-approved release gate.
+**Dependency:** P4.21 ✅ (read-only gate, server-composed building scope and responsive roster precedent)
+
+---
+
 ## NOT IN BACKLOG (Already Fixed — Do Not Repeat)
 
 - ❌ CS0117 Convert.TryFromHexString → Fixed at `0702e0db`

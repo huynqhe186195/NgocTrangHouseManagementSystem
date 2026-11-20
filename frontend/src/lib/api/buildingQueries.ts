@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueries, useQueryClient } from '@tanstack/react-query';
-import { buildingsApi, contractsApi, floorsApi, roomsApi, tenantsApi } from '../api/buildingApi';
+import { buildingsApi, contractsApi, floorsApi, operatorMembershipsApi, roomsApi, tenantsApi } from '../api/buildingApi';
 import type {
   BuildingDto,
   BuildingPhotoDto,
@@ -19,6 +19,8 @@ import type {
   RoomPhotoDto,
   RoomPhotoFileDto,
   TenantSummaryDto,
+  OperatorMembershipSummaryDto,
+  PagedResultDto,
   UpdateBuildingInput,
   UpdateBuildingPublicInfoInput,
   UpdateFloorInput,
@@ -38,6 +40,8 @@ const keys = {
   contract: (contractId: string) => ['contract', contractId] as const,
   tenants: ['tenants'] as const,
   tenant: (tenantId: string) => ['tenant', tenantId] as const,
+  operatorMemberships: (buildingId: string | undefined, skipCount: number, maxResultCount: number) =>
+    ['operator-memberships', buildingId ?? 'all', skipCount, maxResultCount] as const,
   roomEquipment: (roomId: string) => ['room-equipment', roomId] as const,
   roomContracts: (roomId: string) => ['room-contracts', roomId] as const,
   roomPhotos: (roomId: string) => ['room-photos', roomId] as const,
@@ -314,6 +318,18 @@ export function useTenant(tenantId: string | undefined) {
     enabled: Boolean(tenantId),
   });
 }
+
+export function useOperatorMemberships(
+  buildingId: string | undefined,
+  skipCount = 0,
+  maxResultCount = 50,
+) {
+  return useQuery<PagedResultDto<OperatorMembershipSummaryDto>>({
+    queryKey: keys.operatorMemberships(buildingId, skipCount, maxResultCount),
+    queryFn: () => operatorMembershipsApi.list(buildingId, skipCount, maxResultCount),
+  });
+}
+
 
 export function useCreateRoomEquipment(roomId: string) {
   const invalidate = useInvalidateRoom(roomId);

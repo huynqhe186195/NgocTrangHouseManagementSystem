@@ -13,6 +13,8 @@ export type ShellRole = 'admin' | 'tenant';
 export interface NavItem {
   label: string;
   icon: string;
+  /** Optional server-issued permission required to show this entry. */
+  permission?: string;
   /**
    * Absent when the module has no route yet. Such an entry is rendered as a
    * disabled row rather than a link, so nothing leads to a 404 or a fake page.
@@ -40,7 +42,7 @@ export const NAV_ADMIN: NavSection[] = [
       { label: 'Hóa đơn', icon: 'receipt_long', to: undefined, unavailableHint: NOT_BUILT },
       { label: 'Thu chi', icon: 'account_balance_wallet', to: undefined, unavailableHint: NOT_BUILT },
       { label: 'Báo cáo', icon: 'bar_chart', to: undefined, unavailableHint: NOT_BUILT },
-      { label: 'Người dùng', icon: 'person', to: undefined, unavailableHint: NOT_BUILT },
+      { label: 'Người dùng', icon: 'person', to: '/users', permission: BuildingPolicies.buildingsReadOperators },
       { label: 'Cài đặt', icon: 'settings', to: undefined, unavailableHint: NOT_BUILT },
     ],
   },
@@ -83,10 +85,18 @@ export function resolveShellRole(
     hasPermission(BuildingPolicies.roomsManage) ||
     hasPermission(BuildingPolicies.contractsRead) ||
     hasPermission(BuildingPolicies.tenantsRead) ||
+    hasPermission(BuildingPolicies.buildingsReadOperators) ||
     hasPermission(BuildingPolicies.buildingsBootstrapOwner);
   return managesSomething ? 'admin' : 'tenant';
 }
 
-export function navigationFor(role: ShellRole): NavSection[] {
-  return role === 'admin' ? NAV_ADMIN : NAV_TENANT;
+export function navigationFor(
+  role: ShellRole,
+  hasPermission: (policy: string) => boolean = () => true,
+): NavSection[] {
+  const sections = role === 'admin' ? NAV_ADMIN : NAV_TENANT;
+  return sections.map((section) => ({
+    ...section,
+    items: section.items.filter((item) => !item.permission || hasPermission(item.permission)),
+  }));
 }

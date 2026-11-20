@@ -7,6 +7,7 @@
 export const BuildingPolicies = {
   buildingsRead: 'BuildingManagement.Buildings.Read',
   buildingsManage: 'BuildingManagement.Buildings.Manage',
+  buildingsReadOperators: 'BuildingManagement.Buildings.ReadOperators',
   /** First-owner bootstrap. Never granted automatically. */
   buildingsBootstrapOwner: 'BuildingManagement.Buildings.BootstrapOwner',
   floorsManage: 'BuildingManagement.Floors.Manage',

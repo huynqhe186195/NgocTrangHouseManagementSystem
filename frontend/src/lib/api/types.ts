@@ -302,6 +302,34 @@ export interface TenantSummaryDto extends AuditedEntity {
   contracts: TenantContractSummary[];
 }
 
+export interface OperatorMembershipSummaryDto extends AuditedEntity {
+  operatorUserId: string;
+  buildingId: string;
+  buildingName: string;
+  grantedByUserId: string;
+  grantedAtUtc: string;
+  expiresAtUtc: string | null;
+  revokedAtUtc: string | null;
+  revisionNumber: number;
+  /** Server enum: Active=1, Expired=2, Revoked=3, Scheduled=4. */
+  status: 1 | 2 | 3 | 4;
+}
+
+export interface PagedResultDto<T> {
+  totalCount: number;
+  items: T[];
+}
+
+export const operatorMembershipStatusMeta: Record<
+  OperatorMembershipSummaryDto['status'],
+  { label: string; tone: 'success' | 'warning' | 'error' | 'neutral' }
+> = {
+  1: { label: 'Đang hiệu lực', tone: 'success' },
+  2: { label: 'Đã hết hạn', tone: 'warning' },
+  3: { label: 'Đã thu hồi', tone: 'error' },
+  4: { label: 'Sắp có hiệu lực', tone: 'neutral' },
+};
+
 export interface RoomEquipmentDto extends AuditedEntity {
   roomId: string;
   name: string;

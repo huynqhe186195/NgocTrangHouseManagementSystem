@@ -8,6 +8,7 @@
     "Permission:Buildings.Manage": "Quản lý tòa nhà",
     "Permission:Buildings.AssignOperators": "Phân công nhân viên cho tòa nhà",
     "Permission:Buildings.RevokeOperators": "Thu hồi quyền quản lý tòa nhà",
+    "Permission:Buildings.ReadOperators": "Xem người dùng được cấp quyền theo tòa nhà",
     "Permission:Floors.Read": "Xem tầng",
     "Permission:Floors.Manage": "Quản lý tầng",
     "Permission:Rooms.Read": "Xem phòng",

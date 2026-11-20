@@ -151,7 +151,8 @@ public sealed class BuildingCrudAccessPolicy
             BuildingBusinessCapability.ManageRoom or
             BuildingBusinessCapability.ReadContract or
             BuildingBusinessCapability.ManageContract or
-            BuildingBusinessCapability.ReadTenant;
+            BuildingBusinessCapability.ReadTenant or
+            BuildingBusinessCapability.ReadOperators;
 
     private static AbpAuthorizationException Denied()
         => new("BuildingManagement: operation permission, active account, " +

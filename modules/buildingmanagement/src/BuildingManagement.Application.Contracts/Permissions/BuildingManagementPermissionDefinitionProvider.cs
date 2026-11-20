@@ -20,6 +20,7 @@ public class BuildingManagementPermissionDefinitionProvider : PermissionDefiniti
         // Never automatically grant via a generic building manager role.
         myGroup.AddPermission(BuildingManagementPermissions.Buildings.AssignOperators, L("Permission:Buildings.AssignOperators"));
         myGroup.AddPermission(BuildingManagementPermissions.Buildings.RevokeOperators, L("Permission:Buildings.RevokeOperators"));
+        myGroup.AddPermission(BuildingManagementPermissions.Buildings.ReadOperators, L("Permission:Buildings.ReadOperators"));
         myGroup.AddPermission(BuildingManagementPermissions.Buildings.BootstrapOwner, L("Permission:Buildings.BootstrapOwner"));
         myGroup.AddPermission(BuildingManagementPermissions.Buildings.CoSignOwnerRecovery, L("Permission:Buildings.CoSignOwnerRecovery"));
         myGroup.AddPermission(BuildingManagementPermissions.Floors.Read, L("Permission:Floors.Read"));

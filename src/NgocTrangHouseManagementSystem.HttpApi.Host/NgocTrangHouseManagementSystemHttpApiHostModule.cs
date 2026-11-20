@@ -6,11 +6,13 @@ using Microsoft.AspNetCore.Extensions.DependencyInjection;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Controllers;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using NgocTrangHouseManagementSystem.Security;
 using BuildingManagement.Security;
+using BuildingManagement.OperatorMemberships;
 using Npgsql;
 using Microsoft.Extensions.Hosting;
 using Microsoft.EntityFrameworkCore;
@@ -83,6 +85,22 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule // syst
             mvcBuilder.AddApplicationPartIfNotExists(
                 typeof(BuildingManagementApplicationModule).Assembly
             );
+
+            // The explicit Slice A delegation controller belongs only to the
+            // legacy full-write staging lane. Production and the roster-only
+            // lane must not discover its Assign/Revoke/history actions.
+            mvcBuilder.ConfigureApplicationPartManager(parts =>
+            {
+                foreach (var provider in parts.FeatureProviders
+                    .OfType<ControllerFeatureProvider>().ToArray())
+                    parts.FeatureProviders.Remove(provider);
+
+                var configuration = context.Services.GetConfiguration();
+                parts.FeatureProviders.Add(
+                    new SliceARosterStagingControllerFeatureProvider(
+                        configuration.GetValue<bool>(
+                            "BuildingManagement:SliceAStaging:Enabled")));
+            });
         });
 
         PreConfigure<AbpAspNetCoreMvcOptions>(options =>
@@ -130,10 +148,19 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule // syst
         context.Services.Configure<BuildingManagement.Security.BuildingOwnerBootstrapSecurityOptions>(
             configuration.GetSection("BuildingManagement:Bootstrap"));
 
+        var legacySliceAEnabled = configuration.GetValue<bool>(
+            "BuildingManagement:SliceAStaging:Enabled");
+        var rosterSliceAEnabled = configuration.GetValue<bool>(
+            "BuildingManagement:SliceARosterStaging:Enabled");
+        ValidateSliceAProfileSelection(legacySliceAEnabled, rosterSliceAEnabled);
+
+        ConfigureSliceARosterStagingIfEnabled(
+            configuration, hostingEnvironment, context.Services, rosterSliceAEnabled);
+
         // STAGING OPT-IN ONLY. Both the environment and the isolated PG
         // DATABASE NAMES are checked independently of the activation token.
         // No production instance can enable this with a flag or role.
-        if (configuration.GetValue<bool>("BuildingManagement:SliceAStaging:Enabled"))
+        if (legacySliceAEnabled)
         {
             if (!hostingEnvironment.IsStaging() ||
                 configuration["BuildingManagement:SliceAStaging:Activation"] !=
@@ -165,6 +192,9 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule // syst
             context.Services.Replace(ServiceDescriptor.Transient<
                 IBuildingOperatorGrantMutationWriter, SliceAStagingGrantMutationWriter>());
             context.Services.AddTransient<SliceAStagingIdentityCommitLease>();
+            context.Services.AddTransient<SliceAStagingOperatorMembershipReadStore>();
+            context.Services.Replace(ServiceDescriptor.Transient<
+                IOperatorMembershipReadStore, SliceAStagingOperatorMembershipReadStore>());
             context.Services.AddTransient<SliceAStagingOperatorGrantQuery>();
             context.Services.AddTransient<SliceBStagingContractQuery>();
             context.Services.AddTransient<SliceBStagingReservationQuery>();
@@ -518,6 +548,87 @@ public class NgocTrangHouseManagementSystemHttpApiHostModule : AbpModule // syst
                    db.Password == "disposable-only";
         }
         catch (ArgumentException) { return false; }
+    }
+
+    internal static void ValidateSliceAProfileSelection(
+        bool legacySliceAEnabled, bool rosterSliceAEnabled)
+    {
+        if (legacySliceAEnabled && rosterSliceAEnabled)
+            throw new InvalidOperationException(
+                "Slice A legacy and roster staging profiles cannot be enabled together.");
+    }
+
+    internal static void ConfigureSliceARosterStagingIfEnabled(
+        IConfiguration configuration,
+        IHostEnvironment hostingEnvironment,
+        IServiceCollection services,
+        bool enabled)
+    {
+        if (!enabled)
+            return;
+
+        if (!hostingEnvironment.IsStaging() ||
+            configuration["BuildingManagement:SliceARosterStaging:Activation"] !=
+                "I_ACCEPT_ISOLATED_SLICE_A_ROSTER_READS")
+            throw new InvalidOperationException(
+                "Slice A roster requires explicitly approved isolated staging reads.");
+
+        if (!HaveTwoIsolatedSliceARosterDatabases(
+                configuration.GetConnectionString("BuildingManagement"),
+                configuration.GetConnectionString("Default")))
+            throw new InvalidOperationException(
+                "Slice A roster requires TWO distinct loopback disposable PostgreSQL databases.");
+
+        if (configuration.GetValue<bool>(
+                "BuildingManagement:OwnerRecovery:Enabled"))
+            throw new InvalidOperationException(
+                "Slice A roster cannot enable owner recovery.");
+
+        services.Replace(ServiceDescriptor.Transient<
+            IBuildingOperatorActiveAccountReader>(sp =>
+                new AbpIdentityBuildingOperatorAccountProbe(
+                    sp.GetRequiredService<Volo.Abp.Identity.IIdentityUserRepository>(),
+                    sp.GetRequiredService<Volo.Abp.Identity.IdentityUserManager>())));
+        services.Replace(ServiceDescriptor.Transient<
+            IBuildingOperatorGrantReader, SliceAStagingGrantReader>());
+        services.Replace(ServiceDescriptor.Transient<
+            IOperatorMembershipReadStore,
+            SliceAStagingOperatorMembershipReadStore>());
+    }
+
+    private static bool HaveTwoIsolatedSliceARosterDatabases(
+        string? buildingConnection, string? identityConnection)
+    {
+        if (!IsIsolatedSliceARosterDatabase(buildingConnection) ||
+            !IsIsolatedSliceARosterDatabase(identityConnection))
+            return false;
+
+        var building = new NpgsqlConnectionStringBuilder(buildingConnection);
+        var identity = new NpgsqlConnectionStringBuilder(identityConnection);
+        return !string.Equals(building.Database, identity.Database,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsIsolatedSliceARosterDatabase(string? connectionString)
+    {
+        if (string.IsNullOrWhiteSpace(connectionString))
+            return false;
+
+        try
+        {
+            var parsed = new NpgsqlConnectionStringBuilder(connectionString);
+            var host = parsed.Host?.ToLowerInvariant();
+            return host is "127.0.0.1" or "localhost" &&
+                   parsed.Port == 15432 &&
+                   parsed.Database?.StartsWith(
+                       "bm_slicea_staging_", StringComparison.OrdinalIgnoreCase) == true &&
+                   parsed.Database.Length > "bm_slicea_staging_".Length &&
+                   !string.IsNullOrWhiteSpace(parsed.Username);
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
     }
 
     private static bool HaveTwoIsolatedSliceADatabases(

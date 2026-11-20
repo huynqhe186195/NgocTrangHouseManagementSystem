@@ -6,6 +6,7 @@ using BuildingManagement.MoveOuts;
 using BuildingManagement.RoomReservations;
 using BuildingManagement.Payments;
 using BuildingManagement.Tenants;
+using BuildingManagement.OperatorMemberships;
 using BuildingManagement.Buildings;
 using BuildingManagement.Floors;
 using BuildingManagement.Rooms;
@@ -56,7 +57,10 @@ public sealed class BuildingManagementAuthenticatedControllerConvention
            type != typeof(ContractsAppService) &&
            // Same rule: the roster read only. TenantAppService, which writes
            // and returns every tenant unscoped, stays denied.
-           type != typeof(TenantsAppService);
+           type != typeof(TenantsAppService) &&
+           // OperatorMembershipsAppService has exactly one read-only paged
+           // method; adding a write must remove it from this allowlist first.
+           type != typeof(OperatorMembershipsAppService);
 
     public void Apply(ApplicationModel application)
     {

@@ -183,6 +183,21 @@ describe('AppShell', () => {
     expect(invoices.textContent).toContain('Hóa đơn');
   });
 
+  it('hides the users link when the membership permission is absent', () => {
+    permissions = ['BuildingManagement.Buildings.Manage'];
+    renderShell();
+
+    expect(within(screen.getByRole('navigation')).queryByText('Người dùng')).toBeNull();
+  });
+
+  it('shows the users read-only link when the server grants membership permission', () => {
+    permissions = ['BuildingManagement.Buildings.ReadOperators'];
+    renderShell();
+
+    const users = within(screen.getByRole('navigation')).getByText('Người dùng').closest('li') as HTMLElement;
+    expect(within(users).getByRole('link').getAttribute('href')).toBe('/users');
+  });
+
   it('opens the contract list from the admin sidebar', () => {
     permissions = ['BuildingManagement.Buildings.Manage'];
     renderShell();

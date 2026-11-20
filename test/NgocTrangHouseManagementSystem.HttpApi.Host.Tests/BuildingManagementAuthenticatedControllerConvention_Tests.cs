@@ -133,13 +133,33 @@ public sealed class BuildingManagementAuthenticatedControllerConvention_Tests
             typeof(BuildingManagement.Rooms.RoomAppService),
             typeof(BuildingManagement.Buildings.BuildingPublicInfoAppService),
             typeof(BuildingManagement.Contracts.ContractsAppService),
-            typeof(BuildingManagement.Tenants.TenantsAppService) })
+            typeof(BuildingManagement.Tenants.TenantsAppService),
+            typeof(BuildingManagement.OperatorMemberships.OperatorMembershipsAppService) })
         {
             var reviewed = ModelFor(service);
             new BuildingManagementAuthenticatedControllerConvention()
                 .Apply(AppWith(reviewed));
             Assert.Single(reviewed.Filters.OfType<AuthorizeFilter>());
         }
+    }
+
+    [Fact]
+    public void AUTHMODEL08_Operator_Membership_Service_Is_Read_Only_And_Authenticated()
+    {
+        var controller = ModelFor(
+            typeof(BuildingManagement.OperatorMemberships.OperatorMembershipsAppService));
+        new BuildingManagementAuthenticatedControllerConvention()
+            .Apply(AppWith(controller));
+
+        Assert.Single(controller.Filters.OfType<AuthorizeFilter>());
+        var methods = typeof(BuildingManagement.OperatorMemberships.IOperatorMembershipsAppService)
+            .GetMethods(BindingFlags.Instance | BindingFlags.Public)
+            .Select(method => method.Name)
+            .ToArray();
+        Assert.Equal(new[] { "GetListAsync" }, methods);
+        Assert.DoesNotContain(methods, method =>
+            method.Contains("Assign", StringComparison.OrdinalIgnoreCase) ||
+            method.Contains("Revoke", StringComparison.OrdinalIgnoreCase));
     }
 
     private static ControllerModel ModelFor(Type serviceType)

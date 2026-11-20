@@ -17,6 +17,7 @@ public class BuildingManagementPermissions
         // Separate privileged operations. ManageBuilding is NOT sufficient.
         public const string AssignOperators = GroupName + ".Buildings.AssignOperators";
         public const string RevokeOperators = GroupName + ".Buildings.RevokeOperators";
+        public const string ReadOperators = GroupName + ".Buildings.ReadOperators";
         // Never assigned automatically. Dedicated, audited first-owner provisioning only.
         public const string BootstrapOwner = GroupName + ".Buildings.BootstrapOwner";
         // Separate from BootstrapOwner: recovery co-signers cannot create buildings.

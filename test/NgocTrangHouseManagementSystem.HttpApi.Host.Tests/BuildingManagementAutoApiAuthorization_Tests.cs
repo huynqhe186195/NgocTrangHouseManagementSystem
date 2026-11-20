@@ -771,6 +771,46 @@ public sealed class BuildingManagementAutoApiAuthorization_Tests
                 listRoute.TrimStart('/'), StringComparison.OrdinalIgnoreCase)));
     }
 
+    [Fact]
+    public async Task APIAUTO19_Operator_Membership_Roster_Is_Read_Only_And_Fail_Closed()
+    {
+        await using var app = await StartIsolatedAbpHostAsync();
+        var actions = GetGeneratedActions(app);
+        var surface = actions
+            .Where(action => action.ControllerTypeInfo.AsType() ==
+                typeof(BuildingManagement.OperatorMemberships.OperatorMembershipsAppService))
+            .ToArray();
+
+        Assert.Single(surface);
+        var action = Assert.Single(surface, item =>
+            item.MethodInfo.Name == nameof(
+                BuildingManagement.OperatorMemberships.IOperatorMembershipsAppService.GetListAsync));
+        var route = Assert.IsType<string>(action.AttributeRouteInfo?.Template);
+        Assert.Equal("api/building-management/operator-memberships", route);
+        Assert.Contains(action.FilterDescriptors, descriptor =>
+            descriptor.Filter is AuthorizeFilter filter &&
+            filter.Policy is not null &&
+            filter.Policy.Requirements.Any(requirement =>
+                requirement is DenyAnonymousAuthorizationRequirement));
+
+        Assert.DoesNotContain(surface, item =>
+            item.MethodInfo.Name.Contains("Assign", StringComparison.OrdinalIgnoreCase) ||
+            item.MethodInfo.Name.Contains("Revoke", StringComparison.OrdinalIgnoreCase));
+
+        var store = app.Services.GetRequiredService<
+            BuildingManagement.OperatorMemberships.IOperatorMembershipReadStore>();
+        Assert.IsType<BuildingManagement.OperatorMemberships.DenyAllOperatorMembershipReadStore>(store);
+
+        using var anonymous = app.GetTestClient();
+        using (var response = await anonymous.GetAsync("/" + route.TrimStart('/')))
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+
+        using var authenticated = AuthenticatedClient(app);
+        using (var response = await authenticated.GetAsync(
+            "/" + route.TrimStart('/')))
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
     private static ControllerActionDescriptor[] GetGeneratedActions(WebApplication app)
         => app.Services
             .GetRequiredService<IActionDescriptorCollectionProvider>()

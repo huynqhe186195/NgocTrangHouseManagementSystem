@@ -18,6 +18,8 @@ import type {
   RoomPhotoDto,
   RoomPhotoFileDto,
   TenantSummaryDto,
+  OperatorMembershipSummaryDto,
+  PagedResultDto,
   UpdateBuildingInput,
   UpdateBuildingPublicInfoInput,
   UpdateFloorInput,
@@ -187,6 +189,19 @@ export const contractsApi = {
 export const tenantsApi = {
   list: () => request<TenantSummaryDto[]>(`${base}/tenants`),
   get: (id: string) => request<TenantSummaryDto>(`${base}/tenants/${id}`),
+};
+
+export const operatorMembershipsApi = {
+  list: (buildingId?: string, skipCount = 0, maxResultCount = 50) => {
+    const params = new URLSearchParams({
+      skipCount: String(skipCount),
+      maxResultCount: String(maxResultCount),
+    });
+    if (buildingId) params.set('buildingId', buildingId);
+    return request<PagedResultDto<OperatorMembershipSummaryDto>>(
+      `${base}/operator-memberships?${params.toString()}`,
+    );
+  },
 };
 
 /**

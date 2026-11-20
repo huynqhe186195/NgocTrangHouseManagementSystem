@@ -38,7 +38,7 @@ export function AppShell() {
   const navigate = useNavigate();
 
   const role = resolveShellRole(user, hasPermission);
-  const sections = navigationFor(role);
+  const sections = navigationFor(role, hasPermission);
 
   // Desktop: collapse the sidebar to an icon rail. Mobile: slide it over the
   // content. One flag drives both because only one mode is reachable at a time.

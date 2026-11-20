@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using BuildingManagement.Buildings;
 using BuildingManagement.EntityFrameworkCore;
 using BuildingManagement.EntityFrameworkCore.Security;
 using BuildingManagement.Security;
+using BuildingManagement.OperatorMemberships;
 using Volo.Abp.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Volo.Abp.Users;
@@ -27,6 +29,89 @@ public sealed class SliceAStagingGrantReader : IBuildingOperatorGrantReader
         => await new EfBuildingOperatorGrantCandidateReader(
             await _provider.GetDbContextAsync(), TimeProvider.System)
             .GetActiveBuildingIdsAsync(userId);
+}
+
+/// <summary>
+/// Isolated staging-only read adapter for the operator membership roster.
+/// The application service has already checked the authenticated principal,
+/// ReadOperators permission, active account and current building grants. This
+/// adapter repeats the issuer grant in the same SQL query so a grant revoked
+/// between those awaits cannot widen the history read.
+/// </summary>
+public sealed class SliceAStagingOperatorMembershipReadStore : IOperatorMembershipReadStore
+{
+    private readonly IDbContextProvider<BuildingManagementDbContext> _provider;
+
+    public SliceAStagingOperatorMembershipReadStore(
+        IDbContextProvider<BuildingManagementDbContext> provider)
+        => _provider = provider;
+
+    public async Task<OperatorMembershipReadPage> ReadPageAsync(
+        Guid trustedOperatorId,
+        IReadOnlyCollection<Guid> trustedBuildingIds,
+        Guid? trustedBuildingFilter,
+        DateTime trustedNowUtc,
+        int skipCount,
+        int maxResultCount)
+    {
+        if (trustedOperatorId == Guid.Empty ||
+            trustedBuildingIds is null ||
+            trustedBuildingIds.Count == 0 ||
+            trustedNowUtc.Kind != DateTimeKind.Utc ||
+            skipCount < 0 || maxResultCount < 1 || maxResultCount > 100)
+            throw new Volo.Abp.Authorization.AbpAuthorizationException(
+                "Invalid operator membership read boundary.");
+
+        if (trustedBuildingFilter.HasValue &&
+            !trustedBuildingIds.Contains(trustedBuildingFilter.Value))
+            throw new Volo.Abp.Authorization.AbpAuthorizationException(
+                "The requested building is outside the current operator scope.");
+
+        var db = await _provider.GetDbContextAsync();
+        var grants = db.Set<BuildingOperatorAccessGrant>();
+        var buildings = db.Buildings;
+
+        var scoped =
+            from grant in grants
+            join building in buildings on grant.BuildingId equals building.Id
+            where trustedBuildingIds.Contains(grant.BuildingId)
+                && (!trustedBuildingFilter.HasValue ||
+                    grant.BuildingId == trustedBuildingFilter.Value)
+                && !building.IsDeleted
+                // Re-check the authenticated reader's live membership in SQL.
+                // A historical row must not be disclosed after the reader lost
+                // the building, even if the preflight returned it moments ago.
+                && grants.Any(issuer =>
+                    issuer.OperatorUserId == trustedOperatorId &&
+                    issuer.BuildingId == grant.BuildingId &&
+                    issuer.GrantedAtUtc <= trustedNowUtc &&
+                    issuer.RevokedAtUtc == null &&
+                    (issuer.ExpiresAtUtc == null ||
+                     issuer.ExpiresAtUtc > trustedNowUtc))
+            orderby building.Name, grant.GrantedAtUtc descending, grant.Id
+            select new
+            {
+                Grant = grant,
+                BuildingName = building.Name
+            };
+
+        var totalCount = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.CountAsync(scoped);
+        var rows = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.ToListAsync(scoped
+            .Skip(skipCount)
+            .Take(maxResultCount)
+            .Select(row => new OperatorMembershipReadModel(
+                row.Grant.Id,
+                row.Grant.OperatorUserId,
+                row.Grant.BuildingId,
+                row.BuildingName,
+                row.Grant.GrantedByUserId,
+                row.Grant.GrantedAtUtc,
+                row.Grant.ExpiresAtUtc,
+                row.Grant.RevokedAtUtc,
+                row.Grant.RevisionNumber)));
+
+        return new OperatorMembershipReadPage(totalCount, rows);
+    }
 }
 
 public sealed class SliceAStagingFirstOwnerWriter : IBuildingOwnerBootstrapWriter

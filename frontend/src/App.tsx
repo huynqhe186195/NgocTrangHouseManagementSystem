@@ -20,6 +20,9 @@ import { AppShell } from './features/shell/AppShell';
 import { ForbiddenPage } from './features/shell/ForbiddenPage';
 import { OverviewPage } from './features/shell/OverviewPage';
 
+const DesignGalleryPage = import.meta.env.DEV
+  ? lazy(() => import('./features/design/DesignGalleryPage').then((module) => ({ default: module.DesignGalleryPage })))
+  : null;
 const InvoiceDesignPreviewPage = import.meta.env.DEV
   ? lazy(() => import('./features/invoices/InvoiceDesignPreviewPage').then((module) => ({ default: module.InvoiceDesignPreviewPage })))
   : null;
@@ -34,6 +37,17 @@ export default function App() {
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/verify-otp" element={<VerifyOtpPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
+
+      {DesignGalleryPage && (
+        <Route
+          path="/__design/figma"
+          element={
+            <Suspense fallback={<p className="text-sm text-on-surface-variant">Đang tải bản thiết kế…</p>}>
+              <DesignGalleryPage />
+            </Suspense>
+          }
+        />
+      )}
 
       <Route element={<RequireAuth />}>
         <Route element={<AppShell />}>

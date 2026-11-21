@@ -1267,6 +1267,49 @@ The first fix deferred "Khách thuê" to `xl` — and the re-shoot's own asserti
 
 ---
 
+### P4.24 ✅ Admin "Báo cáo" — Inventory và design-only preview; production NO-GO
+**Status:** DONE ở phạm vi inventory và thiết kế UI cô lập. Không mở production `/reports`, `Reports.Read`, report API, HTTP allowlist, migration hoặc financial workflow.
+
+**Mục tiêu:** lập inventory cho các mục Admin `Thu chi`, `Báo cáo`, `Cài đặt`; phân loại nguồn dữ liệu/scope/field; đề xuất read contract tương lai; và dựng preview UI để Owner đánh giá visual mà không giả làm số liệu production.
+
+**Inventory và boundary:**
+- ✅ `Thu chi` vẫn **NO-GO**: `PaymentAppService`/`IPaymentAppService` trộn read với create/complete/cancel/deposit allocation/settlement; DTO có amount, transaction reference, deposit và notes; chưa có report-safe GET-only read model cùng building scope proof.
+- ✅ `Báo cáo` là candidate **GO design-only**: dimension tương lai có thể compose từ `Building → Floor → Room` và `Contract → Room → Floor → Building`; `Tenant` chỉ có scope qua contract link. Chưa có `ReportsAppService`, report read model hoặc `Reports.Read`.
+- ✅ `Cài đặt` vẫn **NO-GO**: `BuildingManagementSettings` hiện chỉ có `GroupName`, `BuildingManagementSettingDefinitionProvider.Define()` rỗng, chưa có settings contract/policy đủ rõ để mở màn production.
+- ✅ Precedent an toàn được ghi nhận cho phase backend tương lai: `ContractsAppService`, `TenantsAppService`, `OperatorMembershipsAppService`, `IBuildingCrudAccessPolicy`, soft-delete/link predicates và server-side join scope. Không mở service mutation-capable.
+- ✅ Field whitelist design-only chỉ gồm building/period/as-of, room occupancy aggregate và contract status aggregate. Không đưa amount/status payment, transaction reference, deposit allocation, utility/meter reading, invoice payable state, bank evidence hoặc PII vượt nhu cầu vào preview.
+- ✅ Contract tương lai chỉ ở mức đề xuất: building filter, period/date, occupancy/status dimensions, ordering/pagination, DTO whitelist và temporal semantics cho contract giao với kỳ báo cáo. Chưa triển khai contract này.
+
+**Preview đã triển khai:**
+- ✅ Dev-only route `/__design/reports` trong `frontend/src/App.tsx`; production `/reports` không tồn tại.
+- ✅ `frontend/src/features/reports/ReportDesignPreviewPage.tsx` dùng `AppShell` thật, fixture local cô lập, local search/filter/detail và các state `data/loading/empty/forbidden/error`; không dùng React Query và không gọi API.
+- ✅ Sidebar `Báo cáo` tiếp tục là inert row; `AppShell.test.tsx` ghim rằng `Hóa đơn`, `Thu chi`, `Báo cáo`, `Cài đặt` không render thành link.
+- ✅ Desktop dùng table từ `xl`, dưới `xl` dùng cards đầy đủ facts; KPI chỉ là số phòng/hợp đồng/occupancy minh họa, không hiển thị số tiền.
+- ✅ Banner bắt buộc: `Bản thiết kế UI · Chưa tích hợp API · Dữ liệu minh họa`; detail ghi rõ `Fixture UI cô lập` và không có control thu tiền/phát hành/đối soát/chỉnh sửa/xuất file.
+
+**Tests và rendered evidence:**
+- ✅ `ReportDesignPreviewPage.test.tsx`: 8 tests cho banner/safe facts, local filter không gọi fetch, building/group filter, local detail không có mutation/financial control và bốn non-data states.
+- ✅ Frontend Vitest: **282/282 trong 26 files**.
+- ✅ `tsc --noEmit` và `npm run build` PASS; build chỉ còn warning large chunk hiện hữu.
+- ✅ P62 capture đã pass với PNG thật trong `etc/captures/p62/`: `1448×1086` table, `1280×800` table, `1024×768` cards, `390×844` cards, detail và loading/empty/forbidden/error.
+- ✅ Harness kiểm tra không overflow ngang, đúng một layout theo breakpoint, không gọi report/payment/utility/invoice API, không có mutation control và `/reports` không giữ fixture.
+- ✅ Disposable lane dùng process-scoped password; không đụng database production, port `15433` hoặc PostgreSQL persistent `5432`.
+
+**Definition of Done P4.24 design-only:**
+- [x] Inventory mapping `Thu chi` / `Báo cáo` / `Cài đặt` và kết luận GO/NO-GO riêng.
+- [x] Scope graph, soft-delete/link precedent và field classification được ghi rõ.
+- [x] Preview dev-only, fixture local, local filters/detail và loading/empty/403/error hoàn tất.
+- [x] Production `/reports`, `Reports.Read`, report API, allowlist và migration không được mở.
+- [x] Responsive rendered evidence P62 đã capture và đọc PNG từng state/viewport.
+- [x] Frontend Vitest, typecheck và build PASS.
+
+**Kết luận:** P4.24 **DONE design-only**. Đây không phải bằng chứng report read model, occupancy/contract truth theo kỳ, payment/invoice payable state, production authorization hay API `/reports` đã sẵn sàng. Production report phải giữ fail-closed cho đến một task backend riêng được Owner duyệt.
+
+**Dependency:** P4.23 ✅
+**Blocker cho production report:** chưa có `Reports.Read`, report read model/DTO whitelist, temporal semantics, server-composed scope proof, IDOR/soft-delete/paging tests hoặc native bearer-token A/B evidence.
+
+---
+
 ## NOT IN BACKLOG (Already Fixed — Do Not Repeat)
 
 - ❌ CS0117 Convert.TryFromHexString → Fixed at `0702e0db`
@@ -1295,7 +1338,9 @@ The first fix deferred "Khách thuê" to `xl` — and the re-shoot's own asserti
 - P2: 6/6 **MERGED INTO `main`** (PR #11 merge commit `72a0721`, 2026-11-13, no squash — P2.1 `d36edb5` / P2.2 `b18644b` / P2.3 `aa3b9bb` / P2.4 `950610a` / P2.5 `2d01952` / P2.6 `6c9852f`; local 5-group harness ALL PASSED at `72a0721`; post-merge CI stale-assertion fix `d364ee1` with CI run 43423912631 green 5/5)
 - P3: 4/4 done + **MERGED to main** (P3.1 merge `01cba31`; P3.2 DONE `1ddf2e6`; P3.3 matrix; **P3.4 CLOSED 2026-11-12: PR #10 → main merge commit `c499d89`, Owner §6 signed + §3.2 P2 deferral accepted; post-merge local regression + CI green 5/5 at the merge commit**)
 
-**Current Focus:** **P4.23 DESIGN-ONLY PREVIEW COMPLETE (2026-11-21, local `36bd748`)** — preview dev-only `/__design/invoices` đã có evidence P61 ở bốn viewport, detail và loading/empty/403/error; Vitest `274/274`, TypeScript và Vite build PASS. Production `/invoices` vẫn không có route, sidebar vẫn disabled, backend invoice vẫn NO-GO vì draft/provisional, thiếu `Invoices.Read`, grant provider `DenyAll` và chưa có read-model scope proof. Không push commit `36bd748` nếu Owner chưa yêu cầu. Phase production tương lai chỉ mở sau plan GET-only riêng với graph scope, IDOR/soft-delete/paging tests và native bearer-token A/B evidence.
+**Current Focus:** **P4.24 ADMIN “BÁO CÁO” INVENTORY + DESIGN-ONLY PREVIEW COMPLETE (2026-11-21, uncommitted)** — inventory `Thu chi` / `Báo cáo` / `Cài đặt` đã ghi rõ GO/NO-GO; preview dev-only `/__design/reports` đã có evidence P62 ở bốn viewport, detail và loading/empty/403/error; Vitest `282/282`, TypeScript và Vite build PASS. Production `/reports` vẫn không có route, sidebar vẫn disabled, backend report vẫn NO-GO vì thiếu `Reports.Read`, read model/DTO whitelist, server-composed scope proof, temporal semantics, IDOR/soft-delete/paging tests và native bearer-token A/B evidence. Chưa commit/push P4.24 nếu Owner chưa yêu cầu.
+
+**Previous focus:** **P4.23 DESIGN-ONLY PREVIEW COMPLETE (2026-11-21, local `36bd748`)** — preview dev-only `/__design/invoices` đã có evidence P61 ở bốn viewport, detail và loading/empty/403/error; Vitest `274/274`, TypeScript và Vite build PASS. Production `/invoices` vẫn không có route, sidebar vẫn disabled, backend invoice vẫn NO-GO vì draft/provisional, thiếu `Invoices.Read`, grant provider `DenyAll` và chưa có read-model scope proof. Không push commit `36bd748` nếu Owner chưa yêu cầu. Phase production tương lai chỉ mở sau plan GET-only riêng với graph scope, IDOR/soft-delete/paging tests và native bearer-token A/B evidence.
 
 **Previous focus:** **P4.22 THE ADMIN "Người dùng" ROSTER (2026-11-21)** — read-only isolated staging, native bearer-token P60 evidence, production vẫn `DenyAll`.
 

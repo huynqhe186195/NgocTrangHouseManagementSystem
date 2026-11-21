@@ -23,6 +23,9 @@ import { OverviewPage } from './features/shell/OverviewPage';
 const InvoiceDesignPreviewPage = import.meta.env.DEV
   ? lazy(() => import('./features/invoices/InvoiceDesignPreviewPage').then((module) => ({ default: module.InvoiceDesignPreviewPage })))
   : null;
+const ReportDesignPreviewPage = import.meta.env.DEV
+  ? lazy(() => import('./features/reports/ReportDesignPreviewPage').then((module) => ({ default: module.ReportDesignPreviewPage })))
+  : null;
 
 export default function App() {
   return (
@@ -55,6 +58,16 @@ export default function App() {
               element={
                 <Suspense fallback={<p className="text-sm text-on-surface-variant">Đang tải bản thiết kế…</p>}>
                   <InvoiceDesignPreviewPage />
+                </Suspense>
+              }
+            />
+          )}
+          {ReportDesignPreviewPage && (
+            <Route
+              path="/__design/reports"
+              element={
+                <Suspense fallback={<p className="text-sm text-on-surface-variant">Đang tải bản thiết kế…</p>}>
+                  <ReportDesignPreviewPage />
                 </Suspense>
               }
             />

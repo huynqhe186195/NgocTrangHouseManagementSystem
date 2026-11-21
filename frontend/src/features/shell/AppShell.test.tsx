@@ -177,10 +177,11 @@ describe('AppShell', () => {
     renderShell();
 
     const nav = screen.getByRole('navigation');
-    const invoices = within(nav).getByText('Hóa đơn').closest('li') as HTMLElement;
-
-    expect(within(invoices).queryByRole('link')).toBeNull();
-    expect(invoices.textContent).toContain('Hóa đơn');
+    for (const label of ['Hóa đơn', 'Thu chi', 'Báo cáo', 'Cài đặt']) {
+      const item = within(nav).getByText(label).closest('li') as HTMLElement;
+      expect(within(item).queryByRole('link')).toBeNull();
+      expect(item.textContent).toContain(label);
+    }
   });
 
   it('hides the users link when the membership permission is absent', () => {

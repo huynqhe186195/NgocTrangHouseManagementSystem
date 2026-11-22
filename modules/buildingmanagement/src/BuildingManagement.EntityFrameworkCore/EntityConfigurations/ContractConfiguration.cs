@@ -1,4 +1,5 @@
 ﻿using BuildingManagement.Contracts;
+using BuildingManagement.RentalAccounts;
 using BuildingManagement.Rooms;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
@@ -24,6 +25,9 @@ namespace BuildingManagement.EntityFrameworkCore.EntityConfigurations
 
             builder.Property(x => x.RoomId)
                 .IsRequired();
+
+            builder.Property(x => x.RentalAccountId)
+                .IsRequired(false);
 
             builder.Property(x => x.StartDate)
                 .HasColumnType("date")
@@ -68,9 +72,16 @@ namespace BuildingManagement.EntityFrameworkCore.EntityConfigurations
 
             builder.HasIndex(x => x.RoomId);
 
+            builder.HasIndex(x => x.RentalAccountId);
+
             builder.HasOne<Room>()
                 .WithMany()
                 .HasForeignKey(x => x.RoomId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            builder.HasOne<RentalAccount>()
+                .WithMany()
+                .HasForeignKey(x => x.RentalAccountId)
                 .OnDelete(DeleteBehavior.Restrict);
         }
     }

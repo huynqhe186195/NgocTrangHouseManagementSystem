@@ -1,19 +1,28 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
+using System.Linq.Expressions;
 using System.Net;
+using System.Net.Http;
 using System.Reflection;
 using System.Security.Claims;
+using Volo.Abp.Domain.Entities;
 using Volo.Abp.Domain.Repositories;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Routing;
 using System.Text.RegularExpressions;
 using System.Text;
-using System.Net.Http;
+using System.Text.Json;
 using System.Text.Encodings.Web;
 using System.Threading.Tasks;
 using BuildingManagement;
 using BuildingManagement.Buildings;
+using BuildingManagement.Contracts;
+using BuildingManagement.Floors;
 using BuildingManagement.Invoices;
+using BuildingManagement.RentalAccounts;
+using BuildingManagement.Rooms;
+using BuildingManagement.Tenants;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization.Infrastructure;
 using Microsoft.AspNetCore.Builder;
@@ -32,6 +41,7 @@ using Volo.Abp.AspNetCore.Mvc;
 using Volo.Abp.AspNetCore.Mvc.Libs;
 using Volo.Abp.Autofac;
 using Volo.Abp.Modularity;
+using Volo.Abp.Security.Claims;
 using Xunit;
 
 namespace NgocTrangHouseManagementSystem.Security.Tests;
@@ -541,13 +551,16 @@ public sealed class BuildingManagementAutoApiAuthorization_Tests
         Assert.Equal(HttpStatusCode.Forbidden, result.StatusCode);
     }
 
-    private static HttpClient AuthenticatedClient(WebApplication app)
+    private static HttpClient AuthenticatedClient(WebApplication app, Guid actor)
     {
         var client = app.GetTestClient();
         client.DefaultRequestHeaders.Add(
-            "X-Isolated-Security-User", Guid.NewGuid().ToString("D"));
+            "X-Isolated-Security-User", actor.ToString("D"));
         return client;
     }
+
+    private static HttpClient AuthenticatedClient(WebApplication app)
+        => AuthenticatedClient(app, Guid.NewGuid());
 
     [Fact]
     public async Task APIAUTO13_Direct_Contract_End_And_MoveOut_Close_Preflight_Are_Not_Remote()
@@ -811,6 +824,152 @@ public sealed class BuildingManagementAutoApiAuthorization_Tests
             Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
+    [Fact]
+    public async Task APIMOBILE01_RentalAccount_Me_Is_Explicit_Authenticated_Route()
+    {
+        await using var app = await StartIsolatedAbpHostAsync();
+
+        var endpoint = Assert.Single(
+            app.Services.GetRequiredService<EndpointDataSource>()
+                .Endpoints.OfType<RouteEndpoint>()
+                .Where(item => item.Metadata
+                    .GetMetadata<ControllerActionDescriptor>() is
+                    { ControllerTypeInfo: var controllerType,
+                      MethodInfo.Name: nameof(BuildingManagement.HttpApi.Mobile.RentalAccountController.GetMeAsync) }
+                    && controllerType.AsType() ==
+                        typeof(BuildingManagement.HttpApi.Mobile.RentalAccountController)));
+        var action = endpoint.Metadata.GetMetadata<ControllerActionDescriptor>();
+        Assert.NotNull(action);
+        Assert.Equal("api/mobile/rental-account/me",
+            action!.AttributeRouteInfo?.Template);
+        Assert.DoesNotContain("{", action.AttributeRouteInfo?.Template);
+        Assert.DoesNotContain(endpoint.Metadata,
+            metadata => metadata is IAllowAnonymous);
+
+        var actionDescriptors = GetGeneratedActions(app);
+        Assert.DoesNotContain(actionDescriptors, item =>
+            item.ControllerTypeInfo.AsType() ==
+                typeof(BuildingManagement.Application.Mobile.MobileTenantAppService));
+
+        var mobileEndpoints = app.Services.GetRequiredService<EndpointDataSource>()
+            .Endpoints.OfType<RouteEndpoint>()
+            .Where(item => item.Metadata.GetMetadata<ControllerActionDescriptor>() is
+                { ControllerTypeInfo: var controllerType } &&
+                controllerType.AsType() ==
+                    typeof(BuildingManagement.HttpApi.Mobile.RentalAccountController))
+            .ToArray();
+        Assert.Single(mobileEndpoints);
+
+        using var client = app.GetTestClient();
+        using var response = await client.GetAsync("/api/mobile/rental-account/me");
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+    [Fact]
+    public async Task APIMOBILE02_Mapped_Active_User_Gets_Own_Rental_Account_Graph()
+    {
+        var fixture = MobileScopeFixture.Create();
+        await using var app = await StartIsolatedAbpHostAsync(fixture);
+        using var client = AuthenticatedClient(app, fixture.UserA);
+        using var response = await client.GetAsync("/api/mobile/rental-account/me");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var root = json.RootElement;
+        Assert.Equal(fixture.TenantA, root.GetProperty("currentUser").GetProperty("tenantId").GetGuid());
+        Assert.Equal(fixture.AccountA, root.GetProperty("account").GetProperty("id").GetGuid());
+        Assert.Equal(fixture.ContractA, root.GetProperty("activeContract").GetProperty("id").GetGuid());
+        Assert.Equal(fixture.RoomA, root.GetProperty("activeContract").GetProperty("room").GetProperty("id").GetGuid());
+        Assert.Equal(fixture.BuildingA, root.GetProperty("activeContract").GetProperty("room").GetProperty("buildingId").GetGuid());
+        Assert.Equal("Tenant A", root.GetProperty("currentUser").GetProperty("displayName").GetString());
+        Assert.DoesNotContain("Tenant B private PII", root.GetRawText(), StringComparison.Ordinal);
+        Assert.Equal(1, root.GetProperty("members").GetArrayLength());
+        Assert.DoesNotContain(root.GetProperty("members").EnumerateArray(), member =>
+            member.GetProperty("tenantId").GetGuid() == fixture.TenantB);
+        Assert.Equal(1, fixture.AccessLog.Count(x => x.EntityType == typeof(RentalAccountUser) &&
+            x.Operation == "get_AsyncExecuter"));
+    }
+
+    [Fact]
+    public async Task APIMOBILE03_Authenticated_Unmapped_Subject_Returns_403()
+    {
+        var fixture = MobileScopeFixture.Create();
+        await using var app = await StartIsolatedAbpHostAsync(fixture);
+        using var client = AuthenticatedClient(app, fixture.UnknownUser);
+        using var response = await client.GetAsync("/api/mobile/rental-account/me");
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Contains(fixture.AccessLog, x => x.EntityType == typeof(RentalAccountUser));
+        Assert.DoesNotContain(fixture.AccessLog, x => x.EntityType == typeof(RentalAccount));
+        Assert.DoesNotContain(fixture.AccessLog, x => x.EntityType == typeof(Contract));
+        Assert.DoesNotContain(fixture.AccessLog, x => x.EntityType == typeof(Tenant));
+    }
+
+    [Fact]
+    public async Task APIMOBILE04_Revoked_RentalAccountUser_Returns_403()
+    {
+        var fixture = MobileScopeFixture.Create();
+        await using var app = await StartIsolatedAbpHostAsync(fixture);
+        using var client = AuthenticatedClient(app, fixture.RevokedUser);
+        using var response = await client.GetAsync("/api/mobile/rental-account/me");
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.DoesNotContain(fixture.AccessLog, x => x.EntityType == typeof(RentalAccount));
+        Assert.DoesNotContain(fixture.AccessLog, x => x.EntityType == typeof(Tenant));
+    }
+
+    [Fact]
+    public async Task APIMOBILE05_Inactive_Account_Returns_403()
+    {
+        var fixture = MobileScopeFixture.Create();
+        await using var app = await StartIsolatedAbpHostAsync(fixture);
+        using var client = AuthenticatedClient(app, fixture.InactiveAccountUser);
+        using var response = await client.GetAsync("/api/mobile/rental-account/me");
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Contains(fixture.AccessLog, x => x.EntityType == typeof(RentalAccount));
+        Assert.DoesNotContain(fixture.AccessLog, x => x.EntityType == typeof(Contract));
+    }
+
+    [Fact]
+    public async Task APIMOBILE06_Spoofed_Authority_Does_Not_Change_Actor_Scope()
+    {
+        var fixture = MobileScopeFixture.Create();
+        await using var app = await StartIsolatedAbpHostAsync(fixture);
+        using var client = AuthenticatedClient(app, fixture.UserA);
+        client.DefaultRequestHeaders.Add("X-Is-Admin", "true");
+        client.DefaultRequestHeaders.Add("X-Permission", "BuildingManagement.RentalAccounts.Read");
+        client.DefaultRequestHeaders.Add("X-Rental-Account-Id", fixture.AccountB.ToString("D"));
+        client.DefaultRequestHeaders.Add("X-Tenant-Id", fixture.TenantB.ToString("D"));
+        client.DefaultRequestHeaders.Add("X-Building-Id", fixture.BuildingB.ToString("D"));
+
+        using var response = await client.GetAsync(
+            "/api/mobile/rental-account/me?TenantId=" + fixture.TenantB +
+            "&AccountId=" + fixture.AccountB + "&RoomId=" + fixture.RoomB +
+            "&ContractId=" + fixture.ContractB);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal(fixture.UserA, json.RootElement.GetProperty("currentUser").GetProperty("identityUserId").GetGuid());
+        Assert.Equal(fixture.AccountA, json.RootElement.GetProperty("account").GetProperty("id").GetGuid());
+        Assert.Equal(fixture.RoomA, json.RootElement.GetProperty("activeContract").GetProperty("room").GetProperty("id").GetGuid());
+        Assert.DoesNotContain(fixture.AccountB.ToString("D"), json.RootElement.GetRawText(), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(fixture.TenantB.ToString("D"), json.RootElement.GetRawText(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task APIMOBILE07_Unknown_User_Cannot_Use_Spoofed_Authority_Headers()
+    {
+        var fixture = MobileScopeFixture.Create();
+        await using var app = await StartIsolatedAbpHostAsync(fixture);
+        using var client = AuthenticatedClient(app, fixture.UnknownUser);
+        client.DefaultRequestHeaders.Add("X-Is-Admin", "true");
+        client.DefaultRequestHeaders.Add("X-Rental-Account-Id", fixture.AccountA.ToString("D"));
+        client.DefaultRequestHeaders.Add("X-Tenant-Id", fixture.TenantA.ToString("D"));
+
+        using var response = await client.GetAsync("/api/mobile/rental-account/me");
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.DoesNotContain(fixture.AccessLog, x => x.EntityType == typeof(RentalAccount));
+    }
+
     private static ControllerActionDescriptor[] GetGeneratedActions(WebApplication app)
         => app.Services
             .GetRequiredService<IActionDescriptorCollectionProvider>()
@@ -820,7 +979,8 @@ public sealed class BuildingManagementAutoApiAuthorization_Tests
                 typeof(BuildingManagementApplicationModule).Assembly)
             .ToArray();
 
-    private static async Task<WebApplication> StartIsolatedAbpHostAsync()
+    private static async Task<WebApplication> StartIsolatedAbpHostAsync(
+        MobileScopeFixture? mobileScopeFixture = null)
     {
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions
         {
@@ -830,6 +990,11 @@ public sealed class BuildingManagementAutoApiAuthorization_Tests
         builder.Host.UseAutofac();
 
         await builder.AddApplicationAsync<BuildingManagementApiInventoryTestModule>();
+        if (mobileScopeFixture is not null)
+        {
+            MobileScopeFixture.Register(builder.Services, mobileScopeFixture);
+        }
+
         var app = builder.Build();
         await app.InitializeApplicationAsync();
         await app.StartAsync();
@@ -921,6 +1086,10 @@ public sealed class BuildingManagementAutoApiAuthorization_Tests
                     IRepository<BuildingManagement.Utilities.UtilityMeter, Guid>,
                     NoDatabaseRepositoryProxy>());
 
+            // Mobile scope repositories are replaced by MobileScopeFixture only
+            // for the explicit HTTP scope tests. The default host remains a
+            // database-free deny-first authorization harness.
+
             Configure<AbpMvcLibsOptions>(options => options.CheckLibs = false);
             Configure<MvcOptions>(options =>
                 options.Conventions.Add(
@@ -957,6 +1126,7 @@ public sealed class BuildingManagementAutoApiAuthorization_Tests
                 new[]
                 {
                     new Claim(ClaimTypes.NameIdentifier, id.ToString("D")),
+                    new Claim(AbpClaimTypes.UserId, id.ToString("D")),
                     new Claim(ClaimTypes.Name, "isolated-security-test")
                 },
                 Scheme.Name);
@@ -970,6 +1140,271 @@ public sealed class BuildingManagementAutoApiAuthorization_Tests
         protected override object? Invoke(MethodInfo? method, object?[]? args)
             => throw new InvalidOperationException(
                 "SECURITY TEST FAILURE: repository accessed before current building grant authorization.");
+    }
+
+    private sealed class MobileScopeFixture
+    {
+        private readonly List<RentalAccountUser> _accountUsers = new();
+        private readonly List<RentalAccount> _accounts = new();
+        private readonly List<Contract> _contracts = new();
+        private readonly List<Room> _rooms = new();
+        private readonly List<Floor> _floors = new();
+        private readonly List<Building> _buildings = new();
+        private readonly List<ContractTenant> _contractTenants = new();
+        private readonly List<Tenant> _tenants = new();
+
+        public Guid UserA { get; } = Guid.NewGuid();
+        public Guid UserB { get; } = Guid.NewGuid();
+        public Guid UnknownUser { get; } = Guid.NewGuid();
+        public Guid RevokedUser { get; } = Guid.NewGuid();
+        public Guid InactiveAccountUser { get; } = Guid.NewGuid();
+        public Guid AccountA { get; } = Guid.NewGuid();
+        public Guid AccountB { get; } = Guid.NewGuid();
+        public Guid InactiveAccount { get; } = Guid.NewGuid();
+        public Guid RoomA { get; } = Guid.NewGuid();
+        public Guid RoomB { get; } = Guid.NewGuid();
+        public Guid BuildingA { get; } = Guid.NewGuid();
+        public Guid BuildingB { get; } = Guid.NewGuid();
+        public Guid ContractA { get; } = Guid.NewGuid();
+        public Guid ContractB { get; } = Guid.NewGuid();
+        public Guid TenantA { get; } = Guid.NewGuid();
+        public Guid TenantB { get; } = Guid.NewGuid();
+        public List<RepositoryAccess> AccessLog { get; } = new();
+
+        private MobileScopeFixture()
+        {
+            var floorA = Guid.NewGuid();
+            var floorB = Guid.NewGuid();
+            var activeLinkA = Guid.NewGuid();
+            var activeLinkB = Guid.NewGuid();
+            var revokedLink = Guid.NewGuid();
+            var inactiveAccountLink = Guid.NewGuid();
+            var contractTenantA = Guid.NewGuid();
+            var contractTenantB = Guid.NewGuid();
+
+            _buildings.Add(new Building(BuildingA, "Building A", "Address A"));
+            _buildings.Add(new Building(BuildingB, "Building B", "Address B"));
+            _floors.Add(new Floor(floorA, BuildingA, 1, "Floor A"));
+            _floors.Add(new Floor(floorB, BuildingB, 2, "Floor B"));
+            _rooms.Add(new Room(RoomA, floorA, "A-101", "Room A", null, 2, RoomStatus.Occupied));
+            _rooms.Add(new Room(RoomB, floorB, "B-202", "Room B", null, 2, RoomStatus.Occupied));
+
+            _tenants.Add(new Tenant(TenantA, "Tenant A", "0900000001", "a@example.test",
+                null, null, IdentityType.CitizenId, "111111111111"));
+            _tenants.Add(new Tenant(TenantB, "Tenant B private PII", "0900000002", "b@example.test",
+                null, null, IdentityType.CitizenId, "222222222222"));
+
+            _accounts.Add(new RentalAccount(AccountA, "ACC-A", "Account A"));
+            _accounts.Add(new RentalAccount(AccountB, "ACC-B", "Account B"));
+            var inactive = new RentalAccount(InactiveAccount, "ACC-INACTIVE", "Inactive Account");
+            inactive.Deactivate();
+            _accounts.Add(inactive);
+
+            _accountUsers.Add(new RentalAccountUser(activeLinkA, AccountA, UserA, TenantA,
+                RentalAccountAccessRole.PrimaryTenant));
+            _accountUsers.Add(new RentalAccountUser(activeLinkB, AccountB, UserB, TenantB,
+                RentalAccountAccessRole.PrimaryTenant));
+            var revoked = new RentalAccountUser(revokedLink, AccountA, RevokedUser, TenantA,
+                RentalAccountAccessRole.MemberTenant);
+            revoked.Revoke(new DateTime(2026, 11, 22, 12, 0, 0, DateTimeKind.Utc));
+            _accountUsers.Add(revoked);
+            _accountUsers.Add(new RentalAccountUser(inactiveAccountLink, InactiveAccount,
+                InactiveAccountUser, null, RentalAccountAccessRole.Viewer));
+
+            var contractA = new Contract(ContractA, "CON-A", RoomA,
+                new DateTime(2026, 1, 1), null, 5_000_000m);
+            contractA.Activate();
+            contractA.AssignRentalAccount(AccountA);
+            _contracts.Add(contractA);
+            _contractTenants.Add(new ContractTenant(contractTenantA, ContractA, TenantA,
+                ContractTenantRole.PrimaryTenant));
+
+            var contractB = new Contract(ContractB, "CON-B", RoomB,
+                new DateTime(2026, 1, 1), null, 6_000_000m);
+            contractB.Activate();
+            contractB.AssignRentalAccount(AccountB);
+            _contracts.Add(contractB);
+            _contractTenants.Add(new ContractTenant(contractTenantB, ContractB, TenantB,
+                ContractTenantRole.PrimaryTenant));
+        }
+
+        public static MobileScopeFixture Create() => new();
+
+        public static void Register(IServiceCollection services, MobileScopeFixture fixture)
+        {
+            services.AddSingleton(fixture);
+            services.AddSingleton<IRepository<RentalAccountUser, Guid>>(
+                fixture.CreateRepository(fixture._accountUsers));
+            services.AddSingleton<IRepository<RentalAccount, Guid>>(
+                fixture.CreateRepository(fixture._accounts));
+            services.AddSingleton<IRepository<Contract, Guid>>(
+                fixture.CreateRepository(fixture._contracts));
+            services.AddSingleton<IRepository<Room, Guid>>(
+                fixture.CreateRepository(fixture._rooms));
+            services.AddSingleton<IRepository<Floor, Guid>>(
+                fixture.CreateRepository(fixture._floors));
+            services.AddSingleton<IRepository<Building, Guid>>(
+                fixture.CreateRepository(fixture._buildings));
+            services.AddSingleton<IRepository<ContractTenant, Guid>>(
+                fixture.CreateRepository(fixture._contractTenants));
+            services.AddSingleton<IRepository<Tenant, Guid>>(
+                fixture.CreateRepository(fixture._tenants));
+        }
+
+        private IRepository<TEntity, Guid> CreateRepository<TEntity>(List<TEntity> rows)
+            where TEntity : class, IEntity<Guid>
+        {
+            var repository = DispatchProxy.Create<
+                IRepository<TEntity, Guid>, InMemoryRepositoryProxy<TEntity>>();
+            ((InMemoryRepositoryProxy<TEntity>)(object)repository)
+                .Initialize(rows, AccessLog);
+            return repository;
+        }
+
+        public sealed record RepositoryAccess(Type EntityType, string Operation);
+
+        private class InMemoryRepositoryProxy<TEntity> : DispatchProxy
+            where TEntity : class, IEntity<Guid>
+        {
+            private IReadOnlyList<TEntity> _rows = Array.Empty<TEntity>();
+            private List<RepositoryAccess> _accessLog = new();
+
+            public void Initialize(List<TEntity> rows, List<RepositoryAccess> accessLog)
+            {
+                _rows = rows.ToArray();
+                _accessLog = accessLog;
+            }
+
+            protected override object? Invoke(MethodInfo? method, object?[]? args)
+            {
+                if (method is null)
+                {
+                    throw new InvalidOperationException("Repository method was null.");
+                }
+
+                var operation = method.Name;
+                lock (_accessLog)
+                {
+                    _accessLog.Add(new RepositoryAccess(typeof(TEntity), operation));
+                }
+
+                if (operation == "get_AsyncExecuter")
+                {
+                    var executerType = method.ReturnType;
+                    var proxyType = typeof(AsyncExecuterProxy<>).MakeGenericType(executerType);
+                    var create = typeof(DispatchProxy).GetMethods(BindingFlags.Public | BindingFlags.Static)
+                        .Single(x => x.Name == nameof(DispatchProxy.Create) &&
+                                     x.IsGenericMethodDefinition &&
+                                     x.GetGenericArguments().Length == 2)
+                        .MakeGenericMethod(executerType, proxyType);
+                    var executer = create.Invoke(null, null)!;
+                    return executer;
+                }
+
+                if (operation == "FirstOrDefaultAsync")
+                {
+                    var predicate = args?.OfType<Expression<Func<TEntity, bool>>>()
+                        .FirstOrDefault();
+                    var result = predicate is null
+                        ? _rows.FirstOrDefault()
+                        : _rows.AsQueryable().FirstOrDefault(predicate);
+                    return CompletedTask(method.ReturnType, result);
+                }
+
+                if (operation == "GetListAsync")
+                {
+                    var predicate = args?.OfType<Expression<Func<TEntity, bool>>>()
+                        .FirstOrDefault();
+                    var result = predicate is null
+                        ? _rows.ToList()
+                        : _rows.AsQueryable().Where(predicate).ToList();
+                    return CompletedTask(method.ReturnType, result);
+                }
+
+                if (operation == "GetQueryableAsync")
+                {
+                    return CompletedTask(method.ReturnType, _rows.AsQueryable());
+                }
+
+                throw new InvalidOperationException(
+                    $"SECURITY TEST FAILURE: unsupported {typeof(TEntity).Name} repository operation {operation}.");
+            }
+
+            private static object CompletedTask(Type returnType, object? value)
+            {
+                if (!returnType.IsGenericType ||
+                    returnType.GetGenericTypeDefinition() != typeof(Task<>))
+                {
+                    throw new InvalidOperationException(
+                        $"Unsupported repository return type: {returnType}.");
+                }
+
+                var resultType = returnType.GetGenericArguments()[0];
+                return typeof(Task).GetMethod(nameof(Task.FromResult))!
+                    .MakeGenericMethod(resultType)
+                    .Invoke(null, new[] { value })!;
+            }
+        }
+
+        private class AsyncExecuterProxy<TExecutor> : DispatchProxy
+        {
+            protected override object? Invoke(MethodInfo? method, object?[]? args)
+            {
+                if (method is null)
+                {
+                    throw new InvalidOperationException("Async executor method was null.");
+                }
+
+                var queryable = args?.OfType<IQueryable>().FirstOrDefault();
+                var expression = args?.OfType<LambdaExpression>().FirstOrDefault();
+                object? value = queryable;
+
+                if (queryable is not null && expression is not null)
+                {
+                    var where = typeof(Queryable).GetMethods()
+                        .Single(x => x.Name == nameof(Queryable.Where) &&
+                                     x.GetParameters().Length == 2 &&
+                                     x.GetParameters()[1].ParameterType.IsGenericType &&
+                                     x.GetParameters()[1].ParameterType.GetGenericTypeDefinition() ==
+                                         typeof(Expression<>) &&
+                                     x.GetParameters()[1].ParameterType
+                                         .GetGenericArguments()[0].GetGenericArguments().Length == 2)
+                        .MakeGenericMethod(queryable.ElementType);
+                    value = where.Invoke(null, new object[] { queryable, expression });
+                }
+
+                if (method.Name.Contains("FirstOrDefault", StringComparison.Ordinal))
+                {
+                    value = value is IQueryable filtered
+                        ? filtered.Cast<object>().FirstOrDefault()
+                        : null;
+                }
+                else if (method.Name.Contains("ToList", StringComparison.Ordinal) ||
+                         method.Name.Contains("GetList", StringComparison.Ordinal))
+                {
+                    value = value is IQueryable filtered
+                        ? filtered.Cast<object>().ToList()
+                        : new List<object>();
+                }
+
+                return CompletedTask(method.ReturnType, value);
+            }
+
+            private static object CompletedTask(Type returnType, object? value)
+            {
+                if (!returnType.IsGenericType ||
+                    returnType.GetGenericTypeDefinition() != typeof(Task<>))
+                {
+                    throw new InvalidOperationException(
+                        $"Unsupported async executor return type: {returnType}.");
+                }
+
+                var resultType = returnType.GetGenericArguments()[0];
+                return typeof(Task).GetMethod(nameof(Task.FromResult))!
+                    .MakeGenericMethod(resultType)
+                    .Invoke(null, new[] { value })!;
+            }
+        }
     }
 
 }

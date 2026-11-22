@@ -8,6 +8,7 @@ using BuildingManagement.Invoices;
 using BuildingManagement.Payments;
 using BuildingManagement.RoomReservations;
 using BuildingManagement.Rooms;
+using BuildingManagement.RentalAccounts;
 using BuildingManagement.Tenants;
 using BuildingManagement.Utilities;
 using Microsoft.EntityFrameworkCore;
@@ -39,6 +40,8 @@ public class BuildingManagementDbContext : AbpDbContext<BuildingManagementDbCont
     public DbSet<Tenant> Tenants { get; set; } = default!;
     public DbSet<Contract> Contracts { get; set; } = default!;
     public DbSet<ContractTenant> ContractTenants { get; set; } = default!;
+    public DbSet<RentalAccount> RentalAccounts { get; set; } = default!;
+    public DbSet<RentalAccountUser> RentalAccountUsers { get; set; } = default!;
     public DbSet<UtilityRate> UtilityRates { get; set; } = default!;
     public DbSet<UtilityMeter> UtilityMeters { get; set; } = default!;
     public DbSet<MeterReading> MeterReadings { get; set; } = default!;

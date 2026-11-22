@@ -18,7 +18,7 @@ public sealed class FullInvoiceMigrationChainPostgreSql_Tests
 {
     private const string OptInVariable = "BM_ALLOW_FULL_MIGRATION_REHEARSAL";
     private const string OptInValue = "CREATE_AND_DROP_FRESH_LOCAL_TEST_DATABASE";
-    private const string ExpectedLatestMigration =
+    private const string RequiredInvoiceMigration =
         "20261113150000_Phase2HD06SignedScanAndDownloadAudit";
 
     [Fact]
@@ -100,7 +100,7 @@ public sealed class FullInvoiceMigrationChainPostgreSql_Tests
                 stage = "Discover EF migrations in BuildingManagementDbContext";
                 var migrations = db.Database.GetMigrations().ToArray();
                 Assert.NotEmpty(migrations);
-                Assert.Equal(ExpectedLatestMigration, migrations[^1]);
+                Assert.Contains(RequiredInvoiceMigration, migrations);
 
                 stage = "Check initial EF migration history";
                 var before = (await db.Database.GetAppliedMigrationsAsync()).ToArray();

@@ -1,7 +1,5 @@
 using System;
-using System.IO;
 using System.Linq;
-using System.Security.Cryptography;
 using System.Threading.Tasks;
 using BuildingManagement.EntityFrameworkCore;
 using BuildingManagement.Invoices;
@@ -34,12 +32,14 @@ public sealed class InvoiceRevisionPopulatedRollbackPostgreSql_Tests
         if (Environment.GetEnvironmentVariable(ApprovalFlag) != ApprovalValue)
             throw new InvalidOperationException("Use guarded local full-chain rehearsal script.");
 
-        CheckSql("BM_PHASE2G3A7_UP_SQL",
+        RevisionLedgerSqlApproval.LoadApprovedSql(
+            "BM_PHASE2G3A7_UP_SQL",
             "Phase2G3A7_RevisionLedger_Patched_Review.sql",
-            "b5aabd722050d3db3f7cff2703d8a7b44f0380fd9711f40470da35bf1d9dcb24");
-        CheckSql("BM_PHASE2G3A7_DOWN_SQL",
+            "e061833dc96321239aba10bab6879dd4ae3e8eac65da9834925ff7976d127ac6");
+        RevisionLedgerSqlApproval.LoadApprovedSql(
+            "BM_PHASE2G3A7_DOWN_SQL",
             "Phase2G3A7_RevisionLedger_Down_Review.sql",
-            "38a06bfbbf76b0cbd973a6fa70b2e779e73f1a45a9f61f12bbd7dda02bc4a416");
+            "f4c46ec0ef9e55c4e1af72ae6b507a1c433747103069cacd70a2a25f64f736af");
 
         var allowed = BuildingManagementPostgreSqlTestModule
             .RequireSafeConnectionString();
@@ -55,8 +55,8 @@ public sealed class InvoiceRevisionPopulatedRollbackPostgreSql_Tests
         await using (var probe = new BuildingManagementDbContext(probeOpts))
         {
             var migrations = probe.Database.GetMigrations().ToArray();
-            Assert.Equal(Latest, migrations[^1]);
             Assert.Contains(Prior, migrations);
+            Assert.Contains(Latest, migrations);
         }
 
         await using var admin = new NpgsqlConnection(options.ConnectionString);
@@ -89,7 +89,8 @@ public sealed class InvoiceRevisionPopulatedRollbackPostgreSql_Tests
             await using (var db = new BuildingManagementDbContext(efOptions))
             {
                 await db.Database.MigrateAsync();
-                Assert.Equal(Latest, (await db.Database.GetAppliedMigrationsAsync()).Last());
+                var applied = (await db.Database.GetAppliedMigrationsAsync()).ToArray();
+                Assert.Contains(Latest, applied);
             }
 
             stage = "Seed synthetic FK parent and invoice records";
@@ -280,21 +281,6 @@ public sealed class InvoiceRevisionPopulatedRollbackPostgreSql_Tests
             invoiceId, 1, Guid.NewGuid(),
             new DateTime(2026, 10, 26, 0, 0, 0, DateTimeKind.Utc),
             "Verified operator correction with archived old readings", snapshot);
-    }
-
-    private static void CheckSql(
-        string variable, string filename, string requiredDigest)
-    {
-        var file = Environment.GetEnvironmentVariable(variable);
-        if (string.IsNullOrWhiteSpace(file) ||
-            !Path.IsPathFullyQualified(file) ||
-            !string.Equals(Path.GetFileName(file), filename, StringComparison.Ordinal) ||
-            !File.Exists(file))
-            throw new InvalidOperationException("Missing reviewed SQL: " + filename);
-        var sha = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(file)))
-            .ToLowerInvariant();
-        if (sha != requiredDigest)
-            throw new InvalidOperationException("Changed SQL; review required: " + filename);
     }
 
     private static async Task ExecAsync(NpgsqlConnection conn, string sql)

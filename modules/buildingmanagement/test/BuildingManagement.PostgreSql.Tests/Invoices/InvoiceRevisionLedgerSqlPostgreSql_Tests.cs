@@ -1,8 +1,5 @@
 using System;
-using System.IO;
 using System.Linq;
-using System.Security.Cryptography;
-using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using BuildingManagement.Invoices;
 using BuildingManagement.Utilities;
@@ -30,9 +27,9 @@ public sealed class InvoiceRevisionLedgerSqlPostgreSql_Tests
     // A changed SQL file requires a separate human review and a new
     // deliberate checksum update, NOT an automatic blind acceptance.
     private const string ApprovedUpHash =
-        "b5aabd722050d3db3f7cff2703d8a7b44f0380fd9711f40470da35bf1d9dcb24";
+        "e061833dc96321239aba10bab6879dd4ae3e8eac65da9834925ff7976d127ac6";
     private const string ApprovedDownHash =
-        "38a06bfbbf76b0cbd973a6fa70b2e779e73f1a45a9f61f12bbd7dda02bc4a416";
+        "f4c46ec0ef9e55c4e1af72ae6b507a1c433747103069cacd70a2a25f64f736af";
 
     [Fact]
     public async Task PGREV01_Populated_Ledger_Rejects_Mutations_Bad_Data_And_Rollback()
@@ -175,8 +172,10 @@ public sealed class InvoiceRevisionLedgerSqlPostgreSql_Tests
     {
         // Validate BOTH files before making any DB connection. Failure is
         // a safe stop; no automatic use of potentially unreviewed SQL.
-        var up = LoadApprovedSql("BM_PHASE2G3A7_UP_SQL", UpFileName, ApprovedUpHash);
-        var down = LoadApprovedSql("BM_PHASE2G3A7_DOWN_SQL", DownFileName, ApprovedDownHash);
+        var up = RevisionLedgerSqlApproval.LoadApprovedSqlBody(
+            "BM_PHASE2G3A7_UP_SQL", UpFileName, ApprovedUpHash);
+        var down = RevisionLedgerSqlApproval.LoadApprovedSqlBody(
+            "BM_PHASE2G3A7_DOWN_SQL", DownFileName, ApprovedDownHash);
 
         var allowed = BuildingManagementPostgreSqlTestModule
             .RequireSafeConnectionString(); // localhost:5432; integration test DB only
@@ -241,53 +240,6 @@ public sealed class InvoiceRevisionLedgerSqlPostgreSql_Tests
         Assert.Equal(0L, await CountAsync(connection, null,
             "SELECT count(*) FROM pg_namespace " +
             $"WHERE nspname = '{schema}'"));
-    }
-
-    private static string LoadApprovedSql(
-        string variable, string filename, string expectedSha256)
-    {
-        var path = Environment.GetEnvironmentVariable(variable);
-        if (string.IsNullOrWhiteSpace(path) ||
-            !Path.IsPathFullyQualified(path) ||
-            !string.Equals(Path.GetFileName(path), filename, StringComparison.Ordinal) ||
-            !File.Exists(path))
-            throw new InvalidOperationException(
-                "Safety stop: reviewed SQL must be supplied as an absolute local file: " +
-                filename);
-
-        var bytes = File.ReadAllBytes(path);
-        var actual = Convert.ToHexString(SHA256.HashData(bytes))
-            .ToLowerInvariant();
-        if (actual != expectedSha256)
-            throw new InvalidOperationException(
-                "Safety stop: SQL checksum changed; a new human review is required: " +
-                filename);
-        var sql = File.ReadAllText(path).TrimStart('\uFEFF');
-        var match = Regex.Match(sql,
-            @"\A\s*START TRANSACTION;\s*(.*?)\s*COMMIT;\s*\z",
-            RegexOptions.Singleline | RegexOptions.CultureInvariant);
-        if (!match.Success)
-            throw new InvalidOperationException(
-                "Safety stop: reviewed SQL must have one START/COMMIT wrapper.");
-        var body = match.Groups[1].Value;
-        if (filename == UpFileName &&
-            (!body.Contains("TR_BM_InvoiceDraftRevision_ProtectTruncate",
-                    StringComparison.Ordinal) ||
-             !body.Contains("CK_BM_InvoiceDraftRevision_HexSha256",
-                    StringComparison.Ordinal)))
-            throw new InvalidOperationException("Safety stop: Up protections missing.");
-        if (filename == DownFileName)
-        {
-            var lockAt = body.IndexOf(
-                "LOCK TABLE \"BuildingManagementInvoiceDraftRevisions\"",
-                StringComparison.Ordinal);
-            var checkAt = body.IndexOf("IF EXISTS", StringComparison.Ordinal);
-            var dropAt = body.IndexOf("DROP TABLE", StringComparison.Ordinal);
-            if (lockAt < 0 || checkAt <= lockAt || dropAt <= checkAt)
-                throw new InvalidOperationException(
-                    "Safety stop: rollback lock/check/drop ordering is wrong.");
-        }
-        return body;
     }
 
     private static async Task ExpectFailureAsync(

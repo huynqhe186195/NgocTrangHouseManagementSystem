@@ -275,6 +275,15 @@ src/NgocTrangHouseManagementSystem.DbMigrator/Logs/*
 src/NgocTrangHouseManagementSystem.Blazor.Server/Logs/*
 src/NgocTrangHouseManagementSystem.Blazor.Server.Tiered/Logs/*
 
+# Local generated review/capture artifacts; committed evidence remains tracked.
+/.vite/
+/etc/test-results/
+/etc/captures/p*/
+/etc/phase-audits/*_Generated_Review.sql
+/etc/scripts/_p*.mjs
+/etc/scripts/_p*.ps1
+/package-lock.json
+
 # Use abp install-libs to restore.
 **/wwwroot/libs/*
 

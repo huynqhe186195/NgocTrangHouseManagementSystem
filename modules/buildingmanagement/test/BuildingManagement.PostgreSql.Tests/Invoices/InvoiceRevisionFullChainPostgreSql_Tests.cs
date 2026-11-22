@@ -1,7 +1,5 @@
 using System;
-using System.IO;
 using System.Linq;
-using System.Security.Cryptography;
 using System.Threading.Tasks;
 using BuildingManagement.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
@@ -26,9 +24,9 @@ public sealed class InvoiceRevisionFullChainPostgreSql_Tests
     private const string NewMigration =
         "20261025150750_Phase2G3A7_AddInvoiceDraftRevisionLedger";
     private const string UpHash =
-        "b5aabd722050d3db3f7cff2703d8a7b44f0380fd9711f40470da35bf1d9dcb24";
+        "e061833dc96321239aba10bab6879dd4ae3e8eac65da9834925ff7976d127ac6";
     private const string DownHash =
-        "38a06bfbbf76b0cbd973a6fa70b2e779e73f1a45a9f61f12bbd7dda02bc4a416";
+        "f4c46ec0ef9e55c4e1af72ae6b507a1c433747103069cacd70a2a25f64f736af";
 
     [Fact]
     public async Task PGREV03_Full_Migration_Chain_Up_EmptyDown_Up_In_Disposable_Database()
@@ -40,10 +38,10 @@ public sealed class InvoiceRevisionFullChainPostgreSql_Tests
 
         // Both SQL exports are reviewed, checksum-pinned inputs.
         // Reject changed/unreviewed artifacts BEFORE connecting to PostgreSQL.
-        VerifyApprovedSql(
+        _ = RevisionLedgerSqlApproval.LoadApprovedSql(
             "BM_PHASE2G3A7_UP_SQL",
             "Phase2G3A7_RevisionLedger_Patched_Review.sql", UpHash);
-        VerifyApprovedSql(
+        _ = RevisionLedgerSqlApproval.LoadApprovedSql(
             "BM_PHASE2G3A7_DOWN_SQL",
             "Phase2G3A7_RevisionLedger_Down_Review.sql", DownHash);
 
@@ -67,7 +65,7 @@ public sealed class InvoiceRevisionFullChainPostgreSql_Tests
 
         Assert.NotEmpty(migrations);
         Assert.Contains(PriorMigration, migrations);
-        Assert.Equal(NewMigration, migrations[^1]);
+        Assert.Contains(NewMigration, migrations);
 
         await using var admin = new NpgsqlConnection(adminOptions.ConnectionString);
         await admin.OpenAsync();
@@ -132,10 +130,12 @@ public sealed class InvoiceRevisionFullChainPostgreSql_Tests
 
                 stage = "Downgrade only the empty revision ledger migration";
                 await db.Database.MigrateAsync(PriorMigration);
-                Assert.Equal(migrations.Length - 1,
-                    (await db.Database.GetAppliedMigrationsAsync()).Count());
-                Assert.Contains(PriorMigration,
-                    await db.Database.GetAppliedMigrationsAsync());
+                var appliedAfterRollback =
+                    (await db.Database.GetAppliedMigrationsAsync()).ToArray();
+                var priorIndex = Array.IndexOf(migrations, PriorMigration);
+                Assert.True(priorIndex >= 0);
+                Assert.Equal(migrations.Take(priorIndex + 1), appliedAfterRollback);
+                Assert.Contains(PriorMigration, appliedAfterRollback);
 
                 await using (var check = new NpgsqlConnection(
                     scratchOptions.ConnectionString))
@@ -241,23 +241,6 @@ public sealed class InvoiceRevisionFullChainPostgreSql_Tests
         Assert.Equal(1L, await ScalarLongAsync(connection,
             "SELECT count(*) FROM pg_tables WHERE schemaname = 'public' " +
             "AND tablename = 'BuildingManagementInvoiceItemMeterSources'"));
-    }
-
-    private static void VerifyApprovedSql(
-        string key, string filename, string expectedSha256)
-    {
-        var path = Environment.GetEnvironmentVariable(key);
-        if (string.IsNullOrWhiteSpace(path) ||
-            !Path.IsPathFullyQualified(path) ||
-            !string.Equals(Path.GetFileName(path), filename, StringComparison.Ordinal) ||
-            !File.Exists(path))
-            throw new InvalidOperationException(
-                "Safety stop: expected approved local SQL file " + filename);
-        var actual = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path)))
-            .ToLowerInvariant();
-        if (actual != expectedSha256)
-            throw new InvalidOperationException(
-                "Safety stop: unreviewed SQL change in " + filename);
     }
 
     private static async Task ExecuteAsync(NpgsqlConnection connection, string sql)

@@ -161,12 +161,12 @@ public sealed class D04BNativeJwtProvision_Tests
         await using var legacy = new BuildingManagementDbContext(legacyOptions);
         var canonical = legacy.Database.GetMigrations().ToArray();
         Assert.NotEmpty(canonical);
-        // After the P2 merge into main (PR #11), the canonical EF chain
-        // legitimately ends with the P2.4 D06 signed-scan migration, which
-        // layers the P2.3 H4 dispute lane on the P3.1-merged H4 settlement
-        // journal. All are known, reviewed migrations on this chain.
-        Assert.Equal("20261113150000_Phase2HD06SignedScanAndDownloadAudit",
-            canonical[^1]);
+        // D06 is the required reviewed baseline for this legacy writer.
+        // Later application migrations may legitimately extend the shared
+        // BuildingManagement chain; do not require D06 to be the absolute last
+        // migration after unrelated features are added.
+        Assert.Contains("20261113150000_Phase2HD06SignedScanAndDownloadAudit",
+            canonical);
         Assert.DoesNotContain(canonical, name =>
             name.Contains("StagePayOsD04LegacySourceJournal",
                 StringComparison.Ordinal));

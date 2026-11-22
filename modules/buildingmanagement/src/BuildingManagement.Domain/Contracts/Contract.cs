@@ -10,6 +10,9 @@ namespace BuildingManagement.Contracts
 
         public Guid RoomId { get; private set; }
 
+        // Nullable during rollout so historical contracts can be provisioned safely.
+        public Guid? RentalAccountId { get; private set; }
+
         public Guid? RenewedFromContractId
         {
             get;
@@ -129,6 +132,16 @@ namespace BuildingManagement.Contracts
         public void Sign()
         {
             Status = ContractStatus.Signed;
+        }
+
+        public void AssignRentalAccount(Guid rentalAccountId)
+        {
+            RentalAccountId = rentalAccountId;
+        }
+
+        public void ClearRentalAccount()
+        {
+            RentalAccountId = null;
         }
     }
 }

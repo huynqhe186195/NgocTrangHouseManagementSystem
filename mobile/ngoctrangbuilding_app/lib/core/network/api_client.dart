@@ -40,7 +40,7 @@ class ApiClient {
     try {
       uri = Uri.parse('$_baseUrl$path');
       if (_accessTokenExpiresAt != null &&
-          DateTime.now().isAfter(
+          !DateTime.now().isBefore(
             _accessTokenExpiresAt!.subtract(const Duration(seconds: 30)),
           )) {
         throw const ApiException(

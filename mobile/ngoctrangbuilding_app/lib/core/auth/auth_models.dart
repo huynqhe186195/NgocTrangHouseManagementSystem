@@ -12,7 +12,7 @@ class TokenSet {
   final DateTime expiresAt;
 
   bool get isExpired =>
-      DateTime.now().isAfter(expiresAt.subtract(const Duration(seconds: 30)));
+      !DateTime.now().isBefore(expiresAt.subtract(const Duration(seconds: 30)));
 }
 
 class CurrentUser {

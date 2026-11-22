@@ -4,7 +4,7 @@ import '../permissions/building_policies.dart';
 enum AppRole { owner, staff, tenant, unknown }
 
 AppRole resolveRole(CurrentUser user, bool Function(String) hasPermission) {
-  final roles = user.roles.map((role) => role.toLowerCase()).toSet();
+  final roles = user.roles.map((role) => role.trim().toLowerCase()).toSet();
   if (roles.contains('admin') || roles.contains('owner')) return AppRole.owner;
   final hasOperatorScope =
       hasPermission(BuildingPolicies.buildingsManage) ||
@@ -14,7 +14,7 @@ AppRole resolveRole(CurrentUser user, bool Function(String) hasPermission) {
       hasPermission(BuildingPolicies.tenantsRead) ||
       hasPermission(BuildingPolicies.buildingsReadOperators);
   if (roles.contains('staff') || hasOperatorScope) return AppRole.staff;
-  if (roles.contains('tenant') || roles.isNotEmpty) return AppRole.tenant;
+  if (roles.contains('tenant')) return AppRole.tenant;
   return AppRole.unknown;
 }
 

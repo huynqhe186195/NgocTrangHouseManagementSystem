@@ -10,16 +10,24 @@
 ## Chạy
 
 ```powershell
-C:\Users\Huynq\flutter-3.50.0\bin\flutter.bat pub get
-C:\Users\Huynq\flutter-3.50.0\bin\flutter.bat analyze
-C:\Users\Huynq\flutter-3.50.0\bin\flutter.bat test
+flutter pub get
+flutter analyze
+flutter test
 ```
 
-API base URL có thể thay bằng:
+API base URL có thể thay bằng `--dart-define`:
 
 ```powershell
+# Android emulator -> host machine
 flutter run --dart-define=NGOC_TRANG_API_BASE_URL=https://10.0.2.2:44311
+
+# iOS simulator / desktop
+flutter run --dart-define=NGOC_TRANG_API_BASE_URL=https://127.0.0.1:44311
+
+# Thiết bị thật: dùng hostname/IP LAN có chứng chỉ HTTPS được thiết bị tin cậy.
 ```
+
+Nếu không truyền `--dart-define`, app dùng `10.0.2.2` trên Android và `127.0.0.1` trên iOS simulator/desktop. Không tắt kiểm tra chứng chỉ TLS để vượt qua lỗi HTTPS. Bản release hiện vẫn dùng application ID mẫu và debug signing của scaffold; chưa được phát hành production.
 
 Mobile không tự chọn role. Sau khi đăng nhập, app đọc identity và granted policies từ `/api/abp/application-configuration`, sau đó chọn shell phù hợp. Dữ liệu nghiệp vụ phải đi qua API backend; không có fallback fixture trong runtime.
 

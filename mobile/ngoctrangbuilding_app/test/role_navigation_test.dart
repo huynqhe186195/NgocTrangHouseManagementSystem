@@ -33,4 +33,29 @@ void main() {
   test('resolves Tenant role separately', () {
     expect(resolveRole(tenant, (_) => false), AppRole.tenant);
   });
+
+  test('normalizes known roles and rejects unknown roles', () {
+    expect(
+      resolveRole(
+        const CurrentUser(
+          id: 'tenant-id',
+          userName: 'tenant',
+          roles: ['  TENANT  '],
+        ),
+        (_) => false,
+      ),
+      AppRole.tenant,
+    );
+    expect(
+      resolveRole(
+        const CurrentUser(
+          id: 'unknown-id',
+          userName: 'unknown',
+          roles: ['Auditor'],
+        ),
+        (_) => false,
+      ),
+      AppRole.unknown,
+    );
+  });
 }

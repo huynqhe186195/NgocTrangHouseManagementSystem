@@ -38,7 +38,11 @@ jobs:
       - name: Install Flutter 3.50.0 from the official repository
         shell: bash
         run: |
-          git clone --depth 1 --branch 3.50.0 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          flutter_revision="ab2912035e160d9cad6306df307576da6128ebdb"
+          git clone --filter=blob:none --no-checkout https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          git -C "$RUNNER_TEMP/flutter" fetch --depth 1 origin "$flutter_revision"
+          git -C "$RUNNER_TEMP/flutter" checkout --detach "$flutter_revision"
+          test "$(git -C "$RUNNER_TEMP/flutter" rev-parse HEAD)" = "$flutter_revision"
           echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
           echo "$RUNNER_TEMP/flutter/bin/cache/dart-sdk/bin" >> "$GITHUB_PATH"
           "$RUNNER_TEMP/flutter/bin/flutter" precache --no-web --no-android --no-ios --no-macos --no-windows

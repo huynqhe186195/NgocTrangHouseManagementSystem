@@ -1,3 +1,5 @@
+import '../network/api_exception.dart';
+
 class TokenSet {
   const TokenSet({
     required this.accessToken,
@@ -43,8 +45,23 @@ class ApplicationConfiguration {
     final currentMap = current is Map<String, dynamic> ? current : null;
     final isAuthenticated = currentMap?['isAuthenticated'] == true;
     final id = currentMap?['id'];
+    final rawUserName = currentMap?['userName'];
+    final rawEmail = currentMap?['email'];
+    final rawName = currentMap?['name'];
     final roles = currentMap?['roles'];
     final auth = json['auth'];
+    if (isAuthenticated &&
+        (id is! String ||
+            id.trim().isEmpty ||
+            (rawUserName != null && rawUserName is! String) ||
+            (rawEmail != null && rawEmail is! String) ||
+            (rawName != null && rawName is! String) ||
+            (roles != null && roles is! List))) {
+      throw const ApiException(
+        message: 'Máy chủ trả về thông tin tài khoản không hợp lệ.',
+        code: 'Common:InvalidCurrentUser',
+      );
+    }
     final authMap = auth is Map<String, dynamic> ? auth : null;
     final rawPolicies = authMap?['grantedPolicies'];
     final policies = <String, bool>{};
@@ -58,11 +75,13 @@ class ApplicationConfiguration {
       user: isAuthenticated && id is String
           ? CurrentUser(
               id: id,
-              userName:
-                  (currentMap?['userName'] ?? currentMap?['email'] ?? '')
-                      as String,
-              email: currentMap?['email'] as String?,
-              name: currentMap?['name'] as String?,
+              userName: rawUserName is String && rawUserName.isNotEmpty
+                  ? rawUserName
+                  : rawEmail is String
+                  ? rawEmail
+                  : '',
+              email: rawEmail as String?,
+              name: rawName as String?,
               roles: roles is List
                   ? roles.whereType<String>().toList(growable: false)
                   : const <String>[],

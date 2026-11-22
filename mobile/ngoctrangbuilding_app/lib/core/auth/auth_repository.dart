@@ -19,22 +19,43 @@ class AuthRepository {
       'password': password,
       'scope': AppConfig.scopes.join(' '),
     });
-    if (payload is! Map<String, dynamic> ||
-        payload['access_token'] is! String) {
+    if (payload is! Map<String, dynamic>) {
       throw const ApiException(
         message: 'Máy chủ trả về phiên đăng nhập không hợp lệ.',
         code: 'Common:InvalidTokenResponse',
       );
     }
-    final expiresIn = payload['expires_in'] is num
-        ? (payload['expires_in'] as num).toInt()
-        : 3600;
+    final accessToken = payload['access_token'];
+    if (accessToken is! String || accessToken.trim().isEmpty) {
+      throw const ApiException(
+        message: 'Máy chủ trả về phiên đăng nhập không hợp lệ.',
+        code: 'Common:InvalidTokenResponse',
+      );
+    }
+    final rawExpiresIn = payload['expires_in'];
+    if (rawExpiresIn is! num ||
+        !rawExpiresIn.isFinite ||
+        rawExpiresIn <= 0 ||
+        rawExpiresIn != rawExpiresIn.truncateToDouble()) {
+      throw const ApiException(
+        message: 'Máy chủ trả về thời hạn phiên đăng nhập không hợp lệ.',
+        code: 'Common:InvalidTokenExpiry',
+      );
+    }
+    final expiresIn = rawExpiresIn.toInt();
+    final refreshToken = payload['refresh_token'];
+    if (refreshToken != null && refreshToken is! String) {
+      throw const ApiException(
+        message: 'Máy chủ trả về refresh token không hợp lệ.',
+        code: 'Common:InvalidTokenResponse',
+      );
+    }
     final token = TokenSet(
-      accessToken: payload['access_token'] as String,
-      refreshToken: payload['refresh_token'] as String?,
+      accessToken: accessToken,
+      refreshToken: refreshToken as String?,
       expiresAt: DateTime.now().add(Duration(seconds: expiresIn)),
     );
-    _api.setAccessToken(token.accessToken);
+    _api.setAccessToken(token.accessToken, expiresAt: token.expiresAt);
     return token;
   }
 

@@ -28,15 +28,19 @@ class AppSession extends ChangeNotifier {
   ApiException? get tenantAccountError => _tenantAccountError;
   bool get busy => _busy;
   bool get tenantAccountBusy => _tenantAccountBusy;
-  bool get isAuthenticated => _tokens != null && user != null;
+  bool get isAuthenticated =>
+      _tokens != null && !_tokens!.isExpired && user != null;
 
   bool hasPermission(String permission) => grantedPolicies[permission] == true;
 
   Future<void> signIn(String username, String password) async {
-    _busy = true;
-    _lastError = null;
+    _tokens = null;
+    _configuration = null;
     _tenantOverview = null;
     _tenantAccountError = null;
+    _busy = true;
+    _lastError = null;
+    _authRepository.clearSession();
     notifyListeners();
     try {
       _tokens = await _authRepository.signIn(
@@ -55,14 +59,18 @@ class AppSession extends ChangeNotifier {
       // legitimately have no rental-account link, so a 403 is kept as state
       // instead of turning a valid operator login into a failed login.
       await loadTenantAccount();
-    } on ApiException catch (error) {
+    } catch (error, stackTrace) {
+      final hadSession = _tokens != null || _configuration != null;
       _tokens = null;
       _configuration = null;
       _tenantOverview = null;
       _tenantAccountError = null;
-      _lastError = error;
-      _authRepository.clearSession();
-      rethrow;
+      final normalized = _asApiException(error);
+      _lastError = normalized;
+      if (hadSession) {
+        _authRepository.clearSession();
+      }
+      Error.throwWithStackTrace(normalized, stackTrace);
     } finally {
       _busy = false;
       notifyListeners();
@@ -70,7 +78,15 @@ class AppSession extends ChangeNotifier {
   }
 
   Future<void> loadTenantAccount() async {
-    if (!isAuthenticated) return;
+    if (_tokens?.isExpired == true) {
+      signOut();
+      throw const ApiException(
+        message: 'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.',
+        statusCode: 401,
+        code: 'Auth:TokenExpired',
+      );
+    }
+    if (_tokens == null || user == null) return;
     _tenantAccountBusy = true;
     _tenantAccountError = null;
     notifyListeners();
@@ -78,12 +94,31 @@ class AppSession extends ChangeNotifier {
       _tenantOverview = await _tenantAccountRepository.getMe();
     } on ApiException catch (error) {
       _tenantOverview = null;
-      _tenantAccountError = error;
+      if (error.isForbidden) {
+        _tenantAccountError = error;
+        return;
+      }
+      if (error.isUnauthorized) {
+        signOut();
+      }
+      rethrow;
+    } catch (error, stackTrace) {
+      _tenantOverview = null;
+      signOut();
+      final normalized = _asApiException(error);
+      Error.throwWithStackTrace(normalized, stackTrace);
     } finally {
       _tenantAccountBusy = false;
       notifyListeners();
     }
   }
+
+  ApiException _asApiException(Object error) => error is ApiException
+      ? error
+      : const ApiException(
+          message: 'Đăng nhập thất bại do dữ liệu máy chủ không hợp lệ.',
+          code: 'Common:UnexpectedError',
+        );
 
   void signOut() {
     _tokens = null;

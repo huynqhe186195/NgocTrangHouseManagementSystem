@@ -86,6 +86,52 @@ void main() {
     expect(result.members, isEmpty);
   });
 
+  test('rejects a malformed non-null contract end date', () async {
+    final repository = TenantAccountRepository(
+      (_) async => <String, dynamic>{
+        'currentUser': <String, dynamic>{
+          'identityUserId': 'user-1',
+          'tenantId': 'tenant-1',
+          'displayName': 'Nguyễn An',
+          'accessRole': 'PrimaryTenant',
+        },
+        'account': <String, dynamic>{
+          'id': 'account-1',
+          'accountNumber': 'RA-001',
+          'displayName': 'Phòng 301',
+          'isActive': true,
+        },
+        'activeContract': <String, dynamic>{
+          'id': 'contract-1',
+          'contractNumber': 'HD-001',
+          'startDate': '2026-01-01T00:00:00Z',
+          'endDate': 'not-a-date',
+          'room': <String, dynamic>{
+            'id': 'room-1',
+            'roomNumber': '301',
+            'name': 'Phòng 301',
+            'floorId': 'floor-1',
+            'floorName': 'Tầng 3',
+            'buildingId': 'building-1',
+            'buildingName': 'Ngọc Trang',
+          },
+        },
+        'members': <dynamic>[],
+      },
+    );
+
+    expect(
+      repository.getMe(),
+      throwsA(
+        isA<ApiException>().having(
+          (error) => error.code,
+          'code',
+          'Common:InvalidRentalContractDate',
+        ),
+      ),
+    );
+  });
+
   test('keeps a forbidden response as an authorization error', () async {
     final repository = TenantAccountRepository((_) async {
       throw const ApiException(

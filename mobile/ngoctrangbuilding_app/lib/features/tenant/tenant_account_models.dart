@@ -141,11 +141,22 @@ class TenantMobileContract {
       );
     }
     final rawEndDate = json['endDate'];
+    final parsedEndDate = switch (rawEndDate) {
+      null => null,
+      String value => DateTime.tryParse(value),
+      _ => null,
+    };
+    if (rawEndDate != null && parsedEndDate == null) {
+      throw const ApiException(
+        message: 'Ngày kết thúc hợp đồng thuê không hợp lệ.',
+        code: 'Common:InvalidRentalContractDate',
+      );
+    }
     return TenantMobileContract(
       id: id,
       contractNumber: contractNumber,
       startDate: parsedStartDate,
-      endDate: rawEndDate is String ? DateTime.tryParse(rawEndDate) : null,
+      endDate: parsedEndDate,
       room: TenantMobileRoom.fromJson(room),
     );
   }

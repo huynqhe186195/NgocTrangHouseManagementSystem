@@ -12,8 +12,12 @@ class ApiClient {
   final String _baseUrl;
   final HttpClient _httpClient;
   String? _accessToken;
+  DateTime? _accessTokenExpiresAt;
 
-  void setAccessToken(String? token) => _accessToken = token;
+  void setAccessToken(String? token, {DateTime? expiresAt}) {
+    _accessToken = token;
+    _accessTokenExpiresAt = token == null ? null : expiresAt;
+  }
 
   void dispose() => _httpClient.close(force: true);
 
@@ -31,9 +35,20 @@ class ApiClient {
     Map<String, String>? form,
     Map<String, dynamic>? body,
   }) async {
-    final uri = Uri.parse('$_baseUrl$path');
+    late final Uri uri;
     HttpClientRequest request;
     try {
+      uri = Uri.parse('$_baseUrl$path');
+      if (_accessTokenExpiresAt != null &&
+          DateTime.now().isAfter(
+            _accessTokenExpiresAt!.subtract(const Duration(seconds: 30)),
+          )) {
+        throw const ApiException(
+          message: 'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.',
+          statusCode: 401,
+          code: 'Auth:TokenExpired',
+        );
+      }
       request = await _httpClient
           .openUrl(method, uri)
           .timeout(const Duration(seconds: 20));
@@ -93,6 +108,11 @@ class ApiClient {
         message: 'Máy chủ trả về dữ liệu không hợp lệ.',
         code: 'Common:InvalidResponse',
       );
+    } catch (_) {
+      throw const ApiException(
+        message: 'Không thể hoàn tất yêu cầu tới máy chủ.',
+        code: 'Common:NetworkError',
+      );
     }
   }
 
@@ -119,7 +139,7 @@ class ApiClient {
             ? errorMap['message'] as String
             : 'Máy chủ từ chối yêu cầu.',
         statusCode: 400,
-        code: errorMap['code'] as String?,
+        code: errorMap['code'] is String ? errorMap['code'] as String : null,
       );
     }
     return payload['data'];

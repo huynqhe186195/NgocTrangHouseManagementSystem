@@ -26,16 +26,30 @@ class TenantMobileOverview {
       );
     }
 
+    final activeContract = json['activeContract'];
+    if (activeContract != null && activeContract is! Map<String, dynamic>) {
+      throw const ApiException(
+        message: 'Máy chủ trả về hợp đồng thuê không hợp lệ.',
+        code: 'Common:InvalidRentalContract',
+      );
+    }
+    if (members.any((member) => member is! Map<String, dynamic>)) {
+      throw const ApiException(
+        message: 'Máy chủ trả về thành viên thuê không hợp lệ.',
+        code: 'Common:InvalidRentalMember',
+      );
+    }
+
     return TenantMobileOverview(
       currentUser: TenantMobileUser.fromJson(currentUser),
       account: TenantMobileAccount.fromJson(account),
-      activeContract: json['activeContract'] is Map<String, dynamic>
-          ? TenantMobileContract.fromJson(
-              json['activeContract'] as Map<String, dynamic>,
-            )
-          : null,
+      activeContract: activeContract == null
+          ? null
+          : TenantMobileContract.fromJson(
+              activeContract as Map<String, dynamic>,
+            ),
       members: members
-          .whereType<Map<String, dynamic>>()
+          .cast<Map<String, dynamic>>()
           .map(TenantMobileMember.fromJson)
           .toList(growable: false),
     );
@@ -63,11 +77,22 @@ class TenantMobileUser {
         code: 'Common:InvalidRentalAccountUser',
       );
     }
+    final tenantId = json['tenantId'];
+    final displayName = json['displayName'];
+    final accessRole = json['accessRole'];
+    if (tenantId != null && tenantId is! String ||
+        displayName != null && displayName is! String) {
+      throw const ApiException(
+        message: 'Máy chủ trả về người dùng thuê không hợp lệ.',
+        code: 'Common:InvalidRentalAccountUser',
+      );
+    }
+    final parsedAccessRole = _parseAccessRole(accessRole);
     return TenantMobileUser(
       identityUserId: identityUserId,
-      tenantId: json['tenantId'] as String?,
-      displayName: json['displayName'] as String?,
-      accessRole: _enumName(json['accessRole']),
+      tenantId: tenantId as String?,
+      displayName: displayName as String?,
+      accessRole: parsedAccessRole,
     );
   }
 }
@@ -89,7 +114,11 @@ class TenantMobileAccount {
     final id = json['id'];
     final accountNumber = json['accountNumber'];
     final displayName = json['displayName'];
-    if (id is! String || accountNumber is! String || displayName is! String) {
+    final isActive = json['isActive'];
+    if (id is! String ||
+        accountNumber is! String ||
+        displayName is! String ||
+        isActive is! bool) {
       throw const ApiException(
         message: 'Máy chủ trả về tài khoản thuê không hợp lệ.',
         code: 'Common:InvalidRentalAccount',
@@ -99,7 +128,7 @@ class TenantMobileAccount {
       id: id,
       accountNumber: accountNumber,
       displayName: displayName,
-      isActive: json['isActive'] == true,
+      isActive: isActive,
     );
   }
 }
@@ -238,16 +267,30 @@ class TenantMobileMember {
   }
 }
 
-String _enumName(dynamic value) {
-  if (value is String) return value;
-  if (value is num) {
+String _parseAccessRole(dynamic value) {
+  if (value is String &&
+      <String>{
+        'PrimaryTenant',
+        'MemberTenant',
+        'AuthorizedRepresentative',
+        'Viewer',
+      }.contains(value)) {
+    return value;
+  }
+  if (value is num && value == value.truncateToDouble()) {
     return switch (value.toInt()) {
       1 => 'PrimaryTenant',
       2 => 'MemberTenant',
       3 => 'AuthorizedRepresentative',
       4 => 'Viewer',
-      _ => 'Unknown',
+      _ => throw const ApiException(
+        message: 'Máy chủ trả về người dùng thuê không hợp lệ.',
+        code: 'Common:InvalidRentalAccountUser',
+      ),
     };
   }
-  return 'Unknown';
+  throw const ApiException(
+    message: 'Máy chủ trả về người dùng thuê không hợp lệ.',
+    code: 'Common:InvalidRentalAccountUser',
+  );
 }

@@ -6,7 +6,7 @@ import 'api_exception.dart';
 
 class ApiClient {
   ApiClient({required String baseUrl, HttpClient? httpClient})
-    : _baseUrl = baseUrl.replaceFirst(RegExp(r'/*$'), ''),
+    : _baseUrl = baseUrl.trim().replaceFirst(RegExp(r'/*$'), ''),
       _httpClient = httpClient ?? HttpClient();
 
   final String _baseUrl;
@@ -38,7 +38,7 @@ class ApiClient {
     late final Uri uri;
     HttpClientRequest request;
     try {
-      uri = Uri.parse('$_baseUrl$path');
+      uri = _buildRequestUri(path);
       if (_accessTokenExpiresAt != null &&
           !DateTime.now().isBefore(
             _accessTokenExpiresAt!.subtract(const Duration(seconds: 30)),
@@ -81,9 +81,17 @@ class ApiClient {
         const Duration(seconds: 20),
       );
       final text = await utf8.decoder.bind(response).join();
-      final payload = text.isEmpty ? null : _decode(text);
+      final payload = text.isEmpty
+          ? null
+          : _decode(text, allowPlainText: _isRawPath(path));
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw _toException(response.statusCode, payload);
+      }
+      if (text.isEmpty && !_isRawPath(path)) {
+        throw const ApiException(
+          message: 'Máy chủ trả về dữ liệu không hợp lệ.',
+          code: 'Common:InvalidResponse',
+        );
       }
       return _unwrapEnvelope(path, payload);
     } on ApiException {
@@ -116,18 +124,75 @@ class ApiClient {
     }
   }
 
-  dynamic _decode(String text) {
+  Uri _buildRequestUri(String path) {
+    try {
+      if (!path.startsWith('/') || path.contains('?') || path.contains('#')) {
+        throw const ApiException(
+          message: 'Địa chỉ API không hợp lệ.',
+          code: 'Common:InvalidApiBaseUrl',
+        );
+      }
+      if (_baseUrl.contains(RegExp(r'\s'))) {
+        throw const ApiException(
+          message: 'Địa chỉ API không hợp lệ.',
+          code: 'Common:InvalidApiBaseUrl',
+        );
+      }
+      final base = Uri.parse(_baseUrl);
+      if ((base.scheme != 'http' && base.scheme != 'https') ||
+          !base.hasAuthority ||
+          base.host.isEmpty ||
+          base.query.isNotEmpty ||
+          base.fragment.isNotEmpty) {
+        throw const ApiException(
+          message: 'Địa chỉ API không hợp lệ.',
+          code: 'Common:InvalidApiBaseUrl',
+        );
+      }
+      final uri = Uri.parse('$_baseUrl$path');
+      if ((uri.scheme != 'http' && uri.scheme != 'https') ||
+          !uri.hasAuthority ||
+          uri.host.isEmpty ||
+          uri.query.isNotEmpty ||
+          uri.fragment.isNotEmpty) {
+        throw const ApiException(
+          message: 'Địa chỉ API không hợp lệ.',
+          code: 'Common:InvalidApiBaseUrl',
+        );
+      }
+      return uri;
+    } on ApiException {
+      rethrow;
+    } catch (_) {
+      throw const ApiException(
+        message: 'Địa chỉ API không hợp lệ.',
+        code: 'Common:InvalidApiBaseUrl',
+      );
+    }
+  }
+
+  dynamic _decode(String text, {required bool allowPlainText}) {
     try {
       return jsonDecode(text);
     } on FormatException {
-      return text;
+      if (allowPlainText) return text;
+      throw const ApiException(
+        message: 'Máy chủ trả về dữ liệu không hợp lệ.',
+        code: 'Common:InvalidResponse',
+      );
     }
   }
 
   dynamic _unwrapEnvelope(String path, dynamic payload) {
     if (_isRawPath(path)) return payload;
-    if (payload is! Map<String, dynamic> || payload['success'] is! bool) {
+    if (payload is! Map<String, dynamic> || !payload.containsKey('success')) {
       return payload;
+    }
+    if (payload['success'] is! bool) {
+      throw const ApiException(
+        message: 'Máy chủ trả về envelope không hợp lệ.',
+        code: 'Common:InvalidResponse',
+      );
     }
     if (payload['success'] == false) {
       final error = payload['error'];

@@ -42,7 +42,13 @@ class ApplicationConfiguration {
 
   factory ApplicationConfiguration.fromJson(Map<String, dynamic> json) {
     final current = json['currentUser'];
-    final currentMap = current is Map<String, dynamic> ? current : null;
+    if (current != null && current is! Map<String, dynamic>) {
+      throw const ApiException(
+        message: 'Máy chủ trả về cấu hình tài khoản không hợp lệ.',
+        code: 'Common:InvalidConfiguration',
+      );
+    }
+    final currentMap = current as Map<String, dynamic>?;
     final isAuthenticated = currentMap?['isAuthenticated'] == true;
     final id = currentMap?['id'];
     final rawUserName = currentMap?['userName'];
@@ -56,18 +62,37 @@ class ApplicationConfiguration {
             (rawUserName != null && rawUserName is! String) ||
             (rawEmail != null && rawEmail is! String) ||
             (rawName != null && rawName is! String) ||
-            (roles != null && roles is! List))) {
+            (roles != null &&
+                (roles is! List || roles.any((role) => role is! String))))) {
       throw const ApiException(
         message: 'Máy chủ trả về thông tin tài khoản không hợp lệ.',
         code: 'Common:InvalidCurrentUser',
       );
     }
-    final authMap = auth is Map<String, dynamic> ? auth : null;
+    if (auth != null && auth is! Map<String, dynamic>) {
+      throw const ApiException(
+        message: 'Máy chủ trả về cấu hình quyền không hợp lệ.',
+        code: 'Common:InvalidConfiguration',
+      );
+    }
+    final authMap = auth as Map<String, dynamic>?;
     final rawPolicies = authMap?['grantedPolicies'];
+    if (rawPolicies != null && rawPolicies is! Map<String, dynamic>) {
+      throw const ApiException(
+        message: 'Máy chủ trả về cấu hình quyền không hợp lệ.',
+        code: 'Common:InvalidConfiguration',
+      );
+    }
     final policies = <String, bool>{};
     if (rawPolicies is Map<String, dynamic>) {
       rawPolicies.forEach((key, value) {
-        if (value is bool) policies[key] = value;
+        if (value is! bool) {
+          throw const ApiException(
+            message: 'Máy chủ trả về cấu hình quyền không hợp lệ.',
+            code: 'Common:InvalidConfiguration',
+          );
+        }
+        policies[key] = value;
       });
     }
 

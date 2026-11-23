@@ -54,6 +54,7 @@ void main() {
           },
         ),
       );
+      addTearDown(session.dispose);
       await session.signIn('user', 'password');
 
       await tester.pumpWidget(
@@ -80,6 +81,7 @@ void main() {
         ),
       ),
     );
+    addTearDown(session.dispose);
     await session.signIn('user', 'password');
 
     await tester.pumpWidget(

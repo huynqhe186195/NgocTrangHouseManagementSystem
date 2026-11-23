@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../../features/tenant/tenant_account_models.dart';
@@ -18,6 +20,10 @@ class AppSession extends ChangeNotifier {
   ApiException? _tenantAccountError;
   bool _busy = false;
   bool _tenantAccountBusy = false;
+  bool _disposed = false;
+  int _authGeneration = 0;
+  int _tenantGeneration = 0;
+  Timer? _expiryTimer;
 
   ApplicationConfiguration? get configuration => _configuration;
   CurrentUser? get user => _configuration?.user;
@@ -33,7 +39,21 @@ class AppSession extends ChangeNotifier {
 
   bool hasPermission(String permission) => grantedPolicies[permission] == true;
 
+  @override
+  void dispose() {
+    _disposed = true;
+    _expiryTimer?.cancel();
+    _expiryTimer = null;
+    _authGeneration++;
+    _tenantGeneration++;
+    super.dispose();
+  }
+
   Future<void> signIn(String username, String password) async {
+    final generation = ++_authGeneration;
+    _tenantGeneration++;
+    _expiryTimer?.cancel();
+    _expiryTimer = null;
     _tokens = null;
     _configuration = null;
     _tenantOverview = null;
@@ -41,13 +61,19 @@ class AppSession extends ChangeNotifier {
     _busy = true;
     _lastError = null;
     _authRepository.clearSession();
-    notifyListeners();
+    _notify();
     try {
-      _tokens = await _authRepository.signIn(
+      final tokens = await _authRepository.signIn(
         username: username,
         password: password,
       );
+      if (!_isCurrentAuth(generation)) return;
+      _authRepository.setSession(tokens);
+      _tokens = tokens;
+      _scheduleExpiry(generation, tokens.expiresAt);
+
       final configuration = await _authRepository.loadConfiguration();
+      if (!_isCurrentAuth(generation)) return;
       if (configuration.user == null) {
         throw const ApiException(
           message: 'Tài khoản chưa được máy chủ xác nhận.',
@@ -58,28 +84,43 @@ class AppSession extends ChangeNotifier {
       // This endpoint is attempted for every authenticated role. Operators may
       // legitimately have no rental-account link, so a 403 is kept as state
       // instead of turning a valid operator login into a failed login.
-      await loadTenantAccount();
+      await _loadTenantAccount(
+        authGeneration: generation,
+        clearTransportOnUnauthorized: false,
+      );
     } catch (error, stackTrace) {
-      final hadSession = _tokens != null || _configuration != null;
+      if (!_isCurrentAuth(generation)) return;
       _tokens = null;
       _configuration = null;
       _tenantOverview = null;
       _tenantAccountError = null;
+      _authRepository.clearSession();
       final normalized = _asApiException(error);
       _lastError = normalized;
-      if (hadSession) {
-        _authRepository.clearSession();
-      }
       Error.throwWithStackTrace(normalized, stackTrace);
     } finally {
-      _busy = false;
-      notifyListeners();
+      if (_isCurrentAuth(generation)) {
+        _busy = false;
+        _notify();
+      }
     }
   }
 
   Future<void> loadTenantAccount() async {
+    final authGeneration = _authGeneration;
+    await _loadTenantAccount(
+      authGeneration: authGeneration,
+      clearTransportOnUnauthorized: true,
+    );
+  }
+
+  Future<void> _loadTenantAccount({
+    required int authGeneration,
+    required bool clearTransportOnUnauthorized,
+  }) async {
+    if (!_isCurrentAuth(authGeneration)) return;
     if (_tokens?.isExpired == true) {
-      signOut();
+      _clearSessionState(clearTransport: clearTransportOnUnauthorized);
       throw const ApiException(
         message: 'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.',
         statusCode: 401,
@@ -87,29 +128,38 @@ class AppSession extends ChangeNotifier {
       );
     }
     if (_tokens == null || user == null) return;
+
+    final tenantGeneration = ++_tenantGeneration;
     _tenantAccountBusy = true;
     _tenantAccountError = null;
-    notifyListeners();
+    _notify();
     try {
-      _tenantOverview = await _tenantAccountRepository.getMe();
+      final overview = await _tenantAccountRepository.getMe();
+      if (_isCurrentTenant(authGeneration, tenantGeneration)) {
+        _tenantOverview = overview;
+      }
     } on ApiException catch (error) {
+      if (!_isCurrentTenant(authGeneration, tenantGeneration)) return;
       _tenantOverview = null;
       if (error.isForbidden) {
         _tenantAccountError = error;
         return;
       }
       if (error.isUnauthorized) {
-        signOut();
+        _clearSessionState(clearTransport: clearTransportOnUnauthorized);
       }
       rethrow;
     } catch (error, stackTrace) {
+      if (!_isCurrentTenant(authGeneration, tenantGeneration)) return;
       _tenantOverview = null;
-      signOut();
+      _clearSessionState(clearTransport: clearTransportOnUnauthorized);
       final normalized = _asApiException(error);
       Error.throwWithStackTrace(normalized, stackTrace);
     } finally {
-      _tenantAccountBusy = false;
-      notifyListeners();
+      if (_isCurrentTenant(authGeneration, tenantGeneration)) {
+        _tenantAccountBusy = false;
+        _notify();
+      }
     }
   }
 
@@ -121,12 +171,44 @@ class AppSession extends ChangeNotifier {
         );
 
   void signOut() {
+    _authGeneration++;
+    _tenantGeneration++;
+    _clearSessionState(clearTransport: true);
+    _notify();
+  }
+
+  void _scheduleExpiry(int generation, DateTime expiresAt) {
+    _expiryTimer?.cancel();
+    final delay = expiresAt
+        .subtract(const Duration(seconds: 30))
+        .difference(DateTime.now());
+    _expiryTimer = Timer(delay.isNegative ? Duration.zero : delay, () {
+      if (_isCurrentAuth(generation) && _tokens?.isExpired == true) {
+        signOut();
+      }
+    });
+  }
+
+  void _clearSessionState({required bool clearTransport}) {
+    _expiryTimer?.cancel();
+    _expiryTimer = null;
     _tokens = null;
     _configuration = null;
     _tenantOverview = null;
     _lastError = null;
     _tenantAccountError = null;
-    _authRepository.clearSession();
-    notifyListeners();
+    _busy = false;
+    _tenantAccountBusy = false;
+    if (clearTransport) _authRepository.clearSession();
+  }
+
+  bool _isCurrentAuth(int generation) =>
+      !_disposed && generation == _authGeneration;
+
+  bool _isCurrentTenant(int authGeneration, int tenantGeneration) =>
+      _isCurrentAuth(authGeneration) && tenantGeneration == _tenantGeneration;
+
+  void _notify() {
+    if (!_disposed) notifyListeners();
   }
 }

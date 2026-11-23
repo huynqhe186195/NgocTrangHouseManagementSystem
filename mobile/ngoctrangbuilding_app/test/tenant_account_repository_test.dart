@@ -153,6 +153,133 @@ void main() {
     );
   });
 
+  test('rejects a malformed active contract shape', () async {
+    final repository = TenantAccountRepository(
+      (_) async => <String, dynamic>{
+        'currentUser': <String, dynamic>{
+          'identityUserId': 'user-1',
+          'tenantId': 'tenant-1',
+          'displayName': 'Nguyễn An',
+          'accessRole': 'PrimaryTenant',
+        },
+        'account': <String, dynamic>{
+          'id': 'account-1',
+          'accountNumber': 'RA-001',
+          'displayName': 'Phòng 301',
+          'isActive': true,
+        },
+        'activeContract': <dynamic>[],
+        'members': <dynamic>[],
+      },
+    );
+
+    await expectLater(
+      repository.getMe(),
+      throwsA(
+        isA<ApiException>().having(
+          (error) => error.code,
+          'code',
+          'Common:InvalidRentalContract',
+        ),
+      ),
+    );
+  });
+
+  test('rejects a non-object rental member', () async {
+    final repository = TenantAccountRepository(
+      (_) async => <String, dynamic>{
+        'currentUser': <String, dynamic>{
+          'identityUserId': 'user-1',
+          'tenantId': 'tenant-1',
+          'displayName': 'Nguyễn An',
+          'accessRole': 'PrimaryTenant',
+        },
+        'account': <String, dynamic>{
+          'id': 'account-1',
+          'accountNumber': 'RA-001',
+          'displayName': 'Phòng 301',
+          'isActive': true,
+        },
+        'activeContract': null,
+        'members': <dynamic>['not-an-object'],
+      },
+    );
+
+    await expectLater(
+      repository.getMe(),
+      throwsA(
+        isA<ApiException>().having(
+          (error) => error.code,
+          'code',
+          'Common:InvalidRentalMember',
+        ),
+      ),
+    );
+  });
+
+  test('rejects an unknown rental access role', () async {
+    final repository = TenantAccountRepository(
+      (_) async => <String, dynamic>{
+        'currentUser': <String, dynamic>{
+          'identityUserId': 'user-1',
+          'tenantId': 'tenant-1',
+          'displayName': 'Nguyễn An',
+          'accessRole': 99,
+        },
+        'account': <String, dynamic>{
+          'id': 'account-1',
+          'accountNumber': 'RA-001',
+          'displayName': 'Phòng 301',
+          'isActive': true,
+        },
+        'activeContract': null,
+        'members': <dynamic>[],
+      },
+    );
+
+    await expectLater(
+      repository.getMe(),
+      throwsA(
+        isA<ApiException>().having(
+          (error) => error.code,
+          'code',
+          'Common:InvalidRentalAccountUser',
+        ),
+      ),
+    );
+  });
+
+  test('rejects a non-boolean account activity flag', () async {
+    final repository = TenantAccountRepository(
+      (_) async => <String, dynamic>{
+        'currentUser': <String, dynamic>{
+          'identityUserId': 'user-1',
+          'tenantId': 'tenant-1',
+          'displayName': 'Nguyễn An',
+          'accessRole': 'PrimaryTenant',
+        },
+        'account': <String, dynamic>{
+          'id': 'account-1',
+          'accountNumber': 'RA-001',
+          'displayName': 'Phòng 301',
+          'isActive': 'true',
+        },
+        'activeContract': null,
+        'members': <dynamic>[],
+      },
+    );
+
+    await expectLater(
+      repository.getMe(),
+      throwsA(
+        isA<ApiException>().having(
+          (error) => error.code,
+          'code',
+          'Common:InvalidRentalAccount',
+        ),
+      ),
+    );
+  });
   test('loads the rental account after an authenticated login', () async {
     final accountRepository = TenantAccountRepository(
       (_) async => <String, dynamic>{

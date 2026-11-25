@@ -47,6 +47,7 @@ public sealed class ApiResponseFilter
                     errorResult.StatusCode,
                     meta
                 );
+            errorResult.DeclaredType = typeof(ApiResponse<object?>);
 
             await next();
             return;
@@ -67,7 +68,8 @@ public sealed class ApiResponseFilter
                 )
             )
             {
-                StatusCode = StatusCodes.Status200OK
+                StatusCode = StatusCodes.Status200OK,
+                DeclaredType = typeof(ApiResponse<object?>)
             };
 
             await next();
@@ -97,6 +99,8 @@ public sealed class ApiResponseFilter
                                     objectResult.Value,
                                     meta
                                 );
+                            objectResult.DeclaredType =
+                                typeof(ApiResponse<object?>);
                         }
 
                         if (HttpMethods.IsPost(

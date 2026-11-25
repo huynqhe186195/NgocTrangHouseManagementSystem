@@ -1,9 +1,11 @@
-import 'app.dart';
-// ignore_for_file: deprecated_member_use
-
 import 'package:flutter/material.dart';
 
-void main() {
+import 'app.dart';
+import 'core/config/app_config.dart';
+import 'core/network/api_client.dart';
+
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(const NgocTrangBuildingApp());
+  final apiClient = await ApiClient.create(baseUrl: AppConfig.apiBaseUrl);
+  runApp(NgocTrangBuildingApp(apiClient: apiClient));
 }

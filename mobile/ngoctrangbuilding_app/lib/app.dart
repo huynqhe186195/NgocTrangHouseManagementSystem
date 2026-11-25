@@ -14,7 +14,9 @@ import 'features/tenant/tenant_account_repository.dart';
 import 'features/shell/role_shell.dart';
 
 class NgocTrangBuildingApp extends StatefulWidget {
-  const NgocTrangBuildingApp({super.key});
+  const NgocTrangBuildingApp({this.apiClient, super.key});
+
+  final ApiClient? apiClient;
 
   @override
   State<NgocTrangBuildingApp> createState() => _NgocTrangBuildingAppState();
@@ -27,7 +29,7 @@ class _NgocTrangBuildingAppState extends State<NgocTrangBuildingApp> {
   @override
   void initState() {
     super.initState();
-    _apiClient = ApiClient(baseUrl: AppConfig.apiBaseUrl);
+    _apiClient = widget.apiClient ?? ApiClient(baseUrl: AppConfig.apiBaseUrl);
     _session = AppSession(
       AuthRepository(_apiClient),
       TenantAccountRepository.fromApi(_apiClient),

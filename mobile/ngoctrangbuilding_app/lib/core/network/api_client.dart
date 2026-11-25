@@ -2,12 +2,35 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/services.dart';
+
+import '../config/app_config.dart';
 import 'api_exception.dart';
 
 class ApiClient {
   ApiClient({required String baseUrl, HttpClient? httpClient})
     : _baseUrl = baseUrl.trim().replaceFirst(RegExp(r'/*$'), ''),
       _httpClient = httpClient ?? HttpClient();
+
+  static const _disposableCertificateAsset =
+      'assets/tls/localhost_dev_cert.pem';
+
+  static Future<ApiClient> create({required String baseUrl}) async {
+    final context = SecurityContext(withTrustedRoots: true);
+    if (AppConfig.useDisposableTlsCertificate) {
+      final certificate = await rootBundle.load(_disposableCertificateAsset);
+      context.setTrustedCertificatesBytes(
+        certificate.buffer.asUint8List(
+          certificate.offsetInBytes,
+          certificate.lengthInBytes,
+        ),
+      );
+    }
+    return ApiClient(
+      baseUrl: baseUrl,
+      httpClient: HttpClient(context: context),
+    );
+  }
 
   final String _baseUrl;
   final HttpClient _httpClient;

@@ -7,6 +7,7 @@ import '../../features/tenant/tenant_account_repository.dart';
 import '../network/api_exception.dart';
 import 'auth_models.dart';
 import 'auth_repository.dart';
+import '../navigation/role_navigation.dart';
 
 class AppSession extends ChangeNotifier {
   AppSession(this._authRepository, this._tenantAccountRepository);
@@ -81,13 +82,15 @@ class AppSession extends ChangeNotifier {
         );
       }
       _configuration = configuration;
-      // This endpoint is attempted for every authenticated role. Operators may
-      // legitimately have no rental-account link, so a 403 is kept as state
-      // instead of turning a valid operator login into a failed login.
-      await _loadTenantAccount(
-        authGeneration: generation,
-        clearTransportOnUnauthorized: false,
-      );
+      // Only tenant users should call the tenant self-service endpoint. Operators
+      // authenticate through their configuration and must not lose their session
+      // because they have no rental-account association.
+      if (resolveRole(configuration.user!, hasPermission) == AppRole.tenant) {
+        await _loadTenantAccount(
+          authGeneration: generation,
+          clearTransportOnUnauthorized: false,
+        );
+      }
     } catch (error, stackTrace) {
       if (!_isCurrentAuth(generation)) return;
       _tokens = null;

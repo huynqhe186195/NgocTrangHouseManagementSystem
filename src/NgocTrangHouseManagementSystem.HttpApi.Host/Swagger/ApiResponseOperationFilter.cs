@@ -154,6 +154,9 @@ public sealed class ApiResponseOperationFilter
         return path.StartsWith(
             "/api/building-management",
             StringComparison.OrdinalIgnoreCase
+        ) || path.StartsWith(
+            "/api/mobile",
+            StringComparison.OrdinalIgnoreCase
         );
     }
 }

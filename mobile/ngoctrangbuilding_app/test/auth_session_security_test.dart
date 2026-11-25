@@ -69,6 +69,28 @@ void main() {
   );
 
   test(
+    'owner login does not call tenant self-service endpoint',
+    () async {
+      final auth = _FakeAuthRepository(role: 'owner');
+      var tenantRequestCount = 0;
+      final session = AppSession(
+        auth,
+        TenantAccountRepository((_) async {
+          tenantRequestCount++;
+          return _overviewJson('owner');
+        }),
+      );
+      addTearDown(session.dispose);
+
+      await session.signIn('owner', 'password');
+
+      expect(session.isAuthenticated, isTrue);
+      expect(session.user?.roles, <String>['owner']);
+      expect(tenantRequestCount, 0);
+    },
+  );
+
+  test(
     'unexpected account parsing errors are normalized and clear the session',
     () async {
       final auth = _FakeAuthRepository();
@@ -352,8 +374,10 @@ class _DeferredAuthRepository extends AuthRepository {
 }
 
 class _FakeAuthRepository extends AuthRepository {
-  _FakeAuthRepository() : super(ApiClient(baseUrl: 'http://127.0.0.1'));
+  _FakeAuthRepository({this.role = 'tenant'})
+    : super(ApiClient(baseUrl: 'http://127.0.0.1'));
 
+  final String role;
   int clearSessionCalls = 0;
 
   @override
@@ -367,12 +391,12 @@ class _FakeAuthRepository extends AuthRepository {
 
   @override
   Future<ApplicationConfiguration> loadConfiguration() async =>
-      const ApplicationConfiguration(
+      ApplicationConfiguration(
         user: CurrentUser(
           id: 'user-1',
           userName: 'user',
           name: 'Nguyễn An',
-          roles: <String>['tenant'],
+          roles: <String>[role],
         ),
         grantedPolicies: <String, bool>{},
       );

@@ -10,6 +10,13 @@ class AppConfig {
     'NGOC_TRANG_API_BASE_URL',
   );
 
+  /// Enables the explicitly supplied disposable-lane certificate only for a
+  /// build that opts in at compile time. It is never enabled by default.
+  static const useDisposableTlsCertificate = bool.fromEnvironment(
+    'NGOC_TRANG_DISPOSABLE_TLS',
+    defaultValue: false,
+  );
+
   static String get apiBaseUrl {
     if (_configuredApiBaseUrl.isNotEmpty) return _configuredApiBaseUrl;
     if (Platform.isAndroid) return 'https://10.0.2.2:44311';

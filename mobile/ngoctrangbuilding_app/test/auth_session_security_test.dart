@@ -68,27 +68,24 @@ void main() {
     },
   );
 
-  test(
-    'owner login does not call tenant self-service endpoint',
-    () async {
-      final auth = _FakeAuthRepository(role: 'owner');
-      var tenantRequestCount = 0;
-      final session = AppSession(
-        auth,
-        TenantAccountRepository((_) async {
-          tenantRequestCount++;
-          return _overviewJson('owner');
-        }),
-      );
-      addTearDown(session.dispose);
+  test('owner login does not call tenant self-service endpoint', () async {
+    final auth = _FakeAuthRepository(role: 'owner');
+    var tenantRequestCount = 0;
+    final session = AppSession(
+      auth,
+      TenantAccountRepository((_) async {
+        tenantRequestCount++;
+        return _overviewJson('owner');
+      }),
+    );
+    addTearDown(session.dispose);
 
-      await session.signIn('owner', 'password');
+    await session.signIn('owner', 'password');
 
-      expect(session.isAuthenticated, isTrue);
-      expect(session.user?.roles, <String>['owner']);
-      expect(tenantRequestCount, 0);
-    },
-  );
+    expect(session.isAuthenticated, isTrue);
+    expect(session.user?.roles, <String>['owner']);
+    expect(tenantRequestCount, 0);
+  });
 
   test(
     'unexpected account parsing errors are normalized and clear the session',
